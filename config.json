@@ -1,0 +1,17 @@
+{
+    "soul_path": "prompt/soul",
+    "api_url": "https://api.deepseek.com/chat/completions",
+    "api_key": "sk-e33f62310d32452e805b3b7748426883",
+    "model": "deepseek-chat",
+    "heartbeat_path": "prompt/heartbeat",
+    "heartbeat_interval": 60,
+    "heartbeat_api_url": "https://api.deepseek.com/chat/completions",
+    "heartbeat_api_key": "sk-e33f62310d32452e805b3b7748426883",
+    "heart_model": "deepseek-chat",
+    "embedding_model": "text-embedding-v4",
+    "embedding_api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
+    "embedding_api_key": "sk-8d18ff6ce8c240cab533a3a2e774b5e1",
+    "start_path": "prompt/start",
+    "deep_memory_file_path": "deep_memory.json",
+    "tools_schema_path": "tools.json"
+}

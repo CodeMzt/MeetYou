@@ -1,0 +1,69 @@
+{
+    "common_tools": [
+        {
+            "type": "function",
+            "function": {
+                "name": "exec_sys_cmd",
+                "description": "在用户的宿主Windows电脑上执行命令行(shell)指令，并返回终端输出结果。可用于查看文件、运行脚本等。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "cmd": {
+                            "type": "string",
+                            "description": "需要执行的具体终端命令，例如 'dir' (Windows上的命令行指令)"
+                        }
+                    },
+                    "required": ["cmd"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_system_time",
+                "description": "当用户询问当前时间、日期、星期几，或者在对话中涉及到'今天'、'现在'、'刚才'等时间概念需要对齐时间轴时，调用此工具获取宿主机真实的系统时间。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}, 
+                    "required": []
+                }
+            }
+        }
+    ],
+    "memory_tools": [
+        {
+            "type": "function",
+            "function": {
+                "name": "save_deep_memory",
+                "description": "当用户告诉你重要的事情或要求你'记住'某事时，调用此工具将文本转化为高维向量并持久化。不要随意存储无意义的日常闲聊。日期用绝对时间，不能用明天之类的相对时间",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_text": {
+                            "type": "string", 
+                            "description": "需要被转化为向量并永久记住的具体内容细节，请尽可能保留完整的技术上下文。"
+                        }
+                    },
+                    "required": ["memory_text"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "recall_deep_memory",
+                "description": "当你发现当前的对话上下文中缺乏关键的背景信息，或者用户问'之前设定的参数是多少'、'你还记得主控芯片型号吗'等涉及历史设定的问题时，以及在某些你判断需要记忆的情况下，调用此工具进行高维空间相似度检索。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query_text": {
+                            "type": "string", 
+                            "description": "用于在向量空间中进行雷达扫描的查询语句，尽量精炼"
+                        }
+                    },
+                    "required": ["query_text"]
+                }
+            }
+        }
+    ]
+}
