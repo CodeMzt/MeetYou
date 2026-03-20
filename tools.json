@@ -13,7 +13,9 @@
                             "description": "需要执行的具体终端命令，例如 'dir' (Windows上的命令行指令)"
                         }
                     },
-                    "required": ["cmd"]
+                    "required": [
+                        "cmd"
+                    ]
                 }
             }
         },
@@ -21,10 +23,10 @@
             "type": "function",
             "function": {
                 "name": "get_current_system_time",
-                "description": "当用户询问当前时间、日期、星期几，或者在对话中涉及到'今天'、'现在'、'刚才'等时间概念需要对齐时间轴时，调用此工具获取宿主机真实的系统时间。",
+                "description": "当用户询问当前时间、日期、星期几，或者在对话中涉及到'今天'、'现在'、'刚才',以及某事件需要时间信息等时间概念需要对齐时间轴时，调用此工具获取宿主机真实的系统时间。",
                 "parameters": {
                     "type": "object",
-                    "properties": {}, 
+                    "properties": {},
                     "required": []
                 }
             }
@@ -34,34 +36,64 @@
         {
             "type": "function",
             "function": {
-                "name": "save_deep_memory",
-                "description": "当用户告诉你重要的事情或要求你'记住'某事时，调用此工具将文本转化为高维向量并持久化。不要随意存储无意义的日常闲聊。日期用绝对时间，不能用明天之类的相对时间",
+                "name": "save_memory",
+                "description": "【核心记忆守则】将一条信息编码为高维向量并存入记忆图谱。适用场景：记录约定、偏好或重要设定。⚠ 警告（最高防错杠杆）：由于记忆片段是独立存储无上下文的，memory_text 中【绝对禁止】出现“今天、明天、现在、下周”等相对时间标记词。如果涉及时间事件，必须要强制转换并记录为明确的【绝对真实系统日期】（格式如“2026年3月20日”）。如果不清楚当前环境真实时间，必须先调用 get_current_system_time 获取时间锚点再进行存储。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "memory_text": {
-                            "type": "string", 
-                            "description": "需要被转化为向量并永久记住的具体内容细节，请尽可能保留完整的技术上下文。"
+                            "type": "string",
+                            "description": "需要记忆的具体内容。应包含完整的上下文信息，确保未来召回时无需额外解释即可理解。例如：'用户的猫叫小橘，是一只3岁的橘猫'，而非仅'小橘'。"
+                        },
+                        "text_emotion_intensity": {
+                            "type": "number",
+                            "description": "这条记忆的情绪强度（0.0~1.0）。影响初始记忆权重和每次被回忆时的强化幅度。高情绪强度的记忆更难遗忘。参考：日常琐事约0.2，普通事件约0.5，重要约定/决策约0.7，强烈情感事件（如悲伤、惊喜、愤怒）约0.9~1.0。默认值为1.0。"
                         }
                     },
-                    "required": ["memory_text"]
+                    "required": [
+                        "memory_text",
+                        "text_emotion_intensity"
+                    ]
                 }
             }
         },
         {
             "type": "function",
             "function": {
-                "name": "recall_deep_memory",
-                "description": "当你发现当前的对话上下文中缺乏关键的背景信息，或者用户问'之前设定的参数是多少'、'你还记得主控芯片型号吗'等涉及历史设定的问题时，以及在某些你判断需要记忆的情况下，调用此工具进行高维空间相似度检索。",
+                "name": "recall_memory",
+                "description": "通过语义相似度在记忆图谱中检索相关记忆。系统会将查询文本编码为向量，在所有记忆节点中找到最相关的锚点，然后沿突触网络向外扩散搜索，返回关联的记忆片段及其记忆强度。适用场景：用户提问涉及之前的约定/设定/偏好、对话需要历史背景信息补充、你不确定之前是否讨论过某个话题。注意：此操作只读取记忆，不会写入新记忆。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query_text": {
-                            "type": "string", 
-                            "description": "用于在向量空间中进行雷达扫描的查询语句，尽量精炼"
+                            "type": "string",
+                            "description": "用于语义检索的查询语句，应尽量精炼并聚焦于想要回忆的主题。例如：'用户的宠物信息'、'项目的技术栈选择'。"
                         }
                     },
-                    "required": ["query_text"]
+                    "required": [
+                        "query_text"
+                    ]
+                }
+            }
+        }
+    ],
+    "context_tools": [
+        {
+            "type": "function",
+            "function": {
+                "name": "update_context",
+                "description": "更新上下文信息。每5次对话后调用。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "context": {
+                            "type": "string",
+                            "description": "需要保存的上下文信息。当上下文较长，应当根据重要程度、文本长度等压缩。"
+                        }
+                    },
+                    "required": [
+                        "context"
+                    ]
                 }
             }
         }
