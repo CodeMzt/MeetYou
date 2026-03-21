@@ -177,7 +177,7 @@ graph TD
 ### 安装
 1. 克隆仓库：
    ```bash
-   git clone https://github.com/yourusername/MeetYou.git
+   git clone https://github.com/CodeMzt/MeetYou.git
    cd MeetYou
    ```
 2. 创建并激活虚拟环境（推荐）：
@@ -191,12 +191,38 @@ graph TD
    ```
 
 ### 配置
-通过项目配置管理器设置 `api_key`、`api_url`、`model`、`embedding_model` 等参数。
+在项目根目录下创建 `user/` 文件夹，并在其中新建 `user/config.json` 文件（该目录已通过 `.gitignore` 排除，**请勿将含有密钥的配置文件提交到版本控制**）。
+
+配置文件示例：
+```json
+{
+    "api_key": "YOUR_API_KEY",
+    "api_url": "https://api.openai.com/v1/chat/completions",
+    "model": "gpt-4o",
+    "embedding_api_key": "YOUR_EMBEDDING_API_KEY",
+    "embedding_api_url": "https://api.openai.com/v1/embeddings",
+    "embedding_model": "text-embedding-3-small",
+    "tools_schema_path": "tools.json",
+    "soul_path": "prompt/soul",
+    "start_path": "prompt/start",
+    "heartbeat_path": "prompt/heartbeat",
+    "memory_file_path": "user/memory.json"
+}
+```
 
 ### 运行
 ```bash
 python main.py
 ```
+
+## 👤 作者
+
+| 项目信息 | 详情 |
+|---|---|
+| **作者** | [CodeMzt](https://github.com/CodeMzt) |
+| **项目地址** | [https://github.com/CodeMzt/MeetYou](https://github.com/CodeMzt/MeetYou) |
+
+---
 
 ## 📜 License
 
