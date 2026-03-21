@@ -30,6 +30,18 @@
                     "required": []
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_sys_vitals",
+                "description": "获取宿主机系统的资源使用情况，包括CPU占用、内存占用、电池电量和充电状态。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
         }
     ],
     "memory_tools": [
@@ -47,7 +59,7 @@
                         },
                         "text_emotion_intensity": {
                             "type": "number",
-                            "description": "这条记忆的情绪强度（0.0~1.0）。影响初始记忆权重和每次被回忆时的强化幅度。高情绪强度的记忆更难遗忘。参考：日常琐事约0.2，普通事件约0.5，重要约定/决策约0.7，强烈情感事件（如悲伤、惊喜、愤怒）约0.9~1.0。默认值为1.0。"
+                            "description": "这条记忆的情绪强度（0.0~1.0）。影响初始记忆权重和每次被回忆时的强化幅度。高情绪强度的记忆更难遗忘。参考：日常琐事约0.2，普通事件约0.5，重要约定/决策约0.7，强烈情感事件（如悲伤、惊喜、愤怒）约0.9~1.0。默认值为0.5。"
                         }
                     },
                     "required": [
@@ -93,6 +105,51 @@
                     },
                     "required": [
                         "context"
+                    ]
+                }
+            }
+        }
+    ],
+    "files_tools": [
+        {
+            "type": "function",
+            "function": {
+                "name": "reed_txt",
+                "description": "读取txt文件内容",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "文件路径"
+                        }
+                    },
+                    "required": [
+                        "file_path"
+                    ]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "write_txt",
+                "description": "写入txt文件内容",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "文件路径"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "写入内容"
+                        }
+                    },
+                    "required": [
+                        "file_path",
+                        "content"
                     ]
                 }
             }

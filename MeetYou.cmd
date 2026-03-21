@@ -1,0 +1,1 @@
+e:/Documents/Project/MeetYou/.venv/Scripts/python.exe e:/Documents/Project/MeetYou/main.py
