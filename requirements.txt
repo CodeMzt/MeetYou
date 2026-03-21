@@ -1,0 +1,9 @@
+aiohttp
+prompt_toolkit
+networkx
+numpy
+psutil
+pyvis
+uiautomation
+mcp
+pywin32
