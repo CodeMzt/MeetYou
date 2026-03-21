@@ -161,3 +161,6 @@ cython_debug/
 
 # Other project specific temporary files
 memory_graph_view.html
+memory.json
+.idea/
+*.db
