@@ -2,17 +2,17 @@
 
 MeetYou 是一个基于大语言模型（LLM）的仿生智能体应用，旨在模拟人类认知过程。项目采用高度模块化的生物隐喻架构，将功能划分为"大脑"（Brain）负责推理、"心脏"（Heart）驱动后台潜意识、"记忆"（Memory）实现长时记忆存储与召回、以及"感官"（Sensors）处理交互输入输出。
 
-## 🌟 核心特性
+## 核心特性
 
-- **🧠 仿生认知架构：** 高度模块化设计，由核心大脑（LLM 推理引擎）、心脏（后台心跳事件循环）、记忆系统（长时存储与检索）和感官系统（I/O 处理）协同运作。
-- **📚 高级上下文管理：** 运用滑动窗口、动态摘要和长时记忆检索（RAG / 知识图谱）等策略，在长对话中维持深层语义连贯性。
-- **🕸️ 记忆图谱系统：** 核心算法模块，基于语义向量嵌入和图网络构建类人记忆系统，详见下方技术论述。
-- **⚡ 异步流式 CLI：** 基于 `prompt_toolkit` 实现非阻塞异步终端界面，支持实时逐字流式输出。
-- **🔌 多模型支持：** 灵活接入 OpenAI、Ollama 等多种 LLM 推理后端，支持同一供应商下多模型并行启用。
+- ** 仿生认知架构：** 高度模块化设计，由核心大脑（LLM 推理引擎）、心脏（后台心跳事件循环）、记忆系统（长时存储与检索）和感官系统（I/O 处理）协同运作。
+- ** 高级上下文管理：** 运用滑动窗口、动态摘要和长时记忆检索（RAG / 知识图谱）等策略，在长对话中维持深层语义连贯性。
+- ** 记忆图谱系统：** 核心算法模块，基于语义向量嵌入和图网络构建类人记忆系统，详见下方技术论述。
+- ** 异步流式 CLI：** 基于 `prompt_toolkit` 实现非阻塞异步终端界面，支持实时逐字流式输出。
+- ** 多模型支持：** 灵活接入 OpenAI、Ollama 等多种 LLM 推理后端，支持同一供应商下多模型并行启用。
 
 ---
 
-## 🧬 记忆图谱算法：技术论述
+## 记忆图谱算法：技术论述
 
 ### 1. 概述（Abstract）
 
@@ -158,7 +158,7 @@ graph TD
 
 ---
 
-## 📂 项目结构
+## 项目结构
 
 | 路径 | 描述 |
 |---|---|
@@ -168,7 +168,7 @@ graph TD
 | `user/` | 用户数据目录，存储个性化记忆图谱等持久化数据（已 git-ignore） |
 | `main.py` | 入口文件，编排异步事件循环，启动智能体 "Mozart" |
 
-## 🚀 快速开始
+## 快速开始
 
 ### 环境要求
 - Python 3.8+
@@ -177,7 +177,7 @@ graph TD
 ### 安装
 1. 克隆仓库：
    ```bash
-   git clone https://github.com/yourusername/MeetYou.git
+   git clone https://github.com/CodeMzt/MeetYou.git
    cd MeetYou
    ```
 2. 创建并激活虚拟环境（推荐）：
@@ -191,13 +191,38 @@ graph TD
    ```
 
 ### 配置
-通过项目配置管理器设置 `api_key`、`api_url`、`model`、`embedding_model` 等参数。
+在项目根目录下创建 `user/` 文件夹，并在其中新建 `user/config.json` 文件（该目录已通过 `.gitignore` 排除，**请勿将含有密钥的配置文件提交到版本控制**）。
+
+配置文件示例：
+```json
+{
+    "api_key": "YOUR_API_KEY",
+    "api_url": "https://api.openai.com/v1/chat/completions",
+    "model": "gpt-4o",
+    "embedding_api_key": "YOUR_EMBEDDING_API_KEY",
+    "embedding_api_url": "https://api.openai.com/v1/embeddings",
+    "embedding_model": "text-embedding-3-small",
+    "tools_schema_path": "tools.json",
+    "soul_path": "prompt/soul",
+    "start_path": "prompt/start",
+    "heartbeat_path": "prompt/heartbeat",
+    "memory_file_path": "user/memory.json"
+}
+```
 
 ### 运行
 ```bash
 python main.py
 ```
 
-## 📜 License
+## 作者
+
+<a href="https://github.com/Codemzt">
+  <img src="https://github.com/Codemzt.png" width="100px;" alt="用户名"/>
+</a>
+
+---
+
+## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
