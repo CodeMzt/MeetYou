@@ -1,7 +1,7 @@
 """
 统一日志配置。
 
-日志同时输出到控制台（WARNING+）和文件（INFO+）。
+默认仅输出到日志文件，避免污染 CLI 交互界面。
 格式: [2026-03-29 20:00:00] [meetyou.module] [LEVEL] message
 """
 
@@ -10,7 +10,11 @@ import os
 from datetime import datetime
 
 
-def setup_logger(log_dir: str = "logs", level: int = logging.INFO) -> logging.Logger:
+def setup_logger(
+    log_dir: str = "logs",
+    level: int = logging.INFO,
+    enable_console: bool = False,
+) -> logging.Logger:
     """
     配置并返回 meetyou 命名空间的 Logger。
 
@@ -34,11 +38,11 @@ def setup_logger(log_dir: str = "logs", level: int = logging.INFO) -> logging.Lo
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # 控制台 handler — 仅 WARNING 及以上
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.WARNING)
-    console_handler.setFormatter(formatter)
-    log.addHandler(console_handler)
+    if enable_console:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.WARNING)
+        console_handler.setFormatter(formatter)
+        log.addHandler(console_handler)
 
     # 文件 handler — INFO 及以上
     os.makedirs(log_dir, exist_ok=True)
@@ -49,5 +53,14 @@ def setup_logger(log_dir: str = "logs", level: int = logging.INFO) -> logging.Lo
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
     log.addHandler(file_handler)
+
+    third_party_loggers = [
+        logging.getLogger("Lark"),
+    ]
+    for third_party_logger in third_party_loggers:
+        third_party_logger.handlers.clear()
+        third_party_logger.setLevel(level)
+        third_party_logger.propagate = False
+        third_party_logger.addHandler(file_handler)
 
     return log

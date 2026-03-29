@@ -1,0 +1,29 @@
+{
+  "name": "meetyou-ui",
+  "version": "1.0.0",
+  "description": "MeetYou Desktop Floating Widget",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && electron-builder",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "framer-motion": "^11.0.5",
+    "lucide-react": "^0.344.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.20",
+    "@types/react": "^18.2.58",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^29.0.1",
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.4",
+    "vite-plugin-electron": "^0.28.2",
+    "vite-plugin-electron-renderer": "^0.14.5"
+  }
+}

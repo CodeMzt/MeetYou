@@ -1,13 +1,12 @@
 """
-事件总线：解耦模块间通信。
-
-所有模块通过发布/订阅事件进行交互，不再直接持有彼此引用。
-同时承载原 context_manager 的 shutdown_event 和 sensory_queue 职责。
+事件总线：统一输入事件与内部发布订阅。
 """
 
 import asyncio
 import logging
 from collections import defaultdict
+
+from core.io_protocol import ConfirmRequestEvent, EventTarget, EventType, TargetKind, make_source
 
 logger = logging.getLogger("meetyou.event_bus")
 
@@ -21,19 +20,20 @@ class EventBus:
     """
 
     # ---- 事件类型常量 ----
-    USER_INPUT = "user_input"
-    HEART_SIGNAL = "heart_signal"
     SYSTEM_OUTPUT = "system_output"
     AI_OUTPUT = "ai_output"
     SHUTDOWN = "shutdown"
     ERROR = "error"
-    CONFIRM_REQUEST = "confirm_request"
+    CONFIRM_REQUEST = EventType.CONFIRM_REQUEST.value
+    CONFIRM_RESPONSE = EventType.CONFIRM_RESPONSE.value
 
     def __init__(self):
         self._subscribers: dict[str, list] = defaultdict(list)
         self._shutdown_event = asyncio.Event()
-        self._sensory_queue: asyncio.Queue = asyncio.Queue()
+        self._inbound_queue: asyncio.Queue = asyncio.Queue()
         self._pending_confirmation: asyncio.Future | None = None
+        self._pending_request_id: str = ""
+        self._pending_confirmation_session_id: str = ""
 
     # ---- 核心信号 ----
 
@@ -43,9 +43,9 @@ class EventBus:
         return self._shutdown_event
 
     @property
-    def sensory_queue(self) -> asyncio.Queue:
-        """感知信息队列（用户输入、心跳信号等）"""
-        return self._sensory_queue
+    def inbound_queue(self) -> asyncio.Queue:
+        """统一输入事件队列"""
+        return self._inbound_queue
 
     def request_shutdown(self):
         """触发全局关闭"""
@@ -54,12 +54,19 @@ class EventBus:
 
     # ---- 用户确认机制 ----
 
-    async def request_confirmation(self, prompt: str, timeout: float = 30.0) -> bool:
+    async def request_confirmation(
+        self,
+        prompt: str,
+        timeout: float = 30.0,
+        session_id: str = "system:confirm",
+        source=None,
+        target: EventTarget | None = None,
+    ) -> bool:
         """
         请求用户确认。
 
-        发布 CONFIRM_REQUEST 事件（由 Listener 展示给用户），
-        然后等待用户通过 resolve_confirmation() 回复 yes/no。
+        发布 CONFIRM_REQUEST 事件（由当前输出目标展示给用户），
+        然后等待统一输入链路回传确认结果。
 
         Args:
             prompt: 展示给用户的确认提示文本
@@ -70,8 +77,18 @@ class EventBus:
         """
         loop = asyncio.get_running_loop()
         self._pending_confirmation = loop.create_future()
-
-        await self.publish(self.CONFIRM_REQUEST, {"prompt": prompt})
+        event = ConfirmRequestEvent(
+            session_id=session_id,
+            type=EventType.CONFIRM_REQUEST.value,
+            role="system",
+            content=prompt,
+            source=source or make_source("system", "confirm"),
+            target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+            timeout=timeout,
+        )
+        self._pending_request_id = event.request_id
+        self._pending_confirmation_session_id = event.session_id
+        await self.publish(self.CONFIRM_REQUEST, event)
 
         try:
             result = await asyncio.wait_for(self._pending_confirmation, timeout=timeout)
@@ -81,21 +98,43 @@ class EventBus:
             return False
         finally:
             self._pending_confirmation = None
+            self._pending_request_id = ""
+            self._pending_confirmation_session_id = ""
 
-    def resolve_confirmation(self, accepted: bool):
+    def resolve_confirmation(
+        self,
+        accepted: bool,
+        request_id: str = "",
+        session_id: str = "",
+    ) -> bool:
         """
-        由 Listener 调用：用户回复了确认请求。
+        由 CLI、前端或飞书输入适配器调用：用户回复了确认请求。
 
         Args:
             accepted: 用户是否同意
         """
+        if request_id and request_id != self._pending_request_id:
+            return False
+        if session_id and self._pending_confirmation_session_id:
+            if session_id != self._pending_confirmation_session_id:
+                return False
         if self._pending_confirmation and not self._pending_confirmation.done():
             self._pending_confirmation.set_result(accepted)
+            return True
+        return False
 
     @property
     def has_pending_confirmation(self) -> bool:
         """是否有等待中的确认请求"""
         return self._pending_confirmation is not None and not self._pending_confirmation.done()
+
+    @property
+    def pending_request_id(self) -> str:
+        return self._pending_request_id
+
+    @property
+    def pending_confirmation_session_id(self) -> str:
+        return self._pending_confirmation_session_id
 
     # ---- 发布/订阅 ----
 

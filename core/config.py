@@ -21,6 +21,8 @@ _ENV_KEY_MAP = {
     "api_key": "MEETYOU_API_KEY",
     "heartbeat_api_key": "MEETYOU_HEARTBEAT_API_KEY",
     "embedding_api_key": "MEETYOU_EMBEDDING_API_KEY",
+    "feishu_app_id": "MEETYOU_FEISHU_APP_ID",
+    "feishu_app_secret": "MEETYOU_FEISHU_APP_SECRET",
 }
 
 
@@ -88,6 +90,14 @@ class ConfigManager:
             if env_val:
                 return env_val
         return self._config.get(key, default)
+
+    def get_bool(self, key: str, default: bool = False) -> bool:
+        value = self.get(key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
 
     def get_prompt(self, prompt_name: str) -> str:
         """

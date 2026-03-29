@@ -5,19 +5,21 @@ MeetYou — 仿生认知架构 LLM 智能体
 """
 
 import asyncio
-import traceback
+import logging
 
 from core.app import App
+from core.logger import setup_logger
 
 
 if __name__ == "__main__":
+    setup_logger()
+    logger = logging.getLogger("meetyou.main")
     try:
         app = App()
         asyncio.run(app.run())
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print(f"你干啥了，我怎么被关了，你看看报错：{type(e).__name__}: {e}")
-        print(traceback.format_exc())
+        logger.exception("应用异常退出: %s: %s", type(e).__name__, e)
     finally:
         exit()

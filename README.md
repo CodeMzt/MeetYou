@@ -1,14 +1,15 @@
 # MeetYou
 
-MeetYou 是一个基于大语言模型（LLM）的仿生智能体应用，旨在模拟人类认知过程。项目采用高度模块化的生物隐喻架构，将功能划分为"大脑"（Brain）负责推理、"心脏"（Heart）驱动后台潜意识、"记忆"（Memory）实现长时记忆存储与召回、以及"感官"（Sensors）处理交互输入输出。
+MeetYou 是一个基于大语言模型（LLM）的仿生智能体应用，旨在模拟人类认知过程。项目采用仿生模块化架构，将能力划分为“Brain（推理）”“Heart（后台心跳）”“Memory（长时记忆）”“Sensors（感知输入）”“Speaker（统一输出）”等层次，并开始演进为支持 CLI、FastAPI 网关与飞书 Bot 的统一输入输出协议体系。
 
 ## 核心特性
 
-- ** 仿生认知架构：** 高度模块化设计，由核心大脑（LLM 推理引擎）、心脏（后台心跳事件循环）、记忆系统（长时存储与检索）和感官系统（I/O 处理）协同运作。
-- ** 高级上下文管理：** 运用滑动窗口、动态摘要和长时记忆检索（RAG / 知识图谱）等策略，在长对话中维持深层语义连贯性。
-- ** 记忆图谱系统：** 核心算法模块，基于语义向量嵌入和图网络构建类人记忆系统，详见下方技术论述。
-- ** 异步流式 CLI：** 基于 `prompt_toolkit` 实现非阻塞异步终端界面，支持实时逐字流式输出。
-- ** 多模型支持：** 灵活接入 OpenAI、Ollama 等多种 LLM 推理后端，支持同一供应商下多模型并行启用。
+- **仿生认知架构：** Brain、Heart、Memory、Context、Proprioceptor 等模块异步协作，模拟“前台意识 + 后台潜意识”的工作方式。
+- **统一 I/O 协议：** 输入输出开始从旧 Listener 中拆分，形成标准 `InboundEvent` / `OutboundEvent` 协议、`SessionManager` 和 `Speaker` 路由层。
+- **多通道扩展能力：** 当前保留 CLI 交互，同时加入 FastAPI 网关骨架与飞书 Bot 适配骨架，便于后续接前端与 IM。
+- **高级上下文管理：** 结合滑动窗口、动态摘要和长时记忆检索，在长对话中维持语义连贯性。
+- **记忆图谱系统：** 基于语义向量与图结构构建长期记忆，详见下方技术论述。
+- **多模型支持：** 灵活接入 OpenAI、Anthropic、Gemini、Ollama 等多种 LLM 推理后端。
 
 ---
 
@@ -162,11 +163,273 @@ graph TD
 
 | 路径 | 描述 |
 |---|---|
-| `core/` | 核心认知模块：`brain.py`（推理引擎）、`heart.py`（心跳循环）、`context.py`（上下文总线）、`sensors.py`（I/O 感官）、`config_manage.py`（配置管理） |
-| `tools/` | 可扩展工具集，核心为 `memory.py`（记忆图谱系统） |
-| `prompt/` | 系统级和特定场景 Prompt 模板 |
-| `user/` | 用户数据目录，存储个性化记忆图谱等持久化数据（已 git-ignore） |
-| `main.py` | 入口文件，编排异步事件循环，启动智能体 "Mozart" |
+| `core/` | 核心编排与认知模块，包括 `app.py`、`brain.py`、`heart.py`、`context.py`、`event_bus.py`、`speaker.py`、`session_manager.py`、`io_protocol.py` |
+| `sensors/` | 输入与感知相关模块，包括 `cli_input_adapter.py`、`cli_output_adapter.py`、`feishu_input_adapter.py`、`feishu_output_adapter.py`、`proprioceptor.py` |
+| `gateway/` | FastAPI 网关骨架，提供 HTTP 入站和 WebSocket 出站能力 |
+| `adapters/` | 模型适配器与外部连接适配器，包括各 LLM adapter 与 `feishu_ws_client.py` |
+| `tools/` | 可扩展工具集，核心为 `memory.py`（记忆图谱）、`system_tools.py`（系统工具）、`mcp.py`（MCP 集成） |
+| `platform_layer/` | 不同操作系统的能力抽象与检测 |
+| `prompt/` | 系统级与场景级 Prompt 模板 |
+| `user/` | 用户数据目录，存储配置、记忆图谱、MCP 配置等持久化数据（已 git-ignore） |
+| `main.py` | 程序入口，创建 `App` 并启动事件循环 |
+
+## 运行架构
+
+当前主链路已经调整为统一事件协议：
+
+```text
+CLI / Heart / Feishu / Web
+        ↓
+   InboundEvent
+        ↓
+    EventBus.inbound_queue
+        ↓
+        App
+        ↓
+       Brain
+        ↓
+   OutboundEvent
+        ↓
+      Speaker
+        ↓
+CLI / WebSocket / Feishu
+```
+
+### 核心模块职责
+
+- **App**：负责依赖注入、生命周期管理和主协程编排。
+- **Brain**：按 `session_id` 维护多会话上下文，与模型通信并处理工具调用。
+- **Heart**：周期性执行后台心跳检查，并将有效结果作为标准输入事件注入系统。
+- **SessionManager**：维护来源与 `session_id` 的绑定关系，以及默认输出目标。
+- **Speaker**：统一输出路由中心，根据目标将消息发往 CLI、WebSocket 或飞书。
+- **EventBus**：统一输入队列与内部发布订阅中心。
+
+## 输入输出协议
+
+首版统一协议基于两个核心事件：
+
+- `InboundEvent`：统一输入事件
+- `OutboundEvent`：统一输出事件
+
+关键字段包括：
+
+- `event_id`
+- `session_id`
+- `type`
+- `role`
+- `source`
+- `target`
+- `content`
+- `stream_id`
+- `reply_to`
+- `metadata`
+
+### 事件类型
+
+- `message`
+- `signal`
+- `confirm_request`
+- `confirm_response`
+- `status`
+- `control`
+- `error`
+
+### 会话模型
+
+项目当前采用“每来源独立会话”的设计：
+
+- CLI 默认绑定 `cli:local`
+- Heart 默认绑定 `system:heart`
+- Web 通过 `session_id` 或来源标识创建独立会话
+- 飞书按 `chat_id` 绑定到 `feishu:chat:<chat_id>`
+
+## FastAPI 网关
+
+详细接口文档见 [interface.md](file:///e:/Documents/Project/MeetYou/docs/interface.md)。
+
+项目已加入统一网关骨架：
+
+- `POST /inputs`：提交标准文本输入
+- `GET /health`：健康检查
+- `WebSocket /ws`：订阅某个 `session_id` 的流式输出、状态事件与确认事件
+
+首版网关策略为：
+
+- HTTP 负责入站
+- WebSocket 负责出站
+- Brain 不直接感知 HTTP 或 WebSocket 连接细节
+
+### WebSocket 事件格式
+
+WebSocket 出站统一使用 `meetyou.ws.v1` 包装格式：
+
+```json
+{
+  "schema": "meetyou.ws.v1",
+  "kind": "event",
+  "event": {
+    "event_id": "string",
+    "session_id": "string",
+    "type": "message|status|confirm_request|error",
+    "role": "assistant|system|user",
+    "content": "string|object",
+    "source": {},
+    "target": {},
+    "stream_id": "string",
+    "reply_to": "string",
+    "metadata": {}
+  },
+  "stream": {
+    "id": "string",
+    "phase": "start|chunk|end|error"
+  },
+  "confirm": {
+    "request_id": "string",
+    "timeout": 30.0,
+    "default_decision": false
+  }
+}
+```
+
+连接建立后，服务端先发送：
+
+```json
+{
+  "schema": "meetyou.ws.v1",
+  "kind": "connection",
+  "connection": {
+    "session_id": "string",
+    "source_id": "string",
+    "status": "connected"
+  }
+}
+```
+
+### WebSocket 入站命令
+
+当前 WebSocket 支持以下命令：
+
+- `{"action": "ping"}`
+- `{"action": "confirm_response", "request_id": "...", "accepted": true}`
+
+确认回传成功后，服务端返回：
+
+```json
+{
+  "schema": "meetyou.ws.v1",
+  "kind": "ack",
+  "ack": {
+    "action": "confirm_response",
+    "request_id": "string"
+  }
+}
+```
+
+## 飞书 Bot
+
+项目已加入飞书 Bot 接入骨架：
+
+- 使用飞书长连接模式接收事件
+- 输入侧通过 `FeishuInputAdapter` 映射为 `InboundEvent`
+- 输出侧通过 `FeishuOutputAdapter` 发送文本消息
+- 流式文本在飞书侧按 `stream_id` 聚合，结束后统一发送
+- 确认事件会下发到原飞书会话，用户可直接回复 `y/yes/确认` 或 `n/no/拒绝`
+
+### 建议的飞书开放平台配置
+
+- 应用类型：企业自建应用
+- 机器人能力：开启
+- 事件订阅方式：长连接（WebSocket）
+- 事件：`im.message.receive_v1`
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.10+
+- 可用的 LLM 推理后端
+- 可选：飞书应用凭证（如需启用飞书 Bot）
+
+### 安装
+
+1. 克隆仓库：
+   ```bash
+   git clone https://github.com/CodeMzt/MeetYou.git
+   cd MeetYou
+   ```
+2. 创建并激活虚拟环境：
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+   Windows:
+   ```bash
+   .venv\Scripts\activate
+   ```
+3. 安装依赖：
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### 配置
+
+在项目根目录下创建 `user/config.json`。该目录已被 `.gitignore` 排除，不要提交含密钥的配置文件。
+
+配置示例：
+
+```json
+{
+  "api_provider": "openai",
+  "api_url": "https://api.openai.com/v1/chat/completions",
+  "model": "gpt-4o",
+  "heartbeat_api_provider": "openai",
+  "heartbeat_api_url": "https://api.openai.com/v1/chat/completions",
+  "heart_model": "gpt-4o-mini",
+  "embedding_api_url": "https://api.openai.com/v1/embeddings",
+  "embedding_model": "text-embedding-3-small",
+  "tools_schema_path": "user/tools.json",
+  "soul_path": "prompt/soul",
+  "start_path": "prompt/start",
+  "heartbeat_path": "prompt/heartbeat",
+  "memory_file_path": "user/memory.json",
+  "enable_gateway": true,
+  "gateway_host": "127.0.0.1",
+  "gateway_port": 8000,
+  "enable_feishu_bot": false,
+  "feishu_broadcast_chat_ids": ["oc_xxx"],
+  "feishu_chat_registry_path": "user/feishu_chat_ids.json",
+  "feishu_app_id": "cli_xxx",
+  "feishu_app_secret": "your-secret"
+}
+```
+
+支持通过环境变量覆盖敏感配置：
+
+- `MEETYOU_API_KEY`
+- `MEETYOU_HEARTBEAT_API_KEY`
+- `MEETYOU_EMBEDDING_API_KEY`
+- `MEETYOU_FEISHU_APP_ID`
+- `MEETYOU_FEISHU_APP_SECRET`
+
+### 运行
+
+```bash
+python main.py
+```
+
+### 默认行为
+
+- 不启用网关时，系统以 CLI 方式运行。
+- 启用 `enable_gateway` 后，会同时启动 FastAPI 网关。
+- 启用 `enable_feishu_bot` 后，会启动飞书长连接客户端。
+- 如需让“启动欢迎消息”主动广播到飞书，需要额外配置 `feishu_broadcast_chat_ids` 或 `feishu_default_chat_id`。
+- 飞书收到消息后，会自动把 `chat_id` 记录到 `user/feishu_chat_ids.json`，可再复制到广播配置中。
+
+## 安全说明
+
+- 不要把 API Key、飞书 App Secret、用户配置提交到版本控制。
+- 高风险系统命令会走统一确认机制，不再只依赖 CLI 专属逻辑。
+- 飞书和 Web 前端都应通过标准确认事件完成危险操作授权。
 
 ## 快速开始
 
@@ -199,7 +462,6 @@ graph TD
     "api_key": "YOUR_API_KEY",
     "api_url": "https://api.openai.com/v1/chat/completions",
     "model": "gpt-4o",
-    "embedding_api_key": "YOUR_EMBEDDING_API_KEY",
     "embedding_api_url": "https://api.openai.com/v1/embeddings",
     "embedding_model": "text-embedding-3-small",
     "tools_schema_path": "tools.json",
