@@ -5,11 +5,10 @@
 原 manager.py 中 ToolsManager 部分的独立重构。
 """
 
-import json
 import asyncio
+import inspect
+import json
 import logging
-
-from core.exceptions import ToolExecutionError
 
 logger = logging.getLogger("meetyou.tools_manager")
 
@@ -82,7 +81,13 @@ class ToolsManager:
             tools.extend(self.tools_schema_dict.get(key, []))
         return tools
 
-    async def call_tool(self, tool_name: str, tool_args: dict) -> str:
+    async def call_tool(
+        self,
+        tool_name: str,
+        tool_args: dict,
+        session_id: str = "",
+        source=None,
+    ) -> str:
         """
         统一工具调用分派。
 
@@ -96,7 +101,14 @@ class ToolsManager:
         # 内置工具
         if tool_name in self.supported_funcs:
             try:
-                return await self.supported_funcs[tool_name](**tool_args)
+                call_kwargs = dict(tool_args)
+                func = self.supported_funcs[tool_name]
+                signature = inspect.signature(func)
+                if "session_id" in signature.parameters:
+                    call_kwargs["session_id"] = session_id
+                if "source" in signature.parameters:
+                    call_kwargs["source"] = source
+                return await func(**call_kwargs)
             except TypeError as e:
                 return f"Error: 参数不匹配 {tool_name}: {e}"
             except Exception as e:

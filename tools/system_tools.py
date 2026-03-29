@@ -8,10 +8,10 @@
 import asyncio
 import datetime
 import json
-import re
 import logging
+import re
 
-from core.exceptions import CommandBlockedError
+from core.io_protocol import EventTarget, TargetKind
 
 logger = logging.getLogger("meetyou.system_tools")
 
@@ -79,7 +79,7 @@ def _check_command_safety(cmd: str) -> tuple[str, str]:
     return "safe", ""
 
 
-async def exec_sys_cmd(cmd: str) -> str:
+async def exec_sys_cmd(cmd: str, session_id: str = "", source=None) -> str:
     """
     安全执行系统命令。
 
@@ -109,6 +109,9 @@ async def exec_sys_cmd(cmd: str) -> str:
             f"原因: {reason}\n"
             f"输入 y 确认执行，其他任意输入取消（{30}秒超时自动拒绝）",
             timeout=30.0,
+            session_id=session_id or "system:confirm",
+            source=source,
+            target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
         )
         if not confirmed:
             logger.info(f"用户拒绝执行危险命令: {cmd}")

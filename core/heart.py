@@ -11,6 +11,8 @@ import logging
 
 import aiohttp
 
+from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
+
 logger = logging.getLogger("meetyou.heart")
 
 
@@ -45,6 +47,8 @@ class Heart:
         self._api_url = ""
         self._model = ""
         self._http_session: aiohttp.ClientSession | None = None
+        self._source = make_source(SourceKind.HEART.value, "system")
+        self._session_id = "system:heart"
 
     async def init_heart(self):
         """从配置初始化心脏参数并创建 HTTP session。"""
@@ -72,7 +76,7 @@ class Heart:
         心跳核心处理协程。
 
         按固定间隔发起非流式请求，检测后台状态。
-        有意义的结果投递到 sensory_queue。
+        有意义的结果投递到统一输入队列。
         每次循环触发记忆衰减。
         """
         shutdown = self._event_bus.shutdown_event
@@ -114,10 +118,16 @@ class Heart:
 
                 output = (result.get("content") or "").strip()
                 if output and output not in ("[HEARTBEAT_OK]", "HEARTBEAT_OK"):
-                    await self._event_bus.sensory_queue.put({
-                        "source": "heart",
-                        "content": output,
-                    })
+                    await self._event_bus.inbound_queue.put(
+                        InboundEvent(
+                            session_id=self._session_id,
+                            type=EventType.SIGNAL.value,
+                            role="system",
+                            content=output,
+                            source=self._source,
+                            target=EventTarget(kind=TargetKind.INTERNAL.value),
+                        )
+                    )
             except Exception as e:
                 logger.error(f"心跳请求失败: {e}")
 
