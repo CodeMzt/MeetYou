@@ -8,3 +8,6 @@ uiautomation
 mcp
 pywin32
 python-dotenv
+fastapi
+uvicorn
+lark-oapi

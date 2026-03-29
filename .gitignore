@@ -1,6 +1,7 @@
 # User specific folders
 user/
 test/
+.pjfacts/
 
 # Environment variables (API keys)
 .env

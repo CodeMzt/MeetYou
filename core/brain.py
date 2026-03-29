@@ -15,7 +15,8 @@ import logging
 
 import aiohttp
 
-from adapters.base import StreamEvent
+from core.brain_session import BrainSession
+from core.runtime_context import get_event_context
 
 logger = logging.getLogger("meetyou.brain")
 
@@ -42,47 +43,67 @@ class Brain:
         self._context_manager = context_manager
         self._event_bus = event_bus
         self._exception_router = exception_router
-        self._chat_history: list[dict] = []
+        self._base_messages: list[dict] = []
+        self._sessions: dict[str, BrainSession] = {}
         self._http_session: aiohttp.ClientSession | None = None
 
     async def init_brain(self, sys_prompt: str):
         """
         初始化大脑：加载 system prompt、持久化上下文、创建 HTTP session。
         """
-        self._chat_history = [
+        self._base_messages = [
             {"role": "system", "content": sys_prompt},
         ]
         # 加载持久化上下文
         context = await self._context_manager.load_context()
-        self._chat_history.append({"role": "system", "content": context})
+        self._base_messages.append({"role": "system", "content": context})
 
         self._http_session = aiohttp.ClientSession()
         logger.info("Brain 初始化完成")
 
     async def close_brain(self):
         """关闭大脑：保存上下文，关闭 HTTP session。"""
-        # BUG-4 修复：关闭前先保存上下文摘要
-        if len(self._chat_history) > 2:
-            # 取最近的对话内容做上下文保存
-            recent = self._chat_history[2:]  # 跳过 system prompts
-            lines = []
-            for msg in recent[-6:]:  # 最近 6 条
-                content = msg.get("content", "")
-                if isinstance(content, str) and content:
-                    lines.append(f"[{msg.get('role', '')}]: {content[:200]}")
-            if lines:
-                summary = "\n".join(lines)
-                try:
-                    await self._context_manager.update_context(summary)
-                except Exception as e:
-                    logger.error(f"关闭时保存上下文失败: {e}")
+        for session in self._sessions.values():
+            await self._save_session_context(session)
 
         if self._http_session is not None:
             await self._http_session.close()
             self._http_session = None
         logger.info("Brain 已关闭")
 
-    async def input_brain(self, input_info: dict, api_key: str, api_url: str, model: str):
+    def get_or_create_session(self, session_id: str) -> BrainSession:
+        session = self._sessions.get(session_id)
+        if session is None:
+            session = BrainSession(
+                session_id=session_id,
+                chat_history=[dict(message) for message in self._base_messages],
+            )
+            self._sessions[session_id] = session
+        session.touch()
+        return session
+
+    async def close_session(self, session_id: str):
+        session = self._sessions.pop(session_id, None)
+        if session is not None:
+            await self._save_session_context(session)
+
+    async def _save_session_context(self, session: BrainSession):
+        if len(session.chat_history) <= 2:
+            return
+        recent = session.chat_history[2:]
+        lines = []
+        for msg in recent[-6:]:
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                lines.append(f"[{msg.get('role', '')}]: {content[:200]}")
+        if lines:
+            summary = "\n".join(lines)
+            try:
+                await self._context_manager.update_context(summary)
+            except Exception as e:
+                logger.error(f"关闭时保存上下文失败: {e}")
+
+    async def input_brain(self, session_id: str, input_info: dict, api_key: str, api_url: str, model: str):
         """
         处理一次输入并流式返回模型回复。
 
@@ -100,17 +121,19 @@ class Brain:
         if self._http_session is None:
             raise RuntimeError("Brain HTTP session 未初始化，请先调用 init_brain()")
 
-        self._chat_history.append(input_info)
+        session = self.get_or_create_session(session_id)
+        session.chat_history.append(input_info)
+        session.touch()
 
         # 上下文裁剪
         await self._context_manager.trim_history(
-            self._chat_history, model, self._http_session, api_url, api_key
+            session.chat_history, model, self._http_session, api_url, api_key
         )
 
         # 循环处理（支持连续多轮工具调用）
         while True:
             # 构建消息列表（附加本体感知信息）
-            messages = self._chat_history + [
+            messages = session.chat_history + [
                 {
                     "role": "system",
                     "content": f"当前用户电脑光标信息：{json.dumps(self._context_manager.proprioception_info, ensure_ascii=False)}",
@@ -138,7 +161,7 @@ class Brain:
 
             # 记录 assistant 回复
             if assistant_content:
-                self._chat_history.append({
+                session.chat_history.append({
                     "role": "assistant",
                     "content": assistant_content,
                 })
@@ -150,7 +173,7 @@ class Brain:
             # ---- 处理所有 tool_calls ----
 
             # 记录 assistant 的 tool_calls 消息
-            self._chat_history.append({
+            session.chat_history.append({
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [
@@ -174,11 +197,17 @@ class Brain:
                     args = {}
 
                 try:
-                    result = await self._tools_manager.call_tool(tc.name, args)
+                    context = get_event_context()
+                    result = await self._tools_manager.call_tool(
+                        tc.name,
+                        args,
+                        session_id=context.get("session_id", session_id),
+                        source=context.get("source"),
+                    )
                 except Exception as e:
                     result = f"Error: 工具 {tc.name} 执行异常: {e}"
 
-                self._chat_history.append({
+                session.chat_history.append({
                     "role": "tool",
                     "content": result if isinstance(result, str) else str(result),
                     "tool_call_id": tc.id,
