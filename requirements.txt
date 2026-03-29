@@ -7,3 +7,4 @@ pyvis
 uiautomation
 mcp
 pywin32
+python-dotenv

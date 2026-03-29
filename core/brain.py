@@ -1,183 +1,187 @@
-from core.context import context_manager
-from core.manager import tools_manager
+"""
+大脑核心处理模块。
+
+职责：
+- 管理聊天历史
+- 通过 LLMAdapter 与模型通信
+- 支持多 tool_call 并行解析（按 index 分组）
+- 循环处理工具调用（替代递归）
+- 多模态输入接口
+- 自动上下文裁剪
+"""
 
 import json
+import logging
+
 import aiohttp
+
+from adapters.base import StreamEvent
+
+logger = logging.getLogger("meetyou.brain")
+
 
 class Brain:
     """
-    大脑核心处理类，封装了与大语言模型通信的核心逻辑、聊天历史和 HTTP 会话管理。
-    """
-    def __init__(self):
-        """
-        初始化 Brain 实例的历史记录和会话占位。
-        """
-        self._chat_history = []
-        self._chat_http_session = None
+    大脑核心处理类。
 
-    async def init_brain(self, sys_prompt):
+    封装与 LLM 通信的核心逻辑：聊天历史管理、流式响应处理、
+    多工具调用循环、上下文自动裁剪。
+    """
+
+    def __init__(self, adapter, tools_manager, context_manager, event_bus, exception_router):
         """
-        异步初始化大脑状态。
-        加载系统提示词以及持久化的上下文记忆，同时开启异步的 HTTP 客户端会话。
-        
         Args:
-            sys_prompt (str): 系统提示词内容。
+            adapter: LLMAdapter 实例（主对话用）
+            tools_manager: ToolsManager 实例
+            context_manager: ContextManager 实例
+            event_bus: EventBus 实例
+            exception_router: ExceptionRouter 实例
+        """
+        self._adapter = adapter
+        self._tools_manager = tools_manager
+        self._context_manager = context_manager
+        self._event_bus = event_bus
+        self._exception_router = exception_router
+        self._chat_history: list[dict] = []
+        self._http_session: aiohttp.ClientSession | None = None
+
+    async def init_brain(self, sys_prompt: str):
+        """
+        初始化大脑：加载 system prompt、持久化上下文、创建 HTTP session。
         """
         self._chat_history = [
-            {
-                "role": "system",
-                "content": sys_prompt
-            }
+            {"role": "system", "content": sys_prompt},
         ]
+        # 加载持久化上下文
+        context = await self._context_manager.load_context()
+        self._chat_history.append({"role": "system", "content": context})
 
-        self._chat_history.append({
-            "role": "system",
-            "content": await context_manager.load_context()
-        })
-        self._chat_http_session = aiohttp.ClientSession()
+        self._http_session = aiohttp.ClientSession()
+        logger.info("Brain 初始化完成")
 
     async def close_brain(self):
-        """
-        异步关闭大脑工作状态，保存当前记忆上下文并安全断开 HTTP 连接会话。
-        """
-        if self._chat_http_session is not None:
-            await self._chat_http_session.close()   
-            self._chat_http_session = None
+        """关闭大脑：保存上下文，关闭 HTTP session。"""
+        # BUG-4 修复：关闭前先保存上下文摘要
+        if len(self._chat_history) > 2:
+            # 取最近的对话内容做上下文保存
+            recent = self._chat_history[2:]  # 跳过 system prompts
+            lines = []
+            for msg in recent[-6:]:  # 最近 6 条
+                content = msg.get("content", "")
+                if isinstance(content, str) and content:
+                    lines.append(f"[{msg.get('role', '')}]: {content[:200]}")
+            if lines:
+                summary = "\n".join(lines)
+                try:
+                    await self._context_manager.update_context(summary)
+                except Exception as e:
+                    logger.error(f"关闭时保存上下文失败: {e}")
 
-        context = await context_manager.load_context()
-        self._chat_history.append(
-            {
-                "role": "system",
-                "content": context
-            }
-        )
+        if self._http_session is not None:
+            await self._http_session.close()
+            self._http_session = None
+        logger.info("Brain 已关闭")
 
-    async def input_brain(self, input_info, api_key, api_url, model):
+    async def input_brain(self, input_info: dict, api_key: str, api_url: str, model: str):
         """
-        异步调用模型接口进行推断和回应。
-        处理用户或系统输入，合并光标信息后发起流式请求。
-        如果包含工具调用，则自动解析并调用本地函数，持续交互直至返回最终文本结果。
-        
+        处理一次输入并流式返回模型回复。
+
+        支持多 tool_call 并行 + 循环处理（非递归）。
+
         Args:
-            input_info (dict): 当前的输入数据字典，包含 role 和 content。
-            api_key (str): 模型访问 API Key。
-            api_url (str): 模型 API 服务地址。
-            model (str): 指定的模型名称。
-            
+            input_info: 消息字典 {"role": str, "content": str | list}
+            api_key: API Key
+            api_url: API URL
+            model: 模型名称
+
         Yields:
-            str: 模型的流式文本回复片段。
-            
-        Raises:
-            Exception: 如果未调用 init_brain 即发起了请求。
+            str: 模型的流式文本片段
         """
+        if self._http_session is None:
+            raise RuntimeError("Brain HTTP session 未初始化，请先调用 init_brain()")
+
         self._chat_history.append(input_info)
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": model,
-            "messages": self._chat_history+[
+        # 上下文裁剪
+        await self._context_manager.trim_history(
+            self._chat_history, model, self._http_session, api_url, api_key
+        )
+
+        # 循环处理（支持连续多轮工具调用）
+        while True:
+            # 构建消息列表（附加本体感知信息）
+            messages = self._chat_history + [
                 {
                     "role": "system",
-                    "content": f"当前用户电脑光标信息：{json.dumps(context_manager.proprioception_info)}"
+                    "content": f"当前用户电脑光标信息：{json.dumps(self._context_manager.proprioception_info, ensure_ascii=False)}",
                 }
-            ],
-            "tools": tools_manager.tools_schema_list["common_tools"]+tools_manager.tools_schema_list["memory_tools"]+tools_manager.tools_schema_list["context_tools"],
-            "stream": True
-        }
-        if self._chat_http_session is None:
-            raise Exception("Chat HTTP session is not initialized. Call init_brain first.")
-        
-        __tool_call_id = ''
-        __func_name = ''
-        __func_args = ''
-        __is_tool_call = False
+            ]
 
-        async with self._chat_http_session.post(api_url, headers=headers, json=payload) as response:
-            response.raise_for_status()
+            tools = self._tools_manager.get_all_tools()
             assistant_content = ""
-            while not response.content.at_eof():
-                chunk = await response.content.readline()
-                if chunk:
-                    raw_line = chunk.decode("utf-8")
-                    if raw_line.startswith("data:"):
-                        json_data = raw_line[6:].strip()
-                        if json_data.startswith("[DONE]"):
-                            break
-                        try:
-                            data = json.loads(json_data)
-                            choices = data.get("choices") or []
-                            if not choices:
-                                continue
-                            delta = choices[0].get("delta") or {}
-                            if "tool_calls" in delta:
-                                __is_tool_call = True
-                                tool_chunk = delta['tool_calls'][0]
-                                if 'id' in tool_chunk:
-                                    __tool_call_id = tool_chunk['id']
-                                if 'function' in tool_chunk:
-                                    func_chunk = tool_chunk['function']
-                                    if 'name' in func_chunk:
-                                        __func_name = func_chunk['name']
-                                    if 'arguments' in func_chunk:
-                                        __func_args += func_chunk['arguments']
-                                continue
-                            elif 'content' in delta:
-                                output = delta.get("content")
-                                if not output:
-                                    continue
-                                assistant_content += output
-                                yield output
-                        except Exception as e:
-                            # yield (f"Error parsing JSON data: {e}\r\n")
-                            continue
-            self._chat_history.append({"role": "assistant", "content": assistant_content})
-        if __is_tool_call:
-            try:
-                __func_args_dict = json.loads(__func_args) if __func_args else {}
-            except Exception as e:
-                result = f"Error parsing function arguments: {e}\r\n"
-                __func_args_dict = None
+            tool_calls = []
 
-            if __func_args_dict is not None:
-                if __func_name in tools_manager.supported_funcs:
-                    try:
-                        result = await tools_manager.supported_funcs[__func_name](**__func_args_dict)
-                    except TypeError as e:
-                        result = f"Error: Argument mismatch for {__func_name}: {e}\r\n"
-                    except Exception as e:
-                        result = f"Error executing {__func_name}: {e}\r\n"
-                else:
-                    result = f"Error: Unknown function {__func_name}\r\n"
+            # 流式请求
+            async for event in self._adapter.stream_chat(
+                self._http_session, api_url, api_key, model, messages, tools
+            ):
+                if event.type == "text" and event.text:
+                    assistant_content += event.text
+                    yield event.text
+                elif event.type == "reasoning" and event.reasoning_text:
+                    # 推理过程可以选择性输出
+                    pass
+                elif event.type == "tool_calls" and event.tool_calls:
+                    tool_calls = event.tool_calls
+                elif event.type == "error":
+                    logger.error(f"流式响应错误: {event.error}")
 
-            self._chat_history.append({
+            # 记录 assistant 回复
+            if assistant_content:
+                self._chat_history.append({
                     "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                            "type": "function",
-                            "id": __tool_call_id,
-                            "function": {
-                                "name": __func_name,
-                                "arguments": __func_args
-                            }
-                        }
-                    ]
-                }
-            )
-            tool_output_info = {
-                "role": "tool",
-                "content": result,
-                "tool_call_id": __tool_call_id,
-            }
-            
-            async for chunk in self.input_brain(tool_output_info, api_key, api_url, model):
-                yield chunk
+                    "content": assistant_content,
+                })
 
-brain_instance = Brain()
-        
+            # 没有工具调用，结束循环
+            if not tool_calls:
+                break
 
+            # ---- 处理所有 tool_calls ----
 
+            # 记录 assistant 的 tool_calls 消息
+            self._chat_history.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "id": tc.id,
+                        "function": {
+                            "name": tc.name,
+                            "arguments": tc.arguments_str,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            })
 
+            # 逐个执行并记录结果
+            for tc in tool_calls:
+                try:
+                    args = tc.arguments
+                except Exception:
+                    args = {}
+
+                try:
+                    result = await self._tools_manager.call_tool(tc.name, args)
+                except Exception as e:
+                    result = f"Error: 工具 {tc.name} 执行异常: {e}"
+
+                self._chat_history.append({
+                    "role": "tool",
+                    "content": result if isinstance(result, str) else str(result),
+                    "tool_call_id": tc.id,
+                })
+
+            # 循环回去让 LLM 处理工具结果
