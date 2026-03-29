@@ -1,121 +1,132 @@
+"""
+系统心脏模块。
+
+后台心跳循环：按设定间隔探测系统状态，
+如果检测到需要处理的事务则投递到事件总线。
+每次心跳兼顾记忆衰减。
+"""
+
 import asyncio
+import logging
+
 import aiohttp
 
-from tools.memory import memory_instance
-from core.brain import brain_instance
-from core.context import context_manager
-from core.sensors import listener_instance
-from core.manager import cfg
-from core.manager import tools_manager
+logger = logging.getLogger("meetyou.heart")
+
 
 class Heart:
     """
-    系统心脏模块类。
-    负责在后台按设定的间隔节拍循环运行，探测系统状态并判断是否需要主动触发系统思维。
+    系统心脏。
+
+    使用独立的 LLMAdapter 进行轻量级后台推理，
+    将有意义的检测结果通过 event_bus 通知大脑。
     """
-    def __init__(self):
+
+    def __init__(self, adapter, config, tools_manager, memory, event_bus, exception_router):
         """
-        初始化 Heart 对象，定义心跳相关属性。
+        Args:
+            adapter: 心跳用的 LLMAdapter 实例
+            config: ConfigManager 实例
+            tools_manager: ToolsManager 实例
+            memory: Memory 实例
+            event_bus: EventBus 实例
+            exception_router: ExceptionRouter 实例
         """
-        self._heart_prompt = ''
-        self._heart_http_session = None
-        self._heart_interval = 60
-        self._heart_api_key = ""
-        self._heart_api_url = ""
-        self._heart_model = ""
+        self._adapter = adapter
+        self._config = config
+        self._tools_manager = tools_manager
+        self._memory = memory
+        self._event_bus = event_bus
+        self._exception_router = exception_router
+
+        self._prompt = ""
+        self._interval = 60
+        self._api_key = ""
+        self._api_url = ""
+        self._model = ""
+        self._http_session: aiohttp.ClientSession | None = None
 
     async def init_heart(self):
-        """
-        依据全局配置异步初始化心脏对象的各项参数（提示词、频率、API Key和模型）。
-        同步建立异步 HTTP 请求会话。
-        """
+        """从配置初始化心脏参数并创建 HTTP session。"""
         try:
-            self._heart_prompt = cfg.get_prompt("heartbeat")
+            self._prompt = self._config.get_prompt("heartbeat")
         except Exception as e:
-            listener_instance.system_output(f"Error loading heartbeat prompt: {e}")
+            logger.error(f"加载心跳提示词失败: {e}")
 
-        try:
-            self._heart_interval = int(cfg.get_config_item("heartbeat_interval") or self._heart_interval)
-        except Exception as e:
-            listener_instance.system_output(f"Error loading heartbeat interval: {e}")
-
-        self._heart_api_url = cfg.get_config_item("heartbeat_api_url") or self._heart_api_url
-        self._heart_api_key = cfg.get_config_item("heartbeat_api_key") or self._heart_api_key
-        self._heart_model = cfg.get_config_item("heart_model") or self._heart_model
-
-        self._heart_http_session = aiohttp.ClientSession()
+        self._interval = int(self._config.get("heartbeat_interval") or 60)
+        self._api_url = self._config.get("heartbeat_api_url") or ""
+        self._api_key = self._config.get("heartbeat_api_key") or ""
+        self._model = self._config.get("heart_model") or ""
+        self._http_session = aiohttp.ClientSession()
+        logger.info(f"Heart 初始化完成: 间隔 {self._interval}s, 模型 {self._model}")
 
     async def close_heart(self):
-        """
-        异步关闭心脏运行环境及对应的网络请求客户端会话。
-        """
-        if self._heart_http_session:
-            await self._heart_http_session.close()
-            self._heart_http_session = None
+        """关闭 HTTP session。"""
+        if self._http_session:
+            await self._http_session.close()
+            self._http_session = None
+        logger.info("Heart 已关闭")
 
     async def heartbeat_processor(self):
         """
-        心跳核心处理任务协程。
-        按固定间隔发起请求探测后台状态；如果检测到并返回了有意义的状态突变，将其投递到系统的信息流队列中充当潜意识触发器。
-        同时每次心跳循环兼具推进记忆消退的逻辑。
+        心跳核心处理协程。
+
+        按固定间隔发起非流式请求，检测后台状态。
+        有意义的结果投递到 sensory_queue。
+        每次循环触发记忆衰减。
         """
+        shutdown = self._event_bus.shutdown_event
 
         while True:
-            if context_manager.shutdown_event.is_set():
-                break       
-            if self._heart_http_session is None:
-                raise Exception("Heart HTTP session is not initialized. Call init_heart first.")
+            if shutdown.is_set():
+                break
 
-            if not self._heart_api_url or not self._heart_model:
-                listener_instance.system_output("[system] [heart] [Error] Heartbeat config missing: heartbeat_api_url or heart_model")
+            if not self._api_url or not self._model:
+                logger.warning("心跳配置不完整 (api_url 或 model 缺失)，跳过")
                 try:
-                    await asyncio.wait_for(context_manager.shutdown_event.wait(), timeout=self._heart_interval)
+                    await asyncio.wait_for(shutdown.wait(), timeout=self._interval)
                     break
                 except asyncio.TimeoutError:
                     continue
 
-            if(tools_manager.tools_schema_list is None):
+            if self._http_session is None:
+                break
+
+            # 等待工具 schema 就绪
+            if not self._tools_manager.tools_schema_dict:
                 try:
-                    await asyncio.wait_for(context_manager.shutdown_event.wait(), timeout=1.0)
+                    await asyncio.wait_for(shutdown.wait(), timeout=1.0)
                     break
                 except asyncio.TimeoutError:
                     continue
 
-            headers = {}
-            if self._heart_api_key:
-                headers = {
-                    "Authorization": f"Bearer {self._heart_api_key}",
-                    "Content-Type": "application/json",
-                }
-
-            payload = {
-                "model": self._heart_model,
-                "messages": [{"role": "user", "content": self._heart_prompt}],
-                "stream": False,
-                "tools": tools_manager.tools_schema_list["common_tools"]+tools_manager.tools_schema_list["memory_tools"],
-            }
-
+            # 发起心跳请求（非流式）
             try:
-                async with self._heart_http_session.post(self._heart_api_url, json=payload, headers=headers) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
-                    message = data.get("message") or {}
-                    output = (message.get("content") or "").strip()
-                    if output and output not in ("[HEARTBEAT_OK]", "HEARTBEAT_OK"):
-                        heart_sensor = {
-                            "source": "heart",
-                            "content": output
-                        }
-                        await context_manager.sensory_queue.put(heart_sensor)
+                tools = self._tools_manager.get_heartbeat_tools()
+                result = await self._adapter.chat(
+                    self._http_session,
+                    self._api_url,
+                    self._api_key,
+                    self._model,
+                    [{"role": "user", "content": self._prompt}],
+                    tools=tools,
+                )
+
+                output = (result.get("content") or "").strip()
+                if output and output not in ("[HEARTBEAT_OK]", "HEARTBEAT_OK"):
+                    await self._event_bus.sensory_queue.put({
+                        "source": "heart",
+                        "content": output,
+                    })
             except Exception as e:
-                listener_instance.system_output(f"[system] [heart] [Error] Heartbeat error: {e}")
+                logger.error(f"心跳请求失败: {e}")
 
-            await memory_instance.fade_memory()
+            # 记忆衰减
+            self._memory.fade_memory()
+
+            # 等待下一个周期（或 shutdown）
             try:
-                await asyncio.wait_for(context_manager.shutdown_event.wait(), timeout=self._heart_interval)
+                await asyncio.wait_for(shutdown.wait(), timeout=self._interval)
                 break
             except asyncio.TimeoutError:
                 pass
-
-
-heart_instance = Heart()
