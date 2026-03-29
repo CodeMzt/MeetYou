@@ -2,6 +2,12 @@
 user/
 test/
 
+# Environment variables (API keys)
+.env
+
+# Log files
+logs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

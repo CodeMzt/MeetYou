@@ -1,70 +1,156 @@
+"""
+系统工具模块。
+
+提供命令执行（带安全策略）、时间获取、系统指标等功能。
+使用平台抽象层实现跨平台兼容。
+"""
+
 import asyncio
 import datetime
-import psutil
+import json
+import re
+import logging
 
-async def exec_sys_cmd(cmd: str):
+from core.exceptions import CommandBlockedError
+
+logger = logging.getLogger("meetyou.system_tools")
+
+# 模块级变量，由 App 初始化时注入
+_platform_adapter = None
+_cmd_policy = None
+_event_bus = None
+
+
+def init_system_tools(platform_adapter, event_bus, cmd_policy_path: str = "user/cmd_policy.json"):
     """
-    异步执行操作系统底层终端命令。
-    
+    初始化系统工具模块。
+
     Args:
-        cmd (str): 要执行的终端或 shell 命令。
-        
-    Returns:
-        str: 执行的标准输出结果，若失败则返回格式化的标准错误信息。
+        platform_adapter: PlatformAdapter 实例
+        event_bus: EventBus 实例（用于危险命令确认）
+        cmd_policy_path: 命令安全策略文件路径
     """
+    global _platform_adapter, _cmd_policy, _event_bus
+    _platform_adapter = platform_adapter
+    _event_bus = event_bus
+
+    try:
+        with open(cmd_policy_path, "r", encoding="utf-8") as f:
+            _cmd_policy = json.load(f)
+        logger.info(f"命令安全策略已加载: {cmd_policy_path}")
+    except FileNotFoundError:
+        logger.warning(f"命令安全策略文件不存在: {cmd_policy_path}，使用默认（全部允许）")
+        _cmd_policy = {"mode": "none"}
+    except json.JSONDecodeError as e:
+        logger.error(f"命令安全策略格式错误: {e}")
+        _cmd_policy = {"mode": "none"}
+
+
+def _check_command_safety(cmd: str) -> tuple[str, str]:
+    """
+    检查命令安全状态。
+
+    Returns:
+        (status, reason) — status 为 "safe" / "blocked" / "needs_confirm"
+    """
+    if _cmd_policy is None or _cmd_policy.get("mode") == "none":
+        return "safe", ""
+
+    mode = _cmd_policy.get("mode", "blacklist")
+    cmd_lower = cmd.strip().lower()
+
+    if mode == "whitelist":
+        whitelist = _cmd_policy.get("whitelist", [])
+        for allowed in whitelist:
+            if cmd_lower.startswith(allowed.lower()):
+                return "safe", ""
+        return "blocked", f"命令不在白名单中: {cmd}"
+
+    elif mode == "blacklist":
+        blacklist = _cmd_policy.get("blacklist_patterns", [])
+        for pattern in blacklist:
+            try:
+                if re.search(pattern, cmd, re.IGNORECASE):
+                    return "needs_confirm", f"匹配危险规则: {pattern}"
+            except re.error:
+                if pattern.lower() in cmd_lower:
+                    return "needs_confirm", f"匹配危险关键词: {pattern}"
+
+    return "safe", ""
+
+
+async def exec_sys_cmd(cmd: str) -> str:
+    """
+    安全执行系统命令。
+
+    - 白名单之外的命令直接拦截
+    - 黑名单命令弹出确认，用户同意后才执行
+    - 其他命令正常执行
+
+    Args:
+        cmd: 终端命令
+
+    Returns:
+        str: 执行结果或拦截信息
+    """
+    status, reason = _check_command_safety(cmd)
+
+    if status == "blocked":
+        logger.warning(f"命令被拦截: {cmd} | {reason}")
+        return f"[安全策略拦截] {reason}"
+
+    if status == "needs_confirm":
+        if _event_bus is None:
+            logger.warning(f"危险命令无法确认（EventBus 未注入），默认拒绝: {cmd}")
+            return f"[安全策略] 危险命令已拦截（{reason}）"
+
+        confirmed = await _event_bus.request_confirmation(
+            f"请求执行危险命令: {cmd}\n"
+            f"原因: {reason}\n"
+            f"输入 y 确认执行，其他任意输入取消（{30}秒超时自动拒绝）",
+            timeout=30.0,
+        )
+        if not confirmed:
+            logger.info(f"用户拒绝执行危险命令: {cmd}")
+            return f"[用户已拒绝] 命令未执行: {cmd}"
+        logger.info(f"用户确认执行危险命令: {cmd}")
+
     process = await asyncio.create_subprocess_shell(
         cmd,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        stderr=asyncio.subprocess.PIPE,
     )
     stdout, stderr = await process.communicate()
+
+    if _platform_adapter:
+        decode = _platform_adapter.decode_command_output
+    else:
+        decode = lambda b: b.decode("utf-8", errors="replace")
+
     if process.returncode == 0:
-        try:
-            return stdout.decode("gbk", "strict").strip()
-        except UnicodeDecodeError:
-            return stdout.decode("utf-8", "strict").strip()
+        return decode(stdout).strip()
     else:
-        try:
-            return f"命令执行失败，错误信息：{stderr.decode('gbk', 'strict').strip()}"
-        except UnicodeDecodeError:
-            return f"命令执行失败，错误信息：{stderr.decode('utf-8', 'strict').strip()}"
-        
-
-async def get_current_system_time():
-    """
-    异步获取当前系统的准确时间。
-    
-    Returns:
-        str: 格式化的当前日期和时间字符串。
-    """
-    now_obj = datetime.datetime.now()
-    time_str = now_obj.strftime("%Y-%m-%d %H:%M:%S %A")
-    return f"当前宿主机系统时间是：{time_str}"
+        return f"命令执行失败，错误信息：{decode(stderr).strip()}"
 
 
-async def get_sys_vitals():
-    """
-    异步获取当前系统生命体征（主要资源使用情况），如 CPU、内存以及电池信息等。
-    
-    Returns:
-        str: 系统资源占用的格式化报告。
-    """
-    sys_vitals = {
-        'cpu_percent': psutil.cpu_percent(interval=0.1),
-        'ram_percent': psutil.virtual_memory().percent,
-        'battery_percent': None
-    }
-    
-    # 笔记本，获取电池状态
-    _batt = psutil.sensors_battery()
-    if _batt:
-        sys_vitals['battery_percent'] = _batt.percent
-        sys_vitals['is_plugged'] = _batt.power_plugged
-        
-        return f"cpu占用：{sys_vitals['cpu_percent']}%\
-    内存占用：{sys_vitals['ram_percent']}%\
-    电池电量：{sys_vitals['battery_percent']}%\
-    是否充电：{sys_vitals['is_plugged']}"
-    else:
-        return f"cpu占用：{sys_vitals['cpu_percent']}%\
-    内存占用：{sys_vitals['ram_percent']}%"
+async def get_current_system_time() -> str:
+    """获取当前系统时间"""
+    now = datetime.datetime.now()
+    return f"当前宿主机系统时间是：{now.strftime('%Y-%m-%d %H:%M:%S %A')}"
+
+
+async def get_sys_vitals() -> str:
+    """获取系统生命体征"""
+    if _platform_adapter is None:
+        return "平台适配器未初始化"
+
+    vitals = _platform_adapter.get_system_vitals()
+    parts = [
+        f"CPU占用：{vitals.get('cpu_percent', 'N/A')}%",
+        f"内存占用：{vitals.get('ram_percent', 'N/A')}%",
+    ]
+    if "battery_percent" in vitals:
+        parts.append(f"电池电量：{vitals['battery_percent']}%")
+        parts.append(f"是否充电：{vitals.get('is_plugged', 'N/A')}")
+
+    return "  ".join(parts)
