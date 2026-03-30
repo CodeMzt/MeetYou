@@ -417,13 +417,44 @@ WebSocket 出站统一使用 `meetyou.ws.v1` 包装格式：
 python main.py
 ```
 
+默认会进入 launcher 控制台，可用命令：
+
+- `help`
+- `start gateway`
+- `start cil`
+- `start ui`
+- `status`
+- `exit`
+
+也可以直接启动指定组件：
+
+```bash
+python main.py gateway
+python main.py cil
+python main.py launcher
+```
+
 ### 默认行为
 
-- 不启用网关时，系统以 CLI 方式运行。
-- 启用 `enable_gateway` 后，会同时启动 FastAPI 网关。
+- 当前架构固定为 `gateway` 唯一后端。
+- `python main.py` 启动的是 launcher，而不是直接进入旧版本地 CLI。
+- `start cil` 与 `start ui` 会先检查本地 gateway，未运行时自动拉起。
+- CIL 通过 gateway 的 HTTP/WebSocket 接口对话，不再与后端运行时同进程。
 - 启用 `enable_feishu_bot` 后，会启动飞书长连接客户端。
-- 如需让“启动欢迎消息”主动广播到飞书，需要额外配置 `feishu_broadcast_chat_ids` 或 `feishu_default_chat_id`。
 - 飞书收到消息后，会自动把 `chat_id` 记录到 `user/feishu_chat_ids.json`，可再复制到广播配置中。
+
+### CIL 命令
+
+- `/help`
+- `/config list`
+- `/config get <key>`
+- `/config set <key> <value>`
+
+### Gateway 配置接口
+
+- `GET /config`：读取全部受管配置快照，密钥字段只返回掩码。
+- `GET /config/{key}`：读取单项配置。
+- `PATCH /config`：批量更新配置，返回已应用项、已热更新组件、需重启项和警告。
 
 ## 安全说明
 
@@ -475,6 +506,13 @@ python main.py
 ### 运行
 ```bash
 python main.py
+```
+
+启动后使用 launcher 命令控制各组件；如需直接拉起指定组件，可用：
+
+```bash
+python main.py gateway
+python main.py cil
 ```
 
 ## 作者

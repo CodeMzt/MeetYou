@@ -71,6 +71,26 @@ class Brain:
             self._http_session = None
         logger.info("Brain 已关闭")
 
+    @property
+    def is_initialized(self) -> bool:
+        return self._http_session is not None
+
+    def set_adapter(self, adapter):
+        self._adapter = adapter
+
+    async def refresh_base_prompt(self, sys_prompt: str, persisted_context: str):
+        self._base_messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "system", "content": persisted_context},
+        ]
+        for session in self._sessions.values():
+            preserved = [
+                message
+                for message in session.chat_history[2:]
+            ]
+            session.chat_history = [dict(message) for message in self._base_messages] + preserved
+        logger.info("Brain system prompt 已刷新")
+
     def get_or_create_session(self, session_id: str) -> BrainSession:
         session = self._sessions.get(session_id)
         if session is None:

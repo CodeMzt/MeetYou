@@ -48,9 +48,7 @@ class Memory:
             config: ConfigManager 实例
         """
         self._memory_file_path = config.get("memory_file_path") or self._memory_file_path
-        self._embedding_model = config.get("embedding_model") or ""
-        self._embedding_api_key = config.get("embedding_api_key") or ""
-        self._embedding_api_url = config.get("embedding_api_url") or ""
+        self.refresh_config(config)
         self._http_session = aiohttp.ClientSession()
 
         # 加载图谱
@@ -69,6 +67,11 @@ class Memory:
         self.build_synapses()
         self.fade_memory()
         logger.info(f"记忆系统初始化完成: {self._memory_net.number_of_nodes()} 个节点")
+
+    def refresh_config(self, config):
+        self._embedding_model = config.get("embedding_model") or ""
+        self._embedding_api_key = config.get("embedding_api_key") or ""
+        self._embedding_api_url = config.get("embedding_api_url") or ""
 
     async def close_memory(self):
         """关闭 HTTP session"""

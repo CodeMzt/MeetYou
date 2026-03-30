@@ -52,6 +52,13 @@ class Heart:
 
     async def init_heart(self):
         """从配置初始化心脏参数并创建 HTTP session。"""
+        await self.refresh_config()
+        if self._http_session is None:
+            self._http_session = aiohttp.ClientSession()
+        logger.info(f"Heart 初始化完成: 间隔 {self._interval}s, 模型 {self._model}")
+
+    async def refresh_config(self):
+        """刷新心脏配置，下一轮心跳自动生效。"""
         try:
             self._prompt = self._config.get_prompt("heartbeat")
         except Exception as e:
@@ -61,8 +68,10 @@ class Heart:
         self._api_url = self._config.get("heartbeat_api_url") or ""
         self._api_key = self._config.get("heartbeat_api_key") or ""
         self._model = self._config.get("heart_model") or ""
-        self._http_session = aiohttp.ClientSession()
-        logger.info(f"Heart 初始化完成: 间隔 {self._interval}s, 模型 {self._model}")
+        logger.info(f"Heart 配置已刷新: 间隔 {self._interval}s, 模型 {self._model}")
+
+    def set_adapter(self, adapter):
+        self._adapter = adapter
 
     async def close_heart(self):
         """关闭 HTTP session。"""

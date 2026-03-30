@@ -39,6 +39,9 @@ class ContextManager:
             "last_update_time": 0,
         }
 
+    def set_adapter(self, adapter):
+        self._adapter = adapter
+
     # ============================================================
     # 持久化上下文（基于记忆图谱）
     # ============================================================
