@@ -4,9 +4,10 @@ FastAPI 网关。
 
 import asyncio
 import contextlib
+import inspect
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
@@ -20,6 +21,10 @@ from core.io_protocol import (
     make_source,
 )
 from gateway.models import (
+    ConfigPatchRequest,
+    ConfigPatchResponse,
+    ConfigSnapshotResponse,
+    ConfigEntryResponse,
     HealthResponse,
     InputAcceptedResponse,
     InputRequest,
@@ -29,9 +34,19 @@ from gateway.ws_manager import WebSocketManager, WebSocketOutputAdapter
 
 
 class FastAPIGateway:
-    def __init__(self, event_bus, session_manager):
+    def __init__(
+        self,
+        event_bus,
+        session_manager,
+        config_snapshot_getter=None,
+        config_item_getter=None,
+        config_updater=None,
+    ):
         self._event_bus = event_bus
         self._session_manager = session_manager
+        self._config_snapshot_getter = config_snapshot_getter
+        self._config_item_getter = config_item_getter
+        self._config_updater = config_updater
         self.ws_manager = WebSocketManager()
         self.output_adapter = WebSocketOutputAdapter(self.ws_manager)
         self.app = FastAPI(title="MeetYou Gateway")
@@ -48,6 +63,23 @@ class FastAPIGateway:
         self._server = None
         self._server_task = None
         self._setup_routes()
+
+    async def _resolve(self, func, *args, **kwargs):
+        if func is None:
+            raise HTTPException(status_code=404, detail="配置服务未启用")
+        result = func(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def _safe_send_json(self, websocket: WebSocket, payload: dict) -> bool:
+        try:
+            await websocket.send_json(payload)
+            return True
+        except WebSocketDisconnect:
+            return False
+        except Exception:
+            return False
 
     def _setup_routes(self):
         @self.app.get("/health", response_model=HealthResponse)
@@ -70,6 +102,29 @@ class FastAPIGateway:
             await self._event_bus.inbound_queue.put(event)
             return InputAcceptedResponse(session_id=session_id, event_id=event.event_id)
 
+        @self.app.get("/config", response_model=ConfigSnapshotResponse)
+        async def get_config():
+            items = await self._resolve(self._config_snapshot_getter)
+            return ConfigSnapshotResponse(
+                items={
+                    key: ConfigEntryResponse(**value)
+                    for key, value in items.items()
+                }
+            )
+
+        @self.app.get("/config/{key}", response_model=ConfigEntryResponse)
+        async def get_config_item(key: str):
+            try:
+                item = await self._resolve(self._config_item_getter, key)
+            except Exception as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
+            return ConfigEntryResponse(**item)
+
+        @self.app.patch("/config", response_model=ConfigPatchResponse)
+        async def patch_config(request: ConfigPatchRequest):
+            result = await self._resolve(self._config_updater, request.updates)
+            return ConfigPatchResponse(**result)
+
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
             await websocket.accept()
@@ -78,7 +133,7 @@ class FastAPIGateway:
             source = make_source(SourceKind.WEB.value, source_id)
             session_id = self._session_manager.get_or_create_session(source, requested_session_id)
             await self.ws_manager.connect(session_id, websocket)
-            await websocket.send_json({
+            connected = await self._safe_send_json(websocket, {
                 "schema": "meetyou.ws.v1",
                 "kind": "connection",
                 "connection": {
@@ -87,14 +142,19 @@ class FastAPIGateway:
                     "status": "connected",
                 },
             })
+            if not connected:
+                await self.ws_manager.disconnect(session_id, websocket)
+                return
             try:
                 while True:
                     try:
                         command = WebSocketCommand.model_validate(
                             await websocket.receive_json()
                         )
+                    except WebSocketDisconnect:
+                        break
                     except ValidationError as e:
-                        await websocket.send_json({
+                        sent = await self._safe_send_json(websocket, {
                             "schema": "meetyou.ws.v1",
                             "kind": "error",
                             "error": {
@@ -102,16 +162,20 @@ class FastAPIGateway:
                                 "message": str(e),
                             },
                         })
+                        if not sent:
+                            break
                         continue
                     if command.action == "ping":
-                        await websocket.send_json({
+                        sent = await self._safe_send_json(websocket, {
                             "schema": "meetyou.ws.v1",
                             "kind": "pong",
                         })
+                        if not sent:
+                            break
                         continue
                     if command.action == "confirm_response":
                         if command.request_id is None or command.accepted is None:
-                            await websocket.send_json({
+                            sent = await self._safe_send_json(websocket, {
                                 "schema": "meetyou.ws.v1",
                                 "kind": "error",
                                 "error": {
@@ -119,6 +183,8 @@ class FastAPIGateway:
                                     "message": "request_id 和 accepted 为必填字段",
                                 },
                             })
+                            if not sent:
+                                break
                             continue
                         await self._event_bus.inbound_queue.put(
                             ConfirmResponseEvent(
@@ -133,7 +199,7 @@ class FastAPIGateway:
                                 metadata=command.metadata,
                             )
                         )
-                        await websocket.send_json({
+                        sent = await self._safe_send_json(websocket, {
                             "schema": "meetyou.ws.v1",
                             "kind": "ack",
                             "ack": {
@@ -141,8 +207,10 @@ class FastAPIGateway:
                                 "request_id": command.request_id,
                             },
                         })
+                        if not sent:
+                            break
                         continue
-                    await websocket.send_json({
+                    sent = await self._safe_send_json(websocket, {
                         "schema": "meetyou.ws.v1",
                         "kind": "error",
                         "error": {
@@ -150,6 +218,8 @@ class FastAPIGateway:
                             "message": f"不支持的 action: {command.action}",
                         },
                     })
+                    if not sent:
+                        break
             except WebSocketDisconnect:
                 pass
             finally:

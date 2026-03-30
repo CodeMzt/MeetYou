@@ -3,8 +3,11 @@ WebSocket 连接管理。
 """
 
 import asyncio
+import logging
 
 from core.io_protocol import event_to_dict
+
+logger = logging.getLogger("meetyou.gateway.ws")
 
 
 class WebSocketManager:
@@ -30,14 +33,26 @@ class WebSocketManager:
         async with self._lock:
             connections = list(self._connections.get(session_id, set()))
         for websocket in connections:
-            await websocket.send_json(payload)
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                logger.debug("发送 WebSocket 事件失败，连接将被移除: session=%s", session_id)
+                await self.disconnect(session_id, websocket)
 
     async def broadcast_event(self, event):
         payload = self._serialize_event(event)
         async with self._lock:
-            all_connections = [ws for conns in self._connections.values() for ws in conns]
-        for websocket in all_connections:
-            await websocket.send_json(payload)
+            snapshot = {
+                session_id: list(connections)
+                for session_id, connections in self._connections.items()
+            }
+        for session_id, connections in snapshot.items():
+            for websocket in connections:
+                try:
+                    await websocket.send_json(payload)
+                except Exception:
+                    logger.debug("广播 WebSocket 事件失败，连接将被移除: session=%s", session_id)
+                    await self.disconnect(session_id, websocket)
 
     def _serialize_event(self, event):
         if isinstance(event, dict):

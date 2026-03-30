@@ -240,6 +240,90 @@ MeetYou 当前对外与跨模块扩展统一基于事件协议工作：
 }
 ```
 
+### 4.3 GET /config
+
+用途：读取全部受管配置快照。
+
+#### 响应
+
+```json
+{
+  "items": {
+    "api_provider": {
+      "key": "api_provider",
+      "value": "openai",
+      "is_secret": false,
+      "has_value": true,
+      "source": "config",
+      "env_key": null
+    },
+    "api_key": {
+      "key": "api_key",
+      "value": "sk**********yz",
+      "is_secret": true,
+      "has_value": true,
+      "source": "env",
+      "env_key": "MEETYOU_API_KEY"
+    }
+  }
+}
+```
+
+说明：
+
+- 密钥字段不会返回明文，只返回掩码值与来源信息。
+- 当前受管范围包含 `user/config.json` 与项目 `.env`。
+
+### 4.4 GET /config/{key}
+
+用途：读取单项配置。
+
+#### 响应
+
+```json
+{
+  "key": "api_provider",
+  "value": "openai",
+  "is_secret": false,
+  "has_value": true,
+  "source": "config",
+  "env_key": null
+}
+```
+
+### 4.5 PATCH /config
+
+用途：批量更新配置，并返回热更新结果。
+
+#### 请求体
+
+```json
+{
+  "updates": {
+    "api_provider": "anthropic",
+    "api_key": "new-secret"
+  }
+}
+```
+
+#### 响应
+
+```json
+{
+  "applied_keys": ["api_provider", "api_key"],
+  "reloaded_components": ["brain"],
+  "restart_required_keys": [],
+  "warnings": []
+}
+```
+
+字段说明：
+
+- `applied_keys`：本次已写入的配置项
+- `reloaded_components`：已在运行中热更新的组件
+- `restart_required_keys`：已持久化但仍需重启 gateway 的配置项
+- `warnings`：弃用提示、未知配置项跳过提示等
+
 ## 5. WebSocket 接口
 
 ### 5.1 连接地址
