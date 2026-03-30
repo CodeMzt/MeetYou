@@ -1,31 +1,36 @@
 """
 应用级依赖注入容器与生命周期管理。
 
-App 类统一创建、注入、启动和关闭所有模块，
-消除所有循环依赖和模块级全局单例。
+当前进程模型固定为 gateway-only 后端运行时：
+- Brain / Heart / Memory / Proprioceptor
+- FastAPI gateway
+- 可选 Feishu 输入输出
 """
 
 import asyncio
 import logging
 import traceback
+from typing import Any
 
 from adapters.base import create_adapter
 from core.brain import Brain
-from core.context import ContextManager
 from core.config import ConfigManager
+from core.context import ContextManager
 from core.event_bus import EventBus
 from core.exceptions import ExceptionRouter, MeetYouError
 from core.heart import Heart
 from core.io_protocol import EventTarget, EventType, SourceKind, TargetKind, make_source
 from core.logger import setup_logger
-from core.runtime_context import bind_event_context, reset_event_context
+from core.runtime_context import (
+    bind_event_context,
+    get_event_context,
+    reset_event_context,
+)
 from core.session_manager import SessionManager
 from core.speaker import Speaker
 from core.tools_manager import ToolsManager
 from gateway.api import FastAPIGateway
 from platform_layer.detector import detect_platform
-from sensors.cli_input_adapter import CLIInputAdapter
-from sensors.cli_output_adapter import CLIOutputAdapter
 from sensors.feishu_input_adapter import FeishuInputAdapter
 from sensors.feishu_output_adapter import FeishuOutputAdapter
 from sensors.proprioceptor import Proprioceptor
@@ -35,34 +40,60 @@ from tools.memory import Memory
 
 logger = logging.getLogger("meetyou.app")
 
+_BRAIN_IMMEDIATE_KEYS = {
+    "api_provider",
+    "api_url",
+    "api_key",
+    "model",
+    "soul_path",
+}
+_HEART_IMMEDIATE_KEYS = {
+    "heartbeat_api_provider",
+    "heartbeat_api_url",
+    "heartbeat_api_key",
+    "heartbeat_interval",
+    "heart_model",
+    "heartbeat_path",
+}
+_MEMORY_IMMEDIATE_KEYS = {
+    "embedding_api_url",
+    "embedding_api_key",
+    "embedding_model",
+}
+_RESTART_REQUIRED_KEYS = {
+    "cmd_policy_path",
+    "enable_feishu_bot",
+    "feishu_app_id",
+    "feishu_app_secret",
+    "feishu_broadcast_chat_ids",
+    "feishu_default_chat_id",
+    "feishu_chat_registry_path",
+    "gateway_host",
+    "gateway_port",
+    "mcp_registry_url",
+    "memory_file_path",
+    "tools_schema_path",
+}
+
 
 class App:
     """
-    应用级 DI 容器 + 生命周期管理器。
+    gateway-only 后端运行时。
 
-    按依赖顺序创建所有模块实例，注入依赖，
-    管理启动和关闭流程。
+    负责统一创建所有依赖、启动 HTTP/WebSocket 网关，并处理入站事件。
     """
 
     def __init__(self):
-        # Phase 1: 基础设施
-        setup_logger()
+        setup_logger(enable_console=True, component="gateway")
+
         self.event_bus = EventBus()
         self.exception_router = ExceptionRouter()
-
-        # Phase 2: 配置
         self.config = ConfigManager()
-
-        # Phase 3: 平台层
         self.platform = detect_platform()
 
-        # Phase 4: 适配器
-        main_provider = self.config.get("api_provider") or "openai"
-        heart_provider = self.config.get("heartbeat_api_provider") or main_provider
-        self.main_adapter = create_adapter(main_provider)
-        self.heart_adapter = create_adapter(heart_provider)
+        self.main_adapter = create_adapter(self._get_main_provider())
+        self.heart_adapter = create_adapter(self._get_heart_provider())
 
-        # Phase 5: 工具层
         self.memory = Memory()
         self.mcp_manager = MCPManager()
         system_tools.init_system_tools(
@@ -71,7 +102,6 @@ class App:
             self.config.get("cmd_policy_path") or "user/cmd_policy.json",
         )
 
-        # Phase 6: 核心模块
         self.context_manager = ContextManager(
             self.memory, self.main_adapter, self.event_bus
         )
@@ -79,24 +109,23 @@ class App:
             self.memory, self.context_manager, self.mcp_manager, system_tools
         )
         self.brain = Brain(
-            self.main_adapter, self.tools_manager, self.context_manager,
-            self.event_bus, self.exception_router
+            self.main_adapter,
+            self.tools_manager,
+            self.context_manager,
+            self.event_bus,
+            self.exception_router,
         )
         self.heart = Heart(
-            self.heart_adapter, self.config, self.tools_manager,
-            self.memory, self.event_bus, self.exception_router
+            self.heart_adapter,
+            self.config,
+            self.tools_manager,
+            self.memory,
+            self.event_bus,
+            self.exception_router,
         )
 
-        # Phase 7: 感知与 IO
         self.session_manager = SessionManager()
         self.speaker = Speaker(self.session_manager)
-        self.cli_input = CLIInputAdapter(self.event_bus, self.session_manager)
-        self.cli_output = CLIOutputAdapter(
-            self.cli_input.app,
-            self.cli_input.output_field,
-            self.cli_input.input_field,
-        )
-        self.speaker.register_adapter(TargetKind.CLI.value, self.cli_output)
         self.gateway: FastAPIGateway | None = None
         self.feishu_input: FeishuInputAdapter | None = None
         self.feishu_output: FeishuOutputAdapter | None = None
@@ -105,28 +134,37 @@ class App:
         )
         self._brain_source = make_source(SourceKind.SYSTEM.value, "brain")
 
-        # 注册异常回调
         self.exception_router.on_system_error(self._log_error)
         self.exception_router.on_user_error(self._display_error)
-        self.event_bus.subscribe(self.event_bus.CONFIRM_REQUEST, self._handle_confirm_request)
+        self.event_bus.subscribe(
+            self.event_bus.CONFIRM_REQUEST,
+            self._handle_confirm_request,
+        )
 
-        logger.info("App 依赖注入完成")
+        logger.info("Gateway runtime 依赖注入完成")
 
-    # ============================================================
-    # 异常回调
-    # ============================================================
+    def _get_main_provider(self) -> str:
+        return self.config.get("api_provider") or "openai"
+
+    def _get_heart_provider(self) -> str:
+        return self.config.get("heartbeat_api_provider") or self._get_main_provider()
 
     async def _log_error(self, error: MeetYouError):
-        """系统级异常 → 写日志"""
-        logger.error(f"[SYSTEM] {type(error).__name__}: {error}")
+        logger.error("[SYSTEM] %s: %s", type(error).__name__, error)
 
     async def _display_error(self, error: MeetYouError):
-        """用户级异常 → 输出到界面"""
-        await self.speaker.emit_error(
-            self.cli_input.session_id,
-            str(error),
-            make_source(SourceKind.SYSTEM.value, "exception"),
-        )
+        context = get_event_context()
+        session_id = context.get("session_id", "")
+        target = context.get("target")
+        if session_id:
+            await self.speaker.emit_error(
+                session_id,
+                str(error),
+                make_source(SourceKind.SYSTEM.value, "exception"),
+                target=target if isinstance(target, EventTarget) else None,
+            )
+            return
+        logger.warning("用户级异常未绑定会话，仅写日志: %s", error)
 
     async def _handle_confirm_request(self, event):
         await self.speaker.emit(event)
@@ -151,47 +189,71 @@ class App:
                 session_id=f"feishu:chat:{chat_id}",
             )
 
-    # ============================================================
-    # 核心处理协程
-    # ============================================================
+    async def _refresh_brain_runtime(self):
+        self.main_adapter = create_adapter(self._get_main_provider())
+        self.context_manager.set_adapter(self.main_adapter)
+        self.brain.set_adapter(self.main_adapter)
+        sys_prompt = self.config.get_prompt("soul")
+        if not self.brain.is_initialized:
+            await self.brain.init_brain(sys_prompt)
+            return
+        persisted_context = await self.context_manager.load_context()
+        await self.brain.refresh_base_prompt(sys_prompt, persisted_context)
+
+    async def _refresh_heart_runtime(self):
+        self.heart_adapter = create_adapter(self._get_heart_provider())
+        self.heart.set_adapter(self.heart_adapter)
+        await self.heart.refresh_config()
+
+    def get_config_snapshot(self) -> dict[str, dict[str, Any]]:
+        return self.config.snapshot()
+
+    def get_config_entry(self, key: str) -> dict[str, Any]:
+        return self.config.describe_key(key)
+
+    async def apply_config_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
+        applied_keys, warnings = self.config.apply_updates(updates)
+        if not applied_keys:
+            return {
+                "applied_keys": [],
+                "reloaded_components": [],
+                "restart_required_keys": [],
+                "warnings": warnings,
+            }
+
+        self.config.reload()
+        reloaded_components: set[str] = set()
+        restart_required = sorted(_RESTART_REQUIRED_KEYS.intersection(applied_keys))
+
+        if "enable_gateway" in applied_keys:
+            warnings.append("enable_gateway 已弃用，gateway 进程由 launcher 控制。")
+
+        if _BRAIN_IMMEDIATE_KEYS.intersection(applied_keys):
+            await self._refresh_brain_runtime()
+            reloaded_components.add("brain")
+
+        if _HEART_IMMEDIATE_KEYS.intersection(applied_keys):
+            await self._refresh_heart_runtime()
+            reloaded_components.add("heart")
+
+        if _MEMORY_IMMEDIATE_KEYS.intersection(applied_keys):
+            self.memory.refresh_config(self.config)
+            reloaded_components.add("memory")
+
+        if restart_required:
+            warnings.append(
+                "以下配置已写入，但需要重启 gateway 才能完全生效: "
+                + ", ".join(restart_required)
+            )
+
+        return {
+            "applied_keys": applied_keys,
+            "reloaded_components": sorted(reloaded_components),
+            "restart_required_keys": restart_required,
+            "warnings": warnings,
+        }
 
     async def brain_processor(self):
-        """主控大脑逻辑：监听输入事件，通过模型获取回复。"""
-        api_key = self.config.get("api_key") or ""
-        api_url = self.config.get("api_url") or ""
-        model = self.config.get("model") or ""
-
-        # 启动问候
-        start_prompt = self.config.get_prompt("start")
-        input_info = {"role": "user", "content": start_prompt}
-        startup_target = EventTarget(kind=TargetKind.BROADCAST.value)
-        stream_id = await self.speaker.emit_stream_start(
-            self.cli_input.session_id,
-            self._brain_source,
-            target=startup_target,
-        )
-        async for chunk in self.brain.input_brain(
-            self.cli_input.session_id,
-            input_info,
-            api_key,
-            api_url,
-            model,
-        ):
-            await self.speaker.emit_stream_chunk(
-                self.cli_input.session_id,
-                chunk,
-                self._brain_source,
-                stream_id,
-                target=startup_target,
-            )
-        await self.speaker.emit_stream_end(
-            self.cli_input.session_id,
-            self._brain_source,
-            stream_id,
-            target=startup_target,
-        )
-
-        # 主循环
         shutdown = self.event_bus.shutdown_event
         queue = self.event_bus.inbound_queue
 
@@ -245,6 +307,10 @@ class App:
                 target=target,
             )
             try:
+                api_key = self.config.get("api_key") or ""
+                api_url = self.config.get("api_url") or ""
+                model = self.config.get("model") or ""
+
                 stream_id = await self.speaker.emit_stream_start(
                     event.session_id,
                     self._brain_source,
@@ -271,7 +337,7 @@ class App:
                     target=target,
                 )
             except Exception as e:
-                logger.error(f"Brain 处理异常: {e}\n{traceback.format_exc()}")
+                logger.error("Brain 处理异常: %s\n%s", e, traceback.format_exc())
                 await self.speaker.emit_error(
                     event.session_id,
                     str(e),
@@ -281,28 +347,29 @@ class App:
             finally:
                 reset_event_context(token)
 
-    # ============================================================
-    # 生命周期
-    # ============================================================
-
     async def setup(self):
-        """异步初始化所有模块。"""
         tools_schema_path = self.config.get("tools_schema_path") or "user/tools.json"
         mcp_servers = self.config.get_mcp_servers()
 
         await self.memory.init_memory(self.config)
         await self.tools_manager.init_tools(tools_schema_path, mcp_servers)
-
-        sys_prompt = self.config.get_prompt("soul")
-        await self.brain.init_brain(sys_prompt)
+        await self._refresh_brain_runtime()
         await self.heart.init_heart()
 
-        if self.config.get_bool("enable_gateway"):
-            self.gateway = FastAPIGateway(self.event_bus, self.session_manager)
-            self.speaker.register_adapter(TargetKind.WEB.value, self.gateway.output_adapter)
-            host = self.config.get("gateway_host") or "127.0.0.1"
-            port = int(self.config.get("gateway_port") or 8000)
-            await self.gateway.start(host=host, port=port)
+        if not self.config.get_bool("enable_gateway", True):
+            logger.warning("enable_gateway=false 已忽略；当前架构始终以 gateway 运行。")
+
+        host = self.config.get("gateway_host") or "127.0.0.1"
+        port = int(self.config.get("gateway_port") or 8000)
+        self.gateway = FastAPIGateway(
+            self.event_bus,
+            self.session_manager,
+            config_snapshot_getter=self.get_config_snapshot,
+            config_item_getter=self.get_config_entry,
+            config_updater=self.apply_config_updates,
+        )
+        self.speaker.register_adapter(TargetKind.WEB.value, self.gateway.output_adapter)
+        await self.gateway.start(host=host, port=port)
 
         if self.config.get_bool("enable_feishu_bot"):
             self.feishu_input = FeishuInputAdapter(
@@ -316,24 +383,22 @@ class App:
             self._register_feishu_broadcast_targets()
             await self.feishu_input.run()
 
-        logger.info("所有模块初始化完成")
+        logger.info("Gateway runtime 初始化完成")
 
     async def run(self):
-        """启动所有核心协程。"""
         await self.setup()
         try:
             await asyncio.gather(
                 self.brain_processor(),
                 self.heart.heartbeat_processor(),
-                self.cli_input.run(),
                 self.proprioceptor.run(),
             )
         finally:
             await self.shutdown()
 
     async def shutdown(self):
-        """优雅关闭所有资源。"""
         logger.info("正在关闭...")
+        self.event_bus.request_shutdown()
         if self.gateway is not None:
             await self.gateway.stop()
         if self.feishu_input is not None:
