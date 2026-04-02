@@ -1,0 +1,11 @@
+- generic [active] [ref=e1]:
+  - generic:
+    - generic
+  - generic [ref=e9]:
+    - search [ref=e10]
+    - generic [ref=e46]
+  - generic [ref=e63]:
+    - navigation [ref=e69]
+    - heading "搜索结果" [level=1] [ref=e122]
+    - main [ref=e128]
+    - contentinfo [ref=e814]

@@ -1,0 +1,731 @@
+"""
+High-level scenario orchestration tools for the main assistant.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any, Awaitable, Callable
+
+from tools.agent_memory import AgentMemoryTools
+from tools.task_manager import TaskManager
+from tools.web_search import WebSearchTools
+
+ActivityCallback = Callable[[str, str, dict[str, Any] | None], Awaitable[None]]
+
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_SPACE_RE = re.compile(r"\s+")
+_SUMMARY_LIMIT = 800
+_NOTION_SEARCH_TOOL_CANDIDATES = (
+    "post-search",
+    "search",
+    "search_pages",
+    "notion_search",
+)
+_NOTION_PAGE_TOOL_CANDIDATES = (
+    "retrieve-a-page",
+    "retrieve_page",
+    "notion_retrieve_page",
+)
+_NOTION_CHILDREN_TOOL_CANDIDATES = (
+    "retrieve-block-children",
+    "retrieve_block_children",
+    "notion_retrieve_block_children",
+)
+_KNOWLEDGE_HINTS = (
+    "之前",
+    "上次",
+    "以前",
+    "记得",
+    "聊过",
+    "讨论过",
+    "项目",
+    "方案",
+    "notion",
+    "文档",
+    "需求",
+    "会议",
+    "谁说过",
+    "what did we",
+    "previous",
+    "earlier",
+    "remember",
+    "project",
+    "spec",
+    "notion",
+)
+_LIVE_WEB_HINTS = (
+    "最新",
+    "今天",
+    "实时",
+    "现在",
+    "新闻",
+    "天气",
+    "价格",
+    "推荐",
+    "对比",
+    "测评",
+    "recent",
+    "latest",
+    "today",
+    "news",
+    "weather",
+    "price",
+    "recommend",
+    "compare",
+)
+
+
+def _normalize_text(value: Any) -> str:
+    return _SPACE_RE.sub(" ", str(value or "").strip())
+
+
+def _trim_text(value: Any, limit: int = _SUMMARY_LIMIT) -> str:
+    normalized = _normalize_text(value)
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _looks_like_url(value: str) -> bool:
+    return bool(_URL_RE.search(str(value or "").strip()))
+
+
+def _extract_json_payload(text: str) -> dict[str, Any] | list[Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    fenced = re.search(r"```(?:json)?\s*(.+?)\s*```", raw, re.DOTALL)
+    if fenced:
+        raw = fenced.group(1).strip()
+
+    candidates = [raw]
+    object_match = re.search(r"(\{.*\})", raw, re.DOTALL)
+    if object_match:
+        candidates.append(object_match.group(1).strip())
+    array_match = re.search(r"(\[.*\])", raw, re.DOTALL)
+    if array_match:
+        candidates.append(array_match.group(1).strip())
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except (TypeError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def _collect_strings(value: Any, *, limit: int = 12) -> list[str]:
+    results: list[str] = []
+
+    def walk(node: Any) -> None:
+        if len(results) >= limit:
+            return
+        if isinstance(node, str):
+            text = _normalize_text(node)
+            if text:
+                results.append(text)
+            return
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+                if len(results) >= limit:
+                    return
+            return
+        if isinstance(node, dict):
+            preferred_keys = (
+                "plain_text",
+                "content",
+                "title",
+                "name",
+                "text",
+                "rich_text",
+                "caption",
+            )
+            for key in preferred_keys:
+                if key in node:
+                    walk(node.get(key))
+                    if len(results) >= limit:
+                        return
+            for nested_key, nested_value in node.items():
+                if nested_key in preferred_keys:
+                    continue
+                walk(nested_value)
+                if len(results) >= limit:
+                    return
+
+    walk(value)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in results:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+
+def _memory_sources_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    source_id = 1
+
+    for entry in payload.get("profile", []):
+        title = _normalize_text(entry.get("fact_key") or "Memory fact")
+        summary = _normalize_text(entry.get("fact_value") or entry.get("content"))
+        if not summary:
+            continue
+        sources.append(
+            {
+                "id": source_id,
+                "title": title,
+                "source_type": "memory",
+                "url": "",
+                "page_id": "",
+                "summary": summary,
+                "confidence": entry.get("score"),
+            }
+        )
+        source_id += 1
+
+    for entry in payload.get("tasks", []):
+        summary = _normalize_text(entry.get("content"))
+        if not summary:
+            continue
+        title = _normalize_text(entry.get("project") or "Task")
+        meta_parts = [
+            _normalize_text(entry.get("task_status")),
+            _normalize_text(entry.get("deadline")),
+        ]
+        meta = ", ".join(part for part in meta_parts if part)
+        if meta:
+            summary = f"{summary} ({meta})"
+        sources.append(
+            {
+                "id": source_id,
+                "title": title,
+                "source_type": "memory",
+                "url": "",
+                "page_id": "",
+                "summary": summary,
+                "confidence": entry.get("score"),
+            }
+        )
+        source_id += 1
+
+    for entry in payload.get("recent_events", []):
+        summary = _normalize_text(entry.get("content"))
+        if not summary:
+            continue
+        sources.append(
+            {
+                "id": source_id,
+                "title": _normalize_text(entry.get("created_at") or "Recent event"),
+                "source_type": "memory",
+                "url": "",
+                "page_id": "",
+                "summary": summary,
+                "confidence": entry.get("score"),
+            }
+        )
+        source_id += 1
+
+    return sources
+
+
+class ScenarioTools:
+    def __init__(self, memory, context_manager, mcp_manager):
+        self._memory = memory
+        self._context_manager = context_manager
+        self._mcp_manager = mcp_manager
+        self._memory_tools = AgentMemoryTools(memory)
+        self._task_manager = TaskManager(memory)
+        self._web_tools = WebSearchTools(mcp_manager)
+
+    async def _emit_activity(
+        self,
+        callback: ActivityCallback | None,
+        phase: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if callback is None:
+            return
+        await callback(
+            phase,
+            content,
+            {
+                "activity_kind": "tool_chain",
+                **(metadata or {}),
+            },
+        )
+
+    def _relay_activity(
+        self,
+        callback: ActivityCallback | None,
+        phase_map: dict[str, str] | None = None,
+    ) -> ActivityCallback | None:
+        if callback is None:
+            return None
+
+        async def relay(phase: str, content: str, metadata: dict[str, Any] | None = None) -> None:
+            mapped_phase = (phase_map or {}).get(phase, phase)
+            await self._emit_activity(callback, mapped_phase, content, metadata)
+
+        return relay
+
+    def _should_load_context(self, query: str, goal: str = "") -> bool:
+        haystack = f"{query}\n{goal}".lower()
+        return any(hint in haystack for hint in _KNOWLEDGE_HINTS)
+
+    def _looks_like_live_web_query(self, query: str) -> bool:
+        lowered = str(query or "").lower()
+        return any(hint in lowered for hint in _LIVE_WEB_HINTS)
+
+    async def _maybe_load_session_context(
+        self,
+        session_id: str,
+        *,
+        query: str,
+        goal: str = "",
+        activity_callback: ActivityCallback | None = None,
+    ) -> str:
+        if not session_id or not self._should_load_context(query, goal):
+            return ""
+        await self._emit_activity(
+            activity_callback,
+            "loading_context",
+            "Loading recent conversation context",
+            {"session_id": session_id},
+        )
+        try:
+            context_text = await self._context_manager.load_context(session_id)
+        except Exception:
+            return ""
+        return _trim_text(context_text, 500)
+
+    async def research_topic(
+        self,
+        query: str,
+        goal: str = "",
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+    ) -> str:
+        del source
+        normalized_query = _normalize_text(query)
+        if not normalized_query:
+            return "Error: research_topic requires a non-empty query."
+
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            f"Routing request to web research: {normalized_query}",
+            {"tool_name": "research_topic"},
+        )
+        session_context = await self._maybe_load_session_context(
+            session_id,
+            query=normalized_query,
+            goal=goal,
+            activity_callback=activity_callback,
+        )
+
+        raw = await self._web_tools.search_web(
+            normalized_query,
+            session_id=session_id,
+            activity_callback=self._relay_activity(
+                activity_callback,
+                {"searching": "searching_web"},
+            ),
+        )
+        payload = _extract_json_payload(raw)
+
+        if not isinstance(payload, dict):
+            return json.dumps(
+                {
+                    "chain": "research_topic",
+                    "query": normalized_query,
+                    "goal": _normalize_text(goal),
+                    "session_context": session_context,
+                    "search_error": _trim_text(raw),
+                    "answer_style": "If search failed, say web search is unavailable instead of inventing facts.",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        return json.dumps(
+            {
+                "chain": "research_topic",
+                "query": normalized_query,
+                "goal": _normalize_text(goal),
+                "session_context": session_context,
+                "search": payload,
+                "answer_style": "Lead with the answer, then cite sourced claims inline like [1], [2].",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    async def inspect_page(
+        self,
+        url: str,
+        goal: str = "",
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+    ) -> str:
+        del source
+        normalized_url = _normalize_text(url)
+        if not normalized_url:
+            return "Error: inspect_page requires a non-empty URL."
+
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            f"Inspecting direct page: {normalized_url}",
+            {"tool_name": "inspect_page", "url": normalized_url},
+        )
+        session_context = await self._maybe_load_session_context(
+            session_id,
+            query=normalized_url,
+            goal=goal,
+            activity_callback=activity_callback,
+        )
+        raw = await self._web_tools.read_web_page(
+            normalized_url,
+            session_id=session_id,
+            activity_callback=self._relay_activity(activity_callback),
+        )
+        payload = _extract_json_payload(raw)
+
+        if not isinstance(payload, dict):
+            return json.dumps(
+                {
+                    "chain": "inspect_page",
+                    "url": normalized_url,
+                    "goal": _normalize_text(goal),
+                    "session_context": session_context,
+                    "page_error": _trim_text(raw),
+                    "answer_style": "If the page could not be read, say what failed and avoid pretending to know the page contents.",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        return json.dumps(
+            {
+                "chain": "inspect_page",
+                "url": normalized_url,
+                "goal": _normalize_text(goal),
+                "session_context": session_context,
+                "page": payload,
+                "answer_style": "Explain the page directly and cite it as [1] if you use page facts.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    def _notion_tool_names(self) -> list[str]:
+        names: list[str] = []
+        for tool_name, server_name in self._mcp_manager.tool_map.items():
+            if "notion" not in str(server_name or "").lower():
+                continue
+            names.append(tool_name)
+        return names
+
+    def _pick_notion_tool(self, exact_candidates: tuple[str, ...], fragments: tuple[str, ...]) -> str:
+        notion_tools = self._notion_tool_names()
+        notion_lower_map = {name.lower(): name for name in notion_tools}
+        for candidate in exact_candidates:
+            chosen = notion_lower_map.get(candidate.lower())
+            if chosen:
+                return chosen
+        for name in notion_tools:
+            lowered = name.lower()
+            if all(fragment in lowered for fragment in fragments):
+                return name
+        return ""
+
+    async def _call_mcp_text(self, tool_name: str, arguments: dict[str, Any]) -> str:
+        result = await self._mcp_manager.call_mcp_tool(tool_name, arguments)
+        return "\n".join(
+            item.text
+            for item in result.content
+            if getattr(item, "type", "") == "text"
+        ).strip()
+
+    def _extract_notion_title(self, item: dict[str, Any]) -> str:
+        direct_title = _normalize_text(item.get("title") or item.get("name"))
+        if direct_title:
+            return direct_title
+        properties = item.get("properties")
+        strings = _collect_strings(properties, limit=4)
+        if strings:
+            return strings[0]
+        fallback_strings = _collect_strings(item, limit=4)
+        return fallback_strings[0] if fallback_strings else ""
+
+    def _normalize_notion_search_results(
+        self,
+        payload: dict[str, Any] | list[Any] | None,
+    ) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            items = payload
+        elif isinstance(payload, dict):
+            items = payload.get("results") or payload.get("data") or payload.get("items") or []
+        else:
+            items = []
+
+        normalized: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            page_id = _normalize_text(item.get("id"))
+            url = _normalize_text(item.get("url"))
+            title = self._extract_notion_title(item) or page_id or url or "Notion result"
+            summary_text = _collect_strings(item.get("properties"), limit=6)
+            if not summary_text:
+                summary_text = _collect_strings(item, limit=6)
+            summary = _trim_text(" ".join(summary_text), 400)
+            normalized.append(
+                {
+                    "page_id": page_id,
+                    "url": url,
+                    "title": title,
+                    "summary": summary or title,
+                    "object": _normalize_text(item.get("object") or item.get("type")),
+                }
+            )
+        return normalized
+
+    async def _read_notion_page(self, page_id: str, title: str) -> dict[str, Any] | None:
+        page_tool = self._pick_notion_tool(_NOTION_PAGE_TOOL_CANDIDATES, ("page",))
+        children_tool = self._pick_notion_tool(_NOTION_CHILDREN_TOOL_CANDIDATES, ("block", "children"))
+
+        fragments: list[str] = []
+        page_url = ""
+
+        if page_tool:
+            try:
+                raw_page = await self._call_mcp_text(page_tool, {"page_id": page_id})
+                payload = _extract_json_payload(raw_page)
+                if isinstance(payload, dict):
+                    page_url = _normalize_text(payload.get("url"))
+                    fragments.extend(_collect_strings(payload, limit=8))
+            except Exception:
+                pass
+
+        if children_tool:
+            try:
+                raw_children = await self._call_mcp_text(children_tool, {"block_id": page_id})
+                payload = _extract_json_payload(raw_children)
+                if isinstance(payload, (dict, list)):
+                    fragments.extend(_collect_strings(payload, limit=12))
+            except Exception:
+                pass
+
+        summary = _trim_text(" ".join(fragment for fragment in fragments if fragment), 500)
+        if not summary:
+            return None
+        return {
+            "title": title,
+            "source_type": "notion",
+            "url": page_url,
+            "page_id": page_id,
+            "summary": summary,
+        }
+
+    async def _search_notion_knowledge(
+        self,
+        query: str,
+        activity_callback: ActivityCallback | None = None,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        search_tool = self._pick_notion_tool(_NOTION_SEARCH_TOOL_CANDIDATES, ("search",))
+        if not search_tool:
+            return [], ["Notion MCP is unavailable or does not expose a search tool."]
+
+        await self._emit_activity(
+            activity_callback,
+            "searching_knowledge",
+            f"Searching Notion knowledge: {query}",
+            {"tool_name": "search_knowledge"},
+        )
+        failures: list[str] = []
+
+        try:
+            raw = await self._call_mcp_text(search_tool, {"query": query})
+        except Exception as exc:
+            return [], [f"Notion search failed: {exc}"]
+
+        payload = _extract_json_payload(raw)
+        results = self._normalize_notion_search_results(payload)
+        sources: list[dict[str, Any]] = []
+
+        for index, item in enumerate(results[:3], start=1):
+            detailed = None
+            if item.get("page_id"):
+                detailed = await self._read_notion_page(item["page_id"], item["title"])
+            source = detailed or {
+                "title": item["title"],
+                "source_type": "notion",
+                "url": item.get("url", ""),
+                "page_id": item.get("page_id", ""),
+                "summary": item.get("summary", ""),
+            }
+            source["id"] = index
+            sources.append(source)
+
+        if not sources and raw:
+            failures.append("Notion search returned no readable results.")
+        return sources, failures
+
+    async def search_knowledge(
+        self,
+        query: str,
+        scope: str = "auto",
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+    ) -> str:
+        normalized_query = _normalize_text(query)
+        normalized_scope = str(scope or "auto").strip().lower() or "auto"
+        if normalized_scope not in {"auto", "memory", "notion"}:
+            return "Error: search_knowledge scope must be one of auto, memory, notion."
+        if not normalized_query:
+            return "Error: search_knowledge requires a non-empty query."
+
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            f"Routing request to knowledge search: {normalized_query}",
+            {"tool_name": "search_knowledge"},
+        )
+
+        if _looks_like_url(normalized_query):
+            return json.dumps(
+                {
+                    "chain": "search_knowledge",
+                    "query": normalized_query,
+                    "scope_used": [],
+                    "found": False,
+                    "sources": [],
+                    "route_suggestion": {
+                        "preferred_tool": "inspect_page",
+                        "reason": "This looks like a direct URL. Use inspect_page for page reading.",
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        if normalized_scope == "auto" and self._looks_like_live_web_query(normalized_query):
+            return json.dumps(
+                {
+                    "chain": "search_knowledge",
+                    "query": normalized_query,
+                    "scope_used": [],
+                    "found": False,
+                    "sources": [],
+                    "route_suggestion": {
+                        "preferred_tool": "research_topic",
+                        "reason": "This looks like a live external-information request rather than private knowledge lookup.",
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        await self._emit_activity(
+            activity_callback,
+            "loading_context",
+            "Loading private knowledge sources",
+            {"tool_name": "search_knowledge"},
+        )
+
+        failures: list[str] = []
+        sources: list[dict[str, Any]] = []
+        scope_used: list[str] = []
+
+        if normalized_scope in {"auto", "memory"}:
+            try:
+                memory_raw = await self._memory_tools.search_memory(
+                    normalized_query,
+                    session_id=session_id,
+                    source=source,
+                )
+                memory_payload = _extract_json_payload(memory_raw)
+                if isinstance(memory_payload, dict):
+                    memory_sources = _memory_sources_from_payload(memory_payload)
+                    if memory_sources:
+                        scope_used.append("memory")
+                        sources.extend(memory_sources)
+            except Exception as exc:
+                failures.append(f"Memory search failed: {exc}")
+
+        if normalized_scope in {"auto", "notion"}:
+            notion_sources, notion_failures = await self._search_notion_knowledge(
+                normalized_query,
+                activity_callback=activity_callback,
+            )
+            if notion_sources:
+                scope_used.append("notion")
+                offset = len(sources)
+                for index, item in enumerate(notion_sources, start=1):
+                    item["id"] = offset + index
+                    sources.append(item)
+            failures.extend(notion_failures)
+
+        return json.dumps(
+            {
+                "chain": "search_knowledge",
+                "query": normalized_query,
+                "scope_used": scope_used,
+                "found": bool(sources),
+                "sources": sources,
+                "partial_failures": failures,
+                "answer_style": "Use only the returned private knowledge sources. If nothing was found, say so plainly.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    async def manage_tasks(
+        self,
+        action: str,
+        task_key: str = "",
+        summary: str = "",
+        project: str = "",
+        task_status: str = "",
+        deadline: str | None = None,
+        query: str = "",
+        limit: int = 8,
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+    ) -> str:
+        del session_id
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            f"Routing request to task manager: {action}",
+            {"tool_name": "manage_tasks"},
+        )
+        await self._emit_activity(
+            activity_callback,
+            "updating_tasks",
+            f"Updating tasks with action: {action}",
+            {"tool_name": "manage_tasks"},
+        )
+        return await self._task_manager.manage_tasks(
+            action=action,
+            task_key=task_key,
+            summary=summary,
+            project=project,
+            task_status=task_status,
+            deadline=deadline,
+            query=query,
+            limit=limit,
+            source=source,
+        )

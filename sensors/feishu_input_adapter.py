@@ -9,7 +9,6 @@ from pathlib import Path
 
 from adapters.feishu_ws_client import FeishuWSClient
 from core.io_protocol import (
-    ConfirmResponseEvent,
     EventTarget,
     EventType,
     InboundEvent,
@@ -160,22 +159,10 @@ class FeishuInputAdapter:
             and self._event_bus.has_pending_confirmation
             and session_id == self._event_bus.pending_confirmation_session_id
         ):
-            await self._event_bus.inbound_queue.put(
-                ConfirmResponseEvent(
-                    session_id=session_id,
-                    type=EventType.CONFIRM_RESPONSE.value,
-                    role="user",
-                    content=text,
-                    source=source,
-                    target=EventTarget(kind=TargetKind.INTERNAL.value),
-                    request_id=self._event_bus.pending_request_id,
-                    accepted=confirm_value,
-                    metadata={
-                        "message_id": message.get("message_id", ""),
-                        "chat_id": chat_id,
-                        "chat_type": message.get("chat_type", ""),
-                    },
-                )
+            self._event_bus.submit_confirmation_response(
+                confirm_value,
+                request_id=self._event_bus.pending_request_id,
+                session_id=session_id,
             )
             return
         await self._event_bus.inbound_queue.put(

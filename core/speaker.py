@@ -61,10 +61,14 @@ class Speaker:
         target: EventTarget | None = None,
         stream_id: str = "",
         metadata: dict | None = None,
+        stream_channel: str = "",
     ):
         """
         发送文本消息事件。
         """
+        payload = dict(metadata or {})
+        if stream_channel:
+            payload["stream_channel"] = stream_channel
         await self.emit(
             OutboundEvent(
                 session_id=session_id,
@@ -74,7 +78,7 @@ class Speaker:
                 source=source,
                 target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
                 stream_id=stream_id,
-                metadata=metadata or {},
+                metadata=payload,
             )
         )
 
@@ -133,21 +137,27 @@ class Speaker:
         session_id: str,
         source: EventSource,
         target: EventTarget | None = None,
+        stream_channel: str = "",
+        event_type: str = EventType.MESSAGE.value,
+        role: str = "assistant",
     ) -> str:
         """
         发送流开始事件。
         """
         stream_id = self._session_manager.create_stream_id(session_id)
+        metadata = {"stream_event": StreamEventType.START.value}
+        if stream_channel:
+            metadata["stream_channel"] = stream_channel
         await self.emit(
             OutboundEvent(
                 session_id=session_id,
-                type=EventType.STATUS.value,
-                role="assistant",
+                type=event_type,
+                role=role,
                 content="",
                 source=source,
                 target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
                 stream_id=stream_id,
-                metadata={"stream_event": StreamEventType.START.value},
+                metadata=metadata,
             )
         )
         return stream_id
@@ -159,6 +169,7 @@ class Speaker:
         source: EventSource,
         stream_id: str,
         target: EventTarget | None = None,
+        stream_channel: str = "",
     ):
         """
         发送流事件的文本块。
@@ -170,6 +181,7 @@ class Speaker:
             target=target,
             stream_id=stream_id,
             metadata={"stream_event": StreamEventType.CHUNK.value},
+            stream_channel=stream_channel,
         )
 
     async def emit_stream_end(
@@ -178,20 +190,26 @@ class Speaker:
         source: EventSource,
         stream_id: str,
         target: EventTarget | None = None,
+        stream_channel: str = "",
+        event_type: str = EventType.MESSAGE.value,
+        role: str = "assistant",
     ):
         """
         发送流结束事件。
         """
+        metadata = {"stream_event": StreamEventType.END.value}
+        if stream_channel:
+            metadata["stream_channel"] = stream_channel
         await self.emit(
             OutboundEvent(
                 session_id=session_id,
-                type=EventType.STATUS.value,
-                role="assistant",
+                type=event_type,
+                role=role,
                 content="",
                 source=source,
                 target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
                 stream_id=stream_id,
-                metadata={"stream_event": StreamEventType.END.value},
+                metadata=metadata,
             )
         )
         self._session_manager.close_stream(stream_id)

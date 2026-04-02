@@ -1,33 +1,37 @@
 """
-应用级依赖注入容器与生命周期管理。
-
-当前进程模型固定为 gateway-only 后端运行时：
-- Brain / Heart / Memory / Proprioceptor
-- FastAPI gateway
-- 可选 Feishu 输入输出
+Application wiring and lifecycle management.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
 import traceback
 from typing import Any
+from uuid import uuid4
 
 from adapters.base import create_adapter
-from core.brain import Brain
+from core.brain import Brain, BrainOutputEvent
 from core.config import ConfigManager
 from core.context import ContextManager
 from core.event_bus import EventBus
 from core.exceptions import ExceptionRouter, MeetYouError
 from core.heart import Heart
-from core.io_protocol import EventTarget, EventType, SourceKind, TargetKind, make_source
-from core.logger import setup_logger
-from core.runtime_context import (
-    bind_event_context,
-    get_event_context,
-    reset_event_context,
+from core.io_protocol import (
+    EventTarget,
+    EventType,
+    InboundEvent,
+    OutboundEvent,
+    SourceKind,
+    StreamEventType,
+    TargetKind,
+    make_source,
 )
+from core.logger import setup_logger
+from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.session_manager import SessionManager
 from core.speaker import Speaker
+from core.status import RuntimeStatus, StatusManager
 from core.tools_manager import ToolsManager
 from gateway.api import FastAPIGateway
 from platform_layer.detector import detect_platform
@@ -72,17 +76,13 @@ _RESTART_REQUIRED_KEYS = {
     "gateway_port",
     "mcp_registry_url",
     "memory_file_path",
+    "notion_token",
+    "tavily_api_key",
     "tools_schema_path",
 }
 
 
 class App:
-    """
-    gateway-only 后端运行时。
-
-    负责统一创建所有依赖、启动 HTTP/WebSocket 网关，并处理入站事件。
-    """
-
     def __init__(self):
         setup_logger(enable_console=True, component="gateway")
 
@@ -90,6 +90,7 @@ class App:
         self.exception_router = ExceptionRouter()
         self.config = ConfigManager()
         self.platform = detect_platform()
+        self.status_manager = StatusManager()
 
         self.main_adapter = create_adapter(self._get_main_provider())
         self.heart_adapter = create_adapter(self._get_heart_provider())
@@ -102,11 +103,12 @@ class App:
             self.config.get("cmd_policy_path") or "user/cmd_policy.json",
         )
 
-        self.context_manager = ContextManager(
-            self.memory, self.main_adapter, self.event_bus
-        )
+        self.context_manager = ContextManager(self.memory, self.main_adapter, self.event_bus)
         self.tools_manager = ToolsManager(
-            self.memory, self.context_manager, self.mcp_manager, system_tools
+            self.memory,
+            self.context_manager,
+            self.mcp_manager,
+            system_tools,
         )
         self.brain = Brain(
             self.main_adapter,
@@ -122,6 +124,7 @@ class App:
             self.memory,
             self.event_bus,
             self.exception_router,
+            status_callback=self._update_heartbeat_status,
         )
 
         self.session_manager = SessionManager()
@@ -129,25 +132,52 @@ class App:
         self.gateway: FastAPIGateway | None = None
         self.feishu_input: FeishuInputAdapter | None = None
         self.feishu_output: FeishuOutputAdapter | None = None
-        self.proprioceptor = Proprioceptor(
-            self.platform, self.context_manager, self.event_bus
-        )
+        self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
+
         self._brain_source = make_source(SourceKind.SYSTEM.value, "brain")
+        self._runtime_source = make_source(SourceKind.SYSTEM.value, "runtime")
+        self._usage_source = make_source(SourceKind.SYSTEM.value, "usage")
 
         self.exception_router.on_system_error(self._log_error)
         self.exception_router.on_user_error(self._display_error)
-        self.event_bus.subscribe(
-            self.event_bus.CONFIRM_REQUEST,
-            self._handle_confirm_request,
-        )
+        self.event_bus.subscribe(self.event_bus.CONFIRM_REQUEST, self._handle_confirm_request)
+        self.event_bus.subscribe(self.event_bus.CONFIRM_RESPONSE, self._handle_confirm_response)
 
-        logger.info("Gateway runtime 依赖注入完成")
+        logger.info("Gateway runtime dependencies initialized")
 
     def _get_main_provider(self) -> str:
         return self.config.get("api_provider") or "openai"
 
     def _get_heart_provider(self) -> str:
         return self.config.get("heartbeat_api_provider") or self._get_main_provider()
+
+    @staticmethod
+    def _safe_int(value: Any, default: int | None = None) -> int | None:
+        if value in (None, ""):
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _build_model_options(self, metadata: dict | None = None) -> dict:
+        metadata = metadata or {}
+        overrides = metadata.get("input_options") or {}
+        thinking_override = overrides.get("thinking") or {}
+
+        default_enabled = self.config.get_bool("thinking_enabled", False)
+        default_effort = self.config.get("thinking_effort") or None
+        default_budget = self._safe_int(self.config.get("thinking_budget_tokens"))
+
+        thinking = {
+            "enabled": thinking_override.get("enabled", default_enabled),
+            "effort": thinking_override.get("effort", default_effort),
+            "budget_tokens": self._safe_int(
+                thinking_override.get("budget_tokens"),
+                default_budget,
+            ),
+        }
+        return {"thinking": thinking}
 
     async def _log_error(self, error: MeetYouError):
         logger.error("[SYSTEM] %s: %s", type(error).__name__, error)
@@ -164,10 +194,125 @@ class App:
                 target=target if isinstance(target, EventTarget) else None,
             )
             return
-        logger.warning("用户级异常未绑定会话，仅写日志: %s", error)
+        logger.warning("User-level error without bound session: %s", error)
+
+    async def _emit_runtime_status_event(
+        self,
+        session_id: str,
+        target: EventTarget | None,
+        turn_id: str = "",
+    ):
+        snapshot = self.brain.get_session_runtime_snapshot(session_id)
+        if snapshot is None:
+            return
+        metadata = {"turn_id": turn_id or snapshot.get("turn_id", "")}
+        await self.speaker.emit(
+            OutboundEvent(
+                session_id=session_id,
+                type=EventType.RUNTIME_STATUS.value,
+                role="system",
+                content=snapshot,
+                source=self._runtime_source,
+                target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+                metadata=metadata,
+            )
+        )
+
+    async def _emit_usage_event(
+        self,
+        session_id: str,
+        payload: dict,
+        target: EventTarget | None,
+        turn_id: str = "",
+    ):
+        await self.speaker.emit(
+            OutboundEvent(
+                session_id=session_id,
+                type=EventType.USAGE.value,
+                role="system",
+                content=payload,
+                source=self._usage_source,
+                target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+                metadata={"turn_id": turn_id},
+            )
+        )
+
+    async def _emit_reasoning_stream_event(
+        self,
+        session_id: str,
+        stream_id: str,
+        phase: str,
+        content: str,
+        target: EventTarget | None,
+        turn_id: str,
+    ):
+        await self.speaker.emit(
+            OutboundEvent(
+                session_id=session_id,
+                type=EventType.REASONING.value,
+                role="assistant",
+                content=content,
+                source=self._brain_source,
+                target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+                stream_id=stream_id,
+                metadata={
+                    "stream_event": phase,
+                    "stream_channel": "reasoning",
+                    "turn_id": turn_id,
+                },
+            )
+        )
 
     async def _handle_confirm_request(self, event):
+        snapshot = self.brain.get_session_runtime_snapshot(event.session_id) or {}
+        self.brain.set_session_runtime_state(
+            event.session_id,
+            RuntimeStatus.WAITING_CONFIRM.value,
+            detail="Waiting for confirmation",
+            active_tools=snapshot.get("active_tools", []),
+            stream_id=snapshot.get("stream_id", ""),
+            turn_id=snapshot.get("turn_id", ""),
+        )
+        await self._emit_runtime_status_event(
+            event.session_id,
+            event.target if isinstance(event.target, EventTarget) else None,
+            snapshot.get("turn_id", ""),
+        )
         await self.speaker.emit(event)
+
+    async def _handle_confirm_response(self, payload):
+        if not isinstance(payload, dict):
+            return
+        session_id = payload.get("session_id", "")
+        if not session_id:
+            return
+        snapshot = self.brain.get_session_runtime_snapshot(session_id) or {}
+        self.brain.set_session_runtime_state(
+            session_id,
+            RuntimeStatus.TOOL_CALLING.value,
+            detail="Resuming tool call",
+            active_tools=snapshot.get("active_tools", []),
+            stream_id=snapshot.get("stream_id", ""),
+            turn_id=snapshot.get("turn_id", ""),
+        )
+        await self._emit_runtime_status_event(
+            session_id,
+            EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+            snapshot.get("turn_id", ""),
+        )
+
+    async def _update_heartbeat_status(self, status: str, detail: str = ""):
+        snapshot = self.status_manager.set_heartbeat(status, detail)
+        await self.speaker.emit(
+            OutboundEvent(
+                session_id="system:heart",
+                type=EventType.RUNTIME_STATUS.value,
+                role="system",
+                content=snapshot,
+                source=self._runtime_source,
+                target=EventTarget(kind=TargetKind.BROADCAST.value),
+            )
+        )
 
     def _register_feishu_broadcast_targets(self):
         raw_chat_ids = self.config.get("feishu_broadcast_chat_ids") or []
@@ -211,6 +356,45 @@ class App:
     def get_config_entry(self, key: str) -> dict[str, Any]:
         return self.config.describe_key(key)
 
+    def get_memory_snapshot(
+        self,
+        source_id: str = "",
+        session_id: str = "",
+        include_invalidated: bool = False,
+    ) -> dict[str, Any]:
+        return self.memory.get_memory_snapshot(
+            source_id=source_id,
+            session_id=session_id,
+            include_invalidated=include_invalidated,
+        )
+
+    def get_memory_graph(
+        self,
+        source_id: str = "",
+        session_id: str = "",
+        include_invalidated: bool = False,
+    ) -> dict[str, Any]:
+        return self.memory.get_memory_graph_view(
+            source_id=source_id,
+            session_id=session_id,
+            include_invalidated=include_invalidated,
+        )
+
+    def get_runtime_state(self, session_id: str = "") -> dict[str, Any]:
+        return {
+            "global_state": self.status_manager.get_global(),
+            "heartbeat_state": self.status_manager.get_heartbeat(),
+            "session_state": self.brain.get_session_runtime_snapshot(session_id) if session_id else None,
+        }
+
+    def get_runtime_usage(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            raise ValueError("session_id is required")
+        snapshot = self.brain.get_session_usage_snapshot(session_id)
+        if snapshot is None:
+            raise ValueError(f"Session not found: {session_id}")
+        return snapshot
+
     async def apply_config_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
         applied_keys, warnings = self.config.apply_updates(updates)
         if not applied_keys:
@@ -226,7 +410,7 @@ class App:
         restart_required = sorted(_RESTART_REQUIRED_KEYS.intersection(applied_keys))
 
         if "enable_gateway" in applied_keys:
-            warnings.append("enable_gateway 已弃用，gateway 进程由 launcher 控制。")
+            warnings.append("enable_gateway is ignored in the gateway-only runtime.")
 
         if _BRAIN_IMMEDIATE_KEYS.intersection(applied_keys):
             await self._refresh_brain_runtime()
@@ -242,7 +426,7 @@ class App:
 
         if restart_required:
             warnings.append(
-                "以下配置已写入，但需要重启 gateway 才能完全生效: "
+                "The following keys were written, but require a gateway restart to fully take effect: "
                 + ", ".join(restart_required)
             )
 
@@ -279,85 +463,202 @@ class App:
                 if not resolved:
                     await self.speaker.emit_error(
                         event.session_id,
-                        "确认请求已失效或与当前会话不匹配",
+                        "Confirmation request expired or does not match the current session.",
                         make_source(SourceKind.SYSTEM.value, "confirm"),
                     )
-                    continue
-                status = "已确认" if event.accepted else "已拒绝"
-                await self.speaker.emit_status(
-                    event.session_id,
-                    f"[确认回复] {status}",
-                    make_source(SourceKind.SYSTEM.value, "confirm"),
-                    metadata={"confirm_request_id": event.request_id},
-                )
                 continue
 
             if event.type == EventType.SIGNAL.value:
                 input_info = {
                     "role": "system",
-                    "content": f"系统后台心跳截获重要潜意识事务，请立刻作为内部处理：{event.content}",
+                    "content": f"系统后台心跳捕获到重要潜意识事务，请立刻作为内部处理：{event.content}",
                 }
             else:
                 input_info = {"role": event.role, "content": event.content}
 
-            target = EventTarget(kind=TargetKind.CURRENT_SESSION.value)
+            is_boot = event.session_id == "system:boot"
+            target = (
+                EventTarget(kind=TargetKind.BROADCAST.value)
+                if is_boot
+                else EventTarget(kind=TargetKind.CURRENT_SESSION.value)
+            )
             token = bind_event_context(
                 session_id=event.session_id,
                 source=event.source,
                 target=target,
             )
+
+            stream_id = ""
+            turn_id = uuid4().hex
+            reasoning_started = False
+            reasoning_ended = False
+
             try:
                 api_key = self.config.get("api_key") or ""
                 api_url = self.config.get("api_url") or ""
                 model = self.config.get("model") or ""
+                model_options = self._build_model_options(getattr(event, "metadata", {}))
 
                 stream_id = await self.speaker.emit_stream_start(
                     event.session_id,
                     self._brain_source,
                     target=target,
+                    stream_channel="answer",
                 )
-                async for chunk in self.brain.input_brain(
+
+                async def emit_tool_activity(phase: str, content: str, metadata: dict | None = None):
+                    metadata = metadata or {}
+                    await self.speaker.emit_status(
+                        event.session_id,
+                        content,
+                        make_source(SourceKind.SYSTEM.value, "search"),
+                        target=target,
+                        metadata={
+                            "activity_kind": metadata.get("activity_kind", "tool_chain"),
+                            "search_phase": phase,
+                            "activity_phase": phase,
+                            "turn_id": turn_id,
+                            **metadata,
+                        },
+                    )
+
+                async def phase_callback(status: str, detail: str = "", active_tools: list[str] | None = None):
+                    self.brain.set_session_runtime_state(
+                        event.session_id,
+                        status,
+                        detail=detail,
+                        active_tools=active_tools or [],
+                        stream_id=stream_id,
+                        turn_id=turn_id,
+                    )
+                    await self._emit_runtime_status_event(event.session_id, target, turn_id)
+
+                self.brain.set_session_runtime_state(
+                    event.session_id,
+                    RuntimeStatus.THINKING.value,
+                    detail="Starting turn",
+                    active_tools=[],
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                )
+                await self._emit_runtime_status_event(event.session_id, target, turn_id)
+
+                async for output in self.brain.input_brain(
                     event.session_id,
                     input_info,
                     api_key,
                     api_url,
                     model,
+                    tool_activity_callback=emit_tool_activity,
+                    model_options=model_options,
+                    phase_callback=phase_callback,
                 ):
-                    await self.speaker.emit_stream_chunk(
+                    if not isinstance(output, BrainOutputEvent):
+                        continue
+
+                    if output.type == "reasoning_text" and output.text:
+                        if not reasoning_started:
+                            await self._emit_reasoning_stream_event(
+                                event.session_id,
+                                stream_id,
+                                StreamEventType.START.value,
+                                "",
+                                target,
+                                turn_id,
+                            )
+                            reasoning_started = True
+                        await self._emit_reasoning_stream_event(
+                            event.session_id,
+                            stream_id,
+                            StreamEventType.CHUNK.value,
+                            output.text,
+                            target,
+                            turn_id,
+                        )
+                    elif output.type == "answer_text" and output.text:
+                        if reasoning_started and not reasoning_ended:
+                            await self._emit_reasoning_stream_event(
+                                event.session_id,
+                                stream_id,
+                                StreamEventType.END.value,
+                                "",
+                                target,
+                                turn_id,
+                            )
+                            reasoning_ended = True
+                        await self.speaker.emit_stream_chunk(
+                            event.session_id,
+                            output.text,
+                            self._brain_source,
+                            stream_id,
+                            target=target,
+                            stream_channel="answer",
+                        )
+                    elif output.type == "usage" and output.usage:
+                        await self._emit_usage_event(event.session_id, output.usage, target, turn_id)
+
+                if reasoning_started and not reasoning_ended:
+                    await self._emit_reasoning_stream_event(
                         event.session_id,
-                        chunk,
-                        self._brain_source,
                         stream_id,
-                        target=target,
+                        StreamEventType.END.value,
+                        "",
+                        target,
+                        turn_id,
                     )
+
+                self.brain.set_session_runtime_state(
+                    event.session_id,
+                    RuntimeStatus.IDLE.value,
+                    detail="",
+                    active_tools=[],
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                )
+                await self._emit_runtime_status_event(event.session_id, target, turn_id)
                 await self.speaker.emit_stream_end(
                     event.session_id,
                     self._brain_source,
                     stream_id,
                     target=target,
+                    stream_channel="answer",
                 )
-            except Exception as e:
-                logger.error("Brain 处理异常: %s\n%s", e, traceback.format_exc())
+            except Exception as exc:
+                logger.error("Brain processing error: %s\n%s", exc, traceback.format_exc())
+                self.brain.set_session_runtime_state(
+                    event.session_id,
+                    RuntimeStatus.ERROR.value,
+                    detail=str(exc),
+                    active_tools=[],
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                )
+                await self._emit_runtime_status_event(event.session_id, target, turn_id)
                 await self.speaker.emit_error(
                     event.session_id,
-                    str(e),
+                    str(exc),
                     self._brain_source,
                     target=target,
+                    stream_id=stream_id,
+                    metadata={"turn_id": turn_id, "stream_channel": "answer"},
                 )
             finally:
                 reset_event_context(token)
+                if is_boot:
+                    await self.brain.close_session(event.session_id)
 
     async def setup(self):
         tools_schema_path = self.config.get("tools_schema_path") or "user/tools.json"
         mcp_servers = self.config.get_mcp_servers()
 
+        self.status_manager.set_global(RuntimeStatus.INITIALIZING.value, "Starting up")
         await self.memory.init_memory(self.config)
         await self.tools_manager.init_tools(tools_schema_path, mcp_servers)
         await self._refresh_brain_runtime()
         await self.heart.init_heart()
 
         if not self.config.get_bool("enable_gateway", True):
-            logger.warning("enable_gateway=false 已忽略；当前架构始终以 gateway 运行。")
+            logger.warning("enable_gateway=false is ignored in the gateway-only runtime.")
 
         host = self.config.get("gateway_host") or "127.0.0.1"
         port = int(self.config.get("gateway_port") or 8000)
@@ -367,6 +668,10 @@ class App:
             config_snapshot_getter=self.get_config_snapshot,
             config_item_getter=self.get_config_entry,
             config_updater=self.apply_config_updates,
+            memory_snapshot_getter=self.get_memory_snapshot,
+            memory_graph_getter=self.get_memory_graph,
+            runtime_state_getter=self.get_runtime_state,
+            runtime_usage_getter=self.get_runtime_usage,
         )
         self.speaker.register_adapter(TargetKind.WEB.value, self.gateway.output_adapter)
         await self.gateway.start(host=host, port=port)
@@ -383,7 +688,25 @@ class App:
             self._register_feishu_broadcast_targets()
             await self.feishu_input.run()
 
-        logger.info("Gateway runtime 初始化完成")
+        self.status_manager.set_global(RuntimeStatus.IDLE.value, "")
+        logger.info("Gateway runtime initialized")
+
+        try:
+            start_prompt = self.config.get_prompt("start")
+            boot_source = make_source(SourceKind.SYSTEM.value, "boot")
+            await self.event_bus.inbound_queue.put(
+                InboundEvent(
+                    session_id="system:boot",
+                    type=EventType.MESSAGE.value,
+                    role="user",
+                    content=start_prompt,
+                    source=boot_source,
+                    target=EventTarget(kind=TargetKind.BROADCAST.value),
+                )
+            )
+            logger.info("Boot wake-up event injected")
+        except Exception as exc:
+            logger.warning("Failed to inject boot wake-up event (non-fatal): %s", exc)
 
     async def run(self):
         await self.setup()
@@ -397,7 +720,8 @@ class App:
             await self.shutdown()
 
     async def shutdown(self):
-        logger.info("正在关闭...")
+        logger.info("Shutting down...")
+        self.status_manager.set_global(RuntimeStatus.SHUTTING_DOWN.value, "Shutting down")
         self.event_bus.request_shutdown()
         if self.gateway is not None:
             await self.gateway.stop()
@@ -409,4 +733,4 @@ class App:
         await self.brain.close_brain()
         await self.heart.close_heart()
         await self.memory.close_memory()
-        logger.info("所有资源已释放")
+        logger.info("All resources released")

@@ -69,6 +69,7 @@ class WebSocketManager:
             "stream": {
                 "id": payload.get("stream_id", ""),
                 "phase": payload.get("metadata", {}).get("stream_event", ""),
+                "channel": payload.get("metadata", {}).get("stream_channel", ""),
             },
             "confirm": payload.get("confirm", {}),
         }
