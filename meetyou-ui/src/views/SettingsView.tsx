@@ -1,125 +1,293 @@
-import { useState, useEffect } from 'react';
-import { useConfig } from '../hooks/useConfig';
+import { useMemo, useState } from 'react'
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  KeyRound,
+  RefreshCcw,
+  RotateCcw,
+  Save,
+} from 'lucide-react'
+import GlassSelect from '../components/GlassSelect'
+import { useConfig } from '../hooks/useConfig'
+import type { ConfigFormValue, ResolvedConfigField } from '../types'
 
-export default function SettingsView() {
-  const { config, loading, error, updateConfig } = useConfig();
-  const [localConfig, setLocalConfig] = useState<Record<string, any>>({});
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (!loading && config) {
-      const mapped: Record<string, any> = {};
-      Object.keys(config).forEach(k => {
-        mapped[k] = config[k].value;
-      });
-      setLocalConfig(mapped);
-    }
-  }, [config, loading]);
-
-  const handleChange = (key: string, value: any) => {
-    setLocalConfig(prev => ({ ...prev, [key]: value }));
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    const updates: Record<string, any> = {};
-    Object.keys(localConfig).forEach(k => {
-      if (localConfig[k] !== config[k]?.value) {
-        updates[k] = localConfig[k];
-      }
-    });
-
-    if (Object.keys(updates).length > 0) {
-      await updateConfig(updates);
-    }
-    setSaving(false);
-  };
-
-  if (loading) return <div>正在加载设置...</div>;
-  if (error) return <div style={{ color: '#ff3b30' }}>错误: {error}</div>;
+function FieldStatus({
+  field,
+  onClear,
+  saving,
+}: {
+  field: ResolvedConfigField
+  onClear: (key: string) => void
+  saving: boolean
+}) {
+  if (!field.entry?.is_secret) {
+    return (
+      <div className="settings-field-meta">
+        <span>{field.entry?.source === 'env' ? '来源 env' : field.entry?.source === 'config' ? '来源 config' : '默认值'}</span>
+      </div>
+    )
+  }
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--glass-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ fontSize: 18, fontWeight: 600 }}>系统配置</h2>
-        <button 
-          onClick={handleSave} 
-          disabled={saving}
-          style={{ 
-            background: 'var(--accent-color)', color: 'white', border: 'none', 
-            padding: '8px 16px', borderRadius: 8, cursor: saving ? 'not-allowed' : 'pointer',
-            opacity: saving ? 0.7 : 1, fontWeight: 500 
-          }}
-        >
-          {saving ? '保存中...' : '保存更改'}
+    <div className="settings-field-meta">
+      <span className={`secret-badge ${field.entry?.has_value ? 'configured' : ''}`}>
+        {field.entry?.has_value ? '已配置' : '未配置'}
+      </span>
+      {field.entry?.env_key ? <span>{field.entry.env_key}</span> : null}
+      {field.entry?.has_value ? (
+        <button className="field-inline-btn" onClick={() => onClear(field.key)} disabled={saving}>
+          清除
         </button>
+      ) : null}
+    </div>
+  )
+}
+
+function FieldControl({
+  field,
+  saving,
+  onChange,
+  onClearSecret,
+}: {
+  field: ResolvedConfigField
+  saving: boolean
+  onChange: (key: string, value: ConfigFormValue) => void
+  onClearSecret: (key: string) => void
+}) {
+  const placeholder =
+    field.entry?.is_secret && field.entry.has_value
+      ? String(field.entry.value || '已配置')
+      : field.schema.placeholder || ''
+
+  let control = null
+
+  if (field.schema.input === 'boolean') {
+    control = (
+      <button
+        className={`settings-switch ${field.value ? 'checked' : ''}`}
+        onClick={() => onChange(field.key, !field.value)}
+        disabled={saving}
+      >
+        <span className="settings-switch-thumb" />
+      </button>
+    )
+  } else if (field.schema.input === 'select') {
+    control = (
+      <GlassSelect
+        wrapperClassName="glass-select-full"
+        value={String(field.value)}
+        onChange={(event) => onChange(field.key, event.target.value)}
+        disabled={saving}
+      >
+        <option value="">未设置</option>
+        {field.schema.options?.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </GlassSelect>
+    )
+  } else if (field.schema.input === 'list') {
+    control = (
+      <textarea
+        className="settings-input settings-textarea"
+        value={String(field.value)}
+        onChange={(event) => onChange(field.key, event.target.value)}
+        placeholder="一行一个值"
+        rows={4}
+        disabled={saving}
+      />
+    )
+  } else {
+    control = (
+      <input
+        className="settings-input"
+        type={field.schema.input === 'password' ? 'password' : field.schema.input === 'number' ? 'number' : 'text'}
+        value={String(field.value)}
+        onChange={(event) => onChange(field.key, event.target.value)}
+        placeholder={placeholder}
+        disabled={saving}
+      />
+    )
+  }
+
+  return (
+    <div className="settings-field">
+      <div className="settings-field-head">
+        <div className="settings-field-title-row">
+          <label className="settings-field-title">{field.schema.title}</label>
+          {field.dirty ? <span className="dirty-dot" title="有未保存修改" /> : null}
+        </div>
+        <div className="settings-field-description">{field.schema.description}</div>
+        <FieldStatus field={field} onClear={onClearSecret} saving={saving} />
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
-        <section>
-          <h3 style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 16, textTransform: 'uppercase' }}>深度思考 (Reasoning)</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '16px 24px', alignItems: 'center' }}>
-            <label style={{ fontSize: 13, fontWeight: 500 }}>启用思考</label>
-            <div>
-              <input 
-                type="checkbox" 
-                checked={!!localConfig['thinking_enabled']} 
-                onChange={e => handleChange('thinking_enabled', e.target.checked)} 
-              />
-            </div>
+      <div className="settings-field-control">{control}</div>
 
-            <label style={{ fontSize: 13, fontWeight: 500 }}>思考强度</label>
-            <select 
-              value={localConfig['thinking_effort'] || 'low'}
-              onChange={e => handleChange('thinking_effort', e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'transparent', color: 'var(--text-primary)' }}
-            >
-              <option value="low">低 (Low)</option>
-              <option value="medium">中等 (Medium)</option>
-              <option value="high">高 (High)</option>
-            </select>
+      {field.error ? (
+        <div className="settings-field-error">
+          <AlertCircle size={13} />
+          <span>{field.error}</span>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
-            <label style={{ fontSize: 13, fontWeight: 500 }}>思考 Token 预算</label>
-            <input 
-              type="number" 
-              value={localConfig['thinking_budget_tokens'] || 0}
-              onChange={e => handleChange('thinking_budget_tokens', parseInt(e.target.value) || 0)}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'transparent', color: 'var(--text-primary)' }}
-            />
+export default function SettingsView() {
+  const {
+    groupedFields,
+    loading,
+    saving,
+    error,
+    saveResult,
+    dirtyKeys,
+    hasDirtyChanges,
+    updateField,
+    clearSecretField,
+    resetChanges,
+    refresh,
+    saveConfig,
+  } = useConfig()
+
+  const [advancedOpen, setAdvancedOpen] = useState<Record<string, boolean>>({})
+
+  const appliedSummary = useMemo(() => {
+    if (!saveResult) {
+      return ''
+    }
+    return `已应用 ${saveResult.applied_keys.length} 项配置`
+  }, [saveResult])
+
+  const handleSave = async () => {
+    await saveConfig()
+  }
+
+  if (loading) {
+    return <div className="settings-loading">正在加载设置…</div>
+  }
+
+  return (
+    <div className="settings-page">
+      <div className="settings-header-card">
+        <div>
+          <div className="settings-kicker">Settings</div>
+          <h2 className="settings-title">系统配置中心</h2>
+          <div className="settings-subtitle">常用配置直接编辑，高级配置按分组折叠展示。</div>
+        </div>
+
+        <div className="settings-header-actions">
+          <button className="settings-secondary-btn" onClick={() => refresh()} disabled={loading || saving}>
+            <RefreshCcw size={14} />
+            <span>刷新</span>
+          </button>
+          <button className="settings-secondary-btn" onClick={resetChanges} disabled={!hasDirtyChanges || saving}>
+            <RotateCcw size={14} />
+            <span>重置</span>
+          </button>
+          <button className="settings-primary-btn" onClick={handleSave} disabled={!hasDirtyChanges || saving}>
+            <Save size={14} />
+            <span>{saving ? '保存中…' : `保存更改${dirtyKeys.length ? ` (${dirtyKeys.length})` : ''}`}</span>
+          </button>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="settings-banner error">
+          <AlertCircle size={15} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {saveResult ? (
+        <div className="settings-banner success">
+          <CheckCircle2 size={15} />
+          <div className="settings-banner-copy">
+            <span>{appliedSummary}</span>
+            {saveResult.reloaded_components.length > 0 ? (
+              <span>已热更新：{saveResult.reloaded_components.join(', ')}</span>
+            ) : null}
+            {saveResult.restart_required_keys.length > 0 ? (
+              <span>需重启生效：{saveResult.restart_required_keys.join(', ')}</span>
+            ) : null}
+            {saveResult.warnings.length > 0 ? (
+              <span>提示：{saveResult.warnings.join('；')}</span>
+            ) : null}
           </div>
-        </section>
+        </div>
+      ) : null}
 
-        <div style={{ height: 1, background: 'var(--glass-border)' }} />
+      <div className="settings-group-list">
+        {groupedFields.map((group) => {
+          const isAdvancedOpen = Boolean(advancedOpen[group.key])
 
-        <section>
-          <h3 style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 16, textTransform: 'uppercase' }}>API 供应商设置</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '16px 24px', alignItems: 'center' }}>
-            <label style={{ fontSize: 13, fontWeight: 500 }}>API 供应商</label>
-            <input 
-              type="text" 
-              value={localConfig['api_provider'] || ''}
-              onChange={e => handleChange('api_provider', e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'transparent', color: 'var(--text-primary)', width: '100%', maxWidth: 300 }}
-            />
+          return (
+            <section key={group.key} className="settings-group-card">
+              <div className="settings-group-header">
+                <div>
+                  <div className="settings-group-title-row">
+                    {group.key === 'secrets' ? <KeyRound size={15} /> : null}
+                    <h3 className="settings-group-title">{group.title}</h3>
+                  </div>
+                  <div className="settings-group-description">{group.description}</div>
+                </div>
+              </div>
 
-            <label style={{ fontSize: 13, fontWeight: 500 }}>模型</label>
-            <input 
-              type="text" 
-              value={localConfig['model'] || ''}
-              onChange={e => handleChange('model', e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'transparent', color: 'var(--text-primary)', width: '100%', maxWidth: 300 }}
-            />
-            
-            <label style={{ fontSize: 13, fontWeight: 500 }}>API URL</label>
-            <input 
-              type="text" 
-              value={localConfig['api_url'] || ''}
-              onChange={e => handleChange('api_url', e.target.value)}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'transparent', color: 'var(--text-primary)', width: '100%', maxWidth: 300 }}
-            />
-          </div>
-        </section>
+              {group.commonFields.length > 0 ? (
+                <div className="settings-field-grid">
+                  {group.commonFields.map((field) => (
+                    <FieldControl
+                      key={field.key}
+                      field={field}
+                      saving={saving}
+                      onChange={updateField}
+                      onClearSecret={clearSecretField}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="settings-empty-group">当前分组没有常用配置项。</div>
+              )}
+
+              {group.advancedFields.length > 0 ? (
+                <div className="settings-advanced">
+                  <button
+                    className="settings-advanced-toggle"
+                    onClick={() =>
+                      setAdvancedOpen((prev) => ({
+                        ...prev,
+                        [group.key]: !prev[group.key],
+                      }))
+                    }
+                  >
+                    <div className="settings-advanced-toggle-copy">
+                      {isAdvancedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      <span>高级配置</span>
+                    </div>
+                    <span className="settings-advanced-count">{group.advancedFields.length} 项</span>
+                  </button>
+
+                  {isAdvancedOpen ? (
+                    <div className="settings-field-grid advanced">
+                      {group.advancedFields.map((field) => (
+                        <FieldControl
+                          key={field.key}
+                          field={field}
+                          saving={saving}
+                          onChange={updateField}
+                          onClearSecret={clearSecretField}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          )
+        })}
       </div>
     </div>
-  );
+  )
 }

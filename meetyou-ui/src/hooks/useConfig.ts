@@ -1,53 +1,317 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { buildConfigGroups, getConfigFieldSchema } from '../configSchema'
+import type {
+  ConfigEntry,
+  ConfigFieldSchema,
+  ConfigFormValue,
+  ConfigPatchResult,
+  ResolvedConfigField,
+} from '../types'
 
-export interface ConfigEntry {
-  key: string;
-  value: any;
-  is_secret: boolean;
-  has_value: boolean;
-  source: string;
-  env_key: string | null;
+function toFormValue(entry: ConfigEntry | null, schema: ConfigFieldSchema): ConfigFormValue {
+  if (!entry) {
+    return schema.input === 'boolean' ? false : ''
+  }
+
+  if (entry.is_secret) {
+    return ''
+  }
+
+  if (schema.input === 'boolean') {
+    return Boolean(entry.value)
+  }
+
+  if (schema.input === 'list') {
+    return Array.isArray(entry.value) ? entry.value.map(String).join('\n') : ''
+  }
+
+  if (schema.input === 'number') {
+    return entry.value == null || entry.value === '' ? '' : String(entry.value)
+  }
+
+  return entry.value == null ? '' : String(entry.value)
+}
+
+function serializeFormValue(value: ConfigFormValue, schema: ConfigFieldSchema): unknown {
+  if (schema.input === 'boolean') {
+    return Boolean(value)
+  }
+
+  const text = typeof value === 'string' ? value : String(value)
+
+  if (schema.input === 'list') {
+    return text
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  if (schema.input === 'number') {
+    const trimmed = text.trim()
+    return trimmed === '' ? '' : Number(trimmed)
+  }
+
+  return text.trim()
+}
+
+function normalizeEntryValue(entry: ConfigEntry | null, schema: ConfigFieldSchema): unknown {
+  if (!entry) {
+    return schema.input === 'boolean' ? false : schema.input === 'list' ? [] : ''
+  }
+
+  if (entry.is_secret) {
+    return ''
+  }
+
+  if (schema.input === 'boolean') {
+    return Boolean(entry.value)
+  }
+
+  if (schema.input === 'list') {
+    return Array.isArray(entry.value) ? entry.value.map(String) : []
+  }
+
+  if (schema.input === 'number') {
+    return entry.value == null || entry.value === '' ? '' : Number(entry.value)
+  }
+
+  return entry.value == null ? '' : String(entry.value).trim()
+}
+
+function validateField(key: string, value: ConfigFormValue, schema: ConfigFieldSchema): string | null {
+  if (schema.input === 'number') {
+    const text = typeof value === 'string' ? value.trim() : String(value)
+    if (!text) {
+      return null
+    }
+    if (!/^-?\d+$/.test(text)) {
+      return '请输入整数'
+    }
+    const numericValue = Number(text)
+    if (!Number.isFinite(numericValue)) {
+      return '请输入有效数字'
+    }
+    if (numericValue < 0) {
+      return '请输入不小于 0 的值'
+    }
+    if (key === 'gateway_port' && numericValue > 65535) {
+      return '端口需在 0 - 65535 之间'
+    }
+    return null
+  }
+
+  if (schema.input === 'select') {
+    const text = typeof value === 'string' ? value.trim() : String(value)
+    if (!text) {
+      return null
+    }
+    if (!schema.options?.some((option) => option.value === text)) {
+      return '请选择有效选项'
+    }
+    return null
+  }
+
+  const text = typeof value === 'string' ? value.trim() : String(value)
+  if (!text) {
+    return null
+  }
+
+  if (key.endsWith('_url') || key === 'mcp_registry_url') {
+    try {
+      new URL(text)
+    } catch {
+      return '请输入有效 URL'
+    }
+  }
+
+  return null
+}
+
+function valuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function sortFields(fields: ResolvedConfigField[]): ResolvedConfigField[] {
+  return [...fields].sort((left, right) => {
+    if (left.schema.advanced !== right.schema.advanced) {
+      return left.schema.advanced ? 1 : -1
+    }
+    return left.schema.title.localeCompare(right.schema.title, 'zh-CN')
+  })
 }
 
 export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
-  const [config, setConfig] = useState<Record<string, ConfigEntry>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [config, setConfig] = useState<Record<string, ConfigEntry>>({})
+  const [formValues, setFormValues] = useState<Record<string, ConfigFormValue>>({})
+  const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saveResult, setSaveResult] = useState<ConfigPatchResult | null>(null)
 
-  const fetchConfig = useCallback(async () => {
-    try {
-      setLoading(true);
-      const res = await fetch(`${baseUrl}/config`);
-      if (!res.ok) throw new Error('Failed to fetch config');
-      const data = await res.json();
-      setConfig(data.items);
-      setError(null);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [baseUrl]);
+  const fetchConfig = useCallback(
+    async (preserveSaveResult = false) => {
+      try {
+        setLoading(true)
+        const response = await fetch(`${baseUrl}/config`)
+        if (!response.ok) {
+          throw new Error('Failed to fetch config')
+        }
+
+        const data = await response.json()
+        const nextConfig: Record<string, ConfigEntry> = data.items ?? {}
+        const nextFormValues: Record<string, ConfigFormValue> = {}
+
+        Object.keys(nextConfig).forEach((key) => {
+          const entry = nextConfig[key]
+          const schema = getConfigFieldSchema(key, entry)
+          nextFormValues[key] = toFormValue(entry, schema)
+        })
+
+        setConfig(nextConfig)
+        setFormValues(nextFormValues)
+        setTouchedFields({})
+        setError(null)
+        if (!preserveSaveResult) {
+          setSaveResult(null)
+        }
+      } catch (fetchError) {
+        setError(fetchError instanceof Error ? fetchError.message : 'Failed to fetch config')
+      } finally {
+        setLoading(false)
+      }
+    },
+    [baseUrl],
+  )
 
   useEffect(() => {
-    fetchConfig();
-  }, [fetchConfig]);
+    void fetchConfig()
+  }, [fetchConfig])
 
-  const updateConfig = async (updates: Record<string, any>) => {
+  const resolvedFields = useMemo(() => {
+    const keys = Object.keys(config).sort((left, right) => left.localeCompare(right, 'en'))
+    const fields = keys.map((key) => {
+      const entry = config[key] ?? null
+      const schema = getConfigFieldSchema(key, entry)
+      const formValue = formValues[key] ?? toFormValue(entry, schema)
+      const serializedValue = serializeFormValue(formValue, schema)
+      const normalizedValue = normalizeEntryValue(entry, schema)
+      const dirty = entry?.is_secret ? Boolean(touchedFields[key]) : !valuesEqual(serializedValue, normalizedValue)
+      const validationError = validateField(key, formValue, schema)
+
+      return {
+        key,
+        schema,
+        entry,
+        value: formValue,
+        dirty,
+        error: validationError,
+      }
+    })
+
+    return sortFields(fields)
+  }, [config, formValues, touchedFields])
+
+  const groupedFields = useMemo(() => buildConfigGroups(resolvedFields), [resolvedFields])
+
+  const dirtyKeys = useMemo(
+    () => resolvedFields.filter((field) => field.dirty).map((field) => field.key),
+    [resolvedFields],
+  )
+
+  const validationErrors = useMemo(() => {
+    const nextErrors: Record<string, string> = {}
+    resolvedFields.forEach((field) => {
+      if (field.error) {
+        nextErrors[field.key] = field.error
+      }
+    })
+    return nextErrors
+  }, [resolvedFields])
+
+  const updateField = useCallback((key: string, value: ConfigFormValue) => {
+    setFormValues((prev) => ({ ...prev, [key]: value }))
+    setTouchedFields((prev) => ({ ...prev, [key]: true }))
+    setSaveResult(null)
+  }, [])
+
+  const clearSecretField = useCallback((key: string) => {
+    setFormValues((prev) => ({ ...prev, [key]: '' }))
+    setTouchedFields((prev) => ({ ...prev, [key]: true }))
+    setSaveResult(null)
+  }, [])
+
+  const resetChanges = useCallback(() => {
+    const nextValues: Record<string, ConfigFormValue> = {}
+    Object.keys(config).forEach((key) => {
+      const entry = config[key]
+      const schema = getConfigFieldSchema(key, entry)
+      nextValues[key] = toFormValue(entry, schema)
+    })
+    setFormValues(nextValues)
+    setTouchedFields({})
+    setSaveResult(null)
+    setError(null)
+  }, [config])
+
+  const saveConfig = useCallback(async () => {
+    const dirtyFields = resolvedFields.filter((field) => field.dirty)
+    if (dirtyFields.length === 0) {
+      return false
+    }
+
+    const invalidDirtyField = dirtyFields.find((field) => field.error)
+    if (invalidDirtyField) {
+      setError('请先修正校验错误后再保存')
+      return false
+    }
+
+    const updates: Record<string, unknown> = {}
+    dirtyFields.forEach((field) => {
+      updates[field.key] = serializeFormValue(field.value, field.schema)
+    })
+
     try {
-      const res = await fetch(`${baseUrl}/config`, {
+      setSaving(true)
+      setError(null)
+
+      const response = await fetch(`${baseUrl}/config`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates })
-      });
-      if (!res.ok) throw new Error('Failed to update config');
-      await fetchConfig(); // Refresh after update
-      return true;
-    } catch (err: any) {
-      setError(err.message);
-      return false;
-    }
-  };
+        body: JSON.stringify({ updates }),
+      })
 
-  return { config, loading, error, refresh: fetchConfig, updateConfig };
+      if (!response.ok) {
+        throw new Error('Failed to update config')
+      }
+
+      const result: ConfigPatchResult = await response.json()
+      await fetchConfig(true)
+      setSaveResult(result)
+      return true
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Failed to update config')
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }, [baseUrl, fetchConfig, resolvedFields])
+
+  return {
+    config,
+    groupedFields,
+    resolvedFields,
+    loading,
+    saving,
+    error,
+    saveResult,
+    dirtyKeys,
+    validationErrors,
+    hasDirtyChanges: dirtyKeys.length > 0,
+    updateField,
+    clearSecretField,
+    resetChanges,
+    refresh: fetchConfig,
+    saveConfig,
+  }
 }

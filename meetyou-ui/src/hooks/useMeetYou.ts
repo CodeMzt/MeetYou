@@ -1,270 +1,549 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  ChatTurn,
+  ConfirmRequestPayload,
+  ConnectionState,
+  RuntimeStateSnapshot,
+  RuntimeUsageSnapshot,
+  ThinkingOverride,
+  TurnActivity,
+} from '../types'
 
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  reasoning?: string;
-  isStreaming?: boolean;
+interface RuntimeStateResponse {
+  session_state: RuntimeStateSnapshot | null
 }
 
-export interface ConfirmRequestPayload {
-  requestId: string;
-  content: string;
-  timeout?: number;
+function buildThinkingOptions(thinkingOverride: ThinkingOverride) {
+  if (thinkingOverride === 'default') {
+    return undefined
+  }
+
+  if (thinkingOverride === 'off') {
+    return {
+      thinking: {
+        enabled: false,
+      },
+    }
+  }
+
+  return {
+    thinking: {
+      enabled: true,
+      effort: thinkingOverride,
+    },
+  }
+}
+
+function getToolNames(metadata: Record<string, unknown>): string[] {
+  const toolNames = metadata.tool_names
+  if (!Array.isArray(toolNames)) {
+    return []
+  }
+
+  return toolNames.filter((item): item is string => typeof item === 'string')
+}
+
+function findTurnIndex(turns: ChatTurn[], streamId: string, turnId: string): number {
+  if (turnId) {
+    const byTurnId = turns.findIndex((turn) => turn.turnId === turnId)
+    if (byTurnId !== -1) {
+      return byTurnId
+    }
+  }
+
+  if (streamId) {
+    return turns.findIndex((turn) => turn.streamId === streamId)
+  }
+
+  return -1
+}
+
+function createAssistantTurn(streamId: string, turnId: string): ChatTurn {
+  return {
+    id: turnId || streamId || `assistant-${Date.now()}`,
+    streamId,
+    turnId,
+    role: 'assistant',
+    content: '',
+    reasoning: '',
+    activities: [],
+    isStreaming: true,
+    createdAt: Date.now(),
+  }
+}
+
+function upsertAssistantTurn(
+  turns: ChatTurn[],
+  streamId: string,
+  turnId: string,
+): { turns: ChatTurn[]; index: number } {
+  const currentIndex = findTurnIndex(turns, streamId, turnId)
+  if (currentIndex !== -1) {
+    const nextTurns = [...turns]
+    const current = nextTurns[currentIndex]
+    nextTurns[currentIndex] = {
+      ...current,
+      streamId: current.streamId || streamId,
+      turnId: current.turnId || turnId,
+    }
+    return { turns: nextTurns, index: currentIndex }
+  }
+
+  const nextTurns = [...turns, createAssistantTurn(streamId, turnId)]
+  return { turns: nextTurns, index: nextTurns.length - 1 }
+}
+
+function appendTurnContent(
+  turns: ChatTurn[],
+  streamId: string,
+  turnId: string,
+  channel: string,
+  phase: string,
+  content: string,
+): ChatTurn[] {
+  const { turns: nextTurns, index } = upsertAssistantTurn(turns, streamId, turnId)
+  const current = nextTurns[index]
+  const nextTurn = { ...current }
+
+  if (phase === 'start') {
+    nextTurn.isStreaming = true
+  }
+
+  if (content) {
+    if (channel === 'reasoning') {
+      nextTurn.reasoning = `${nextTurn.reasoning}${content}`
+    } else {
+      nextTurn.content = `${nextTurn.content}${content}`
+    }
+  }
+
+  if (phase === 'end' || phase === 'error') {
+    nextTurn.isStreaming = false
+    if (phase === 'error' && content) {
+      nextTurn.error = content
+    }
+  }
+
+  nextTurns[index] = nextTurn
+  return nextTurns
+}
+
+function attachActivity(turns: ChatTurn[], activity: TurnActivity): ChatTurn[] {
+  const { turns: nextTurns, index } = upsertAssistantTurn(turns, activity.streamId, activity.turnId)
+  const current = nextTurns[index]
+  if (current.activities.some((item) => item.id === activity.id)) {
+    return nextTurns
+  }
+
+  nextTurns[index] = {
+    ...current,
+    activities: [...current.activities, activity],
+  }
+  return nextTurns
+}
+
+function syncRuntimeToTurns(turns: ChatTurn[], snapshot: RuntimeStateSnapshot): ChatTurn[] {
+  if (!snapshot.turn_id && !snapshot.stream_id) {
+    return turns
+  }
+
+  const shouldCreateTurn =
+    snapshot.status !== 'idle' &&
+    snapshot.status !== 'initializing' &&
+    snapshot.status !== 'heartbeat' &&
+    snapshot.status !== 'shutting_down'
+
+  const index = findTurnIndex(turns, snapshot.stream_id, snapshot.turn_id)
+  if (index === -1 && !shouldCreateTurn) {
+    return turns
+  }
+
+  const { turns: nextTurns, index: ensuredIndex } = upsertAssistantTurn(
+    turns,
+    snapshot.stream_id,
+    snapshot.turn_id,
+  )
+  const current = nextTurns[ensuredIndex]
+  nextTurns[ensuredIndex] = {
+    ...current,
+    streamId: snapshot.stream_id || current.streamId,
+    turnId: snapshot.turn_id || current.turnId,
+    isStreaming: snapshot.status !== 'idle' && snapshot.status !== 'error',
+    error: snapshot.status === 'error' ? snapshot.detail : current.error,
+  }
+  return nextTurns
+}
+
+function createSystemTurn(content: string, isError = false): ChatTurn {
+  return {
+    id: `system-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    streamId: '',
+    turnId: '',
+    role: 'system',
+    content,
+    reasoning: '',
+    activities: [],
+    isStreaming: false,
+    createdAt: Date.now(),
+    error: isError ? content : undefined,
+  }
+}
+
+function lastAssistantActivities(turns: ChatTurn[]): TurnActivity[] {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]
+    if (turn.role === 'assistant' && turn.activities.length > 0) {
+      return turn.activities
+    }
+  }
+  return []
 }
 
 export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ChatTurn[]>([])
   const [sessionId, setSessionId] = useState<string>(
     `desktop-${Math.random().toString(36).substring(2, 9)}`,
-  );
-  const [sourceId] = useState('desktop-app');
-  const [connected, setConnected] = useState(false);
-  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequestPayload | null>(null);
+  )
+  const [sourceId] = useState('desktop-app')
+  const [connectionState, setConnectionState] = useState<ConnectionState>('connecting')
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeStateSnapshot | null>(null)
+  const [usageSnapshot, setUsageSnapshot] = useState<RuntimeUsageSnapshot | null>(null)
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequestPayload | null>(null)
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
-  const seenEventIdsRef = useRef<Set<string>>(new Set());
-  const seenEventOrderRef = useRef<string[]>([]);
+  const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const seenEventIdsRef = useRef<Set<string>>(new Set())
+  const seenEventOrderRef = useRef<string[]>([])
 
-  const wsUrl = baseUrl.replace(/^http/, 'ws');
+  const wsUrl = baseUrl.replace(/^http/, 'ws')
 
   const rememberEventId = useCallback((eventId?: string) => {
-    if (!eventId) return true;
-    if (seenEventIdsRef.current.has(eventId)) return false;
+    if (!eventId) {
+      return true
+    }
+    if (seenEventIdsRef.current.has(eventId)) {
+      return false
+    }
 
-    seenEventIdsRef.current.add(eventId);
-    seenEventOrderRef.current.push(eventId);
+    seenEventIdsRef.current.add(eventId)
+    seenEventOrderRef.current.push(eventId)
 
     if (seenEventOrderRef.current.length > 2000) {
-      const oldest = seenEventOrderRef.current.shift();
+      const oldest = seenEventOrderRef.current.shift()
       if (oldest) {
-        seenEventIdsRef.current.delete(oldest);
+        seenEventIdsRef.current.delete(oldest)
       }
     }
 
-    return true;
-  }, []);
+    return true
+  }, [])
 
-  const handleStream = useCallback(
-    (
-      streamId: string,
-      phase: string,
-      content: string,
-      role: string,
-      channel: string = 'answer',
-    ) => {
-      setMessages((prev) => {
-        const idx = prev.findIndex((message) => message.id === streamId);
-        const next = [...prev];
+  const refreshRuntime = useCallback(async () => {
+    if (!sessionId) {
+      return
+    }
 
-        if (phase === 'start') {
-          if (idx === -1) {
-            next.push({
-              id: streamId,
-              role: role as Message['role'],
-              content: channel === 'answer' ? content || '' : '',
-              reasoning: channel === 'reasoning' ? content || '' : '',
-              isStreaming: true,
-            });
-          }
-          return next;
-        }
+    try {
+      const response = await fetch(
+        `${baseUrl}/runtime/state?session_id=${encodeURIComponent(sessionId)}`,
+      )
+      if (!response.ok) {
+        return
+      }
 
-        if (phase === 'chunk') {
-          if (idx !== -1) {
-            const current = next[idx];
-            const updated: Message = {
-              ...current,
-              content: current.content,
-              reasoning: current.reasoning,
-              isStreaming: true,
-            };
-            if (channel === 'reasoning') {
-              updated.reasoning = (current.reasoning || '') + (content || '');
-            } else {
-              updated.content = (current.content || '') + (content || '');
-            }
-            next[idx] = updated;
-            return next;
-          }
+      const data: RuntimeStateResponse = await response.json()
+      if (!data.session_state) {
+        return
+      }
 
-          next.push({
-            id: streamId,
-            role: role as Message['role'],
-            content: channel === 'answer' ? content || '' : '',
-            reasoning: channel === 'reasoning' ? content || '' : '',
-            isStreaming: true,
-          });
-          return next;
-        }
+      setRuntimeSnapshot(data.session_state)
+      startTransition(() => {
+        setMessages((prev) => syncRuntimeToTurns(prev, data.session_state as RuntimeStateSnapshot))
+      })
+    } catch (error) {
+      console.error('Failed to refresh runtime state:', error)
+    }
+  }, [baseUrl, sessionId])
 
-        if (phase === 'end' || phase === 'error') {
-          if (idx !== -1) {
-            const current = next[idx];
-            const updated: Message = {
-              ...current,
-              content: current.content,
-              reasoning: current.reasoning,
-              isStreaming: false,
-            };
-            if (channel === 'reasoning') {
-              updated.reasoning = (current.reasoning || '') + (content || '');
-            } else {
-              updated.content = (current.content || '') + (content || '');
-            }
-            next[idx] = updated;
-          }
-        }
+  const refreshUsage = useCallback(async () => {
+    if (!sessionId) {
+      return
+    }
 
-        return next;
-      });
-    },
-    [],
-  );
+    try {
+      const response = await fetch(
+        `${baseUrl}/runtime/usage?session_id=${encodeURIComponent(sessionId)}`,
+      )
+      if (response.status === 404) {
+        setUsageSnapshot(null)
+        return
+      }
+      if (!response.ok) {
+        return
+      }
+
+      const data: RuntimeUsageSnapshot = await response.json()
+      setUsageSnapshot(data)
+    } catch (error) {
+      console.error('Failed to refresh runtime usage:', error)
+    }
+  }, [baseUrl, sessionId])
 
   const connectWs = useCallback(() => {
     if (
       wsRef.current?.readyState === WebSocket.OPEN ||
       wsRef.current?.readyState === WebSocket.CONNECTING
     ) {
-      return;
+      return
     }
 
-    clearTimeout(reconnectTimeoutRef.current);
+    clearTimeout(reconnectTimeoutRef.current)
+    setConnectionState('connecting')
 
-    const url = `${wsUrl}/ws?session_id=${sessionId}&source_id=${sourceId}`;
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
+    const url = `${wsUrl}/ws?session_id=${encodeURIComponent(sessionId)}&source_id=${encodeURIComponent(sourceId)}`
+    const ws = new WebSocket(url)
+    wsRef.current = ws
 
     ws.onopen = () => {
       if (wsRef.current !== ws) {
-        ws.close();
-        return;
+        ws.close()
+        return
       }
-      setConnected(true);
-      console.log('MeetYou WS Connected');
-    };
+      setConnectionState('connected')
+      void refreshRuntime()
+      void refreshUsage()
+    }
 
-    ws.onmessage = (e) => {
-      if (wsRef.current !== ws) return;
+    ws.onmessage = (event) => {
+      if (wsRef.current !== ws) {
+        return
+      }
 
       try {
-        const data = JSON.parse(e.data);
-        if (data.schema !== 'meetyou.ws.v1') return;
+        const data = JSON.parse(event.data)
+        if (data.schema !== 'meetyou.ws.v1') {
+          return
+        }
 
         if (data.kind === 'connection' && data.connection?.session_id) {
           if (data.connection.session_id !== sessionId) {
-            setSessionId(data.connection.session_id);
+            setSessionId(data.connection.session_id)
           }
-          return;
+          return
         }
 
-        if (data.kind !== 'event') return;
+        if (data.kind !== 'event') {
+          return
+        }
 
-        const evt = data.event;
-        const stream = data.stream;
-        const confirm = data.confirm;
+        const rawEvent = data.event ?? {}
+        if (!rememberEventId(rawEvent.event_id)) {
+          return
+        }
 
-        if (!rememberEventId(evt?.event_id)) return;
+        const rawStream = data.stream ?? {}
+        const streamId = typeof rawStream.id === 'string' ? rawStream.id : ''
+        const streamPhase = typeof rawStream.phase === 'string' ? rawStream.phase : ''
+        const streamChannel = typeof rawStream.channel === 'string' ? rawStream.channel : ''
+        const rawMetadata = rawEvent.metadata ?? {}
+        const metadata: Record<string, unknown> =
+          rawMetadata && typeof rawMetadata === 'object' ? rawMetadata : {}
+        const turnId = typeof metadata.turn_id === 'string' ? metadata.turn_id : ''
+        const eventType = typeof rawEvent.type === 'string' ? rawEvent.type : ''
+        const content =
+          typeof rawEvent.content === 'string'
+            ? rawEvent.content
+            : rawEvent.content == null
+              ? ''
+              : JSON.stringify(rawEvent.content)
 
-        if (evt.type === 'confirm_request') {
+        if (eventType === 'confirm_request') {
+          const confirm = data.confirm ?? {}
           setConfirmRequest({
-            requestId: confirm?.request_id,
-            content: evt.content,
-            timeout: confirm?.timeout,
-          });
-          return;
+            requestId: confirm.request_id,
+            content,
+            timeout: confirm.timeout,
+          })
+          return
         }
 
-        if (evt.type === 'message' || evt.type === 'status' || evt.type === 'reasoning') {
-          if (stream) {
-            handleStream(stream.id, stream.phase, evt.content, evt.role, stream.channel);
-            return;
+        if (eventType === 'runtime_status' && rawEvent.content && typeof rawEvent.content === 'object') {
+          const snapshot = rawEvent.content as RuntimeStateSnapshot
+          setRuntimeSnapshot(snapshot)
+          startTransition(() => {
+            setMessages((prev) => syncRuntimeToTurns(prev, snapshot))
+          })
+          return
+        }
+
+        if (eventType === 'usage' && rawEvent.content && typeof rawEvent.content === 'object') {
+          setUsageSnapshot(rawEvent.content as RuntimeUsageSnapshot)
+          return
+        }
+
+        if (eventType === 'status') {
+          const activity: TurnActivity = {
+            id: rawEvent.event_id || `${turnId || streamId || 'activity'}-${Date.now()}`,
+            turnId,
+            streamId,
+            phase:
+              typeof metadata.activity_phase === 'string'
+                ? metadata.activity_phase
+                : typeof metadata.search_phase === 'string'
+                  ? metadata.search_phase
+                  : 'status',
+            content,
+            activityKind:
+              typeof metadata.activity_kind === 'string' ? metadata.activity_kind : 'tool_chain',
+            toolNames: getToolNames(metadata),
+            metadata,
+            createdAt: Date.now(),
           }
 
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: evt.event_id || Date.now().toString(),
-              role: evt.role || 'assistant',
-              content: evt.type === 'reasoning' ? '' : evt.content,
-              reasoning: evt.type === 'reasoning' ? evt.content : '',
-              isStreaming: false,
-            },
-          ]);
+          startTransition(() => {
+            setMessages((prev) => attachActivity(prev, activity))
+          })
+          return
         }
-      } catch (err) {
-        console.error('WS parse error:', err);
+
+        if (eventType === 'message' || eventType === 'reasoning') {
+          if (streamId) {
+            startTransition(() => {
+              setMessages((prev) =>
+                appendTurnContent(
+                  prev,
+                  streamId,
+                  turnId,
+                  streamChannel || (eventType === 'reasoning' ? 'reasoning' : 'answer'),
+                  streamPhase || 'chunk',
+                  content,
+                ),
+              )
+            })
+            return
+          }
+
+          startTransition(() => {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: rawEvent.event_id || `assistant-${Date.now()}`,
+                streamId: '',
+                turnId,
+                role: rawEvent.role || 'assistant',
+                content: eventType === 'reasoning' ? '' : content,
+                reasoning: eventType === 'reasoning' ? content : '',
+                activities: [],
+                isStreaming: false,
+                createdAt: Date.now(),
+              },
+            ])
+          })
+          return
+        }
+
+        if (eventType === 'error') {
+          startTransition(() => {
+            setMessages((prev) => [...prev, createSystemTurn(content || '发生错误', true)])
+          })
+        }
+      } catch (error) {
+        console.error('WS parse error:', error)
       }
-    };
+    }
 
     ws.onclose = () => {
-      if (wsRef.current !== ws) return;
+      if (wsRef.current !== ws) {
+        return
+      }
 
-      wsRef.current = null;
-      setConnected(false);
+      wsRef.current = null
+      setConnectionState('disconnected')
       reconnectTimeoutRef.current = setTimeout(() => {
         if (!wsRef.current) {
-          connectWs();
+          connectWs()
         }
-      }, 3000);
-    };
+      }, 3000)
+    }
 
-    ws.onerror = (err) => {
-      if (wsRef.current !== ws) return;
-      console.error('WS Error:', err);
-    };
-  }, [handleStream, rememberEventId, sessionId, sourceId, wsUrl]);
+    ws.onerror = (error) => {
+      if (wsRef.current !== ws) {
+        return
+      }
+      console.error('WS Error:', error)
+    }
+  }, [baseUrl, rememberEventId, refreshRuntime, refreshUsage, sessionId, sourceId, wsUrl])
 
   useEffect(() => {
-    connectWs();
+    connectWs()
     return () => {
-      clearTimeout(reconnectTimeoutRef.current);
-      const ws = wsRef.current;
-      wsRef.current = null;
-      ws?.close();
-    };
-  }, [connectWs]);
-
-  const sendMessage = async (text: string) => {
-    const userMsgId = `user-${Date.now().toString()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: userMsgId, role: 'user', content: text, isStreaming: false },
-    ]);
-
-    try {
-      const res = await fetch(`${baseUrl}/inputs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: text,
-          session_id: sessionId,
-          source_id: sourceId,
-          role: 'user',
-        }),
-      });
-      const data = await res.json();
-      if (data.session_id && data.session_id !== sessionId) {
-        setSessionId(data.session_id);
-      }
-    } catch (err) {
-      console.error('Failed to send message via HTTP:', err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          role: 'system',
-          content: '连接后端失败，请重试',
-          isStreaming: false,
-        },
-      ]);
+      clearTimeout(reconnectTimeoutRef.current)
+      const ws = wsRef.current
+      wsRef.current = null
+      ws?.close()
     }
-  };
+  }, [connectWs])
 
-  const sendConfirmResponse = (requestId: string, accepted: boolean) => {
+  useEffect(() => {
+    if (connectionState !== 'connected') {
+      return
+    }
+
+    void refreshRuntime()
+    void refreshUsage()
+  }, [connectionState, refreshRuntime, refreshUsage, sessionId])
+
+  const sendMessage = useCallback(
+    async (text: string, thinkingOverride: ThinkingOverride = 'default') => {
+      const content = text.trim()
+      if (!content) {
+        return
+      }
+
+      const userMessage: ChatTurn = {
+        id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        streamId: '',
+        turnId: '',
+        role: 'user',
+        content,
+        reasoning: '',
+        activities: [],
+        isStreaming: false,
+        createdAt: Date.now(),
+      }
+
+      setMessages((prev) => [...prev, userMessage])
+
+      try {
+        const response = await fetch(`${baseUrl}/inputs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content,
+            session_id: sessionId,
+            source_id: sourceId,
+            role: 'user',
+            options: buildThinkingOptions(thinkingOverride),
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+
+        const data = await response.json()
+        if (data.session_id && data.session_id !== sessionId) {
+          setSessionId(data.session_id)
+        }
+      } catch (error) {
+        console.error('Failed to send message via HTTP:', error)
+        setMessages((prev) => [...prev, createSystemTurn('连接后端失败，请稍后重试', true)])
+      }
+    },
+    [baseUrl, sessionId, sourceId],
+  )
+
+  const sendConfirmResponse = useCallback((requestId: string, accepted: boolean) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
@@ -273,17 +552,34 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
           accepted,
           metadata: { from: 'confirm-dialog' },
         }),
-      );
+      )
     }
-    setConfirmRequest(null);
-  };
+    setConfirmRequest(null)
+  }, [])
+
+  const turnActivities = useMemo(() => {
+    if (runtimeSnapshot?.turn_id) {
+      const currentTurn = messages.find((message) => message.turnId === runtimeSnapshot.turn_id)
+      if (currentTurn) {
+        return currentTurn.activities
+      }
+    }
+    return lastAssistantActivities(messages)
+  }, [messages, runtimeSnapshot])
 
   return {
     messages,
-    sendMessage,
-    connected,
+    sessionId,
+    connectionState,
+    connected: connectionState === 'connected',
+    runtimeSnapshot,
+    usageSnapshot,
+    turnActivities,
     confirmRequest,
+    sendMessage,
     sendConfirmResponse,
+    refreshRuntime,
+    refreshUsage,
     baseUrl,
-  };
+  }
 }
