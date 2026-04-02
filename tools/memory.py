@@ -13,10 +13,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 from uuid import uuid4
 
-import aiohttp
+try:
+    import aiohttp
+except ImportError:  # pragma: no cover - optional dependency
+    aiohttp = None
 import numpy as np
 
 logger = logging.getLogger("meetyou.memory")
+
+
+class _FallbackClientSession:
+    async def close(self):
+        return None
 
 IDEMPOTENCY_WINDOW = timedelta(minutes=30)
 PENDING_TRIGGER_COUNT = 5
@@ -149,7 +157,7 @@ class Memory:
     async def init_memory(self, config):
         self._memory_file_path = config.get("memory_file_path") or self._memory_file_path
         self.refresh_config(config)
-        self._http_session = aiohttp.ClientSession()
+        self._http_session = aiohttp.ClientSession() if aiohttp is not None else _FallbackClientSession()
         self._store = self._empty_store()
         if os.path.exists(self._memory_file_path):
             try:

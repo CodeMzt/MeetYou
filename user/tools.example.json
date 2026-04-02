@@ -1,0 +1,195 @@
+{
+  "common_tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "exec_sys_cmd",
+        "description": "Execute a local shell command. Dangerous commands may be blocked by policy.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cmd": {
+              "type": "string",
+              "description": "The command to execute."
+            }
+          },
+          "required": ["cmd"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_system_time",
+        "description": "Get the real current system time from the host machine.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_sys_vitals",
+        "description": "Get host machine vitals such as CPU and memory usage.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    }
+  ],
+  "chain_tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "research_topic",
+        "description": "Research a topic using the configured search and source-reading chain.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The topic or question to research."
+            },
+            "goal": {
+              "type": "string",
+              "description": "Optional focus for the research."
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "inspect_page",
+        "description": "Inspect a direct webpage or PDF URL.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "The URL to inspect."
+            },
+            "goal": {
+              "type": "string",
+              "description": "Optional extraction focus."
+            }
+          },
+          "required": ["url"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search_knowledge",
+        "description": "Search private knowledge such as memory or connected knowledge sources.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The lookup query."
+            },
+            "scope": {
+              "type": "string",
+              "enum": ["auto", "memory", "notion"],
+              "description": "Optional scope."
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "manage_tasks",
+        "description": "Create, list, update, or complete lightweight local tasks.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": ["create", "list", "update", "complete"]
+            },
+            "task_key": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            },
+            "task_status": {
+              "type": "string",
+              "enum": ["open", "blocked", "done"]
+            }
+          },
+          "required": ["action"]
+        }
+      }
+    }
+  ],
+  "memory_tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "remember_knowledge",
+        "description": "Persist durable user or project knowledge into long-term memory.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "The content to remember."
+            },
+            "category": {
+              "type": "string",
+              "description": "Optional memory category."
+            }
+          },
+          "required": ["content"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search_memory",
+        "description": "Search long-term memory using natural language.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The memory query."
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    }
+  ],
+  "background_tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_background_status",
+        "description": "Get current background and heartbeat status.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    }
+  ]
+}
