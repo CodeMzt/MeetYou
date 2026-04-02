@@ -177,7 +177,11 @@ class RuntimeStateSnapshot:
 @dataclass
 class UsageSnapshot:
     session_id: str = ""
+    usage_ready: bool = False
     context_limit_tokens: int = 0
+    context_limit_source: str = ""
+    context_limit_model: str = ""
+    context_limit_confidence: str = ""
     current_context_tokens_estimated: int = 0
     context_breakdown: ContextBreakdown = field(default_factory=ContextBreakdown)
     last_turn_usage: UsageCounters = field(default_factory=UsageCounters)
@@ -188,7 +192,11 @@ class UsageSnapshot:
     def to_dict(self) -> dict:
         return {
             "session_id": self.session_id,
+            "usage_ready": bool(self.usage_ready),
             "context_limit_tokens": int(self.context_limit_tokens),
+            "context_limit_source": self.context_limit_source,
+            "context_limit_model": self.context_limit_model,
+            "context_limit_confidence": self.context_limit_confidence,
             "current_context_tokens_estimated": int(self.current_context_tokens_estimated),
             "context_breakdown": self.context_breakdown.to_dict(),
             "last_turn_usage": self.last_turn_usage.to_dict(),

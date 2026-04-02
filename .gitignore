@@ -1,5 +1,7 @@
 # User specific folders
-user/
+user/*
+!user/*.example.json
+!user/README.md
 test/
 .pjfacts/
 

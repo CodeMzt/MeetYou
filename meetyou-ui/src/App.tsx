@@ -516,6 +516,9 @@ function UsagePanel({ usageSnapshot }: { usageSnapshot: RuntimeUsageSnapshot | n
 
   const { context_breakdown: contextBreakdown, last_turn_usage: lastTurnUsage, session_totals: sessionTotals } =
     usageSnapshot
+  const usageHint = usageSnapshot.usage_ready
+    ? null
+    : 'Usage counters will appear after the first model turn. Context limit has already been resolved.'
 
   return (
     <div className="usage-panel">
@@ -542,6 +545,8 @@ function UsagePanel({ usageSnapshot }: { usageSnapshot: RuntimeUsageSnapshot | n
           <strong>{formatTokenCount(usageSnapshot.context_limit_tokens)}</strong>
         </div>
       </div>
+
+      {usageHint && <div className="usage-empty">{usageHint}</div>}
 
       <div className="usage-section">
         <div className="usage-section-title">本轮消耗</div>
@@ -575,7 +580,18 @@ function UsagePanel({ usageSnapshot }: { usageSnapshot: RuntimeUsageSnapshot | n
         </div>
       </div>
 
-      <div className="usage-footer">来源：{usageSnapshot.usage_source || 'unknown'}</div>
+      <div className="usage-section">
+        <div className="usage-section-title">Context Limit</div>
+        <div className="usage-inline-list">
+          <span>Model {usageSnapshot.context_limit_model || 'unknown'}</span>
+          <span>Source {usageSnapshot.context_limit_source || 'fallback'}</span>
+          <span>Confidence {usageSnapshot.context_limit_confidence || 'low'}</span>
+        </div>
+      </div>
+
+      <div className="usage-footer">
+        来源：{usageSnapshot.usage_source || 'unknown'} | 上限来源：{usageSnapshot.context_limit_source || 'fallback'}
+      </div>
     </div>
   )
 }
@@ -688,7 +704,9 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const connectionText = getConnectionText(connectionState)
-  const usagePillText = getUsagePillText(usageSnapshot)
+  const usagePillText = usageSnapshot && !usageSnapshot.usage_ready
+    ? `0 / ${formatTokenCount(usageSnapshot.context_limit_tokens)}`
+    : getUsagePillText(usageSnapshot)
 
   const inputPlaceholder = useMemo(() => {
     if (!connected) {

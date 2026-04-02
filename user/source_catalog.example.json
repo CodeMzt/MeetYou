@@ -1,0 +1,95 @@
+{
+  "version": "1",
+  "default_source_profiles": {
+    "workspace_local": {
+      "label": "Workspace / Local Knowledge",
+      "description": "Prefer local files, memory, and trusted private workspace sources.",
+      "preferred_source_ids": [],
+      "official_only": false,
+      "default_freshness": "workspace",
+      "primary_domains": []
+    },
+    "tech_updates": {
+      "label": "Tech Updates",
+      "description": "Official release notes, changelogs, standards, and vendor updates.",
+      "preferred_source_ids": [
+        "github_releases_official"
+      ],
+      "official_only": true,
+      "default_freshness": "high",
+      "primary_domains": [
+        "github.com",
+        "developer.mozilla.org",
+        "docs.python.org"
+      ],
+      "match_any": [
+        "latest",
+        "recent",
+        "release",
+        "changelog",
+        "framework",
+        "sdk",
+        "api",
+        "model"
+      ]
+    }
+  },
+  "context_limits": [
+    {
+      "provider": "openai",
+      "host_patterns": [
+        "api.openai.com"
+      ],
+      "model_patterns": [
+        "gpt-5.4*"
+      ],
+      "context_limit_tokens": 400000,
+      "source": "config_override",
+      "confidence": "high",
+      "probe": false
+    },
+    {
+      "provider": "ollama",
+      "host_patterns": [
+        "localhost",
+        "127.0.0.1",
+        "*"
+      ],
+      "model_patterns": [
+        "*"
+      ],
+      "context_limit_tokens": 131072,
+      "source": "config_override",
+      "confidence": "medium",
+      "probe": true
+    }
+  ],
+  "sources": [
+    {
+      "id": "github_releases_official",
+      "enabled": true,
+      "domain": "github.com",
+      "label": "GitHub Releases",
+      "connector_type": "github_releases",
+      "profiles": ["tech_updates"],
+      "priority": 100,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "high",
+      "auth": [],
+      "rate_limit": {
+        "requests_per_minute": 30
+      },
+      "request_defaults": {
+        "site_query": "github.com"
+      },
+      "capabilities": {
+        "search": true,
+        "track_updates": true
+      },
+      "fallback_policy": {
+        "on_error": "continue"
+      }
+    }
+  ]
+}

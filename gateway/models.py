@@ -112,7 +112,11 @@ class SessionUsageTotalsResponse(UsageCountersResponse):
 
 class RuntimeUsageResponse(BaseModel):
     session_id: str
+    usage_ready: bool = False
     context_limit_tokens: int = 0
+    context_limit_source: str = ""
+    context_limit_model: str = ""
+    context_limit_confidence: str = ""
     current_context_tokens_estimated: int = 0
     context_breakdown: ContextBreakdownResponse
     last_turn_usage: UsageCountersResponse
@@ -168,6 +172,18 @@ class MemoryRecordResponse(BaseModel):
     project: str | None = None
     task_status: str | None = None
     deadline: str | None = None
+    schedule_kind: str | None = None
+    due_at: str | None = None
+    timezone: str | None = None
+    recurrence: Any = None
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    last_run_status: str | None = None
+    last_run_summary: str | None = None
+    auto_run: bool | None = None
+    job_prompt: str | None = None
+    notify_policy: str | None = None
+    delivery_target: Any = None
 
 
 class MemoryEdgeResponse(BaseModel):
@@ -219,6 +235,18 @@ class MemoryGraphNodeResponse(BaseModel):
     project: str | None = None
     task_status: str | None = None
     deadline: str | None = None
+    schedule_kind: str | None = None
+    due_at: str | None = None
+    timezone: str | None = None
+    recurrence: Any = None
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    last_run_status: str | None = None
+    last_run_summary: str | None = None
+    auto_run: bool | None = None
+    job_prompt: str | None = None
+    notify_policy: str | None = None
+    delivery_target: Any = None
 
 
 class MemoryGraphEdgeResponse(BaseModel):
