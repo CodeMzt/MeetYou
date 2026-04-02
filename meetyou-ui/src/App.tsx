@@ -1,17 +1,49 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Pin, PinOff, Send, X, Minus, ShieldAlert } from 'lucide-react';
+import { Settings, Pin, PinOff, Send, ShieldAlert, BrainCircuit, ChevronDown, ChevronRight, X, Minus, Database } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMeetYou } from './hooks/useMeetYou';
+
+function ReasoningBlock({ text, isStreaming }: { text: string, isStreaming?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  // Auto-expand if streaming, but allow user to collapse
+  useEffect(() => {
+    if (isStreaming) setExpanded(true);
+  }, [isStreaming]);
+
+  if (!text) return null;
+
+  return (
+    <div className="reasoning-block">
+      <div className="reasoning-header" onClick={() => setExpanded(!expanded)}>
+        <BrainCircuit size={14} className={isStreaming ? 'pulse' : ''} />
+        <span style={{ fontSize: 12, fontWeight: 500 }}>
+          {isStreaming ? '正在思考...' : '思考过程'}
+        </span>
+        <div style={{ flex: 1 }} />
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      </div>
+      <AnimatePresence>
+        {expanded && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }} 
+            animate={{ height: 'auto', opacity: 1 }} 
+            exit={{ height: 0, opacity: 0 }}
+            className="reasoning-content"
+          >
+            {text}
+            {isStreaming && <span className="cursor-blink">▍</span>}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 export default function App() {
   const { messages, sendMessage, connected, confirmRequest, sendConfirmResponse } = useMeetYou('http://127.0.0.1:8000');
   
   const [inputVal, setInputVal] = useState('');
   const [isPinned, setIsPinned] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
-  
-  // Configurable states
-  const [opacity, setOpacity] = useState(0.95);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -47,13 +79,14 @@ export default function App() {
   };
 
   return (
-    <div className="app-container" style={{ opacity }}>
+    <div className="app-container" style={{ opacity: 0.95 }}>
       {/* Titlebar */}
       <div className="titlebar">
         <div className="titlebar-title">
           MeetYou
           <span className="status-dot" style={{ background: connected ? '#34c759' : '#ff3b30' }} title={connected ? '已连接' : '未连接'} />
         </div>
+        <div style={{ flex: 1 }} />
         <div className="actions">
           <button 
             className={`icon-btn ${isPinned ? 'active' : ''}`} 
@@ -62,44 +95,22 @@ export default function App() {
           >
             {isPinned ? <Pin size={16} /> : <PinOff size={16} />}
           </button>
-          <button className="icon-btn" onClick={() => setShowSettings(!showSettings)} title="设置">
+          <button className="icon-btn" onClick={() => window.ipcRenderer?.send('open-dashboard')} title="记忆图谱">
+            <Database size={16} />
+          </button>
+          <button className="icon-btn" onClick={() => window.ipcRenderer?.send('open-settings')} title="设置">
             <Settings size={16} />
           </button>
-          <button className="icon-btn" onClick={handleMinimize} title="最小化">
-            <Minus size={16} />
+        </div>
+        <div className="window-controls" style={{ marginLeft: 8 }}>
+          <button className="win-btn minimize" onClick={handleMinimize} title="最小化">
+            <Minus size={14} />
           </button>
-          <button className="icon-btn" onClick={handleClose} title="关闭退出">
-            <X size={16} />
+          <button className="win-btn close" onClick={handleClose} title="关闭">
+            <X size={14} />
           </button>
         </div>
       </div>
-
-      {/* Settings Panel */}
-      <AnimatePresence>
-        {showSettings && (
-          <motion.div 
-            className="settings-panel"
-            initial={{ opacity: 0, y: -10, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-          >
-            <div className="setting-item">
-              <label>窗口不透明度</label>
-              <input 
-                type="range" 
-                min="0.3" max="1" step="0.05" 
-                value={opacity} 
-                onChange={e => setOpacity(Number(e.target.value))}
-              />
-            </div>
-            <div className="setting-item">
-              <label>连接状态</label>
-              <span>{connected ? '已连接后端' : '断开'}</span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Message List */}
       <div className="content-area">
@@ -121,8 +132,14 @@ export default function App() {
               transition={{ type: 'spring', stiffness: 400, damping: 25 }}
             >
               <div className="message-inner">
+                {msg.reasoning && (
+                  <ReasoningBlock 
+                    text={msg.reasoning} 
+                    isStreaming={msg.isStreaming && !msg.content} 
+                  />
+                )}
                 {msg.content}
-                {msg.isStreaming && <span className="cursor-blink">▍</span>}
+                {msg.isStreaming && msg.content && <span className="cursor-blink">▍</span>}
               </div>
             </motion.div>
           ))}
@@ -243,6 +260,42 @@ export default function App() {
           color: white;
         }
         .btn-accept:hover { background: #d70015; }
+
+        .reasoning-block {
+          background: rgba(128, 128, 128, 0.05);
+          border-left: 3px solid var(--accent-color);
+          border-radius: 4px;
+          margin-bottom: 8px;
+          overflow: hidden;
+        }
+        .reasoning-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 10px;
+          cursor: pointer;
+          color: var(--text-secondary);
+          transition: background 0.2s;
+        }
+        .reasoning-header:hover {
+          background: rgba(128, 128, 128, 0.08);
+        }
+        .reasoning-content {
+          padding: 0 10px 10px;
+          font-size: 13px;
+          color: var(--text-secondary);
+          white-space: pre-wrap;
+          line-height: 1.5;
+        }
+        .pulse {
+          animation: pulse 1.5s infinite;
+          color: var(--accent-color);
+        }
+        @keyframes pulse {
+          0% { opacity: 0.6; transform: scale(0.95); }
+          50% { opacity: 1; transform: scale(1.05); }
+          100% { opacity: 0.6; transform: scale(0.95); }
+        }
       `}</style>
     </div>
   );

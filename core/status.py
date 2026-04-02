@@ -1,112 +1,219 @@
 """
-系统状态管理器。
-
-维护系统当前运行状态，通过 EventBus 发布状态变更事件，
-供 Listener 渲染实时状态栏。
+Runtime status and usage tracking helpers.
 """
 
-import asyncio
-import logging
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 
-logger = logging.getLogger("meetyou.status")
+
+def utcnow_iso() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
-class SystemStatus(str, Enum):
-    """系统状态枚举"""
+class RuntimeStatus(str, Enum):
     INITIALIZING = "initializing"
     IDLE = "idle"
     THINKING = "thinking"
-    STREAMING = "streaming"
     TOOL_CALLING = "tool_calling"
-    SUMMARIZING = "summarizing"
-    CONFIRMING = "confirming"
+    ANSWERING = "answering"
+    WAITING_CONFIRM = "waiting_confirm"
     HEARTBEAT = "heartbeat"
+    ERROR = "error"
     SHUTTING_DOWN = "shutting_down"
 
 
-# 状态 → (中文标签, prompt_toolkit 颜色样式)
-STATUS_DISPLAY = {
-    SystemStatus.INITIALIZING: ("系统初始化中", "fg:ansiyellow"),
-    SystemStatus.IDLE:         ("等待输入",     "fg:ansigreen"),
-    SystemStatus.THINKING:     ("思考中",       "fg:ansiblue"),
-    SystemStatus.STREAMING:    ("回复中",       "fg:ansicyan"),
-    SystemStatus.TOOL_CALLING: ("调用工具",     "fg:ansimagenta"),
-    SystemStatus.SUMMARIZING:  ("上下文压缩中", "fg:ansiyellow"),
-    SystemStatus.CONFIRMING:   ("等待用户确认", "fg:ansired"),
-    SystemStatus.HEARTBEAT:    ("心跳处理中",   "fg:ansiyellow"),
-    SystemStatus.SHUTTING_DOWN:("正在关闭",     "fg:ansired"),
-}
+@dataclass
+class UsageCounters:
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int = 0
+    total_tokens: int = 0
+
+    def add(self, other: "UsageCounters") -> None:
+        self.prompt_tokens += int(other.prompt_tokens)
+        self.completion_tokens += int(other.completion_tokens)
+        self.reasoning_tokens += int(other.reasoning_tokens)
+        self.total_tokens += int(other.total_tokens)
+
+    def to_dict(self) -> dict:
+        return {
+            "prompt_tokens": int(self.prompt_tokens),
+            "completion_tokens": int(self.completion_tokens),
+            "reasoning_tokens": int(self.reasoning_tokens),
+            "total_tokens": int(self.total_tokens),
+        }
+
+
+@dataclass
+class SessionUsageTotals(UsageCounters):
+    turn_count: int = 0
+
+    def to_dict(self) -> dict:
+        payload = super().to_dict()
+        payload["turn_count"] = int(self.turn_count)
+        return payload
+
+
+@dataclass
+class ContextBreakdown:
+    system: int = 0
+    history: int = 0
+    tool_history: int = 0
+    memory_context: int = 0
+    policy: int = 0
+    current_input: int = 0
+    proprioception: int = 0
+    total: int = 0
+
+    @classmethod
+    def from_mapping(cls, data: dict | None = None) -> "ContextBreakdown":
+        data = data or {}
+        breakdown = cls(
+            system=int(data.get("system", 0) or 0),
+            history=int(data.get("history", 0) or 0),
+            tool_history=int(data.get("tool_history", 0) or 0),
+            memory_context=int(data.get("memory_context", 0) or 0),
+            policy=int(data.get("policy", 0) or 0),
+            current_input=int(data.get("current_input", 0) or 0),
+            proprioception=int(data.get("proprioception", 0) or 0),
+        )
+        breakdown.total = int(
+            data.get("total")
+            or (
+                breakdown.system
+                + breakdown.history
+                + breakdown.tool_history
+                + breakdown.memory_context
+                + breakdown.policy
+                + breakdown.current_input
+                + breakdown.proprioception
+            )
+        )
+        return breakdown
+
+    def to_dict(self) -> dict:
+        return {
+            "system": int(self.system),
+            "history": int(self.history),
+            "tool_history": int(self.tool_history),
+            "memory_context": int(self.memory_context),
+            "policy": int(self.policy),
+            "current_input": int(self.current_input),
+            "proprioception": int(self.proprioception),
+            "total": int(self.total),
+        }
+
+
+@dataclass
+class RuntimeStateSnapshot:
+    session_id: str = ""
+    status: str = RuntimeStatus.IDLE.value
+    detail: str = ""
+    active_tools: list[str] = field(default_factory=list)
+    stream_id: str = ""
+    turn_id: str = ""
+    updated_at: str = field(default_factory=utcnow_iso)
+
+    def update(
+        self,
+        *,
+        status: str | RuntimeStatus,
+        detail: str = "",
+        active_tools: list[str] | None = None,
+        stream_id: str | None = None,
+        turn_id: str | None = None,
+    ) -> "RuntimeStateSnapshot":
+        self.status = status.value if isinstance(status, RuntimeStatus) else str(status)
+        self.detail = detail
+        if active_tools is not None:
+            self.active_tools = list(active_tools)
+        if stream_id is not None:
+            self.stream_id = stream_id
+        if turn_id is not None:
+            self.turn_id = turn_id
+        self.updated_at = utcnow_iso()
+        return self
+
+    def to_dict(self) -> dict:
+        return {
+            "session_id": self.session_id,
+            "status": self.status,
+            "detail": self.detail,
+            "active_tools": list(self.active_tools),
+            "stream_id": self.stream_id,
+            "turn_id": self.turn_id,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass
+class UsageSnapshot:
+    session_id: str = ""
+    context_limit_tokens: int = 0
+    current_context_tokens_estimated: int = 0
+    context_breakdown: ContextBreakdown = field(default_factory=ContextBreakdown)
+    last_turn_usage: UsageCounters = field(default_factory=UsageCounters)
+    session_totals: SessionUsageTotals = field(default_factory=SessionUsageTotals)
+    usage_source: str = "estimated"
+    updated_at: str = field(default_factory=utcnow_iso)
+
+    def to_dict(self) -> dict:
+        return {
+            "session_id": self.session_id,
+            "context_limit_tokens": int(self.context_limit_tokens),
+            "current_context_tokens_estimated": int(self.current_context_tokens_estimated),
+            "context_breakdown": self.context_breakdown.to_dict(),
+            "last_turn_usage": self.last_turn_usage.to_dict(),
+            "session_totals": self.session_totals.to_dict(),
+            "usage_source": self.usage_source,
+            "updated_at": self.updated_at,
+        }
 
 
 class StatusManager:
     """
-    可观察的系统状态管理器。
-
-    模块通过 set() / set_async() 更新状态，
-    变更事件自动通过 EventBus 发布给 UI 层。
-
-    用法:
-        status.set(SystemStatus.THINKING)
-        status.set(SystemStatus.TOOL_CALLING, "exec_sys_cmd")
+    Tracks runtime-wide state that is not bound to a single conversation session.
     """
 
-    def __init__(self, event_bus):
-        self._event_bus = event_bus
-        self._status = SystemStatus.INITIALIZING
-        self._detail = ""
-
-    @property
-    def current(self) -> SystemStatus:
-        return self._status
-
-    @property
-    def detail(self) -> str:
-        return self._detail
-
-    @property
-    def display_label(self) -> str:
-        """当前状态的中文展示标签"""
-        label, _ = STATUS_DISPLAY.get(self._status, ("未知", ""))
-        if self._detail:
-            return f"{label}: {self._detail}"
-        return label
-
-    @property
-    def display_style(self) -> str:
-        """当前状态的颜色样式"""
-        _, style = STATUS_DISPLAY.get(self._status, ("", ""))
-        return style
-
-    def set(self, status: SystemStatus, detail: str = ""):
-        """
-        同步更新状态。
-
-        在有 running loop 的上下文中会通过 call_soon 调度事件发布。
-        """
-        self._status = status
-        self._detail = detail
-        # 尝试异步发布事件
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._publish())
-        except RuntimeError:
-            pass  # 没有 event loop 时（如纯同步上下文）静默跳过
-
-    async def set_async(self, status: SystemStatus, detail: str = ""):
-        """异步更新状态并发布事件。"""
-        self._status = status
-        self._detail = detail
-        await self._publish()
-
-    async def _publish(self):
-        """发布状态变更事件"""
-        await self._event_bus.publish(
-            self._event_bus.STATUS_CHANGE,
-            {
-                "status": self._status,
-                "detail": self._detail,
-                "label": self.display_label,
-                "style": self.display_style,
-            },
+    def __init__(self):
+        self._global_state = RuntimeStateSnapshot(
+            session_id="system:global",
+            status=RuntimeStatus.INITIALIZING.value,
         )
+        self._heartbeat_state = RuntimeStateSnapshot(
+            session_id="system:heart",
+            status=RuntimeStatus.IDLE.value,
+        )
+
+    def set_global(
+        self,
+        status: str | RuntimeStatus,
+        detail: str = "",
+    ) -> dict:
+        return self._global_state.update(status=status, detail=detail).to_dict()
+
+    def set_heartbeat(
+        self,
+        status: str | RuntimeStatus,
+        detail: str = "",
+    ) -> dict:
+        active_tools = [] if status != RuntimeStatus.HEARTBEAT else ["heartbeat"]
+        return self._heartbeat_state.update(
+            status=status,
+            detail=detail,
+            active_tools=active_tools,
+        ).to_dict()
+
+    def get_global(self) -> dict:
+        return self._global_state.to_dict()
+
+    def get_heartbeat(self) -> dict:
+        return self._heartbeat_state.to_dict()

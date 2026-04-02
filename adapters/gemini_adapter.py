@@ -1,12 +1,8 @@
 """
-Google Gemini generateContent API 适配器。
-
-支持：
-- SSE 流式分块响应
-- functionCall / functionResponse 解析
-- 多模态 (inlineData)
-- systemInstruction 处理
+Google Gemini generateContent adapter.
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -17,9 +13,27 @@ from adapters.base import LLMAdapter, StreamEvent, ToolCallInfo
 logger = logging.getLogger("meetyou.adapter.gemini")
 
 
-class GeminiAdapter(LLMAdapter):
-    """Google Gemini API 适配器"""
+def _gemini_usage(payload: dict | None) -> dict | None:
+    payload = payload or {}
+    usage = payload.get("usageMetadata") or {}
+    if not usage:
+        return None
+    prompt_tokens = int(usage.get("promptTokenCount", 0) or 0)
+    completion_tokens = int(usage.get("candidatesTokenCount", 0) or 0)
+    reasoning_tokens = int(usage.get("thoughtsTokenCount", 0) or 0)
+    total_tokens = int(
+        usage.get("totalTokenCount", 0)
+        or (prompt_tokens + completion_tokens + reasoning_tokens)
+    )
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "total_tokens": total_tokens,
+    }
 
+
+class GeminiAdapter(LLMAdapter):
     def _build_url(self, base_url: str, model: str, stream: bool, api_key: str) -> str:
         action = "streamGenerateContent" if stream else "generateContent"
         if "generateContent" in base_url or "streamGenerateContent" in base_url:
@@ -33,7 +47,6 @@ class GeminiAdapter(LLMAdapter):
         return url
 
     def format_messages(self, messages: list[dict]) -> dict:
-        """返回 {"system_instruction": dict|None, "contents": list}"""
         system_parts = []
         contents = []
 
@@ -49,15 +62,17 @@ class GeminiAdapter(LLMAdapter):
             gemini_role = "model" if role == "assistant" else "user"
             parts = []
 
-            # tool response
             if role == "tool":
-                parts.append({
-                    "functionResponse": {
-                        "name": msg.get("tool_call_name", "function"),
-                        "response": {"result": content if isinstance(content, str) else str(content)},
+                parts.append(
+                    {
+                        "functionResponse": {
+                            "name": msg.get("tool_call_name", "function"),
+                            "response": {
+                                "result": content if isinstance(content, str) else str(content),
+                            },
+                        }
                     }
-                })
-            # 多模态
+                )
             elif isinstance(content, list):
                 for part in content:
                     if not isinstance(part, dict):
@@ -65,24 +80,27 @@ class GeminiAdapter(LLMAdapter):
                     if part.get("type") == "text":
                         parts.append({"text": part["text"]})
                     elif part.get("type") == "image":
-                        parts.append({
-                            "inlineData": {
-                                "mimeType": part.get("mime_type", "image/png"),
-                                "data": part.get("image_data", ""),
+                        parts.append(
+                            {
+                                "inlineData": {
+                                    "mimeType": part.get("mime_type", "image/png"),
+                                    "data": part.get("image_data", ""),
+                                }
                             }
-                        })
-            # assistant with tool calls
+                        )
             elif role == "assistant" and msg.get("tool_calls"):
                 if content:
                     parts.append({"text": content})
                 for tc in msg["tool_calls"]:
                     fn = tc.get("function", {})
-                    parts.append({
-                        "functionCall": {
-                            "name": fn.get("name", ""),
-                            "args": json.loads(fn.get("arguments", "{}")),
+                    parts.append(
+                        {
+                            "functionCall": {
+                                "name": fn.get("name", ""),
+                                "args": json.loads(fn.get("arguments", "{}")),
+                            }
                         }
-                    })
+                    )
             else:
                 parts.append({"text": content or ""})
 
@@ -100,15 +118,50 @@ class GeminiAdapter(LLMAdapter):
         declarations = []
         for tool in tools:
             fn = tool.get("function", {})
-            decl = {"name": fn.get("name", ""), "description": fn.get("description", "")}
+            decl = {
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+            }
             params = fn.get("parameters")
             if params:
                 decl["parameters"] = params
             declarations.append(decl)
         return [{"functionDeclarations": declarations}]
 
+    def _apply_thinking(self, payload: dict, **kwargs) -> None:
+        thinking_enabled = kwargs.pop("thinking", None)
+        thinking_effort = kwargs.pop("thinking_effort", None)
+        thinking_budget = kwargs.pop("thinking_budget", None)
+
+        generation_config = payload.setdefault("generationConfig", {})
+        if thinking_enabled is False:
+            generation_config["thinkingConfig"] = {
+                "thinkingBudget": 0,
+                "includeThoughts": False,
+            }
+        elif thinking_enabled:
+            thinking_config = {"includeThoughts": True}
+            if thinking_budget is not None:
+                thinking_config["thinkingBudget"] = int(thinking_budget)
+            elif thinking_effort == "low":
+                thinking_config["thinkingBudget"] = 256
+            elif thinking_effort == "medium":
+                thinking_config["thinkingBudget"] = 1024
+            elif thinking_effort == "high":
+                thinking_config["thinkingBudget"] = 2048
+            generation_config["thinkingConfig"] = thinking_config
+
+        payload.update(kwargs)
+
     async def stream_chat(
-        self, session, url, api_key, model, messages, tools=None, **kwargs
+        self,
+        session,
+        url,
+        api_key,
+        model,
+        messages,
+        tools=None,
+        **kwargs,
     ) -> AsyncGenerator[StreamEvent, None]:
         api_url = self._build_url(url, model, stream=True, api_key=api_key)
         msg_data = self.format_messages(messages)
@@ -119,7 +172,7 @@ class GeminiAdapter(LLMAdapter):
         ft = self.format_tools(tools)
         if ft:
             payload["tools"] = ft
-        payload.update(kwargs)
+        self._apply_thinking(payload, **kwargs)
 
         headers = {"Content-Type": "application/json"}
         tool_calls: list[ToolCallInfo] = []
@@ -135,17 +188,26 @@ class GeminiAdapter(LLMAdapter):
                 except (json.JSONDecodeError, ValueError):
                     continue
 
+                usage = _gemini_usage(data)
+                if usage:
+                    yield StreamEvent(type="usage", usage=usage)
+
                 for cand in data.get("candidates", []):
                     for part in cand.get("content", {}).get("parts", []):
                         if "text" in part:
-                            yield StreamEvent(type="text", text=part["text"])
+                            if part.get("thought"):
+                                yield StreamEvent(type="reasoning", reasoning_text=part["text"])
+                            else:
+                                yield StreamEvent(type="text", text=part["text"])
                         elif "functionCall" in part:
                             fc = part["functionCall"]
-                            tool_calls.append(ToolCallInfo(
-                                id=f"call_{len(tool_calls)}",
-                                name=fc.get("name", ""),
-                                arguments_str=json.dumps(fc.get("args", {})),
-                            ))
+                            tool_calls.append(
+                                ToolCallInfo(
+                                    id=f"call_{len(tool_calls)}",
+                                    name=fc.get("name", ""),
+                                    arguments_str=json.dumps(fc.get("args", {})),
+                                )
+                            )
 
         if tool_calls:
             yield StreamEvent(type="tool_calls", tool_calls=tool_calls)
@@ -161,23 +223,25 @@ class GeminiAdapter(LLMAdapter):
         ft = self.format_tools(tools)
         if ft:
             payload["tools"] = ft
-        payload.update(kwargs)
+        self._apply_thinking(payload, **kwargs)
 
         headers = {"Content-Type": "application/json"}
         async with session.post(api_url, headers=headers, json=payload) as resp:
             resp.raise_for_status()
             data = await resp.json()
 
-        result = {"content": "", "tool_calls": []}
+        result = {"content": "", "tool_calls": [], "usage": _gemini_usage(data)}
         for cand in data.get("candidates", []):
             for part in cand.get("content", {}).get("parts", []):
-                if "text" in part:
+                if "text" in part and not part.get("thought"):
                     result["content"] += part["text"]
                 elif "functionCall" in part:
                     fc = part["functionCall"]
-                    result["tool_calls"].append(ToolCallInfo(
-                        id=f"call_{len(result['tool_calls'])}",
-                        name=fc.get("name", ""),
-                        arguments_str=json.dumps(fc.get("args", {})),
-                    ))
+                    result["tool_calls"].append(
+                        ToolCallInfo(
+                            id=f"call_{len(result['tool_calls'])}",
+                            name=fc.get("name", ""),
+                            arguments_str=json.dumps(fc.get("args", {})),
+                        )
+                    )
         return result

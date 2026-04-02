@@ -1,13 +1,8 @@
 """
-Anthropic Claude Messages API 适配器。
-
-支持：
-- SSE 事件流 (content_block_start/delta/stop)
-- tool_use content block 解析
-- system 消息提取为顶层参数
-- 多模态（base64 图像）
-- Extended Thinking（推理模式）
+Anthropic Claude Messages adapter.
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -18,11 +13,23 @@ from adapters.base import LLMAdapter, StreamEvent, ToolCallInfo
 logger = logging.getLogger("meetyou.adapter.anthropic")
 
 
-class AnthropicAdapter(LLMAdapter):
-    """Anthropic Messages API 适配器"""
+def _anthropic_usage(payload: dict | None) -> dict | None:
+    payload = payload or {}
+    usage = payload.get("usage") or {}
+    if not usage:
+        return None
+    prompt_tokens = int(usage.get("input_tokens", 0) or 0)
+    completion_tokens = int(usage.get("output_tokens", 0) or 0)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "reasoning_tokens": 0,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
 
+
+class AnthropicAdapter(LLMAdapter):
     def format_messages(self, messages: list[dict]) -> dict:
-        """返回 {"system": str|None, "messages": list}"""
         system_parts = []
         formatted = []
 
@@ -30,27 +37,28 @@ class AnthropicAdapter(LLMAdapter):
             role = msg["role"]
             content = msg.get("content")
 
-            # system 消息提取为顶层参数
             if role == "system":
                 if isinstance(content, str) and content:
                     system_parts.append(content)
                 continue
 
-            # tool result → Anthropic 用 user message + tool_result block
             if role == "tool":
-                formatted.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": msg.get("tool_call_id", ""),
-                        "content": content if isinstance(content, str) else str(content),
-                    }],
-                })
+                formatted.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": msg.get("tool_call_id", ""),
+                                "content": content if isinstance(content, str) else str(content),
+                            }
+                        ],
+                    }
+                )
                 continue
 
             new_msg = {"role": "user" if role == "user" else "assistant"}
 
-            # 多模态
             if isinstance(content, list):
                 parts = []
                 for part in content:
@@ -59,29 +67,31 @@ class AnthropicAdapter(LLMAdapter):
                     if part.get("type") == "text":
                         parts.append({"type": "text", "text": part["text"]})
                     elif part.get("type") == "image":
-                        parts.append({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": part.get("mime_type", "image/png"),
-                                "data": part.get("image_data", ""),
-                            },
-                        })
+                        parts.append(
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": part.get("mime_type", "image/png"),
+                                    "data": part.get("image_data", ""),
+                                },
+                            }
+                        )
                 new_msg["content"] = parts
-
-            # assistant + tool_calls
             elif role == "assistant" and msg.get("tool_calls"):
                 blocks = []
                 if content:
                     blocks.append({"type": "text", "text": content})
                 for tc in msg["tool_calls"]:
                     fn = tc.get("function", {})
-                    blocks.append({
-                        "type": "tool_use",
-                        "id": tc.get("id", ""),
-                        "name": fn.get("name", ""),
-                        "input": json.loads(fn.get("arguments", "{}")),
-                    })
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc.get("id", ""),
+                            "name": fn.get("name", ""),
+                            "input": json.loads(fn.get("arguments", "{}")),
+                        }
+                    )
                 new_msg["content"] = blocks
             else:
                 new_msg["content"] = content or ""
@@ -99,15 +109,35 @@ class AnthropicAdapter(LLMAdapter):
         result = []
         for tool in tools:
             fn = tool.get("function", {})
-            result.append({
-                "name": fn.get("name", ""),
-                "description": fn.get("description", ""),
-                "input_schema": fn.get("parameters", {}),
-            })
+            result.append(
+                {
+                    "name": fn.get("name", ""),
+                    "description": fn.get("description", ""),
+                    "input_schema": fn.get("parameters", {}),
+                }
+            )
         return result
 
+    def _apply_thinking(self, payload: dict, **kwargs) -> None:
+        thinking_enabled = kwargs.pop("thinking", None)
+        thinking_budget = kwargs.pop("thinking_budget", None)
+        kwargs.pop("thinking_effort", None)
+        if thinking_enabled:
+            payload["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": int(thinking_budget or 10000),
+            }
+        payload.update(kwargs)
+
     async def stream_chat(
-        self, session, url, api_key, model, messages, tools=None, **kwargs
+        self,
+        session,
+        url,
+        api_key,
+        model,
+        messages,
+        tools=None,
+        **kwargs,
     ) -> AsyncGenerator[StreamEvent, None]:
         msg_data = self.format_messages(messages)
         headers = {
@@ -126,13 +156,7 @@ class AnthropicAdapter(LLMAdapter):
         ft = self.format_tools(tools)
         if ft:
             payload["tools"] = ft
-        # Extended thinking
-        if kwargs.pop("thinking", False):
-            payload["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": kwargs.pop("thinking_budget", 10000),
-            }
-        payload.update(kwargs)
+        self._apply_thinking(payload, **kwargs)
 
         current_tool: ToolCallInfo | None = None
         tool_calls: list[ToolCallInfo] = []
@@ -149,25 +173,34 @@ class AnthropicAdapter(LLMAdapter):
                     continue
 
                 evt = data.get("type")
-                if evt == "content_block_start":
+                if evt == "message_start":
+                    usage = _anthropic_usage(data.get("message"))
+                    if usage:
+                        yield StreamEvent(type="usage", usage=usage)
+                elif evt == "content_block_start":
                     block = data.get("content_block", {})
                     if block.get("type") == "tool_use":
                         current_tool = ToolCallInfo(
-                            id=block.get("id", ""), name=block.get("name", "")
+                            id=block.get("id", ""),
+                            name=block.get("name", ""),
                         )
                 elif evt == "content_block_delta":
                     delta = data.get("delta", {})
-                    dt = delta.get("type")
-                    if dt == "text_delta":
+                    delta_type = delta.get("type")
+                    if delta_type == "text_delta":
                         yield StreamEvent(type="text", text=delta.get("text", ""))
-                    elif dt == "thinking_delta":
+                    elif delta_type == "thinking_delta":
                         yield StreamEvent(type="reasoning", reasoning_text=delta.get("thinking", ""))
-                    elif dt == "input_json_delta" and current_tool:
+                    elif delta_type == "input_json_delta" and current_tool:
                         current_tool.arguments_str += delta.get("partial_json", "")
                 elif evt == "content_block_stop":
                     if current_tool:
                         tool_calls.append(current_tool)
                         current_tool = None
+                elif evt == "message_delta":
+                    usage = _anthropic_usage(data)
+                    if usage:
+                        yield StreamEvent(type="usage", usage=usage)
                 elif evt == "message_stop":
                     break
 
@@ -193,20 +226,22 @@ class AnthropicAdapter(LLMAdapter):
         ft = self.format_tools(tools)
         if ft:
             payload["tools"] = ft
-        payload.update(kwargs)
+        self._apply_thinking(payload, **kwargs)
 
         async with session.post(url, headers=headers, json=payload) as resp:
             resp.raise_for_status()
             data = await resp.json()
 
-        result = {"content": "", "tool_calls": []}
+        result = {"content": "", "tool_calls": [], "usage": _anthropic_usage(data)}
         for block in data.get("content", []):
             if block.get("type") == "text":
                 result["content"] += block.get("text", "")
             elif block.get("type") == "tool_use":
-                result["tool_calls"].append(ToolCallInfo(
-                    id=block.get("id", ""),
-                    name=block.get("name", ""),
-                    arguments_str=json.dumps(block.get("input", {})),
-                ))
+                result["tool_calls"].append(
+                    ToolCallInfo(
+                        id=block.get("id", ""),
+                        name=block.get("name", ""),
+                        arguments_str=json.dumps(block.get("input", {})),
+                    )
+                )
         return result

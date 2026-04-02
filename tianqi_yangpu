@@ -1,0 +1,44 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]: 天气网提供全国国内城市天气预报，旅游景点天气预报，国际城市天气预报以及历史天气预报查询
+    - generic [ref=e5]
+  - generic [ref=e12]:
+    - link "天气网" [ref=e14] [cursor=pointer]:
+      - /url: https://www.tianqi.com
+    - generic [ref=e16]
+  - list [ref=e29]:
+    - listitem [ref=e30]
+    - listitem [ref=e32]
+    - listitem [ref=e34]
+    - listitem [ref=e36]
+    - listitem [ref=e38]
+    - listitem [ref=e40]
+    - listitem [ref=e42]
+  - generic [ref=e44]:
+    - generic [ref=e45]
+    - generic
+  - generic [ref=e137]:
+    - generic [ref=e138]
+    - generic [ref=e527]
+  - generic [ref=e718]:
+    - list [ref=e720]
+    - list [ref=e723]
+  - generic [ref=e729]:
+    - generic [ref=e730]
+    - generic [ref=e750]
+    - generic [ref=e753]
+    - generic [ref=e756]
+  - generic [ref=e762]:
+    - text: Copyright © 2009-2026
+    - link "www.tianqi.com 天气网" [ref=e763] [cursor=pointer]:
+      - /url: https://www.tianqi.com
+    - text: . All Rights Reserved.
+    - link "渝ICP备18012671号-2" [ref=e764] [cursor=pointer]:
+      - /url: http://beian.miit.gov.cn
+    - paragraph [ref=e765]: 温馨提示：数据来源中国气象局，仅供参考
+    - paragraph [ref=e766]
+    - link "举报链接" [ref=e769] [cursor=pointer]:
+      - /url: http://www.12377.cn/
+    - generic [ref=e770]
+    - link "增值电信业务经营许可证：渝B2-20220180" [ref=e775] [cursor=pointer]:
+      - /url: https://dxzhgl.miit.gov.cn/
