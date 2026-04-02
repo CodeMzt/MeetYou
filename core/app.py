@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from adapters.base import create_adapter
+from core.assistant_modes import AssistantModeManager
 from core.brain import Brain, BrainOutputEvent
 from core.config import ConfigManager
 from core.context import ContextManager
@@ -64,6 +65,14 @@ _MEMORY_IMMEDIATE_KEYS = {
     "embedding_api_key",
     "embedding_model",
 }
+_MODE_IMMEDIATE_KEYS = {
+    "assistant_modes",
+    "mode_router",
+    "trusted_write_roots",
+    "source_profiles",
+    "document_parsers",
+    "office_integrations",
+}
 _RESTART_REQUIRED_KEYS = {
     "cmd_policy_path",
     "enable_feishu_bot",
@@ -91,6 +100,7 @@ class App:
         self.config = ConfigManager()
         self.platform = detect_platform()
         self.status_manager = StatusManager()
+        self.mode_manager = AssistantModeManager(self.config)
 
         self.main_adapter = create_adapter(self._get_main_provider())
         self.heart_adapter = create_adapter(self._get_heart_provider())
@@ -109,6 +119,7 @@ class App:
             self.context_manager,
             self.mcp_manager,
             system_tools,
+            self.mode_manager,
         )
         self.brain = Brain(
             self.main_adapter,
@@ -116,6 +127,7 @@ class App:
             self.context_manager,
             self.event_bus,
             self.exception_router,
+            mode_manager=self.mode_manager,
         )
         self.heart = Heart(
             self.heart_adapter,
@@ -424,6 +436,9 @@ class App:
             self.memory.refresh_config(self.config)
             reloaded_components.add("memory")
 
+        if _MODE_IMMEDIATE_KEYS.intersection(applied_keys):
+            reloaded_components.add("mode_manager")
+
         if restart_required:
             warnings.append(
                 "The following keys were written, but require a gateway restart to fully take effect: "
@@ -474,7 +489,11 @@ class App:
                     "content": f"系统后台心跳捕获到重要潜意识事务，请立刻作为内部处理：{event.content}",
                 }
             else:
-                input_info = {"role": event.role, "content": event.content}
+                input_info = {
+                    "role": event.role,
+                    "content": event.content,
+                    "metadata": dict(getattr(event, "metadata", {}) or {}),
+                }
 
             is_boot = event.session_id == "system:boot"
             target = (

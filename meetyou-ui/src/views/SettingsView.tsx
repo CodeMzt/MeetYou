@@ -100,6 +100,18 @@ function FieldControl({
         disabled={saving}
       />
     )
+  } else if (field.schema.input === 'json') {
+    control = (
+      <textarea
+        className="settings-input settings-textarea settings-json"
+        value={String(field.value)}
+        onChange={(event) => onChange(field.key, event.target.value)}
+        placeholder="{}"
+        rows={10}
+        disabled={saving}
+        spellCheck={false}
+      />
+    )
   } else {
     control = (
       <input

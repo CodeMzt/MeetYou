@@ -22,6 +22,7 @@ class InputRequest(BaseModel):
     session_id: str | None = None
     source_id: str = "web-client"
     role: str = "user"
+    preferred_mode: str | None = None
     metadata: dict = Field(default_factory=dict)
     options: InputOptions | None = None
 
@@ -72,6 +73,10 @@ class RuntimeStateSnapshotResponse(BaseModel):
     status: str = "idle"
     detail: str = ""
     active_tools: list[str] = Field(default_factory=list)
+    current_mode: str = ""
+    route_reason: str = ""
+    action_risk: str = "read"
+    source_profile: str = ""
     stream_id: str = ""
     turn_id: str = ""
     updated_at: str = ""

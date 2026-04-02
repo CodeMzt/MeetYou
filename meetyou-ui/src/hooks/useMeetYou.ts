@@ -1,5 +1,6 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  AssistantMode,
   ChatTurn,
   ConfirmRequestPayload,
   ConnectionState,
@@ -494,7 +495,11 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
   }, [connectionState, refreshRuntime, refreshUsage, sessionId])
 
   const sendMessage = useCallback(
-    async (text: string, thinkingOverride: ThinkingOverride = 'default') => {
+    async (
+      text: string,
+      thinkingOverride: ThinkingOverride = 'default',
+      preferredMode: AssistantMode = 'auto',
+    ) => {
       const content = text.trim()
       if (!content) {
         return
@@ -523,6 +528,7 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
             session_id: sessionId,
             source_id: sourceId,
             role: 'user',
+            preferred_mode: preferredMode === 'auto' ? undefined : preferredMode,
             options: buildThinkingOptions(thinkingOverride),
           }),
         })

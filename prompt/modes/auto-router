@@ -1,0 +1,10 @@
+[Auto Router]
+Choose the working mode that best matches the user's request.
+
+Modes:
+- documents: local files, folders, workspace analysis, document writing, report generation
+- research: current information, URLs, source verification, external research
+- office: schedules, meeting briefs, drafts, notes sync, coordination
+- study: study plans, learning points, quizzes, flashcards, mastery tracking
+
+If signals are mixed, prefer the smallest mode that directly matches the user's job.
