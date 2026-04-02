@@ -2,6 +2,8 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
+export type AssistantMode = 'auto' | 'documents' | 'research' | 'office' | 'study'
+
 export type RuntimeStatus =
   | 'initializing'
   | 'idle'
@@ -20,6 +22,10 @@ export interface RuntimeStateSnapshot {
   status: RuntimeStatus
   detail: string
   active_tools: string[]
+  current_mode: string
+  route_reason: string
+  action_risk: string
+  source_profile: string
   stream_id: string
   turn_id: string
   updated_at: string
@@ -98,9 +104,9 @@ export interface ConfigEntry {
   env_key: string | null
 }
 
-export type ConfigGroupKey = 'model' | 'secrets' | 'memory' | 'heartbeat' | 'advanced'
+export type ConfigGroupKey = 'model' | 'secrets' | 'memory' | 'heartbeat' | 'modes' | 'advanced'
 
-export type ConfigFieldInput = 'text' | 'password' | 'number' | 'boolean' | 'select' | 'list'
+export type ConfigFieldInput = 'text' | 'password' | 'number' | 'boolean' | 'select' | 'list' | 'json'
 
 export interface ConfigFieldOption {
   label: string

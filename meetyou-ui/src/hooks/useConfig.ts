@@ -25,6 +25,20 @@ function toFormValue(entry: ConfigEntry | null, schema: ConfigFieldSchema): Conf
     return Array.isArray(entry.value) ? entry.value.map(String).join('\n') : ''
   }
 
+  if (schema.input === 'json') {
+    if (entry.value == null || entry.value === '') {
+      return ''
+    }
+    if (typeof entry.value === 'string') {
+      return entry.value
+    }
+    try {
+      return JSON.stringify(entry.value, null, 2)
+    } catch {
+      return String(entry.value)
+    }
+  }
+
   if (schema.input === 'number') {
     return entry.value == null || entry.value === '' ? '' : String(entry.value)
   }
@@ -44,6 +58,18 @@ function serializeFormValue(value: ConfigFormValue, schema: ConfigFieldSchema): 
       .split(/\r?\n/)
       .map((item) => item.trim())
       .filter(Boolean)
+  }
+
+  if (schema.input === 'json') {
+    const trimmed = text.trim()
+    if (trimmed === '') {
+      return {}
+    }
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      return trimmed
+    }
   }
 
   if (schema.input === 'number') {
@@ -69,6 +95,20 @@ function normalizeEntryValue(entry: ConfigEntry | null, schema: ConfigFieldSchem
 
   if (schema.input === 'list') {
     return Array.isArray(entry.value) ? entry.value.map(String) : []
+  }
+
+  if (schema.input === 'json') {
+    if (entry.value == null || entry.value === '') {
+      return {}
+    }
+    if (typeof entry.value === 'string') {
+      try {
+        return JSON.parse(entry.value)
+      } catch {
+        return entry.value.trim()
+      }
+    }
+    return entry.value
   }
 
   if (schema.input === 'number') {
@@ -113,6 +153,15 @@ function validateField(key: string, value: ConfigFormValue, schema: ConfigFieldS
 
   const text = typeof value === 'string' ? value.trim() : String(value)
   if (!text) {
+    return null
+  }
+
+  if (schema.input === 'json') {
+    try {
+      JSON.parse(text)
+    } catch {
+      return 'Please enter valid JSON'
+    }
     return null
   }
 
