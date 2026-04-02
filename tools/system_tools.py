@@ -19,6 +19,7 @@ logger = logging.getLogger("meetyou.system_tools")
 _platform_adapter = None
 _cmd_policy = None
 _event_bus = None
+_background_status_provider = None
 
 _DEFAULT_BLACKLIST_PATTERNS = [
     r"(^|[;&|])\s*(rm|del|erase|rd|rmdir|Remove-Item)\b",
@@ -62,6 +63,11 @@ def init_system_tools(platform_adapter, event_bus, cmd_policy_path: str = "user/
     except json.JSONDecodeError as e:
         logger.error(f"命令安全策略格式错误: {e}")
         _cmd_policy = {"mode": "none"}
+
+
+def set_background_status_provider(provider):
+    global _background_status_provider
+    _background_status_provider = provider
 
 
 def _check_command_safety(cmd: str) -> tuple[str, str]:
@@ -189,3 +195,31 @@ async def get_sys_vitals() -> str:
         parts.append(f"是否充电：{vitals.get('is_plugged', 'N/A')}")
 
     return "  ".join(parts)
+
+
+async def get_background_status() -> str:
+    payload = {}
+    provider = _background_status_provider
+    if provider is not None:
+        try:
+            provided = provider()
+            if asyncio.iscoroutine(provided):
+                provided = await provided
+            if isinstance(provided, dict):
+                payload.update(provided)
+        except Exception as exc:
+            payload["provider_error"] = str(exc)
+
+    if _platform_adapter is not None:
+        try:
+            payload["system_vitals"] = _platform_adapter.get_system_vitals()
+        except Exception as exc:
+            payload["system_vitals_error"] = str(exc)
+
+    payload["current_time"] = (
+        datetime.datetime.now(datetime.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    return json.dumps(payload, ensure_ascii=False, indent=2)

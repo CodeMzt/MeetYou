@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from core.source_catalog import SourceCatalogManager
 
 ASSISTANT_MODE_AUTO = "auto"
 ASSISTANT_MODES = ("documents", "research", "office", "study")
@@ -338,6 +339,7 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
             "remember_knowledge",
             "research_topic",
             "inspect_page",
+            "track_source_updates",
             "compile_report",
         ],
         "mcp_servers": [],
@@ -492,6 +494,7 @@ class RouteDecision:
 class AssistantModeManager:
     def __init__(self, config_manager):
         self._config = config_manager
+        self._source_catalog = SourceCatalogManager(config_manager)
 
     def _mode_registry(self) -> dict[str, Any]:
         return _deep_merge(
@@ -512,17 +515,39 @@ class AssistantModeManager:
     def get_office_integrations(self) -> dict[str, Any]:
         return _deep_merge(_DEFAULT_OFFICE_INTEGRATIONS, _parse_json_config(self._config.get("office_integrations")))
 
+    def get_source_catalog_path(self) -> str:
+        return self._source_catalog.get_catalog_path()
+
+    def get_source_catalog_status(self) -> dict[str, Any]:
+        return self._source_catalog.get_catalog_status()
+
     def get_source_profiles(self) -> dict[str, Any]:
-        return _deep_merge(_DEFAULT_SOURCE_PROFILES, _parse_json_config(self._config.get("source_profiles")))
+        catalog_profiles = self._source_catalog.get_source_profiles()
+        legacy_profiles = _parse_json_config(self._config.get("source_profiles"))
+        return _deep_merge(catalog_profiles, legacy_profiles)
 
     def get_source_profile(self, profile_name: str) -> dict[str, Any]:
         profiles = self.get_source_profiles()
         normalized = str(profile_name or "").strip() or "workspace_local"
         payload = profiles.get(normalized)
         if payload is None:
-            payload = profiles.get("tech_global", {})
-            normalized = "tech_global"
+            payload = profiles.get("tech_updates") or profiles.get("workspace_local", {})
+            normalized = "tech_updates" if "tech_updates" in profiles else "workspace_local"
         return {"name": normalized, **payload}
+
+    def get_sources_for_profile(
+        self,
+        profile_name: str,
+        *,
+        official_only: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._source_catalog.get_sources(profile_name, official_only=official_only)
+
+    def get_source_by_id(self, source_id: str) -> dict[str, Any] | None:
+        return self._source_catalog.get_source_by_id(source_id)
+
+    def resolve_source_auth_entries(self, source_config: dict[str, Any]) -> list[dict[str, Any]]:
+        return self._source_catalog.resolve_auth_entries(source_config)
 
     def get_tool_bundle(self, mode: str) -> dict[str, list[str]]:
         registry = self._mode_registry()
@@ -576,22 +601,32 @@ class AssistantModeManager:
         return False
 
     def classify_research_source_profile(self, text: str) -> str:
-        lowered = str(text or "").lower()
-        for profile_name, keywords in _RESEARCH_PROFILE_KEYWORDS.items():
-            if any(keyword in lowered for keyword in keywords):
-                return profile_name
+        classified = self._source_catalog.classify_research_profile(text)
+        if classified:
+            return classified
         if _looks_like_chinese(text):
-            return "tech_cn"
-        return "tech_global"
+            return "policy_cn"
+        return "tech_updates"
 
     def is_primary_source(self, url: str, profile_name: str = "") -> bool:
-        domain = _domain_from_url(url)
-        if not domain:
-            return False
-        profile = self.get_source_profile(profile_name)
-        domains = {str(item).lower() for item in profile.get("primary_domains", [])}
-        domains.update(_PRIMARY_SOURCE_DOMAINS)
-        return any(domain == item or domain.endswith(f".{item}") for item in domains if item)
+        return self._source_catalog.is_primary_source(url, profile_name)
+
+    async def resolve_context_limit(
+        self,
+        *,
+        provider_name: str,
+        api_url: str,
+        model_name: str,
+        adapter,
+    ) -> dict[str, Any]:
+        return (
+            await self._source_catalog.resolve_context_limit(
+                provider_name=provider_name,
+                api_url=api_url,
+                model_name=model_name,
+                adapter=adapter,
+            )
+        ).to_dict()
 
     def route(
         self,

@@ -13,8 +13,21 @@ import asyncio
 import logging
 import os
 
-from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+try:
+    from mcp.client.session import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+except ImportError:  # pragma: no cover - optional dependency
+    class ClientSession:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+    class StdioServerParameters:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+    def stdio_client(*args, **kwargs):  # type: ignore[no-redef]
+        del args, kwargs
+        raise RuntimeError("The optional 'mcp' package is not installed.")
 
 logger = logging.getLogger("meetyou.mcp")
 

@@ -55,7 +55,11 @@ export interface ContextBreakdown {
 
 export interface RuntimeUsageSnapshot {
   session_id: string
+  usage_ready: boolean
   context_limit_tokens: number
+  context_limit_source: string
+  context_limit_model: string
+  context_limit_confidence: string
   current_context_tokens_estimated: number
   context_breakdown: ContextBreakdown
   last_turn_usage: UsageCounters

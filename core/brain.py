@@ -10,7 +10,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-import aiohttp
+try:
+    import aiohttp
+except ImportError:  # pragma: no cover - optional dependency
+    aiohttp = None
 
 from core.assistant_modes import RouteDecision
 from core.brain_session import BrainSession
@@ -18,6 +21,11 @@ from core.runtime_context import get_event_context
 from core.status import ContextBreakdown, RuntimeStatus, UsageCounters, utcnow_iso
 
 logger = logging.getLogger("meetyou.brain")
+
+
+class _FallbackClientSession:
+    async def close(self):
+        return None
 
 TOOL_JUDGMENT_POLICY_MESSAGE = (
     "[Tool Judgment Policy]\n"
@@ -148,13 +156,14 @@ class Brain:
         self._mode_manager = mode_manager
         self._base_messages: list[dict] = []
         self._sessions: dict[str, BrainSession] = {}
-        self._http_session: aiohttp.ClientSession | None = None
+        self._http_session: Any | None = None
+        self._provider_name: str = ""
 
     async def init_brain(self, sys_prompt: str):
         self._base_messages = [{"role": "system", "content": sys_prompt}]
         context = await self._context_manager.load_context()
         self._base_messages.append({"role": "system", "content": context})
-        self._http_session = aiohttp.ClientSession()
+        self._http_session = aiohttp.ClientSession() if aiohttp is not None else _FallbackClientSession()
         logger.info("Brain initialized")
 
     async def _refresh_session_context(self, session: BrainSession):
@@ -179,6 +188,9 @@ class Brain:
 
     def set_adapter(self, adapter):
         self._adapter = adapter
+
+    def set_provider_name(self, provider_name: str):
+        self._provider_name = str(provider_name or "").strip()
 
     async def refresh_base_prompt(self, sys_prompt: str, persisted_context: str):
         self._base_messages = [
@@ -521,6 +533,38 @@ class Brain:
             return int(adapter_getter(model))
         return 8192
 
+    async def _resolve_context_limit_info(
+        self,
+        *,
+        model: str,
+        api_url: str,
+        provider_name: str = "",
+    ) -> dict[str, Any]:
+        effective_provider = str(provider_name or self._provider_name or "").strip()
+        resolver = getattr(self._mode_manager, "resolve_context_limit", None)
+        if callable(resolver):
+            try:
+                payload = await resolver(
+                    provider_name=effective_provider,
+                    api_url=api_url,
+                    model_name=model,
+                    adapter=self._adapter,
+                )
+                if isinstance(payload, dict) and int(payload.get("context_limit_tokens", 0) or 0) > 0:
+                    payload.setdefault("context_limit_source", "fallback")
+                    payload.setdefault("context_limit_model", str(model or ""))
+                    payload.setdefault("context_limit_confidence", "medium")
+                    return payload
+            except Exception as exc:
+                logger.warning("Failed to resolve context limit for %s/%s: %s", effective_provider, model, exc)
+
+        return {
+            "context_limit_tokens": self._get_context_limit(model),
+            "context_limit_source": "fallback",
+            "context_limit_model": str(model or ""),
+            "context_limit_confidence": "low",
+        }
+
     def _build_context_breakdown(
         self,
         *,
@@ -597,8 +641,22 @@ class Brain:
         context_breakdown: dict[str, int],
         turn_usage: UsageCounters,
         usage_source: str,
+        context_limit_info: dict[str, Any] | None = None,
     ) -> dict:
-        session.usage_snapshot.context_limit_tokens = self._get_context_limit(model)
+        context_limit_info = context_limit_info or {}
+        session.usage_snapshot.usage_ready = True
+        session.usage_snapshot.context_limit_tokens = int(
+            context_limit_info.get("context_limit_tokens", 0) or self._get_context_limit(model)
+        )
+        session.usage_snapshot.context_limit_source = str(
+            context_limit_info.get("context_limit_source") or "fallback"
+        )
+        session.usage_snapshot.context_limit_model = str(
+            context_limit_info.get("context_limit_model") or model or ""
+        )
+        session.usage_snapshot.context_limit_confidence = str(
+            context_limit_info.get("context_limit_confidence") or "low"
+        )
         session.usage_snapshot.context_breakdown = ContextBreakdown.from_mapping(context_breakdown)
         session.usage_snapshot.current_context_tokens_estimated = session.usage_snapshot.context_breakdown.total
         session.usage_snapshot.last_turn_usage = UsageCounters(
@@ -622,6 +680,7 @@ class Brain:
         api_key: str,
         api_url: str,
         model: str,
+        provider_name: str = "",
         tool_activity_callback=None,
         model_options: dict | None = None,
         phase_callback=None,
@@ -643,14 +702,28 @@ class Brain:
         turn_usage = UsageCounters()
         usage_source = "estimated"
         session.usage_snapshot.last_turn_usage = UsageCounters()
-
-        trim_result = await self._context_manager.trim_history(
-            session.chat_history,
-            model,
-            self._http_session,
-            api_url,
-            api_key,
-        ) or {}
+        context_limit_info = await self._resolve_context_limit_info(
+            model=model,
+            api_url=api_url,
+            provider_name=provider_name,
+        )
+        try:
+            trim_result = await self._context_manager.trim_history(
+                session.chat_history,
+                model,
+                self._http_session,
+                api_url,
+                api_key,
+                context_limit_override=int(context_limit_info.get("context_limit_tokens", 0) or 0),
+            ) or {}
+        except TypeError:
+            trim_result = await self._context_manager.trim_history(
+                session.chat_history,
+                model,
+                self._http_session,
+                api_url,
+                api_key,
+            ) or {}
         summary_usage = self._normalize_usage(trim_result.get("summary_usage"))
         if summary_usage:
             turn_usage.add(summary_usage)
@@ -769,6 +842,7 @@ class Brain:
                 context_breakdown=context_breakdown,
                 turn_usage=turn_usage,
                 usage_source=usage_source,
+                context_limit_info=context_limit_info,
             )
             yield BrainOutputEvent(type="usage", usage=usage_payload)
 

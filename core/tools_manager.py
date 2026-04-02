@@ -84,13 +84,16 @@ class ToolsManager:
             "get_current_system_time": system_tools_module.get_current_system_time,
             "update_context": context_manager.update_context,
             "get_sys_vitals": system_tools_module.get_sys_vitals,
+            "get_background_status": getattr(system_tools_module, "get_background_status", None),
             "search_web": self._web_search_tools.search_web,
             "read_web_page": self._web_search_tools.read_web_page,
             "research_topic": self._scenario_tools.research_topic,
             "inspect_page": self._scenario_tools.inspect_page,
+            "track_source_updates": self._scenario_tools.track_source_updates,
             "search_knowledge": self._scenario_tools.search_knowledge,
             "manage_tasks": self._scenario_tools.manage_tasks,
         }
+        self.supported_funcs = {name: func for name, func in self.supported_funcs.items() if func is not None}
         if self._document_tools is not None:
             self.supported_funcs.update(
                 {
@@ -124,9 +127,11 @@ class ToolsManager:
             "exec_sys_cmd": "destructive",
             "get_current_system_time": "read",
             "get_sys_vitals": "read",
+            "get_background_status": "read",
             "remember_knowledge": "local_write",
             "research_topic": "read",
             "inspect_page": "read",
+            "track_source_updates": "read",
             "search_knowledge": "read",
             "manage_tasks": "local_write",
             "analyze_workspace": "read",
@@ -169,6 +174,15 @@ class ToolsManager:
             tools.extend(self.tools_schema_dict.get(key, []))
         return tools
 
+    def _tool_schema_by_name(self, tool_name: str, sections: tuple[str, ...] | None = None) -> dict | None:
+        keys = sections or ("common_tools", "chain_tools", "memory_tools", "background_tools")
+        for key in keys:
+            for tool in self.tools_schema_dict.get(key, []):
+                function = tool.get("function", {})
+                if function.get("name") == tool_name:
+                    return tool
+        return None
+
     def get_all_tools(self, route_context: dict[str, Any] | None = None) -> list[dict]:
         """Return the LLM-visible tool schemas."""
         route_context = route_context or {}
@@ -205,11 +219,56 @@ class ToolsManager:
         return visible_tools
 
     def get_heartbeat_tools(self) -> list[dict]:
-        """Return the smaller tool subset available to the heartbeat."""
-        tools: list[dict] = []
-        for key in ("common_tools", "memory_tools"):
-            tools.extend(self.tools_schema_dict.get(key, []))
-        return tools
+        allowlist = (
+            "get_background_status",
+            "get_current_system_time",
+            "get_sys_vitals",
+            "search_memory",
+        )
+        return [
+            tool
+            for name in allowlist
+            if (tool := self._tool_schema_by_name(name, sections=("background_tools", "common_tools", "memory_tools"))) is not None
+        ]
+
+    def get_scheduled_job_tools(self) -> list[dict]:
+        allowlist = (
+            "research_topic",
+            "track_source_updates",
+            "manage_tasks",
+            "remember_knowledge",
+            "analyze_workspace",
+            "read_local_documents",
+            "write_local_document",
+            "rewrite_local_document",
+            "compile_report",
+        )
+        return [
+            tool
+            for name in allowlist
+            if (tool := self._tool_schema_by_name(name, sections=("chain_tools", "common_tools"))) is not None
+        ]
+
+    def _is_tool_allowed(self, tool_name: str, route_context: dict[str, Any] | None = None) -> bool:
+        route_context = route_context or {}
+        allowed_tool_names = {
+            str(item).strip()
+            for item in route_context.get("tool_bundle", [])
+            if str(item).strip()
+        }
+        if allowed_tool_names and tool_name in allowed_tool_names:
+            return True
+        if allowed_tool_names and tool_name not in allowed_tool_names:
+            return False
+
+        allowed_mcp_servers = {
+            str(item).strip()
+            for item in route_context.get("mcp_servers", [])
+            if str(item).strip()
+        }
+        if allowed_mcp_servers and tool_name in self._mcp_manager.tool_map:
+            return self._mcp_manager.tool_map.get(tool_name, "") in allowed_mcp_servers
+        return True
 
     def get_tool_action_risk(self, tool_name: str) -> str:
         if tool_name in self._tool_action_risks:
@@ -239,6 +298,9 @@ class ToolsManager:
         route_context: dict[str, Any] | None = None,
     ) -> str:
         """Dispatch a tool call to either a built-in tool or an MCP server."""
+        if not self._is_tool_allowed(tool_name, route_context=route_context):
+            return f"Error: tool not allowed in the current route: {tool_name}"
+
         if tool_name in self.supported_funcs:
             try:
                 call_kwargs = dict(tool_args)
