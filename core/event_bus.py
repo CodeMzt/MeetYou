@@ -24,6 +24,7 @@ class EventBus:
     AI_OUTPUT = "ai_output"
     SHUTDOWN = "shutdown"
     ERROR = "error"
+    STATUS_CHANGE = "status_change"
     CONFIRM_REQUEST = EventType.CONFIRM_REQUEST.value
     CONFIRM_RESPONSE = EventType.CONFIRM_RESPONSE.value
 
@@ -120,8 +121,34 @@ class EventBus:
                 return False
         if self._pending_confirmation and not self._pending_confirmation.done():
             self._pending_confirmation.set_result(accepted)
+            asyncio.create_task(
+                self.publish(
+                    self.CONFIRM_RESPONSE,
+                    {
+                        "accepted": accepted,
+                        "request_id": self._pending_request_id,
+                        "session_id": self._pending_confirmation_session_id,
+                    },
+                )
+            )
             return True
         return False
+
+    def submit_confirmation_response(
+        self,
+        accepted: bool,
+        request_id: str = "",
+        session_id: str = "",
+    ) -> bool:
+        """
+        立即处理确认回执。
+        用于输入适配器在入口处直接完成确认，避免等待主处理循环再次消费队列。
+        """
+        return self.resolve_confirmation(
+            accepted,
+            request_id=request_id,
+            session_id=session_id,
+        )
 
     @property
     def has_pending_confirmation(self) -> bool:

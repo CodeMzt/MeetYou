@@ -1,38 +1,80 @@
 """
-MCP (Model Context Protocol) 客户端与管理器。
+MCP (Model Context Protocol) client and server manager.
 
-职责：
-- 启动 MCP 服务进程（stdio 方式）
-- 管理通信会话
-- 提取工具 Schema
-- 分派工具调用
+Responsibilities:
+- start MCP server processes over stdio
+- manage MCP sessions
+- load tool schemas
+- dispatch MCP tool calls
 """
 
+from contextlib import AsyncExitStack
+import asyncio
 import logging
+import os
 
 from mcp.client.session import ClientSession
-from mcp.client.stdio import stdio_client, StdioServerParameters
-from contextlib import AsyncExitStack
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 logger = logging.getLogger("meetyou.mcp")
 
 
-class MCPClient:
-    """单个 MCP 服务的客户端。"""
+def _resolve_server_process(
+    command: str,
+    args: list[str] | None = None,
+    *,
+    os_name: str | None = None,
+    comspec: str | None = None,
+) -> tuple[str, list[str]]:
+    """
+    On Windows, asyncio cannot directly spawn .cmd/.bat files as executables.
+    Wrap them with cmd.exe /c so npx.cmd and similar tools work reliably.
+    """
+    resolved_args = list(args or [])
+    current_os = os_name or os.name
+    if current_os == "nt" and command.lower().endswith((".cmd", ".bat")):
+        shell = comspec or os.environ.get("COMSPEC") or r"C:\Windows\System32\cmd.exe"
+        return shell, ["/d", "/c", command, *resolved_args]
+    return command, resolved_args
 
-    def __init__(self, server_command: str, server_args: list[str]):
+
+def _compose_server_env(server_env: dict | None = None) -> dict[str, str]:
+    """
+    Merge explicit MCP env overrides with the current process environment so
+    per-server settings do not accidentally drop secrets loaded from `.env`.
+    """
+    merged = dict(os.environ)
+    for key, value in (server_env or {}).items():
+        merged[str(key)] = str(value)
+    return merged
+
+
+class MCPClient:
+    """Client wrapper for a single MCP server."""
+
+    def __init__(
+        self,
+        server_command: str,
+        server_args: list[str] | None = None,
+        server_env: dict | None = None,
+    ):
         self.server_command = server_command
-        self.server_args = server_args
+        self.server_args = server_args or []
+        self.server_env = server_env or None
         self.session: ClientSession | None = None
         self.tools_schema: list[dict] | None = None
         self.exit_stack = AsyncExitStack()
 
     async def init_mcp_session(self):
-        """启动 MCP 进程并建立 stdio 会话。"""
+        """Start the MCP server process and initialize a stdio session."""
+        command, args = _resolve_server_process(
+            self.server_command,
+            self.server_args,
+        )
         params = StdioServerParameters(
-            command=self.server_command,
-            args=self.server_args,
-            env=None,
+            command=command,
+            args=args,
+            env=_compose_server_env(self.server_env),
         )
         stdio_ctx = stdio_client(params)
         read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_ctx)
@@ -40,70 +82,111 @@ class MCPClient:
         session_ctx = ClientSession(read_stream, write_stream)
         self.session = await self.exit_stack.enter_async_context(session_ctx)
         await self.session.initialize()
-        logger.info(f"MCP 会话已建立: {self.server_command} {self.server_args}")
+        logger.info("MCP session initialized: %s %s", command, args)
 
     async def shutdown_mcp_session(self):
-        """关闭 MCP 会话及进程。"""
+        """Close the MCP session and its server process."""
         await self.exit_stack.aclose()
 
     async def load_mcp_tools(self):
-        """获取 MCP 工具列表并转化为 OpenAI 格式 Schema。"""
+        """Load MCP tools and convert them into OpenAI-style function schema."""
+        if self.session is None:
+            raise RuntimeError("MCP session is not initialized")
+
         tools_resp = dict(await self.session.list_tools())
         self.tools_schema = []
         for tool in tools_resp.get("tools", []):
             tool = dict(tool)
             try:
-                self.tools_schema.append({
-                    "type": "function",
-                    "function": {
-                        "name": tool["name"],
-                        "description": tool.get("description", ""),
-                        "parameters": tool.get("inputSchema", {}),
-                    },
-                })
-            except (KeyError, TypeError) as e:
-                logger.warning(f"跳过无效 MCP 工具: {e}")
+                self.tools_schema.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("inputSchema", {}),
+                        },
+                    }
+                )
+            except (KeyError, TypeError) as exc:
+                logger.warning("Skipping invalid MCP tool schema: %s", exc)
 
 
 class MCPManager:
-    """MCP 服务全局管理器。"""
+    """Global manager for all configured MCP servers."""
 
     def __init__(self):
         self.mcp_servers_list: list[str] = []
         self.mcp_clients: dict[str, MCPClient] = {}
         self.mcp_tools: dict[str, list[dict]] = {}
-        self.tool_map: dict[str, str] = {}  # tool_name → server_name
+        self.tool_map: dict[str, str] = {}
 
     async def init_mcp_servers(self, mcp_servers: dict):
-        """初始化所有配置的 MCP 服务。"""
+        """Initialize all enabled MCP servers from config."""
+        self.mcp_servers_list = []
+        self.mcp_clients = {}
+        self.mcp_tools = {}
+        self.tool_map = {}
+
         for name, info in mcp_servers.items():
+            if not info.get("enabled", True):
+                logger.info("Skipping disabled MCP server [%s]", name)
+                continue
+
+            command = info.get("command")
+            args = info.get("args") or []
+            env = info.get("env") or None
+
+            if not command:
+                logger.error("Skipping MCP server [%s]: missing command", name)
+                continue
+
+            client = MCPClient(command, args, env)
             try:
-                self.mcp_servers_list.append(name)
-                client = MCPClient(info["command"], info["args"])
-                self.mcp_clients[name] = client
                 await client.init_mcp_session()
                 await client.load_mcp_tools()
-                self.mcp_tools[name] = client.tools_schema or []
-                for func in self.mcp_tools[name]:
-                    self.tool_map[func["function"]["name"]] = name
-                logger.info(f"MCP 服务 [{name}] 初始化完成: {len(self.mcp_tools[name])} 个工具")
-            except Exception as e:
-                logger.error(f"MCP 服务 [{name}] 初始化失败: {e}")
+            except Exception as exc:
+                logger.error("Failed to initialize MCP server [%s]: %s", name, exc)
+                try:
+                    await client.shutdown_mcp_session()
+                except Exception as close_error:
+                    logger.debug(
+                        "Cleanup after MCP server [%s] init failure also failed: %s",
+                        name,
+                        close_error,
+                    )
+                continue
+
+            self.mcp_servers_list.append(name)
+            self.mcp_clients[name] = client
+            self.mcp_tools[name] = client.tools_schema or []
+            for func in self.mcp_tools[name]:
+                self.tool_map[func["function"]["name"]] = name
+
+            logger.info(
+                "MCP server [%s] initialized with %s tools",
+                name,
+                len(self.mcp_tools[name]),
+            )
 
     async def call_mcp_tool(self, tool_name: str, tool_args: dict):
-        """调用 MCP 工具。"""
+        """Call an MCP tool by name."""
         server_name = self.tool_map.get(tool_name)
-        if not server_name or server_name not in self.mcp_clients:
-            raise ValueError(f"未找到 MCP 工具: {tool_name}")
-        return await self.mcp_clients[server_name].session.call_tool(
-            tool_name, arguments=tool_args
-        )
+        client = self.mcp_clients.get(server_name or "")
+        if client is None or client.session is None:
+            raise ValueError(f"未找到可用的 MCP 工具: {tool_name}")
+        return await client.session.call_tool(tool_name, arguments=tool_args)
 
     async def close_mcp_servers(self):
-        """关闭所有 MCP 服务。"""
+        """Close all successfully initialized MCP servers."""
         for name in self.mcp_servers_list:
             try:
-                await self.mcp_clients[name].shutdown_mcp_session()
-                logger.info(f"MCP 服务 [{name}] 已关闭")
-            except Exception as e:
-                logger.error(f"MCP 服务 [{name}] 关闭失败: {e}")
+                client = self.mcp_clients.get(name)
+                if client is None:
+                    continue
+                await client.shutdown_mcp_session()
+                logger.info("MCP server [%s] closed", name)
+            except asyncio.CancelledError as exc:
+                logger.warning("MCP server [%s] close was cancelled: %s", name, exc)
+            except Exception as exc:
+                logger.error("Failed to close MCP server [%s]: %s", name, exc)

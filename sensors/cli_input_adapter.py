@@ -12,7 +12,6 @@ from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.widgets import TextArea
 
 from core.io_protocol import (
-    ConfirmResponseEvent,
     EventTarget,
     EventType,
     InboundEvent,
@@ -22,6 +21,8 @@ from core.io_protocol import (
 )
 
 logger = logging.getLogger("meetyou.cli_input")
+
+_ACCEPTED_CONFIRM_TOKENS = {"y", "yes", "确认", "同意", "允许"}
 
 
 class CLIInputAdapter:
@@ -82,18 +83,11 @@ class CLIInputAdapter:
                 return
 
             if self._event_bus.has_pending_confirmation:
-                accepted = user_text.lower() in ("y", "yes")
-                self._event_bus.inbound_queue.put_nowait(
-                    ConfirmResponseEvent(
-                        session_id=self.session_id,
-                        type=EventType.CONFIRM_RESPONSE.value,
-                        role="user",
-                        content=user_text,
-                        source=self.source,
-                        target=EventTarget(kind=TargetKind.INTERNAL.value),
-                        request_id=self._event_bus.pending_request_id or "",
-                        accepted=accepted,
-                    )
+                accepted = user_text.strip().lower() in _ACCEPTED_CONFIRM_TOKENS
+                self._event_bus.submit_confirmation_response(
+                    accepted,
+                    request_id=self._event_bus.pending_request_id or "",
+                    session_id=self.session_id,
                 )
                 return
 

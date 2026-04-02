@@ -12,7 +12,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from core.io_protocol import (
-    ConfirmResponseEvent,
     EventTarget,
     EventType,
     InboundEvent,
@@ -28,6 +27,10 @@ from gateway.models import (
     HealthResponse,
     InputAcceptedResponse,
     InputRequest,
+    MemoryGraphResponse,
+    MemorySnapshotResponse,
+    RuntimeStateResponse,
+    RuntimeUsageResponse,
     WebSocketCommand,
 )
 from gateway.ws_manager import WebSocketManager, WebSocketOutputAdapter
@@ -41,12 +44,20 @@ class FastAPIGateway:
         config_snapshot_getter=None,
         config_item_getter=None,
         config_updater=None,
+        memory_snapshot_getter=None,
+        memory_graph_getter=None,
+        runtime_state_getter=None,
+        runtime_usage_getter=None,
     ):
         self._event_bus = event_bus
         self._session_manager = session_manager
         self._config_snapshot_getter = config_snapshot_getter
         self._config_item_getter = config_item_getter
         self._config_updater = config_updater
+        self._memory_snapshot_getter = memory_snapshot_getter
+        self._memory_graph_getter = memory_graph_getter
+        self._runtime_state_getter = runtime_state_getter
+        self._runtime_usage_getter = runtime_usage_getter
         self.ws_manager = WebSocketManager()
         self.output_adapter = WebSocketOutputAdapter(self.ws_manager)
         self.app = FastAPI(title="MeetYou Gateway")
@@ -88,6 +99,9 @@ class FastAPIGateway:
 
         @self.app.post("/inputs", response_model=InputAcceptedResponse)
         async def post_inputs(request: InputRequest):
+            metadata = dict(request.metadata)
+            if request.options is not None:
+                metadata["input_options"] = request.options.model_dump(exclude_none=True)
             source = make_source(SourceKind.WEB.value, request.source_id, **request.metadata)
             session_id = self._session_manager.get_or_create_session(source, request.session_id)
             event = InboundEvent(
@@ -97,7 +111,7 @@ class FastAPIGateway:
                 content=request.content,
                 source=source,
                 target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
-                metadata=request.metadata,
+                metadata=metadata,
             )
             await self._event_bus.inbound_queue.put(event)
             return InputAcceptedResponse(session_id=session_id, event_id=event.event_id)
@@ -124,6 +138,50 @@ class FastAPIGateway:
         async def patch_config(request: ConfigPatchRequest):
             result = await self._resolve(self._config_updater, request.updates)
             return ConfigPatchResponse(**result)
+
+        @self.app.get("/memory", response_model=MemorySnapshotResponse)
+        async def get_memory(
+            source_id: str = "",
+            session_id: str = "",
+            include_invalidated: bool = False,
+        ):
+            payload = await self._resolve(
+                self._memory_snapshot_getter,
+                source_id=source_id,
+                session_id=session_id,
+                include_invalidated=include_invalidated,
+            )
+            return MemorySnapshotResponse(**payload)
+
+        @self.app.get("/memory/graph", response_model=MemoryGraphResponse)
+        async def get_memory_graph(
+            source_id: str = "",
+            session_id: str = "",
+            include_invalidated: bool = False,
+        ):
+            payload = await self._resolve(
+                self._memory_graph_getter,
+                source_id=source_id,
+                session_id=session_id,
+                include_invalidated=include_invalidated,
+            )
+            return MemoryGraphResponse(**payload)
+
+        @self.app.get("/runtime/state", response_model=RuntimeStateResponse)
+        async def get_runtime_state(session_id: str = ""):
+            try:
+                payload = await self._resolve(self._runtime_state_getter, session_id=session_id)
+            except Exception as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
+            return RuntimeStateResponse(**payload)
+
+        @self.app.get("/runtime/usage", response_model=RuntimeUsageResponse)
+        async def get_runtime_usage(session_id: str):
+            try:
+                payload = await self._resolve(self._runtime_usage_getter, session_id=session_id)
+            except Exception as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
+            return RuntimeUsageResponse(**payload)
 
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
@@ -186,19 +244,23 @@ class FastAPIGateway:
                             if not sent:
                                 break
                             continue
-                        await self._event_bus.inbound_queue.put(
-                            ConfirmResponseEvent(
-                                session_id=session_id,
-                                type=EventType.CONFIRM_RESPONSE.value,
-                                role="user",
-                                content="confirm_response",
-                                source=source,
-                                target=EventTarget(kind=TargetKind.INTERNAL.value),
-                                request_id=command.request_id,
-                                accepted=command.accepted,
-                                metadata=command.metadata,
-                            )
+                        resolved = self._event_bus.submit_confirmation_response(
+                            command.accepted,
+                            request_id=command.request_id,
+                            session_id=session_id,
                         )
+                        if not resolved:
+                            sent = await self._safe_send_json(websocket, {
+                                "schema": "meetyou.ws.v1",
+                                "kind": "error",
+                                "error": {
+                                    "code": "stale_confirm_response",
+                                    "message": "确认请求已失效、已处理，或与当前会话不匹配。",
+                                },
+                            })
+                            if not sent:
+                                break
+                            continue
                         sent = await self._safe_send_json(websocket, {
                             "schema": "meetyou.ws.v1",
                             "kind": "ack",

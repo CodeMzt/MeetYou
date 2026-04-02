@@ -30,17 +30,36 @@ class FeishuWSClient:
         def handle_message(data):
             payload = json.loads(lark.JSON.marshal(data))
             if self._loop is not None:
-                asyncio.run_coroutine_threadsafe(self._on_message(payload), self._loop)
+                future = asyncio.run_coroutine_threadsafe(self._on_message(payload), self._loop)
+
+                def _log_async_failure(task_future):
+                    try:
+                        task_future.result()
+                    except Exception:
+                        logger.exception("Feishu 事件处理失败")
+
+                future.add_done_callback(_log_async_failure)
 
         def handle_message_read(_data):
             return None
 
-        event_handler = (
+        def handle_bot_p2p_chat_entered(_data):
+            return None
+
+        builder = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(handle_message)
             .register_p2_im_message_message_read_v1(handle_message_read)
-            .build()
         )
+        register_chat_entered = getattr(
+            builder,
+            "register_p2_im_chat_access_event_bot_p2p_chat_entered_v1",
+            None,
+        )
+        if callable(register_chat_entered):
+            builder = register_chat_entered(handle_bot_p2p_chat_entered)
+        event_handler = builder.build()
+
         return lark.ws.Client(
             self._app_id,
             self._app_secret,

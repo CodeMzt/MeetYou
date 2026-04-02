@@ -25,6 +25,8 @@ _ENV_KEY_MAP = {
     "embedding_api_key": "MEETYOU_EMBEDDING_API_KEY",
     "feishu_app_id": "MEETYOU_FEISHU_APP_ID",
     "feishu_app_secret": "MEETYOU_FEISHU_APP_SECRET",
+    "notion_token": "NOTION_TOKEN",
+    "tavily_api_key": "TAVILY_API_KEY",
 }
 
 _KNOWN_CONFIG_KEYS = {
@@ -50,6 +52,9 @@ _KNOWN_CONFIG_KEYS = {
     "model",
     "soul_path",
     "start_path",
+    "thinking_budget_tokens",
+    "thinking_effort",
+    "thinking_enabled",
     "tools_schema_path",
 }
 

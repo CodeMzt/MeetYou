@@ -1,12 +1,8 @@
 """
-Ollama 本地 Chat API 适配器。
-
-支持：
-- NDJSON 流式解析
-- message.tool_calls 处理
-- images 字段（base64 列表）
-- /api/show 查询模型上下文长度
+Ollama local chat API adapter.
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -17,28 +13,37 @@ from adapters.base import LLMAdapter, StreamEvent, ToolCallInfo
 logger = logging.getLogger("meetyou.adapter.ollama")
 
 
-class OllamaAdapter(LLMAdapter):
-    """Ollama Chat API 适配器"""
+def _ollama_usage(payload: dict | None) -> dict | None:
+    payload = payload or {}
+    prompt_tokens = int(payload.get("prompt_eval_count", 0) or 0)
+    completion_tokens = int(payload.get("eval_count", 0) or 0)
+    if not prompt_tokens and not completion_tokens:
+        return None
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "reasoning_tokens": 0,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
 
+
+class OllamaAdapter(LLMAdapter):
     async def query_model_context_limit(self, session, base_url: str, model: str) -> int | None:
-        """通过 /api/show 查询模型实际上下文长度"""
         try:
             show_url = base_url.split("/api/")[0] + "/api/show"
             async with session.post(show_url, json={"name": model}) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
-                # 尝试从 model_info 中获取
                 for key, val in data.get("model_info", {}).items():
                     if "context_length" in key:
                         return int(val)
-                # 尝试从 parameters 文本中解析
                 params = data.get("parameters", "")
                 for line in params.split("\n"):
                     if "num_ctx" in line:
                         return int(line.split()[-1])
-        except Exception as e:
-            logger.debug(f"查询 Ollama 模型信息失败: {e}")
+        except Exception as exc:
+            logger.debug("Failed to query Ollama model info: %s", exc)
         return None
 
     def format_messages(self, messages: list[dict]) -> list[dict]:
@@ -68,12 +73,14 @@ class OllamaAdapter(LLMAdapter):
                 new_msg["tool_calls"] = []
                 for tc in msg["tool_calls"]:
                     fn = tc.get("function", {})
-                    new_msg["tool_calls"].append({
-                        "function": {
-                            "name": fn.get("name", ""),
-                            "arguments": json.loads(fn.get("arguments", "{}")),
+                    new_msg["tool_calls"].append(
+                        {
+                            "function": {
+                                "name": fn.get("name", ""),
+                                "arguments": json.loads(fn.get("arguments", "{}")),
+                            }
                         }
-                    })
+                    )
 
             formatted.append(new_msg)
         return formatted
@@ -82,7 +89,14 @@ class OllamaAdapter(LLMAdapter):
         return tools if tools else None
 
     async def stream_chat(
-        self, session, url, api_key, model, messages, tools=None, **kwargs
+        self,
+        session,
+        url,
+        api_key,
+        model,
+        messages,
+        tools=None,
+        **kwargs,
     ) -> AsyncGenerator[StreamEvent, None]:
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -119,11 +133,17 @@ class OllamaAdapter(LLMAdapter):
                 if "tool_calls" in message:
                     for tc in message["tool_calls"]:
                         fn = tc.get("function", {})
-                        tool_calls.append(ToolCallInfo(
-                            id=f"call_{len(tool_calls)}",
-                            name=fn.get("name", ""),
-                            arguments_str=json.dumps(fn.get("arguments", {})),
-                        ))
+                        tool_calls.append(
+                            ToolCallInfo(
+                                id=f"call_{len(tool_calls)}",
+                                name=fn.get("name", ""),
+                                arguments_str=json.dumps(fn.get("arguments", {})),
+                            )
+                        )
+
+                usage = _ollama_usage(data)
+                if usage:
+                    yield StreamEvent(type="usage", usage=usage)
 
                 if data.get("done"):
                     break
@@ -152,14 +172,20 @@ class OllamaAdapter(LLMAdapter):
             data = await resp.json()
 
         message = data.get("message", {})
-        result = {"content": message.get("content", ""), "tool_calls": []}
+        result = {
+            "content": message.get("content", ""),
+            "tool_calls": [],
+            "usage": _ollama_usage(data),
+        }
 
         if "tool_calls" in message:
             for tc in message["tool_calls"]:
                 fn = tc.get("function", {})
-                result["tool_calls"].append(ToolCallInfo(
-                    id=f"call_{len(result['tool_calls'])}",
-                    name=fn.get("name", ""),
-                    arguments_str=json.dumps(fn.get("arguments", {})),
-                ))
+                result["tool_calls"].append(
+                    ToolCallInfo(
+                        id=f"call_{len(result['tool_calls'])}",
+                        name=fn.get("name", ""),
+                        arguments_str=json.dumps(fn.get("arguments", {})),
+                    )
+                )
         return result

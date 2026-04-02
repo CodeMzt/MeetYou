@@ -4,7 +4,87 @@ const path = require("node:path");
 process.env.DIST = path.join(__dirname, "../dist");
 process.env.VITE_PUBLIC = electron.app.isPackaged ? process.env.DIST : path.join(process.env.DIST, "../public");
 let win;
+let dashboardWin = null;
+let settingsWin = null;
 const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
+function createSettingsWindow() {
+  if (settingsWin) {
+    if (settingsWin.isMinimized()) settingsWin.restore();
+    settingsWin.focus();
+    return;
+  }
+  const primaryDisplay = electron.screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.workAreaSize;
+  settingsWin = new electron.BrowserWindow({
+    width: 600,
+    height: 700,
+    x: width / 2 - 300,
+    y: height / 2 - 350,
+    icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
+    transparent: true,
+    frame: false,
+    resizable: true,
+    minWidth: 500,
+    minHeight: 500,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+  if (process.platform === "win32") {
+    settingsWin.setBackgroundMaterial("mica");
+  } else if (process.platform === "darwin") {
+    settingsWin.setVibrancy("popover");
+  }
+  if (VITE_DEV_SERVER_URL) {
+    settingsWin.loadURL(`${VITE_DEV_SERVER_URL}#/settings`);
+  } else {
+    settingsWin.loadFile(path.join(process.env.DIST, "index.html"), { hash: "settings" });
+  }
+  settingsWin.on("closed", () => {
+    settingsWin = null;
+  });
+}
+function createDashboardWindow() {
+  if (dashboardWin) {
+    if (dashboardWin.isMinimized()) dashboardWin.restore();
+    dashboardWin.focus();
+    return;
+  }
+  const primaryDisplay = electron.screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.workAreaSize;
+  dashboardWin = new electron.BrowserWindow({
+    width: 850,
+    height: 650,
+    x: width / 2 - 425,
+    y: height / 2 - 325,
+    icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
+    transparent: true,
+    frame: false,
+    resizable: true,
+    minWidth: 800,
+    minHeight: 600,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+  if (process.platform === "win32") {
+    dashboardWin.setBackgroundMaterial("mica");
+  } else if (process.platform === "darwin") {
+    dashboardWin.setVibrancy("popover");
+  }
+  if (VITE_DEV_SERVER_URL) {
+    dashboardWin.loadURL(`${VITE_DEV_SERVER_URL}#/dashboard`);
+  } else {
+    dashboardWin.loadFile(path.join(process.env.DIST, "index.html"), { hash: "dashboard" });
+  }
+  dashboardWin.on("closed", () => {
+    dashboardWin = null;
+  });
+}
 function createWindow() {
   const primaryDisplay = electron.screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
@@ -37,10 +117,28 @@ function createWindow() {
   } else {
     win.loadFile(path.join(process.env.DIST, "index.html"));
   }
-  electron.ipcMain.on("window-close", () => win == null ? void 0 : win.close());
-  electron.ipcMain.on("window-minimize", () => win == null ? void 0 : win.minimize());
+  electron.ipcMain.on("window-close", (e) => {
+    const w = electron.BrowserWindow.fromWebContents(e.sender);
+    w == null ? void 0 : w.close();
+  });
+  electron.ipcMain.on("window-minimize", (e) => {
+    const w = electron.BrowserWindow.fromWebContents(e.sender);
+    w == null ? void 0 : w.minimize();
+  });
+  electron.ipcMain.on("window-maximize", (e) => {
+    const w = electron.BrowserWindow.fromWebContents(e.sender);
+    if (w == null ? void 0 : w.isMaximized()) w.unmaximize();
+    else w == null ? void 0 : w.maximize();
+  });
   electron.ipcMain.on("window-toggle-top", (e, isTop) => {
-    win == null ? void 0 : win.setAlwaysOnTop(isTop);
+    const w = electron.BrowserWindow.fromWebContents(e.sender);
+    w == null ? void 0 : w.setAlwaysOnTop(isTop);
+  });
+  electron.ipcMain.on("open-dashboard", () => {
+    createDashboardWindow();
+  });
+  electron.ipcMain.on("open-settings", () => {
+    createSettingsWindow();
   });
 }
 electron.app.on("window-all-closed", () => {
