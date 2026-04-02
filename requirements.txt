@@ -11,3 +11,9 @@ python-dotenv
 fastapi
 uvicorn
 lark-oapi
+PyMuPDF
+python-docx
+openpyxl
+python-pptx
+Pillow
+pytesseract

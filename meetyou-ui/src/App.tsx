@@ -20,6 +20,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import GlassSelect from './components/GlassSelect'
 import { useMeetYou } from './hooks/useMeetYou'
 import type {
+  AssistantMode,
   ChatTurn,
   ConnectionState,
   RuntimeStateSnapshot,
@@ -34,6 +35,14 @@ const THINKING_OPTIONS: Array<{ label: string; value: ThinkingOverride }> = [
   { label: '低', value: 'low' },
   { label: '中', value: 'medium' },
   { label: '高', value: 'high' },
+]
+
+const MODE_OPTIONS: Array<{ label: string; value: AssistantMode }> = [
+  { label: 'Auto', value: 'auto' },
+  { label: 'Documents', value: 'documents' },
+  { label: 'Research', value: 'research' },
+  { label: 'Office', value: 'office' },
+  { label: 'Study', value: 'study' },
 ]
 
 const RUNTIME_LABELS: Record<string, string> = {
@@ -581,6 +590,11 @@ function StatusStrip({
   turnActivities: TurnActivity[]
 }) {
   const presentation = buildStatusPresentation(connectionState, runtimeSnapshot, turnActivities)
+  const metaChips = [
+    runtimeSnapshot?.current_mode ? `mode:${runtimeSnapshot.current_mode}` : '',
+    runtimeSnapshot?.source_profile ? `source:${runtimeSnapshot.source_profile}` : '',
+    runtimeSnapshot?.action_risk ? `risk:${runtimeSnapshot.action_risk}` : '',
+  ].filter(Boolean)
 
   return (
     <div className="status-strip">
@@ -600,6 +614,19 @@ function StatusStrip({
         </div>
         <div className="status-phase-chip">{presentation.phaseLabel}</div>
       </div>
+      {metaChips.length > 0 && (
+        <div className="status-strip-meta">
+          {metaChips.map((chip) => (
+            <span
+              key={chip}
+              className="status-meta-chip"
+              title={chip.startsWith('mode:') ? runtimeSnapshot?.route_reason || chip : chip}
+            >
+              {chip}
+            </span>
+          ))}
+        </div>
+      )}
       {(presentation.toolChips.length > 0 || presentation.hiddenToolCount > 0) && (
         <div className="status-strip-tools">
           {presentation.toolChips.map((tool) => (
@@ -656,6 +683,7 @@ export default function App() {
   const [isPinned, setIsPinned] = useState(true)
   const [usagePanelOpen, setUsagePanelOpen] = useState(false)
   const [thinkingOverride, setThinkingOverride] = useState<ThinkingOverride>('default')
+  const [preferredMode, setPreferredMode] = useState<AssistantMode>('auto')
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -692,7 +720,7 @@ export default function App() {
     if (!inputVal.trim() || !connected || confirmRequest) {
       return
     }
-    void sendMessage(inputVal, thinkingOverride)
+    void sendMessage(inputVal, thinkingOverride, preferredMode)
     setInputVal('')
   }
 
@@ -807,6 +835,22 @@ export default function App() {
       <div className="input-container">
         <div className="composer-row">
         <div className="input-toolbar">
+          <label className="thinking-label" htmlFor="mode-override">
+            Mode
+          </label>
+          <GlassSelect
+            id="mode-override"
+            wrapperClassName="thinking-select-wrap"
+            value={preferredMode}
+            onChange={(event) => setPreferredMode(event.target.value as AssistantMode)}
+            disabled={!connected || Boolean(confirmRequest)}
+          >
+            {MODE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </GlassSelect>
           <label className="thinking-label" htmlFor="thinking-override">
             本次推理
           </label>
@@ -965,6 +1009,22 @@ export default function App() {
           flex-wrap: wrap;
           justify-content: flex-start;
           gap: 6px;
+        }
+        .status-strip-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .status-meta-chip {
+          max-width: 180px;
+          padding: 3px 8px;
+          border-radius: 999px;
+          font-size: 11px;
+          color: var(--text-secondary);
+          background: rgba(128, 128, 128, 0.08);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .tool-chip {
           max-width: 130px;

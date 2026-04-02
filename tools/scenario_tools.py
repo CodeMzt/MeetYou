@@ -235,10 +235,11 @@ def _memory_sources_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]
 
 
 class ScenarioTools:
-    def __init__(self, memory, context_manager, mcp_manager):
+    def __init__(self, memory, context_manager, mcp_manager, mode_manager=None):
         self._memory = memory
         self._context_manager = context_manager
         self._mcp_manager = mcp_manager
+        self._mode_manager = mode_manager
         self._memory_tools = AgentMemoryTools(memory)
         self._task_manager = TaskManager(memory)
         self._web_tools = WebSearchTools(mcp_manager)
@@ -305,6 +306,77 @@ class ScenarioTools:
             return ""
         return _trim_text(context_text, 500)
 
+    def _default_source_profile(self, route_context: dict[str, Any] | None, query: str) -> str:
+        if isinstance(route_context, dict) and route_context.get("source_profile"):
+            return str(route_context["source_profile"])
+        if self._mode_manager is not None:
+            return self._mode_manager.classify_research_source_profile(query)
+        lowered = str(query or "").lower()
+        if any(token in lowered for token in ("paper", "doi", "arxiv", "论文", "文献")):
+            return "academic"
+        if any(token in lowered for token in ("policy", "law", "regulation", "政策", "法规")):
+            return "policy"
+        if any(token in lowered for token in ("finance", "stock", "earnings", "财报", "股票")):
+            return "finance"
+        if any("\u4e00" <= char <= "\u9fff" for char in str(query or "")):
+            return "tech_cn"
+        return "tech_global"
+
+    def _classify_source_type(self, url: str) -> str:
+        lowered = str(url or "").lower()
+        if ".gov" in lowered or "gov.cn" in lowered:
+            return "government"
+        if any(token in lowered for token in ("docs.", "/docs", "developer.")):
+            return "official_docs"
+        if any(token in lowered for token in ("github.com", "gitee.com")):
+            return "repo_release"
+        if any(token in lowered for token in ("sec.gov", "edgar", "ir.", "investor")):
+            return "ir"
+        if any(token in lowered for token in ("arxiv.org", "pubmed", "doi.org", "crossref.org")):
+            return "paper"
+        return "web"
+
+    def _build_evidence_object(self, source: dict[str, Any], *, source_profile: str) -> dict[str, Any]:
+        url = _normalize_text(source.get("url"))
+        if self._mode_manager is not None:
+            is_primary = self._mode_manager.is_primary_source(url, source_profile)
+        else:
+            is_primary = False
+        return {
+            "source_id": source.get("id"),
+            "title": _normalize_text(source.get("title")),
+            "url": url,
+            "domain": re.sub(r"^www\.", "", re.sub(r":\d+$", "", re.sub(r"/.*$", "", url.replace("https://", "").replace("http://", "")))),
+            "published_date": _normalize_text(source.get("published_date")),
+            "excerpt": _trim_text(source.get("summary") or source.get("snippet"), 320),
+            "reader": _normalize_text(source.get("reader")),
+            "source_type": self._classify_source_type(url),
+            "credible_level": "primary" if is_primary else "secondary",
+            "is_primary_source": is_primary,
+            "citation": f"[{source.get('id')}] {_normalize_text(source.get('title'))}",
+        }
+
+    def _decorate_research_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        source_profile: str,
+    ) -> dict[str, Any]:
+        search_payload = dict(payload)
+        sources = list(search_payload.get("sources") or [])
+        evidence = [
+            self._build_evidence_object(source, source_profile=source_profile)
+            for source in sources
+            if isinstance(source, dict)
+        ]
+        search_payload["source_profile"] = source_profile
+        search_payload["evidence"] = evidence
+        search_payload["citation_blocks"] = [
+            {"source_id": item["source_id"], "citation": item["citation"]}
+            for item in evidence
+        ]
+        return search_payload
+
     async def research_topic(
         self,
         query: str,
@@ -312,17 +384,19 @@ class ScenarioTools:
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
+        route_context: dict[str, Any] | None = None,
     ) -> str:
         del source
         normalized_query = _normalize_text(query)
         if not normalized_query:
             return "Error: research_topic requires a non-empty query."
+        source_profile = self._default_source_profile(route_context, normalized_query)
 
         await self._emit_activity(
             activity_callback,
             "routing",
             f"Routing request to web research: {normalized_query}",
-            {"tool_name": "research_topic"},
+            {"tool_name": "research_topic", "source_profile": source_profile},
         )
         session_context = await self._maybe_load_session_context(
             session_id,
@@ -338,6 +412,7 @@ class ScenarioTools:
                 activity_callback,
                 {"searching": "searching_web"},
             ),
+            source_profile=source_profile,
         )
         payload = _extract_json_payload(raw)
 
@@ -347,6 +422,7 @@ class ScenarioTools:
                     "chain": "research_topic",
                     "query": normalized_query,
                     "goal": _normalize_text(goal),
+                    "source_profile": source_profile,
                     "session_context": session_context,
                     "search_error": _trim_text(raw),
                     "answer_style": "If search failed, say web search is unavailable instead of inventing facts.",
@@ -360,8 +436,9 @@ class ScenarioTools:
                 "chain": "research_topic",
                 "query": normalized_query,
                 "goal": _normalize_text(goal),
+                "source_profile": source_profile,
                 "session_context": session_context,
-                "search": payload,
+                "search": self._decorate_research_payload(payload, source_profile=source_profile),
                 "answer_style": "Lead with the answer, then cite sourced claims inline like [1], [2].",
             },
             ensure_ascii=False,
@@ -375,17 +452,19 @@ class ScenarioTools:
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
+        route_context: dict[str, Any] | None = None,
     ) -> str:
         del source
         normalized_url = _normalize_text(url)
         if not normalized_url:
             return "Error: inspect_page requires a non-empty URL."
+        source_profile = self._default_source_profile(route_context, normalized_url)
 
         await self._emit_activity(
             activity_callback,
             "routing",
             f"Inspecting direct page: {normalized_url}",
-            {"tool_name": "inspect_page", "url": normalized_url},
+            {"tool_name": "inspect_page", "url": normalized_url, "source_profile": source_profile},
         )
         session_context = await self._maybe_load_session_context(
             session_id,
@@ -397,6 +476,7 @@ class ScenarioTools:
             normalized_url,
             session_id=session_id,
             activity_callback=self._relay_activity(activity_callback),
+            source_profile=source_profile,
         )
         payload = _extract_json_payload(raw)
 
@@ -406,6 +486,7 @@ class ScenarioTools:
                     "chain": "inspect_page",
                     "url": normalized_url,
                     "goal": _normalize_text(goal),
+                    "source_profile": source_profile,
                     "session_context": session_context,
                     "page_error": _trim_text(raw),
                     "answer_style": "If the page could not be read, say what failed and avoid pretending to know the page contents.",
@@ -419,8 +500,15 @@ class ScenarioTools:
                 "chain": "inspect_page",
                 "url": normalized_url,
                 "goal": _normalize_text(goal),
+                "source_profile": source_profile,
                 "session_context": session_context,
-                "page": payload,
+                "page": self._decorate_research_payload(
+                    {
+                        "sources": [payload.get("source")] if isinstance(payload.get("source"), dict) else [],
+                        **payload,
+                    },
+                    source_profile=source_profile,
+                ),
                 "answer_style": "Explain the page directly and cite it as [1] if you use page facts.",
             },
             ensure_ascii=False,

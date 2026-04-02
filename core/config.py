@@ -30,9 +30,11 @@ _ENV_KEY_MAP = {
 }
 
 _KNOWN_CONFIG_KEYS = {
+    "assistant_modes",
     "api_provider",
     "api_url",
     "cmd_policy_path",
+    "document_parsers",
     "embedding_api_url",
     "embedding_model",
     "enable_feishu_bot",
@@ -50,11 +52,15 @@ _KNOWN_CONFIG_KEYS = {
     "mcp_registry_url",
     "memory_file_path",
     "model",
+    "mode_router",
+    "office_integrations",
+    "source_profiles",
     "soul_path",
     "start_path",
     "thinking_budget_tokens",
     "thinking_effort",
     "thinking_enabled",
+    "trusted_write_roots",
     "tools_schema_path",
 }
 

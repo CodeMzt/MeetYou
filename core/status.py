@@ -118,6 +118,10 @@ class RuntimeStateSnapshot:
     status: str = RuntimeStatus.IDLE.value
     detail: str = ""
     active_tools: list[str] = field(default_factory=list)
+    current_mode: str = ""
+    route_reason: str = ""
+    action_risk: str = "read"
+    source_profile: str = ""
     stream_id: str = ""
     turn_id: str = ""
     updated_at: str = field(default_factory=utcnow_iso)
@@ -128,6 +132,10 @@ class RuntimeStateSnapshot:
         status: str | RuntimeStatus,
         detail: str = "",
         active_tools: list[str] | None = None,
+        current_mode: str | None = None,
+        route_reason: str | None = None,
+        action_risk: str | None = None,
+        source_profile: str | None = None,
         stream_id: str | None = None,
         turn_id: str | None = None,
     ) -> "RuntimeStateSnapshot":
@@ -135,6 +143,14 @@ class RuntimeStateSnapshot:
         self.detail = detail
         if active_tools is not None:
             self.active_tools = list(active_tools)
+        if current_mode is not None:
+            self.current_mode = str(current_mode)
+        if route_reason is not None:
+            self.route_reason = str(route_reason)
+        if action_risk is not None:
+            self.action_risk = str(action_risk)
+        if source_profile is not None:
+            self.source_profile = str(source_profile)
         if stream_id is not None:
             self.stream_id = stream_id
         if turn_id is not None:
@@ -148,6 +164,10 @@ class RuntimeStateSnapshot:
             "status": self.status,
             "detail": self.detail,
             "active_tools": list(self.active_tools),
+            "current_mode": self.current_mode,
+            "route_reason": self.route_reason,
+            "action_risk": self.action_risk,
+            "source_profile": self.source_profile,
             "stream_id": self.stream_id,
             "turn_id": self.turn_id,
             "updated_at": self.updated_at,
