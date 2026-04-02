@@ -81,6 +81,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/project_python_learning_guide.md
 
 # PyBuilder
 .pybuilder/
@@ -171,3 +172,4 @@ memory_graph_view.html
 memory.json
 .idea/
 *.db
+.npm-cache/

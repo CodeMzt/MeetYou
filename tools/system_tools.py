@@ -20,6 +20,24 @@ _platform_adapter = None
 _cmd_policy = None
 _event_bus = None
 
+_DEFAULT_BLACKLIST_PATTERNS = [
+    r"(^|[;&|])\s*(rm|del|erase|rd|rmdir|Remove-Item)\b",
+    r"(^|[;&|])\s*(shutdown|reboot|halt|poweroff|restart-computer|stop-computer)\b",
+    r"\b(format|diskpart|mkfs(?:\.\w+)?|fdisk|parted|dd\s+if=|cipher\s+/w|sdelete)\b",
+    r"(^|[;&|])\s*(reg(?:\.exe)?\s+(add|delete|import|load|unload)|regedit)\b",
+    r"\b(bcdedit|bootrec|wevtutil\s+cl|vssadmin|wbadmin)\b",
+    r"(^|[;&|])\s*(powershell(?:\.exe)?|pwsh)\b.*-(enc|encodedcommand|e)\b",
+    r"\b(Invoke-Expression|iex|Set-ExecutionPolicy|Start-Process)\b",
+    r"\b(curl|wget|Invoke-WebRequest|iwr)\b.*(\||&&|;).*\b(sh|bash|zsh|powershell|pwsh|cmd)(?:\.exe)?\b",
+    r"(^|[;&|])\s*(net\s+(user|localgroup)|sc(?:\.exe)?\s+(config|create|delete|stop|start)|schtasks|crontab)\b",
+    r"(^|[;&|])\s*(systemctl\s+(stop|disable|mask|reboot|poweroff)|service\s+\S+\s+(stop|restart))\b",
+    r"(^|[;&|])\s*(taskkill|Stop-Process|pkill|killall|kill\s+-9)\b",
+    r"\b(chmod\s+777|chown|takeown|icacls|attrib\s+[+-][rhs])\b",
+    r"\b(netsh\b.*\badvfirewall\b|iptables|ufw|route\s+(add|delete|change))\b",
+    r"\bgit\s+(reset\s+--hard|clean\s+-fdx|checkout\s+--)\b",
+    r"\b(docker\s+(rm|rmi|system\s+prune|volume\s+rm)|kubectl\s+delete)\b",
+]
+
 
 def init_system_tools(platform_adapter, event_bus, cmd_policy_path: str = "user/cmd_policy.json"):
     """
@@ -57,20 +75,34 @@ def _check_command_safety(cmd: str) -> tuple[str, str]:
         return "safe", ""
 
     mode = _cmd_policy.get("mode", "blacklist")
-    cmd_lower = cmd.strip().lower()
+    normalized_cmd = re.sub(r"\s+", " ", cmd.strip())
+    cmd_lower = normalized_cmd.lower()
 
     if mode == "whitelist":
         whitelist = _cmd_policy.get("whitelist", [])
         for allowed in whitelist:
-            if cmd_lower.startswith(allowed.lower()):
+            if cmd_lower.startswith(str(allowed).strip().lower()):
                 return "safe", ""
         return "blocked", f"命令不在白名单中: {cmd}"
 
     elif mode == "blacklist":
-        blacklist = _cmd_policy.get("blacklist_patterns", [])
+        configured_patterns = _cmd_policy.get("blacklist_patterns", [])
+        blacklist: list[str] = []
+        seen: set[str] = set()
+        for pattern in [*_DEFAULT_BLACKLIST_PATTERNS, *configured_patterns]:
+            pattern = str(pattern).strip()
+            if not pattern or pattern in seen:
+                continue
+            seen.add(pattern)
+            blacklist.append(pattern)
+
         for pattern in blacklist:
             try:
-                if re.search(pattern, cmd, re.IGNORECASE):
+                if re.search(pattern, cmd, re.IGNORECASE) or re.search(
+                    pattern,
+                    normalized_cmd,
+                    re.IGNORECASE,
+                ):
                     return "needs_confirm", f"匹配危险规则: {pattern}"
             except re.error:
                 if pattern.lower() in cmd_lower:

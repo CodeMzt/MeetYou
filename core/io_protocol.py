@@ -18,6 +18,9 @@ class EventType(str, Enum):
     CONFIRM_REQUEST = "confirm_request"
     CONFIRM_RESPONSE = "confirm_response"
     STATUS = "status"
+    REASONING = "reasoning"
+    RUNTIME_STATUS = "runtime_status"
+    USAGE = "usage"
     CONTROL = "control"
     ERROR = "error"
 
