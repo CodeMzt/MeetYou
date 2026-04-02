@@ -7,11 +7,19 @@ import json
 import logging
 from time import monotonic
 
-import aiohttp
+try:
+    import aiohttp
+except ImportError:  # pragma: no cover - optional dependency
+    aiohttp = None
 
 from core.io_protocol import EventType, StreamEventType
 
 logger = logging.getLogger("meetyou.feishu_output")
+
+
+class _FallbackClientSession:
+    async def close(self):
+        return None
 
 
 class FeishuOutputAdapter:
@@ -28,7 +36,7 @@ class FeishuOutputAdapter:
 
     async def init(self):
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = aiohttp.ClientSession() if aiohttp is not None else _FallbackClientSession()
 
     async def close(self):
         if self._session is not None:

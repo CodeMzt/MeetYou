@@ -9,6 +9,7 @@ import re
 from typing import Any, Awaitable, Callable
 
 from tools.agent_memory import AgentMemoryTools
+from tools.authoritative_sources import AuthoritativeSourceRegistry
 from tools.task_manager import TaskManager
 from tools.web_search import WebSearchTools
 
@@ -243,6 +244,7 @@ class ScenarioTools:
         self._memory_tools = AgentMemoryTools(memory)
         self._task_manager = TaskManager(memory)
         self._web_tools = WebSearchTools(mcp_manager)
+        self._authoritative_sources = AuthoritativeSourceRegistry(mode_manager, self._web_tools)
 
     async def _emit_activity(
         self,
@@ -377,6 +379,59 @@ class ScenarioTools:
         ]
         return search_payload
 
+    def _default_source_profile(self, route_context: dict[str, Any] | None, query: str) -> str:
+        if isinstance(route_context, dict) and route_context.get("source_profile"):
+            return str(route_context["source_profile"])
+        if self._mode_manager is not None:
+            return self._mode_manager.classify_research_source_profile(query)
+        lowered = str(query or "").lower()
+        if any(token in lowered for token in ("paper", "doi", "arxiv", "study", "trial", "pubmed")):
+            return "academic_biomed"
+        if any(token in lowered for token in ("policy", "law", "regulation", "government", "fda", "who")):
+            return "policy_global"
+        if any(token in lowered for token in ("finance", "stock", "earnings", "macro", "inflation", "gdp")):
+            return "finance_macro"
+        if any(token in lowered for token in ("cve", "kev", "vulnerability", "exploit")):
+            return "cyber_threat"
+        if any("\u4e00" <= char <= "\u9fff" for char in str(query or "")):
+            return "policy_cn"
+        return "tech_updates"
+
+    def _can_use_authoritative_catalog(self) -> bool:
+        getter = getattr(self._mode_manager, "get_source_catalog_status", None)
+        if not callable(getter):
+            return False
+        status = getter() or {}
+        return bool(status.get("available"))
+
+    async def _fallback_web_research(
+        self,
+        query: str,
+        *,
+        source_profile: str,
+        session_id: str,
+        activity_callback: ActivityCallback | None,
+    ) -> dict[str, Any]:
+        raw = await self._web_tools.search_web(
+            query,
+            session_id=session_id,
+            activity_callback=self._relay_activity(
+                activity_callback,
+                {"searching": "searching_web"},
+            ),
+            source_profile=source_profile,
+        )
+        payload = _extract_json_payload(raw)
+        if not isinstance(payload, dict):
+            return {
+                "search_error": _trim_text(raw),
+                "catalog_unavailable": not self._can_use_authoritative_catalog(),
+                "sources": [],
+            }
+        decorated = self._decorate_research_payload(payload, source_profile=source_profile)
+        decorated.setdefault("catalog_unavailable", not self._can_use_authoritative_catalog())
+        return decorated
+
     async def research_topic(
         self,
         query: str,
@@ -405,18 +460,28 @@ class ScenarioTools:
             activity_callback=activity_callback,
         )
 
-        raw = await self._web_tools.search_web(
-            normalized_query,
-            session_id=session_id,
-            activity_callback=self._relay_activity(
-                activity_callback,
-                {"searching": "searching_web"},
-            ),
-            source_profile=source_profile,
-        )
-        payload = _extract_json_payload(raw)
+        authoritative_payload: dict[str, Any] = {}
+        if self._can_use_authoritative_catalog():
+            authoritative_payload = await self._authoritative_sources.search(
+                normalized_query,
+                source_profile=source_profile,
+                limit=5,
+                activity_callback=self._relay_activity(
+                    activity_callback,
+                    {"searching_web": "searching_web"},
+                ),
+            )
 
-        if not isinstance(payload, dict):
+        fallback_payload = None
+        if not authoritative_payload.get("sources"):
+            fallback_payload = await self._fallback_web_research(
+                normalized_query,
+                source_profile=source_profile,
+                session_id=session_id,
+                activity_callback=activity_callback,
+            )
+
+        if not authoritative_payload.get("sources") and not isinstance(fallback_payload, dict):
             return json.dumps(
                 {
                     "chain": "research_topic",
@@ -424,12 +489,38 @@ class ScenarioTools:
                     "goal": _normalize_text(goal),
                     "source_profile": source_profile,
                     "session_context": session_context,
-                    "search_error": _trim_text(raw),
+                    "search_error": "Research backends returned no usable results.",
+                    "catalog_unavailable": not self._can_use_authoritative_catalog(),
                     "answer_style": "If search failed, say web search is unavailable instead of inventing facts.",
                 },
                 ensure_ascii=False,
                 indent=2,
             )
+
+        if authoritative_payload.get("sources"):
+            search_payload = self._decorate_research_payload(
+                {
+                    "query": normalized_query,
+                    "search_backend": "source_catalog",
+                    "summary_hint": "",
+                    "sources": authoritative_payload.get("sources", []),
+                    "partial_failures": authoritative_payload.get("partial_failures", []),
+                    "catalog_status": authoritative_payload.get("catalog_status", {}),
+                    "catalog_unavailable": authoritative_payload.get("catalog_unavailable", False),
+                },
+                source_profile=source_profile,
+            )
+            additional_results = []
+            if isinstance(fallback_payload, dict):
+                additional_results = list((fallback_payload.get("additional_results") or []))[:3]
+                if fallback_payload.get("sources"):
+                    additional_results.extend(list(fallback_payload.get("sources") or [])[:2])
+            search_payload["additional_results"] = additional_results
+        else:
+            search_payload = fallback_payload or {
+                "search_error": "No usable research results.",
+                "catalog_unavailable": True,
+            }
 
         return json.dumps(
             {
@@ -438,7 +529,7 @@ class ScenarioTools:
                 "goal": _normalize_text(goal),
                 "source_profile": source_profile,
                 "session_context": session_context,
-                "search": self._decorate_research_payload(payload, source_profile=source_profile),
+                "search": search_payload,
                 "answer_style": "Lead with the answer, then cite sourced claims inline like [1], [2].",
             },
             ensure_ascii=False,
@@ -514,6 +605,34 @@ class ScenarioTools:
             ensure_ascii=False,
             indent=2,
         )
+
+    async def track_source_updates(
+        self,
+        source_profile: str,
+        watchlist: list[str] | str | None = None,
+        since: str = "",
+        limit: int = 8,
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+        route_context: dict[str, Any] | None = None,
+    ) -> str:
+        del session_id, source, route_context
+        normalized_profile = _normalize_text(source_profile) or "tech_updates"
+        payload = await self._authoritative_sources.track_updates(
+            source_profile=normalized_profile,
+            watchlist=watchlist,
+            since=since,
+            limit=limit,
+            activity_callback=self._relay_activity(
+                activity_callback,
+                {"searching_web": "searching_web"},
+            ),
+        )
+        payload["tool"] = "track_source_updates"
+        payload["status"] = "ok" if payload.get("updates") else "no_updates"
+        payload["answer_style"] = "Summarize the freshest relevant updates first, then list sources inline with citations."
+        return json.dumps(payload, ensure_ascii=False, indent=2)
 
     def _notion_tool_names(self) -> list[str]:
         names: list[str] = []
@@ -789,11 +908,17 @@ class ScenarioTools:
         deadline: str | None = None,
         query: str = "",
         limit: int = 8,
+        schedule_kind: str | None = None,
+        due_at: str | None = None,
+        timezone: str | None = None,
+        recurrence: Any = None,
+        auto_run: Any = None,
+        job_prompt: str | None = None,
+        notify_policy: str | None = None,
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
     ) -> str:
-        del session_id
         await self._emit_activity(
             activity_callback,
             "routing",
@@ -815,5 +940,13 @@ class ScenarioTools:
             deadline=deadline,
             query=query,
             limit=limit,
+            schedule_kind=schedule_kind,
+            due_at=due_at,
+            timezone=timezone,
+            recurrence=recurrence,
+            auto_run=auto_run,
+            job_prompt=job_prompt,
+            notify_policy=notify_policy,
+            session_id=session_id,
             source=source,
         )

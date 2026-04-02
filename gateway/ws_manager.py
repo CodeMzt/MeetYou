@@ -54,6 +54,9 @@ class WebSocketManager:
                     logger.debug("广播 WebSocket 事件失败，连接将被移除: session=%s", session_id)
                     await self.disconnect(session_id, websocket)
 
+    def has_session(self, session_id: str) -> bool:
+        return bool(self._connections.get(session_id, set()))
+
     def _serialize_event(self, event):
         if isinstance(event, dict):
             return {

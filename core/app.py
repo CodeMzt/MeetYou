@@ -5,12 +5,14 @@ Application wiring and lifecycle management.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import traceback
 from typing import Any
 from uuid import uuid4
 
 from adapters.base import create_adapter
+from core.background_agent import BackgroundAgentRunner
 from core.assistant_modes import AssistantModeManager
 from core.brain import Brain, BrainOutputEvent
 from core.config import ConfigManager
@@ -32,7 +34,7 @@ from core.logger import setup_logger
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.session_manager import SessionManager
 from core.speaker import Speaker
-from core.status import RuntimeStatus, StatusManager
+from core.status import RuntimeStatus, StatusManager, utcnow_iso
 from core.tools_manager import ToolsManager
 from gateway.api import FastAPIGateway
 from platform_layer.detector import detect_platform
@@ -42,8 +44,13 @@ from sensors.proprioceptor import Proprioceptor
 from tools import system_tools
 from tools.mcp import MCPManager
 from tools.memory import Memory
+from tools.task_manager import TaskManager
 
 logger = logging.getLogger("meetyou.app")
+
+
+def _normalize_task_summary(task_record: dict[str, Any]) -> str:
+    return str(task_record.get("content") or task_record.get("summary") or task_record.get("task_key") or "scheduled task").strip()
 
 _BRAIN_IMMEDIATE_KEYS = {
     "api_provider",
@@ -56,9 +63,11 @@ _HEART_IMMEDIATE_KEYS = {
     "heartbeat_api_provider",
     "heartbeat_api_url",
     "heartbeat_api_key",
+    "housekeeping_interval",
     "heartbeat_interval",
     "heart_model",
     "heartbeat_path",
+    "scheduler_interval",
 }
 _MEMORY_IMMEDIATE_KEYS = {
     "embedding_api_url",
@@ -70,6 +79,8 @@ _MODE_IMMEDIATE_KEYS = {
     "mode_router",
     "trusted_write_roots",
     "source_profiles",
+    "source_catalog_path",
+    "research_contact_email",
     "document_parsers",
     "office_integrations",
 }
@@ -106,6 +117,7 @@ class App:
         self.heart_adapter = create_adapter(self._get_heart_provider())
 
         self.memory = Memory()
+        self.task_manager = TaskManager(self.memory)
         self.mcp_manager = MCPManager()
         system_tools.init_system_tools(
             self.platform,
@@ -129,15 +141,19 @@ class App:
             self.exception_router,
             mode_manager=self.mode_manager,
         )
+        self.brain.set_provider_name(self._get_main_provider())
         self.heart = Heart(
             self.heart_adapter,
             self.config,
             self.tools_manager,
             self.memory,
+            self.task_manager,
             self.event_bus,
             self.exception_router,
             status_callback=self._update_heartbeat_status,
         )
+        self.background_agent = BackgroundAgentRunner(self.main_adapter, self.tools_manager)
+        system_tools.set_background_status_provider(self.heart.get_background_status)
 
         self.session_manager = SessionManager()
         self.speaker = Speaker(self.session_manager)
@@ -350,6 +366,8 @@ class App:
         self.main_adapter = create_adapter(self._get_main_provider())
         self.context_manager.set_adapter(self.main_adapter)
         self.brain.set_adapter(self.main_adapter)
+        self.brain.set_provider_name(self._get_main_provider())
+        self.background_agent = BackgroundAgentRunner(self.main_adapter, self.tools_manager)
         sys_prompt = self.config.get_prompt("soul")
         if not self.brain.is_initialized:
             await self.brain.init_brain(sys_prompt)
@@ -361,6 +379,169 @@ class App:
         self.heart_adapter = create_adapter(self._get_heart_provider())
         self.heart.set_adapter(self.heart_adapter)
         await self.heart.refresh_config()
+        system_tools.set_background_status_provider(self.heart.get_background_status)
+
+    def _scheduled_job_route_context(self) -> tuple[list[dict], dict[str, Any]]:
+        tools = self.tools_manager.get_scheduled_job_tools()
+        return tools, {
+            "tool_bundle": [
+                str(tool.get("function", {}).get("name", "")).strip()
+                for tool in tools
+                if str(tool.get("function", {}).get("name", "")).strip()
+            ],
+            "mcp_servers": [],
+        }
+
+    def _task_delivery(self, task_record: dict[str, Any]) -> tuple[str, EventTarget]:
+        delivery = task_record.get("delivery_target") if isinstance(task_record.get("delivery_target"), dict) else {}
+        session_id = str(delivery.get("session_id") or task_record.get("origin_session_id") or "").strip()
+        return session_id, EventTarget(
+            kind=str(delivery.get("kind") or TargetKind.CURRENT_SESSION.value),
+            id=str(delivery.get("id") or ""),
+        )
+
+    def _task_source(self, task_record: dict[str, Any]):
+        delivery = task_record.get("delivery_target") if isinstance(task_record.get("delivery_target"), dict) else {}
+        source_kind = str(delivery.get("source_kind") or SourceKind.SYSTEM.value)
+        source_id = str(delivery.get("source_id") or task_record.get("scope", {}).get("user_id") or "")
+        return make_source(source_kind, source_id)
+
+    def _can_deliver_task_update(self, session_id: str, target: EventTarget) -> bool:
+        resolved_target = target
+        if target.kind == TargetKind.CURRENT_SESSION.value and session_id:
+            resolved_target = self.session_manager.get_default_target(session_id)
+        if resolved_target.kind == TargetKind.WEB.value:
+            return bool(self.gateway is not None and session_id and self.gateway.ws_manager.has_session(session_id))
+        if resolved_target.kind == TargetKind.FEISHU.value:
+            return bool(resolved_target.id)
+        if resolved_target.kind == TargetKind.CLI.value:
+            return bool(session_id)
+        return False
+
+    async def _emit_task_update(self, task_record: dict[str, Any], message: str) -> bool:
+        session_id, target = self._task_delivery(task_record)
+        if not session_id or not self._can_deliver_task_update(session_id, target):
+            return False
+        await self.speaker.emit_text(
+            session_id,
+            message,
+            self._runtime_source,
+            target=target,
+            metadata={"activity_kind": "scheduled_task"},
+        )
+        return True
+
+    async def _emit_pending_task_updates(self, session_id: str, target: EventTarget, source) -> None:
+        pending = await self.task_manager.collect_pending_delivery_messages(source=source)
+        if not pending:
+            return
+        lines = ["Background updates since your last active session:"]
+        for item in pending[:6]:
+            lines.append(f"- {item['message']}")
+        await self.speaker.emit_text(
+            session_id,
+            "\n".join(lines),
+            self._runtime_source,
+            target=target,
+        )
+
+    async def _handle_scheduled_reminder(self, task_key: str):
+        task_record = self.task_manager.get_task_by_key(task_key)
+        if task_record is None:
+            return
+        message = (
+            f"Scheduled reminder: {_normalize_task_summary(task_record)}"
+            f"\nDue: {task_record.get('next_run_at') or task_record.get('due_at') or 'now'}"
+        )
+        should_notify = str(task_record.get("notify_policy") or "on_due") != "silent"
+        delivered = True
+        if should_notify:
+            delivered = await self._emit_task_update(task_record, message)
+        await self.task_manager.complete_due_notification(
+            task_key,
+            summary=message,
+            delivered=(delivered or not should_notify),
+        )
+
+    async def _handle_scheduled_task(self, task_key: str):
+        task_record = self.task_manager.get_task_by_key(task_key)
+        if task_record is None:
+            return
+
+        session = getattr(self.brain, "_http_session", None)
+        if session is None:
+            raise RuntimeError("Brain HTTP session not initialized for scheduled tasks.")
+
+        tools, route_context = self._scheduled_job_route_context()
+        summary = _normalize_task_summary(task_record)
+        system_prompt = (
+            "[Scheduled Job Mode]\n"
+            "You are executing a scheduled background job.\n"
+            "Use only the allowed tools.\n"
+            "Do the smallest reliable amount of work needed to complete the scheduled task.\n"
+            "Never use destructive or external-send behavior.\n"
+            "Return a concise execution summary in plain text."
+        )
+        user_payload = {
+            "task": task_record,
+            "current_time": utcnow_iso(),
+        }
+        task_source = self._task_source(task_record)
+        task_session_id, task_target = self._task_delivery(task_record)
+        token = bind_event_context(
+            session_id=task_session_id or f"system:task:{task_key}",
+            source=task_source,
+            target=task_target,
+        )
+        try:
+            result = await self.background_agent.run(
+                session=session,
+                api_url=self.config.get("api_url") or "",
+                api_key=self.config.get("api_key") or "",
+                model=self.config.get("model") or "",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+                ],
+                tools=tools,
+                session_id=task_session_id or f"system:task:{task_key}",
+                source=task_source,
+                route_context=route_context,
+                adapter_options=Brain._build_adapter_options(self._build_model_options({})),
+            )
+        finally:
+            reset_event_context(token)
+
+        content = str(result.get("content") or "").strip() or f"Scheduled task completed: {summary}"
+        succeeded = result.get("status") == "ok" and not content.lower().startswith("error:")
+        user_message = (
+            f"Scheduled task completed: {summary}\n{content}"
+            if succeeded
+            else f"Scheduled task failed: {summary}\n{content}"
+        )
+        should_notify = str(task_record.get("notify_policy") or "on_completion") == "on_completion"
+        delivered = True
+        if should_notify:
+            delivered = await self._emit_task_update(task_record, user_message)
+        await self.task_manager.complete_task_run(
+            task_key,
+            succeeded=succeeded,
+            summary=user_message,
+            delivered=(delivered or not should_notify),
+        )
+
+    async def _handle_control_event(self, event):
+        metadata = dict(getattr(event, "metadata", {}) or {})
+        control_kind = str(metadata.get("control_kind") or "").strip().lower()
+        payload = event.content if isinstance(event.content, dict) else {}
+        task_key = str(payload.get("task_key") or "").strip()
+        if control_kind == "scheduled_task" and task_key:
+            await self._handle_scheduled_task(task_key)
+            return True
+        if control_kind == "scheduled_reminder" and task_key:
+            await self._handle_scheduled_reminder(task_key)
+            return True
+        return False
 
     def get_config_snapshot(self) -> dict[str, dict[str, Any]]:
         return self.config.snapshot()
@@ -399,13 +580,97 @@ class App:
             "session_state": self.brain.get_session_runtime_snapshot(session_id) if session_id else None,
         }
 
-    def get_runtime_usage(self, session_id: str) -> dict[str, Any]:
+    async def get_runtime_usage(self, session_id: str) -> dict[str, Any]:
         if not session_id:
             raise ValueError("session_id is required")
         snapshot = self.brain.get_session_usage_snapshot(session_id)
-        if snapshot is None:
+        if snapshot is not None and snapshot.get("usage_ready"):
+            return snapshot
+
+        resolver = getattr(self.mode_manager, "resolve_context_limit", None)
+        if callable(resolver):
+            context_limit_info = await resolver(
+                provider_name=self._get_main_provider(),
+                api_url=self.config.get("api_url") or "",
+                model_name=self.config.get("model") or "",
+                adapter=self.main_adapter,
+            )
+        else:
+            context_limit_info = {
+                "context_limit_tokens": int(self.main_adapter.get_context_limit(self.config.get("model") or "")),
+                "context_limit_source": "fallback",
+                "context_limit_model": self.config.get("model") or "",
+                "context_limit_confidence": "low",
+            }
+
+        zero_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 0,
+        }
+
+        if snapshot is not None:
+            merged_snapshot = dict(snapshot)
+            merged_snapshot["usage_ready"] = False
+            merged_snapshot["context_limit_tokens"] = int(
+                merged_snapshot.get("context_limit_tokens") or context_limit_info.get("context_limit_tokens", 0) or 0
+            )
+            merged_snapshot["context_limit_source"] = str(
+                merged_snapshot.get("context_limit_source") or context_limit_info.get("context_limit_source") or "fallback"
+            )
+            merged_snapshot["context_limit_model"] = str(
+                merged_snapshot.get("context_limit_model") or context_limit_info.get("context_limit_model") or self.config.get("model") or ""
+            )
+            merged_snapshot["context_limit_confidence"] = str(
+                merged_snapshot.get("context_limit_confidence")
+                or context_limit_info.get("context_limit_confidence")
+                or "low"
+            )
+            merged_snapshot.setdefault("context_breakdown", {
+                "system": 0,
+                "history": 0,
+                "tool_history": 0,
+                "memory_context": 0,
+                "policy": 0,
+                "current_input": 0,
+                "proprioception": 0,
+                "total": 0,
+            })
+            merged_snapshot.setdefault("last_turn_usage", dict(zero_usage))
+            merged_snapshot.setdefault("session_totals", {**zero_usage, "turn_count": 0})
+            merged_snapshot.setdefault("current_context_tokens_estimated", 0)
+            merged_snapshot.setdefault("usage_source", "estimated")
+            merged_snapshot.setdefault("updated_at", utcnow_iso())
+            return merged_snapshot
+
+        binding = self.session_manager.get_binding(session_id)
+        if binding is None:
             raise ValueError(f"Session not found: {session_id}")
-        return snapshot
+
+        return {
+            "session_id": session_id,
+            "usage_ready": False,
+            "context_limit_tokens": int(context_limit_info.get("context_limit_tokens", 0) or 0),
+            "context_limit_source": str(context_limit_info.get("context_limit_source") or "fallback"),
+            "context_limit_model": str(context_limit_info.get("context_limit_model") or self.config.get("model") or ""),
+            "context_limit_confidence": str(context_limit_info.get("context_limit_confidence") or "low"),
+            "current_context_tokens_estimated": 0,
+            "context_breakdown": {
+                "system": 0,
+                "history": 0,
+                "tool_history": 0,
+                "memory_context": 0,
+                "policy": 0,
+                "current_input": 0,
+                "proprioception": 0,
+                "total": 0,
+            },
+            "last_turn_usage": dict(zero_usage),
+            "session_totals": {**zero_usage, "turn_count": 0},
+            "usage_source": "estimated",
+            "updated_at": utcnow_iso(),
+        }
 
     async def apply_config_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
         applied_keys, warnings = self.config.apply_updates(updates)
@@ -483,6 +748,15 @@ class App:
                     )
                 continue
 
+            if event.type == EventType.CONTROL.value:
+                try:
+                    handled = await self._handle_control_event(event)
+                    if not handled:
+                        logger.warning("Unhandled control event: %s", getattr(event, "metadata", {}))
+                except Exception as exc:
+                    logger.error("Control event processing failed: %s\n%s", exc, traceback.format_exc())
+                continue
+
             if event.type == EventType.SIGNAL.value:
                 input_info = {
                     "role": "system",
@@ -517,6 +791,9 @@ class App:
                 api_url = self.config.get("api_url") or ""
                 model = self.config.get("model") or ""
                 model_options = self._build_model_options(getattr(event, "metadata", {}))
+
+                if event.type == EventType.MESSAGE.value and event.role == "user":
+                    await self._emit_pending_task_updates(event.session_id, target, event.source)
 
                 stream_id = await self.speaker.emit_stream_start(
                     event.session_id,
@@ -568,6 +845,7 @@ class App:
                     api_key,
                     api_url,
                     model,
+                    provider_name=self._get_main_provider(),
                     tool_activity_callback=emit_tool_activity,
                     model_options=model_options,
                     phase_callback=phase_callback,
@@ -675,6 +953,7 @@ class App:
         await self.tools_manager.init_tools(tools_schema_path, mcp_servers)
         await self._refresh_brain_runtime()
         await self.heart.init_heart()
+        system_tools.set_background_status_provider(self.heart.get_background_status)
 
         if not self.config.get_bool("enable_gateway", True):
             logger.warning("enable_gateway=false is ignored in the gateway-only runtime.")
@@ -732,6 +1011,8 @@ class App:
         try:
             await asyncio.gather(
                 self.brain_processor(),
+                self.heart.scheduler_processor(),
+                self.heart.housekeeping_processor(),
                 self.heart.heartbeat_processor(),
                 self.proprioceptor.run(),
             )

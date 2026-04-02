@@ -117,8 +117,9 @@ class ContextManager:
         api_url: str,
         api_key: str,
         reserve_ratio: float = 0.75,
+        context_limit_override: int | None = None,
     ) -> dict:
-        limit = self.get_context_limit(model)
+        limit = int(context_limit_override or 0) or self.get_context_limit(model)
         usable_tokens = int(limit * reserve_ratio)
         current_tokens = self.estimate_tokens(chat_history)
         result = {

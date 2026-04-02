@@ -188,6 +188,20 @@ const KNOWN_FIELDS: Record<string, Omit<ConfigFieldSchema, 'key'>> = {
     group: 'heartbeat',
     input: 'number',
   },
+  housekeeping_interval: {
+    title: 'Housekeeping Interval',
+    description: 'Memory housekeeping cadence in seconds.',
+    group: 'heartbeat',
+    input: 'number',
+    advanced: true,
+  },
+  scheduler_interval: {
+    title: 'Scheduler Interval',
+    description: 'Scheduled task polling cadence in seconds.',
+    group: 'heartbeat',
+    input: 'number',
+    advanced: true,
+  },
   heartbeat_path: {
     title: 'Heartbeat Prompt Path',
     description: 'Prompt file used by the heartbeat loop.',
@@ -219,6 +233,13 @@ const KNOWN_FIELDS: Record<string, Omit<ConfigFieldSchema, 'key'>> = {
     group: 'modes',
     input: 'json',
   },
+  source_catalog_path: {
+    title: 'Source Catalog Path',
+    description: 'Path to the config-driven source catalog JSON file.',
+    group: 'modes',
+    input: 'text',
+    placeholder: 'user/source_catalog.json',
+  },
   document_parsers: {
     title: 'Document Parsers',
     description: 'JSON config for local document parsing limits and OCR.',
@@ -230,6 +251,14 @@ const KNOWN_FIELDS: Record<string, Omit<ConfigFieldSchema, 'key'>> = {
     description: 'JSON config for office integrations and draft-only behavior.',
     group: 'modes',
     input: 'json',
+  },
+  research_contact_email: {
+    title: 'Research Contact Email',
+    description: 'Optional contact email/User-Agent hint for official APIs that request one.',
+    group: 'advanced',
+    input: 'text',
+    advanced: true,
+    placeholder: 'research@example.com',
   },
   enable_feishu_bot: {
     title: 'Enable Feishu Bot',
