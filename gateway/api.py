@@ -100,6 +100,8 @@ class FastAPIGateway:
         @self.app.post("/inputs", response_model=InputAcceptedResponse)
         async def post_inputs(request: InputRequest):
             metadata = dict(request.metadata)
+            if request.preferred_mode:
+                metadata["preferred_mode"] = request.preferred_mode
             if request.options is not None:
                 metadata["input_options"] = request.options.model_dump(exclude_none=True)
             source = make_source(SourceKind.WEB.value, request.source_id, **request.metadata)

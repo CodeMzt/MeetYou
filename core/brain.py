@@ -8,9 +8,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import aiohttp
 
+from core.assistant_modes import RouteDecision
 from core.brain_session import BrainSession
 from core.runtime_context import get_event_context
 from core.status import ContextBreakdown, RuntimeStatus, UsageCounters, utcnow_iso
@@ -137,12 +139,13 @@ class BrainOutputEvent:
 
 
 class Brain:
-    def __init__(self, adapter, tools_manager, context_manager, event_bus, exception_router):
+    def __init__(self, adapter, tools_manager, context_manager, event_bus, exception_router, mode_manager=None):
         self._adapter = adapter
         self._tools_manager = tools_manager
         self._context_manager = context_manager
         self._event_bus = event_bus
         self._exception_router = exception_router
+        self._mode_manager = mode_manager
         self._base_messages: list[dict] = []
         self._sessions: dict[str, BrainSession] = {}
         self._http_session: aiohttp.ClientSession | None = None
@@ -224,6 +227,10 @@ class Brain:
         status: str | RuntimeStatus,
         detail: str = "",
         active_tools: list[str] | None = None,
+        current_mode: str | None = None,
+        route_reason: str | None = None,
+        action_risk: str | None = None,
+        source_profile: str | None = None,
         stream_id: str | None = None,
         turn_id: str | None = None,
     ) -> dict:
@@ -232,9 +239,98 @@ class Brain:
             status=status,
             detail=detail,
             active_tools=active_tools,
+            current_mode=current_mode,
+            route_reason=route_reason,
+            action_risk=action_risk,
+            source_profile=source_profile,
             stream_id=stream_id,
             turn_id=turn_id,
         ).to_dict()
+
+    def _resolve_route(self, input_info: dict, session: BrainSession) -> dict[str, Any]:
+        if self._mode_manager is None:
+            return {
+                "requested_mode": "auto",
+                "current_mode": session.metadata.get("current_mode", "") or "documents",
+                "route_reason": "Assistant mode manager unavailable; using default documents mode.",
+                "source_profile": "workspace_local",
+                "tool_bundle": [],
+                "mcp_servers": [],
+                "prompt_bundle": "documents",
+            }
+
+        route = self._mode_manager.route(
+            input_info,
+            session_metadata=session.metadata,
+            source=get_event_context().get("source"),
+        )
+        if isinstance(route, RouteDecision):
+            return route.to_dict()
+        return dict(route or {})
+
+    def _build_mode_policy_messages(self, route_context: dict[str, Any]) -> list[dict]:
+        mode = str(route_context.get("current_mode") or "").strip()
+        if not mode:
+            return []
+
+        route_reason = str(route_context.get("route_reason") or "").strip()
+        source_profile = str(route_context.get("source_profile") or "").strip()
+        header = (
+            "[Assistant Mode]\n"
+            f"Current mode: {mode}\n"
+            f"Routing reason: {route_reason or 'n/a'}\n"
+            f"Source profile: {source_profile or 'n/a'}"
+        )
+        messages = [{"role": "system", "content": header}]
+        if self._mode_manager is not None:
+            prompt_text = self._mode_manager.get_prompt_for_mode(mode)
+            if prompt_text:
+                messages.append({"role": "system", "content": prompt_text})
+        return messages
+
+    def _get_tools_for_route(self, route_context: dict[str, Any]) -> list[dict]:
+        getter = getattr(self._tools_manager, "get_all_tools", None)
+        if not callable(getter):
+            return []
+        try:
+            return list(getter(route_context=route_context))
+        except TypeError:
+            return list(getter())
+
+    async def _call_tool_with_route(
+        self,
+        tool_name: str,
+        tool_args: dict,
+        *,
+        session_id: str,
+        source,
+        tool_activity_callback,
+        route_context: dict[str, Any],
+    ) -> str:
+        caller = getattr(self._tools_manager, "call_tool")
+        try:
+            return await caller(
+                tool_name,
+                tool_args,
+                session_id=session_id,
+                source=source,
+                tool_activity_callback=tool_activity_callback,
+                route_context=route_context,
+            )
+        except TypeError:
+            return await caller(
+                tool_name,
+                tool_args,
+                session_id=session_id,
+                source=source,
+                tool_activity_callback=tool_activity_callback,
+            )
+
+    def _get_action_risk_for_tools(self, tool_names: list[str]) -> str:
+        getter = getattr(self._tools_manager, "get_action_risk_for_tools", None)
+        if callable(getter):
+            return str(getter(tool_names))
+        return "read"
 
     def _build_recent_context_summary(self, session: BrainSession) -> str:
         if len(session.chat_history) <= 2:
@@ -535,6 +631,9 @@ class Brain:
 
         session = self.get_or_create_session(session_id)
         await self._refresh_session_context(session)
+        route_context = self._resolve_route(input_info, session)
+        session.metadata["current_route"] = route_context
+        session.metadata["current_mode"] = route_context.get("current_mode", "")
         turn_input_index = len(session.chat_history)
         auto_memory_message = await self._build_auto_memory_message(session_id, input_info)
         memory_trigger_message = self._build_memory_trigger_message(input_info)
@@ -558,7 +657,7 @@ class Brain:
             session.usage_snapshot.session_totals.add(summary_usage)
             usage_source = "provider"
 
-        policy_messages = [
+        policy_messages = self._build_mode_policy_messages(route_context) + [
             {"role": "system", "content": TOOL_JUDGMENT_POLICY_MESSAGE},
             {"role": "system", "content": MEMORY_POLICY_MESSAGE},
         ]
@@ -593,7 +692,7 @@ class Brain:
                 proprioception_message=proprioception_message,
             )
 
-            tools = self._tools_manager.get_all_tools()
+            tools = self._get_tools_for_route(route_context)
             assistant_content = ""
             reasoning_content = ""
             tool_calls = []
@@ -603,6 +702,15 @@ class Brain:
             answer_started = False
 
             if phase_callback:
+                self.set_session_runtime_state(
+                    session_id,
+                    RuntimeStatus.THINKING.value,
+                    detail="Calling model",
+                    current_mode=route_context.get("current_mode", ""),
+                    route_reason=route_context.get("route_reason", ""),
+                    action_risk="read",
+                    source_profile=route_context.get("source_profile", ""),
+                )
                 await phase_callback(RuntimeStatus.THINKING.value, "Calling model")
 
             async for event in self._adapter.stream_chat(
@@ -689,6 +797,16 @@ class Brain:
 
             tool_names = [tc.name for tc in tool_calls]
             if phase_callback:
+                self.set_session_runtime_state(
+                    session_id,
+                    RuntimeStatus.TOOL_CALLING.value,
+                    detail=", ".join(tool_names),
+                    active_tools=tool_names,
+                    current_mode=route_context.get("current_mode", ""),
+                    route_reason=route_context.get("route_reason", ""),
+                    action_risk=self._get_action_risk_for_tools(tool_names),
+                    source_profile=route_context.get("source_profile", ""),
+                )
                 await phase_callback(
                     RuntimeStatus.TOOL_CALLING.value,
                     ", ".join(tool_names),
@@ -703,12 +821,13 @@ class Brain:
 
                 try:
                     context = get_event_context()
-                    result = await self._tools_manager.call_tool(
+                    result = await self._call_tool_with_route(
                         tc.name,
                         args,
                         session_id=context.get("session_id", session_id),
                         source=context.get("source"),
                         tool_activity_callback=tool_activity_callback,
+                        route_context=route_context,
                     )
                 except Exception as exc:
                     result = f"Error: tool {tc.name} failed: {exc}"

@@ -15,150 +15,155 @@ const PROVIDER_OPTIONS = [
 ]
 
 const THINKING_OPTIONS = [
-  { label: '低', value: 'low' },
-  { label: '中', value: 'medium' },
-  { label: '高', value: 'high' },
+  { label: 'Low', value: 'low' },
+  { label: 'Medium', value: 'medium' },
+  { label: 'High', value: 'high' },
 ]
 
 export const CONFIG_GROUPS: ConfigGroupDefinition[] = [
   {
     key: 'model',
-    title: '模型与推理',
-    description: '模型提供商、主模型和默认推理强度。',
+    title: 'Model',
+    description: 'Main provider, model, and default reasoning settings.',
   },
   {
     key: 'secrets',
-    title: '密钥与令牌',
-    description: '敏感字段只显示是否已配置，输入后覆盖保存。',
+    title: 'Secrets',
+    description: 'API keys and sensitive integration tokens.',
   },
   {
     key: 'memory',
-    title: 'Embedding / Memory',
-    description: '向量化、记忆文件和上下文相关配置。',
+    title: 'Memory',
+    description: 'Embedding, memory persistence, and related settings.',
   },
   {
     key: 'heartbeat',
     title: 'Heartbeat',
-    description: '后台心跳模型与节奏控制。',
+    description: 'Background heartbeat model and cadence controls.',
+  },
+  {
+    key: 'modes',
+    title: 'Modes',
+    description: 'Assistant mode routing, trusted write roots, and JSON bundles.',
   },
   {
     key: 'advanced',
-    title: '集成与高级',
-    description: '网关、飞书、MCP 和其他较少调整的设置。',
+    title: 'Advanced',
+    description: 'Gateway, Feishu, MCP, and other integration settings.',
   },
 ]
 
 const KNOWN_FIELDS: Record<string, Omit<ConfigFieldSchema, 'key'>> = {
   api_provider: {
-    title: '主模型提供商',
-    description: '主对话使用的 provider。',
+    title: 'Main Provider',
+    description: 'Provider used for the main conversation model.',
     group: 'model',
     input: 'select',
     options: PROVIDER_OPTIONS,
   },
   api_url: {
-    title: '主模型 API URL',
-    description: '主对话请求地址。',
+    title: 'Main API URL',
+    description: 'Base URL for the main model API.',
     group: 'model',
     input: 'text',
     placeholder: 'https://api.openai.com/v1/responses',
   },
   model: {
-    title: '主模型',
-    description: '主对话模型名称。',
+    title: 'Main Model',
+    description: 'Model name used for the main conversation loop.',
     group: 'model',
     input: 'text',
-    placeholder: 'gpt-5.4-nano',
+    placeholder: 'gpt-5.4',
   },
   thinking_enabled: {
-    title: '默认启用推理',
-    description: '未覆盖时的全局 thinking 开关。',
+    title: 'Default Reasoning',
+    description: 'Whether reasoning is enabled by default.',
     group: 'model',
     input: 'boolean',
   },
   thinking_effort: {
-    title: '默认推理强度',
-    description: '未覆盖时的全局 thinking effort。',
+    title: 'Reasoning Effort',
+    description: 'Default reasoning effort when supported.',
     group: 'model',
     input: 'select',
     options: THINKING_OPTIONS,
   },
   thinking_budget_tokens: {
-    title: '推理预算',
-    description: 'provider 支持时透传的预算 token。',
+    title: 'Reasoning Budget',
+    description: 'Optional token budget for reasoning.',
     group: 'model',
     input: 'number',
   },
   api_key: {
-    title: '主模型 API Key',
-    description: '主对话使用的密钥。',
+    title: 'Main API Key',
+    description: 'Secret for the main model provider.',
     group: 'secrets',
     input: 'password',
   },
   heartbeat_api_key: {
     title: 'Heartbeat API Key',
-    description: '后台心跳模型密钥。',
+    description: 'Secret for the heartbeat model provider.',
     group: 'secrets',
     input: 'password',
     advanced: true,
   },
   embedding_api_key: {
     title: 'Embedding API Key',
-    description: 'Embedding 请求使用的密钥。',
+    description: 'Secret for the embedding service.',
     group: 'secrets',
     input: 'password',
     advanced: true,
   },
   feishu_app_id: {
-    title: '飞书 App ID',
-    description: '飞书集成使用的应用 ID。',
+    title: 'Feishu App ID',
+    description: 'Feishu application id.',
     group: 'secrets',
     input: 'password',
     advanced: true,
   },
   feishu_app_secret: {
-    title: '飞书 App Secret',
-    description: '飞书集成使用的应用密钥。',
+    title: 'Feishu App Secret',
+    description: 'Feishu application secret.',
     group: 'secrets',
     input: 'password',
     advanced: true,
   },
   notion_token: {
     title: 'Notion Token',
-    description: 'Notion MCP 或集成访问令牌。',
+    description: 'Token used by Notion integration or MCP.',
     group: 'secrets',
     input: 'password',
     advanced: true,
   },
   tavily_api_key: {
     title: 'Tavily API Key',
-    description: '网页搜索能力依赖的令牌。',
+    description: 'Token used for web research.',
     group: 'secrets',
     input: 'password',
     advanced: true,
   },
   embedding_api_url: {
     title: 'Embedding API URL',
-    description: 'Embedding 服务地址。',
+    description: 'Embedding service URL.',
     group: 'memory',
     input: 'text',
   },
   embedding_model: {
-    title: 'Embedding 模型',
-    description: '向量化使用的模型。',
+    title: 'Embedding Model',
+    description: 'Embedding model name.',
     group: 'memory',
     input: 'text',
   },
   memory_file_path: {
-    title: '记忆文件路径',
-    description: '记忆图谱持久化位置。',
+    title: 'Memory File Path',
+    description: 'Persistence path for the memory graph.',
     group: 'memory',
     input: 'text',
     advanced: true,
   },
   heartbeat_api_provider: {
-    title: 'Heartbeat 提供商',
-    description: '后台心跳使用的 provider。',
+    title: 'Heartbeat Provider',
+    description: 'Provider used by the heartbeat model.',
     group: 'heartbeat',
     input: 'select',
     options: PROVIDER_OPTIONS,
@@ -166,110 +171,146 @@ const KNOWN_FIELDS: Record<string, Omit<ConfigFieldSchema, 'key'>> = {
   },
   heartbeat_api_url: {
     title: 'Heartbeat API URL',
-    description: '后台心跳请求地址。',
+    description: 'Base URL for the heartbeat model API.',
     group: 'heartbeat',
     input: 'text',
     advanced: true,
   },
   heart_model: {
-    title: 'Heartbeat 模型',
-    description: '后台心跳使用的模型。',
+    title: 'Heartbeat Model',
+    description: 'Model name used by heartbeat.',
     group: 'heartbeat',
     input: 'text',
   },
   heartbeat_interval: {
-    title: 'Heartbeat 间隔',
-    description: '后台心跳执行间隔，单位秒。',
+    title: 'Heartbeat Interval',
+    description: 'Heartbeat cadence in seconds.',
     group: 'heartbeat',
     input: 'number',
   },
   heartbeat_path: {
-    title: 'Heartbeat Prompt 路径',
-    description: '后台心跳提示词路径。',
+    title: 'Heartbeat Prompt Path',
+    description: 'Prompt file used by the heartbeat loop.',
     group: 'heartbeat',
     input: 'text',
     advanced: true,
   },
+  assistant_modes: {
+    title: 'Assistant Modes',
+    description: 'JSON bundle describing enabled modes, prompt directory, and tool bundles.',
+    group: 'modes',
+    input: 'json',
+  },
+  mode_router: {
+    title: 'Mode Router',
+    description: 'JSON config for automatic mode routing.',
+    group: 'modes',
+    input: 'json',
+  },
+  trusted_write_roots: {
+    title: 'Trusted Write Roots',
+    description: 'Directories where local document writes are allowed without expanding trust.',
+    group: 'modes',
+    input: 'list',
+  },
+  source_profiles: {
+    title: 'Source Profiles',
+    description: 'JSON registry for research source-priority profiles.',
+    group: 'modes',
+    input: 'json',
+  },
+  document_parsers: {
+    title: 'Document Parsers',
+    description: 'JSON config for local document parsing limits and OCR.',
+    group: 'modes',
+    input: 'json',
+  },
+  office_integrations: {
+    title: 'Office Integrations',
+    description: 'JSON config for office integrations and draft-only behavior.',
+    group: 'modes',
+    input: 'json',
+  },
   enable_feishu_bot: {
-    title: '启用飞书机器人',
-    description: '开启后会启用飞书长连接接入。',
+    title: 'Enable Feishu Bot',
+    description: 'Enable the Feishu long-connection input/output adapter.',
     group: 'advanced',
     input: 'boolean',
     advanced: true,
   },
   enable_gateway: {
-    title: '启用网关',
-    description: '当前运行模式下通常保持开启。',
+    title: 'Enable Gateway',
+    description: 'Enable the HTTP and WebSocket gateway.',
     group: 'advanced',
     input: 'boolean',
     advanced: true,
   },
   gateway_host: {
-    title: '网关 Host',
-    description: 'HTTP / WebSocket 服务监听地址。',
+    title: 'Gateway Host',
+    description: 'Host address for the gateway.',
     group: 'advanced',
     input: 'text',
     advanced: true,
   },
   gateway_port: {
-    title: '网关端口',
-    description: 'HTTP / WebSocket 服务监听端口。',
+    title: 'Gateway Port',
+    description: 'Port for the gateway.',
     group: 'advanced',
     input: 'number',
     advanced: true,
   },
   feishu_broadcast_chat_ids: {
-    title: '飞书广播 Chat ID',
-    description: '一行一个 Chat ID。',
+    title: 'Feishu Broadcast Chat IDs',
+    description: 'One chat id per line.',
     group: 'advanced',
     input: 'list',
     advanced: true,
   },
   feishu_default_chat_id: {
-    title: '默认飞书 Chat ID',
-    description: '默认推送目标。',
+    title: 'Default Feishu Chat ID',
+    description: 'Default Feishu chat target.',
     group: 'advanced',
     input: 'text',
     advanced: true,
   },
   feishu_chat_registry_path: {
-    title: '飞书 Chat 注册表路径',
-    description: '自动记录 chat_id 的文件位置。',
+    title: 'Feishu Chat Registry Path',
+    description: 'File path used to store discovered chat ids.',
     group: 'advanced',
     input: 'text',
     advanced: true,
   },
   cmd_policy_path: {
-    title: '命令策略路径',
-    description: '系统命令审批策略文件路径。',
+    title: 'Command Policy Path',
+    description: 'Command safety policy file path.',
     group: 'advanced',
     input: 'text',
     advanced: true,
   },
   tools_schema_path: {
-    title: '工具 Schema 路径',
-    description: '工具描述文件路径。',
+    title: 'Tools Schema Path',
+    description: 'Tool schema file path.',
     group: 'advanced',
     input: 'text',
     advanced: true,
   },
   soul_path: {
-    title: 'Soul Prompt 路径',
-    description: '主系统提示词路径。',
+    title: 'Soul Prompt Path',
+    description: 'Main system prompt path.',
     group: 'advanced',
     input: 'text',
     advanced: true,
   },
   start_path: {
-    title: 'Start Prompt 路径',
-    description: '启动提示词路径。',
+    title: 'Start Prompt Path',
+    description: 'Boot prompt path.',
     group: 'advanced',
     input: 'text',
     advanced: true,
   },
   mcp_registry_url: {
     title: 'MCP Registry URL',
-    description: 'MCP 服务注册中心地址。',
+    description: 'MCP registry URL.',
     group: 'advanced',
     input: 'text',
     advanced: true,
@@ -293,11 +334,18 @@ function inferGroup(key: string): ConfigGroupKey {
   ) {
     return 'secrets'
   }
-  if (
-    key.startsWith('embedding_') ||
-    key.startsWith('memory_')
-  ) {
+  if (key.startsWith('embedding_') || key.startsWith('memory_')) {
     return 'memory'
+  }
+  if (
+    key === 'assistant_modes' ||
+    key === 'mode_router' ||
+    key === 'trusted_write_roots' ||
+    key === 'source_profiles' ||
+    key === 'document_parsers' ||
+    key === 'office_integrations'
+  ) {
+    return 'modes'
   }
   if (key.startsWith('heartbeat_') || key.startsWith('heart_')) {
     return 'heartbeat'
@@ -322,6 +370,9 @@ function inferInput(key: string, entry: ConfigEntry | null): ConfigFieldSchema['
   if (Array.isArray(entry?.value)) {
     return 'list'
   }
+  if (entry?.value && typeof entry.value === 'object') {
+    return 'json'
+  }
   if (typeof entry?.value === 'boolean') {
     return 'boolean'
   }
@@ -343,7 +394,7 @@ export function getConfigFieldSchema(key: string, entry: ConfigEntry | null): Co
   return {
     key,
     title: titleFromKey(key),
-    description: '未在前端预设中的受管配置项。',
+    description: 'Config field not yet given a custom UI schema.',
     group: inferGroup(key),
     input: inferInput(key, entry),
     advanced: true,
@@ -360,5 +411,5 @@ export function buildConfigGroups(fields: ResolvedConfigField[]): ConfigFieldGro
       commonFields: groupFields.filter((field) => !field.schema.advanced),
       advancedFields: groupFields.filter((field) => field.schema.advanced),
     }
-  }).filter((group) => group.commonFields.length > 0 || group.advancedFields.length > 0)
+  })
 }

@@ -368,6 +368,7 @@ class WebSearchTools:
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
+        source_profile: str = "",
     ) -> str:
         del session_id, source
 
@@ -434,6 +435,7 @@ class WebSearchTools:
                     "query": normalized_query,
                     "search_backend": "tavily",
                     "topic": topic,
+                    "source_profile": str(source_profile or ""),
                     "citation_style": "No results were found.",
                     "summary_hint": normalized["answer"],
                     "sources": [],
@@ -491,6 +493,7 @@ class WebSearchTools:
                 "query": normalized_query,
                 "search_backend": "tavily",
                 "topic": topic,
+                "source_profile": str(source_profile or ""),
                 "citation_style": "Answer first, then cite sources inline like [1], [2] using the source ids below.",
                 "summary_hint": normalized["answer"],
                 "sources": sources,
@@ -507,6 +510,7 @@ class WebSearchTools:
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
+        source_profile: str = "",
     ) -> str:
         del session_id, source
 
@@ -531,6 +535,7 @@ class WebSearchTools:
             return "Error: Could not read the page."
 
         payload = {
+            "source_profile": str(source_profile or ""),
             "citation_style": "If you use this page in the answer, cite it as [1].",
             "source": {
                 "id": 1,
