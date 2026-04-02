@@ -19,17 +19,20 @@ function createSettingsWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize
 
+  const windowWidth = 680
+  const windowHeight = 760
+
   settingsWin = new BrowserWindow({
-    width: 600,
-    height: 700,
-    x: width / 2 - 300,
-    y: height / 2 - 350,
+    width: windowWidth,
+    height: windowHeight,
+    x: width / 2 - windowWidth / 2,
+    y: height / 2 - windowHeight / 2,
     icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
     transparent: true,
     frame: false,
     resizable: true,
-    minWidth: 500,
-    minHeight: 500,
+    minWidth: 560,
+    minHeight: 620,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -64,17 +67,20 @@ function createDashboardWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize
 
+  const windowWidth = 920
+  const windowHeight = 720
+
   dashboardWin = new BrowserWindow({
-    width: 850,
-    height: 650,
-    x: width / 2 - 425,
-    y: height / 2 - 325,
+    width: windowWidth,
+    height: windowHeight,
+    x: width / 2 - windowWidth / 2,
+    y: height / 2 - windowHeight / 2,
     icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
     transparent: true,
     frame: false,
     resizable: true,
-    minWidth: 800,
-    minHeight: 600,
+    minWidth: 840,
+    minHeight: 620,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -103,18 +109,21 @@ function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize
 
+  const windowWidth = 400
+  const windowHeight = 620
+
   win = new BrowserWindow({
-    width: 360,
-    height: 560,
-    x: width - 380,
-    y: height - 600,
+    width: windowWidth,
+    height: windowHeight,
+    x: width - windowWidth - 20,
+    y: height - windowHeight - 40,
     icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     resizable: true,
-    minWidth: 300,
-    minHeight: 400,
+    minWidth: 340,
+    minHeight: 460,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Needed for some local assets and modules
