@@ -25,6 +25,7 @@ class RuntimeStatus(str, Enum):
     TOOL_CALLING = "tool_calling"
     ANSWERING = "answering"
     WAITING_CONFIRM = "waiting_confirm"
+    WAITING_HUMAN_INPUT = "waiting_human_input"
     HEARTBEAT = "heartbeat"
     ERROR = "error"
     SHUTTING_DOWN = "shutting_down"
