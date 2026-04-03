@@ -15,12 +15,21 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     aiohttp = None
 
-from core.assistant_modes import RouteDecision
+from core.assistant_modes import (
+    ASSISTANT_MODE_AUTO,
+    ASSISTANT_MODE_NORMAL,
+    ASSISTANT_MODES,
+    ASSISTANT_SPECIALIZED_MODES,
+    RouteDecision,
+)
 from core.brain_session import BrainSession
 from core.runtime_context import get_event_context
 from core.status import ContextBreakdown, RuntimeStatus, UsageCounters, utcnow_iso
 
 logger = logging.getLogger("meetyou.brain")
+
+_INTERNAL_MODE_SWITCH_TOOL_NAME = "switch_assistant_mode"
+_MODE_SWITCH_REASON_LIMIT = 160
 
 
 class _FallbackClientSession:
@@ -39,6 +48,7 @@ WEB_RESEARCH_POLICY_MESSAGE = (
     "[Scenario Chain Policy]\n"
     "Use research_topic for current information, recommendations, comparisons, and open-ended web research.\n"
     "Use inspect_page when the user provides a direct URL or asks to inspect a specific page, PDF, or webpage.\n"
+    "Switch to research mode only when the next step clearly needs source tracking, evidence-heavy analysis, or research-style report work.\n"
     "Use search_knowledge for prior conversations, user preferences, project history, or Notion knowledge.\n"
     "Use manage_tasks for explicit to-do management: create, list, update, and complete.\n"
     "Do not try to recreate the chain yourself with raw browser, Tavily, or memory primitives; the high-level tools already orchestrate that.\n"
@@ -146,6 +156,17 @@ class BrainOutputEvent:
     usage: dict | None = None
 
 
+@dataclass
+class _ModeSwitchResult:
+    message: str
+    route_context: dict[str, Any]
+    switch_count: int
+    origin: str
+    from_mode: str
+    to_mode: str
+    applied: bool = False
+
+
 class Brain:
     def __init__(self, adapter, tools_manager, context_manager, event_bus, exception_router, mode_manager=None):
         self._adapter = adapter
@@ -213,6 +234,16 @@ class Brain:
         session.touch()
         return session
 
+    def discard_trailing_transient_messages(self, session_id: str):
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        while len(session.chat_history) > 2:
+            metadata = dict(session.chat_history[-1].get("metadata") or {})
+            if not bool(metadata.get("transient")):
+                break
+            session.chat_history.pop()
+
     async def close_session(self, session_id: str):
         session = self._sessions.pop(session_id, None)
         if session is not None:
@@ -259,28 +290,371 @@ class Brain:
             turn_id=turn_id,
         ).to_dict()
 
-    def _resolve_route(self, input_info: dict, session: BrainSession) -> dict[str, Any]:
+    @staticmethod
+    def _normalize_mode_name(value: Any, fallback: str = ASSISTANT_MODE_AUTO) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in ASSISTANT_MODES or normalized == ASSISTANT_MODE_AUTO:
+            return normalized
+        return fallback
+
+    def _route_to_dict(self, route: RouteDecision | dict[str, Any] | None) -> dict[str, Any]:
+        if isinstance(route, RouteDecision):
+            return route.to_dict()
+        return dict(route or {})
+
+    def _build_default_route(
+        self,
+        session: BrainSession,
+        *,
+        requested_mode: str = ASSISTANT_MODE_NORMAL,
+        mode: str = ASSISTANT_MODE_NORMAL,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        current_mode = self._normalize_mode_name(mode, fallback=ASSISTANT_MODE_NORMAL)
+        source_profile = "workspace_local"
+        if current_mode == "research":
+            source_profile = "tech_updates"
+        elif current_mode == "study":
+            source_profile = "study_materials"
+        return {
+            "requested_mode": self._normalize_mode_name(requested_mode, fallback=ASSISTANT_MODE_NORMAL),
+            "current_mode": current_mode or session.metadata.get("current_mode", "") or ASSISTANT_MODE_NORMAL,
+            "route_reason": reason or "Assistant mode manager unavailable; using default normal mode.",
+            "source_profile": source_profile,
+            "tool_bundle": [],
+            "mcp_servers": [],
+            "prompt_bundle": current_mode or ASSISTANT_MODE_NORMAL,
+        }
+
+    def _apply_route_metadata_overrides(self, route_context: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+        route_dict = dict(route_context or {})
+        route_dict["disable_tools"] = bool(metadata.get("disable_tools"))
+        if metadata.get("disable_tools"):
+            route_dict["tool_bundle"] = []
+            route_dict["mcp_servers"] = []
+            existing_reason = str(route_dict.get("route_reason") or "").strip()
+            route_dict["route_reason"] = (
+                f"{existing_reason} Tools disabled for transient internal signal.".strip()
+                if existing_reason
+                else "Transient internal signal; tools disabled."
+            )
+        return route_dict
+
+    def _resolve_route(self, input_info: dict, session: BrainSession, *, reason_prefix: str = "") -> dict[str, Any]:
+        metadata = dict(input_info.get("metadata") or {}) if isinstance(input_info, dict) else {}
         if self._mode_manager is None:
-            return {
-                "requested_mode": "auto",
-                "current_mode": session.metadata.get("current_mode", "") or "documents",
-                "route_reason": "Assistant mode manager unavailable; using default documents mode.",
-                "source_profile": "workspace_local",
-                "tool_bundle": [],
-                "mcp_servers": [],
-                "prompt_bundle": "documents",
-            }
+            route = self._build_default_route(
+                session,
+                requested_mode=self._normalize_mode_name(
+                    (
+                        ((input_info.get("metadata") or {}).get("preferred_mode"))
+                        if isinstance(input_info, dict)
+                        else ""
+                    )
+                    or (input_info.get("preferred_mode") if isinstance(input_info, dict) else ""),
+                    fallback=ASSISTANT_MODE_NORMAL,
+                ),
+            )
+            if reason_prefix:
+                route["route_reason"] = f"{reason_prefix} {route['route_reason']}".strip()
+            return self._apply_route_metadata_overrides(route, metadata)
 
         route = self._mode_manager.route(
             input_info,
             session_metadata=session.metadata,
             source=get_event_context().get("source"),
         )
-        if isinstance(route, RouteDecision):
-            return route.to_dict()
-        return dict(route or {})
+        route_dict = self._route_to_dict(route)
+        if reason_prefix:
+            existing_reason = str(route_dict.get("route_reason") or "").strip()
+            route_dict["route_reason"] = (
+                f"{reason_prefix} {existing_reason}".strip() if existing_reason else reason_prefix.strip()
+            )
+        return self._apply_route_metadata_overrides(route_dict, metadata)
 
-    def _build_mode_policy_messages(self, route_context: dict[str, Any]) -> list[dict]:
+    def _build_locked_route(self, input_info: dict, session: BrainSession, requested_mode: str) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode_name(requested_mode, fallback=ASSISTANT_MODE_AUTO)
+        return self._build_route_for_mode(
+            input_info,
+            session,
+            normalized_mode,
+            requested_mode=normalized_mode,
+            reason=f"User locked mode: {normalized_mode}",
+        )
+
+    def _get_requested_mode(self, input_info: dict) -> str:
+        metadata = dict(input_info.get("metadata") or {}) if isinstance(input_info, dict) else {}
+        raw_mode = metadata.get("preferred_mode")
+        if raw_mode is None and isinstance(input_info, dict):
+            raw_mode = input_info.get("preferred_mode")
+        if raw_mode is None and self._mode_manager is not None:
+            raw_mode = self._mode_manager.get_mode_router_config().get("default_mode")
+        return self._normalize_mode_name(raw_mode, fallback=ASSISTANT_MODE_NORMAL)
+
+    def _get_explicit_requested_mode(self, input_info: dict) -> str:
+        metadata = dict(input_info.get("metadata") or {}) if isinstance(input_info, dict) else {}
+        raw_mode = metadata.get("preferred_mode")
+        if raw_mode is None and isinstance(input_info, dict):
+            raw_mode = input_info.get("preferred_mode")
+        return self._normalize_mode_name(raw_mode, fallback="")
+
+    @staticmethod
+    def _summarize_text(value: Any, *, limit: int = _MODE_SWITCH_REASON_LIMIT) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if not text:
+            return ""
+        if len(text) <= limit:
+            return text
+        return f"{text[: max(0, limit - 3)].rstrip()}..."
+
+    def _get_router_config(self) -> dict[str, Any]:
+        if self._mode_manager is None:
+            return {}
+        getter = getattr(self._mode_manager, "get_mode_router_config", None)
+        if not callable(getter):
+            return {}
+        return dict(getter())
+
+    def _should_lock_requested_mode(self, requested_mode: str) -> bool:
+        if requested_mode not in ASSISTANT_SPECIALIZED_MODES:
+            return False
+        return bool(self._get_router_config().get("allow_preferred_override", True))
+
+    def _build_route_for_mode(
+        self,
+        input_info: dict,
+        session: BrainSession,
+        mode: str,
+        *,
+        requested_mode: str = ASSISTANT_MODE_AUTO,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        metadata = dict(input_info.get("metadata") or {}) if isinstance(input_info, dict) else {}
+        content = str(input_info.get("content") or "").strip() if isinstance(input_info, dict) else ""
+        if self._mode_manager is None:
+            route = self._build_default_route(
+                session,
+                requested_mode=requested_mode,
+                mode=mode,
+                reason=reason,
+            )
+        else:
+            route = self._mode_manager.build_route_for_mode(
+                mode,
+                requested_mode=requested_mode,
+                reason=reason,
+                content=content,
+            )
+        return self._apply_route_metadata_overrides(self._route_to_dict(route), metadata)
+
+    def _initialize_route_for_turn(
+        self,
+        input_info: dict,
+        session: BrainSession,
+        requested_mode: str,
+    ) -> tuple[dict[str, Any], str]:
+        if self._should_lock_requested_mode(requested_mode):
+            return self._build_locked_route(input_info, session, requested_mode), "manual_lock"
+        if self._get_explicit_requested_mode(input_info) == ASSISTANT_MODE_NORMAL:
+            return self._build_route_for_mode(
+                input_info,
+                session,
+                ASSISTANT_MODE_NORMAL,
+                requested_mode=ASSISTANT_MODE_NORMAL,
+                reason="Preferred mode selected: normal",
+            ), "preferred_normal"
+        return self._resolve_route(input_info, session), "heuristic"
+
+    def _should_expose_mode_switch_tool(self, requested_mode: str) -> bool:
+        if requested_mode not in {ASSISTANT_MODE_AUTO, ASSISTANT_MODE_NORMAL}:
+            return False
+        return bool(self._get_router_config().get("allow_in_turn_switch", True))
+
+    def _build_mode_switch_tool_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": _INTERNAL_MODE_SWITCH_TOOL_NAME,
+                "description": (
+                    "Switch to another assistant mode for the next round when the next immediate step fits "
+                    "another mode better. Call this by itself, wait for the tool result, then continue with "
+                    "tools from the new mode."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": list(ASSISTANT_MODES),
+                            "description": "The target assistant mode to activate next.",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "A short reason for the switch.",
+                        },
+                    },
+                    "required": ["mode", "reason"],
+                },
+            },
+        }
+
+    def _build_mode_switch_policy_messages(self, requested_mode: str) -> list[dict]:
+        if not self._should_expose_mode_switch_tool(requested_mode):
+            return []
+        if requested_mode == ASSISTANT_MODE_NORMAL:
+            lines = [
+                "[Mode Switching]",
+                "The user's preference is normal mode. Treat it as the default working style for ordinary conversation, lightweight planning, and basic web search or direct page reading.",
+                "Switch only when the next immediate step clearly needs file tools, deep research constraints, office coordination tools, or study-specific tools.",
+                "Call switch_assistant_mode by itself. After the tool result confirms the switch, continue in the next round.",
+            ]
+        else:
+            lines = [
+                "[Mode Switching]",
+                "If the next immediate step belongs to another mode, call switch_assistant_mode before using tools from that mode.",
+                "Call switch_assistant_mode by itself. After the tool result confirms the switch, continue in the next round.",
+            ]
+        if self._mode_manager is not None:
+            glossary = str(self._mode_manager.get_auto_router_prompt() or "").strip()
+            if glossary:
+                lines.append(glossary)
+        return [{"role": "system", "content": "\n".join(lines)}]
+
+    def _store_route_context(self, session: BrainSession, route_context: dict[str, Any]) -> None:
+        session.metadata["current_route"] = dict(route_context)
+        session.metadata["current_mode"] = route_context.get("current_mode", "")
+        session.metadata["route_reason"] = route_context.get("route_reason", "")
+        session.metadata["source_profile"] = route_context.get("source_profile", "")
+
+    def _append_route_history_entry(
+        self,
+        session: BrainSession,
+        route_history: list[dict[str, Any]],
+        *,
+        round_index: int,
+        route_context: dict[str, Any],
+        origin: str,
+        switch_count: int,
+        from_mode: str = "",
+        to_mode: str = "",
+        reason: str | None = None,
+    ) -> None:
+        current_mode = str(route_context.get("current_mode") or "").strip()
+        route_history.append(
+            {
+                "round": round_index,
+                "mode": current_mode,
+                "from_mode": from_mode,
+                "to_mode": to_mode or current_mode,
+                "reason": str(reason if reason is not None else route_context.get("route_reason") or ""),
+                "source_profile": route_context.get("source_profile", ""),
+                "origin": origin,
+                "switch_count": switch_count,
+            }
+        )
+        session.metadata["route_history"] = list(route_history)
+
+    def _sync_runtime_route_state(self, session_id: str, session: BrainSession, route_context: dict[str, Any]) -> None:
+        runtime_state = session.runtime_state
+        self.set_session_runtime_state(
+            session_id,
+            runtime_state.status or RuntimeStatus.IDLE.value,
+            detail=runtime_state.detail,
+            active_tools=list(runtime_state.active_tools),
+            current_mode=route_context.get("current_mode", ""),
+            route_reason=route_context.get("route_reason", ""),
+            action_risk=runtime_state.action_risk or "read",
+            source_profile=route_context.get("source_profile", ""),
+            stream_id=runtime_state.stream_id,
+            turn_id=runtime_state.turn_id,
+        )
+
+    def _execute_mode_switch_tool(
+        self,
+        *,
+        tool_args: dict[str, Any],
+        input_info: dict,
+        session: BrainSession,
+        route_context: dict[str, Any],
+        requested_mode: str,
+        switch_count: int,
+    ) -> _ModeSwitchResult:
+        current_mode = str(route_context.get("current_mode") or "").strip() or ASSISTANT_MODE_NORMAL
+        normalized_reason = self._summarize_text((tool_args or {}).get("reason"), limit=_MODE_SWITCH_REASON_LIMIT)
+        router_config = self._get_router_config()
+
+        if requested_mode in ASSISTANT_SPECIALIZED_MODES:
+            return _ModeSwitchResult(
+                message=f"Error: mode is locked for this turn; staying in {current_mode}.",
+                route_context=dict(route_context),
+                switch_count=switch_count,
+                origin="switch_tool_locked",
+                from_mode=current_mode,
+                to_mode=current_mode,
+            )
+
+        if not bool(router_config.get("allow_in_turn_switch", True)):
+            return _ModeSwitchResult(
+                message=f"Error: in-turn mode switching is disabled; staying in {current_mode}.",
+                route_context=dict(route_context),
+                switch_count=switch_count,
+                origin="switch_tool_disabled",
+                from_mode=current_mode,
+                to_mode=current_mode,
+            )
+
+        raw_mode = (tool_args or {}).get("mode")
+        target_mode = self._normalize_mode_name(raw_mode, fallback="")
+        if target_mode not in ASSISTANT_MODES:
+            return _ModeSwitchResult(
+                message=f'Error: invalid assistant mode "{raw_mode}".',
+                route_context=dict(route_context),
+                switch_count=switch_count,
+                origin="switch_tool_invalid",
+                from_mode=current_mode,
+                to_mode=current_mode,
+            )
+
+        if target_mode == current_mode:
+            return _ModeSwitchResult(
+                message=f"Already in {current_mode}; no switch needed.",
+                route_context=dict(route_context),
+                switch_count=switch_count,
+                origin="switch_tool_noop",
+                from_mode=current_mode,
+                to_mode=current_mode,
+            )
+
+        max_switches = int(router_config.get("max_switches_per_turn", 2) or 0)
+        if switch_count >= max_switches:
+            return _ModeSwitchResult(
+                message=f"Error: max_switches_per_turn={max_switches} reached; staying in {current_mode}.",
+                route_context=dict(route_context),
+                switch_count=switch_count,
+                origin="switch_tool_limit",
+                from_mode=current_mode,
+                to_mode=current_mode,
+            )
+
+        reason = normalized_reason or f"Switching from {current_mode} to {target_mode}"
+        new_route = self._build_route_for_mode(
+            input_info,
+            session,
+            target_mode,
+            requested_mode=requested_mode,
+            reason=f"Brain switched mode: {reason}",
+        )
+        return _ModeSwitchResult(
+            message=f"Switched mode to {target_mode} because {reason}.",
+            route_context=new_route,
+            switch_count=switch_count + 1,
+            origin="switch_tool",
+            from_mode=current_mode,
+            to_mode=target_mode,
+            applied=True,
+        )
+
+    def _build_mode_policy_messages(self, route_context: dict[str, Any], *, requested_mode: str) -> list[dict]:
         mode = str(route_context.get("current_mode") or "").strip()
         if not mode:
             return []
@@ -298,16 +672,24 @@ class Brain:
             prompt_text = self._mode_manager.get_prompt_for_mode(mode)
             if prompt_text:
                 messages.append({"role": "system", "content": prompt_text})
+        messages.extend(self._build_mode_switch_policy_messages(requested_mode))
         return messages
 
-    def _get_tools_for_route(self, route_context: dict[str, Any]) -> list[dict]:
-        getter = getattr(self._tools_manager, "get_all_tools", None)
-        if not callable(getter):
-            return []
-        try:
-            return list(getter(route_context=route_context))
-        except TypeError:
-            return list(getter())
+    def _get_tools_for_route(self, route_context: dict[str, Any], *, requested_mode: str) -> list[dict]:
+        tools: list[dict] = []
+        if not bool(route_context.get("disable_tools")):
+            getter = getattr(self._tools_manager, "get_all_tools", None)
+            if callable(getter):
+                try:
+                    tools = list(getter(route_context=route_context))
+                except TypeError:
+                    tools = list(getter())
+        if self._should_expose_mode_switch_tool(requested_mode) and not any(
+            tool.get("function", {}).get("name") == _INTERNAL_MODE_SWITCH_TOOL_NAME
+            for tool in tools
+        ):
+            tools.append(self._build_mode_switch_tool_schema())
+        return tools
 
     async def _call_tool_with_route(
         self,
@@ -319,6 +701,8 @@ class Brain:
         tool_activity_callback,
         route_context: dict[str, Any],
     ) -> str:
+        if bool(route_context.get("disable_tools")):
+            return f"Error: tool not allowed in the current route: {tool_name}"
         caller = getattr(self._tools_manager, "call_tool")
         try:
             return await caller(
@@ -347,7 +731,11 @@ class Brain:
     def _build_recent_context_summary(self, session: BrainSession) -> str:
         if len(session.chat_history) <= 2:
             return ""
-        recent = session.chat_history[2:]
+        recent = [
+            message
+            for message in session.chat_history[2:]
+            if not bool(dict(message.get("metadata") or {}).get("transient"))
+        ]
         lines = []
         for msg in recent[-6:]:
             content = msg.get("content", "")
@@ -690,14 +1078,30 @@ class Brain:
 
         session = self.get_or_create_session(session_id)
         await self._refresh_session_context(session)
-        route_context = self._resolve_route(input_info, session)
-        session.metadata["current_route"] = route_context
-        session.metadata["current_mode"] = route_context.get("current_mode", "")
+        requested_mode = self._get_requested_mode(input_info)
+        route_history: list[dict[str, Any]] = []
+        switch_count = 0
+        round_index = 0
+        session.metadata["route_history"] = route_history
         turn_input_index = len(session.chat_history)
+        transient_turn = bool(dict(input_info.get("metadata") or {}).get("transient")) if isinstance(input_info, dict) else False
         auto_memory_message = await self._build_auto_memory_message(session_id, input_info)
         memory_trigger_message = self._build_memory_trigger_message(input_info)
         session.chat_history.append(input_info)
         session.touch()
+        route_context, route_origin = self._initialize_route_for_turn(input_info, session, requested_mode)
+        self._store_route_context(session, route_context)
+        self._append_route_history_entry(
+            session,
+            route_history,
+            round_index=round_index,
+            route_context=route_context,
+            origin=route_origin,
+            switch_count=switch_count,
+            from_mode="",
+            to_mode=route_context.get("current_mode", ""),
+        )
+        self._sync_runtime_route_state(session_id, session, route_context)
 
         turn_usage = UsageCounters()
         usage_source = "estimated"
@@ -707,41 +1111,43 @@ class Brain:
             api_url=api_url,
             provider_name=provider_name,
         )
-        try:
-            trim_result = await self._context_manager.trim_history(
-                session.chat_history,
-                model,
-                self._http_session,
-                api_url,
-                api_key,
-                context_limit_override=int(context_limit_info.get("context_limit_tokens", 0) or 0),
-            ) or {}
-        except TypeError:
-            trim_result = await self._context_manager.trim_history(
-                session.chat_history,
-                model,
-                self._http_session,
-                api_url,
-                api_key,
-            ) or {}
+        if transient_turn:
+            trim_result = {}
+        else:
+            try:
+                trim_result = await self._context_manager.trim_history(
+                    session.chat_history,
+                    model,
+                    self._http_session,
+                    api_url,
+                    api_key,
+                    context_limit_override=int(context_limit_info.get("context_limit_tokens", 0) or 0),
+                ) or {}
+            except TypeError:
+                trim_result = await self._context_manager.trim_history(
+                    session.chat_history,
+                    model,
+                    self._http_session,
+                    api_url,
+                    api_key,
+                ) or {}
         summary_usage = self._normalize_usage(trim_result.get("summary_usage"))
         if summary_usage:
             turn_usage.add(summary_usage)
             session.usage_snapshot.session_totals.add(summary_usage)
             usage_source = "provider"
 
-        policy_messages = self._build_mode_policy_messages(route_context) + [
-            {"role": "system", "content": TOOL_JUDGMENT_POLICY_MESSAGE},
-            {"role": "system", "content": MEMORY_POLICY_MESSAGE},
-        ]
-        if memory_trigger_message:
-            policy_messages.append(memory_trigger_message)
-        policy_messages.append({"role": "system", "content": WEB_RESEARCH_POLICY_MESSAGE})
-
         adapter_options = self._build_adapter_options(model_options)
         turn_counted = False
 
         while True:
+            policy_messages = self._build_mode_policy_messages(route_context, requested_mode=requested_mode) + [
+                {"role": "system", "content": TOOL_JUDGMENT_POLICY_MESSAGE},
+                {"role": "system", "content": MEMORY_POLICY_MESSAGE},
+            ]
+            if memory_trigger_message:
+                policy_messages.append(memory_trigger_message)
+            policy_messages.append({"role": "system", "content": WEB_RESEARCH_POLICY_MESSAGE})
             proprioception_message = {
                 "role": "system",
                 "content": "当前用户电脑光标信息：" + json.dumps(
@@ -765,7 +1171,7 @@ class Brain:
                 proprioception_message=proprioception_message,
             )
 
-            tools = self._get_tools_for_route(route_context)
+            tools = self._get_tools_for_route(route_context, requested_mode=requested_mode)
             assistant_content = ""
             reasoning_content = ""
             tool_calls = []
@@ -817,7 +1223,10 @@ class Brain:
                     logger.error("Streaming adapter error: %s", event.error)
 
             if assistant_content:
-                session.chat_history.append({"role": "assistant", "content": assistant_content})
+                assistant_message = {"role": "assistant", "content": assistant_content}
+                if transient_turn:
+                    assistant_message["metadata"] = {"transient": True}
+                session.chat_history.append(assistant_message)
 
             if call_usage is None:
                 call_usage = self._estimate_call_usage(
@@ -847,13 +1256,17 @@ class Brain:
             yield BrainOutputEvent(type="usage", usage=usage_payload)
 
             if not tool_calls:
-                await self._persist_session_context(session)
+                if transient_turn and len(session.chat_history) > turn_input_index:
+                    del session.chat_history[turn_input_index:]
+                elif not transient_turn:
+                    await self._persist_session_context(session)
                 break
 
             session.chat_history.append(
                 {
                     "role": "assistant",
                     "content": None,
+                    **({"metadata": {"transient": True}} if transient_turn else {}),
                     "tool_calls": [
                         {
                             "type": "function",
@@ -869,52 +1282,122 @@ class Brain:
                 }
             )
 
-            tool_names = [tc.name for tc in tool_calls]
-            if phase_callback:
+            mode_switch_calls = [tc for tc in tool_calls if tc.name == _INTERNAL_MODE_SWITCH_TOOL_NAME]
+            visible_tool_calls = [tc for tc in tool_calls if tc.name != _INTERNAL_MODE_SWITCH_TOOL_NAME]
+            visible_tool_names = [tc.name for tc in visible_tool_calls]
+            if visible_tool_calls and not mode_switch_calls and phase_callback:
                 self.set_session_runtime_state(
                     session_id,
                     RuntimeStatus.TOOL_CALLING.value,
-                    detail=", ".join(tool_names),
-                    active_tools=tool_names,
+                    detail=", ".join(visible_tool_names),
+                    active_tools=visible_tool_names,
                     current_mode=route_context.get("current_mode", ""),
                     route_reason=route_context.get("route_reason", ""),
-                    action_risk=self._get_action_risk_for_tools(tool_names),
+                    action_risk=self._get_action_risk_for_tools(visible_tool_names),
                     source_profile=route_context.get("source_profile", ""),
                 )
                 await phase_callback(
                     RuntimeStatus.TOOL_CALLING.value,
-                    ", ".join(tool_names),
-                    active_tools=tool_names,
+                    ", ".join(visible_tool_names),
+                    active_tools=visible_tool_names,
                 )
 
-            for tc in tool_calls:
+            if mode_switch_calls:
+                primary_switch = mode_switch_calls[0]
                 try:
-                    args = tc.arguments
+                    switch_args = primary_switch.arguments
                 except Exception:
-                    args = {}
-
-                try:
-                    context = get_event_context()
-                    result = await self._call_tool_with_route(
-                        tc.name,
-                        args,
-                        session_id=context.get("session_id", session_id),
-                        source=context.get("source"),
-                        tool_activity_callback=tool_activity_callback,
+                    switch_args = {}
+                switch_result = self._execute_mode_switch_tool(
+                    tool_args=switch_args,
+                    input_info=input_info,
+                    session=session,
+                    route_context=route_context,
+                    requested_mode=requested_mode,
+                    switch_count=switch_count,
+                )
+                route_context = dict(switch_result.route_context)
+                if switch_result.applied:
+                    switch_count = switch_result.switch_count
+                    self._store_route_context(session, route_context)
+                    self._append_route_history_entry(
+                        session,
+                        route_history,
+                        round_index=round_index + 1,
                         route_context=route_context,
+                        origin=switch_result.origin,
+                        switch_count=switch_count,
+                        from_mode=switch_result.from_mode,
+                        to_mode=switch_result.to_mode,
                     )
-                except Exception as exc:
-                    result = f"Error: tool {tc.name} failed: {exc}"
-
+                    self._sync_runtime_route_state(session_id, session, route_context)
+                else:
+                    self._append_route_history_entry(
+                        session,
+                        route_history,
+                        round_index=round_index + 1,
+                        route_context=route_context,
+                        origin=switch_result.origin,
+                        switch_count=switch_count,
+                        from_mode=switch_result.from_mode,
+                        to_mode=switch_result.to_mode,
+                        reason=switch_result.message,
+                    )
                 session.chat_history.append(
                     {
                         "role": "tool",
-                        "content": result if isinstance(result, str) else str(result),
-                        "tool_call_id": tc.id,
+                        "content": switch_result.message,
+                        "tool_call_id": primary_switch.id,
                     }
                 )
+                for extra_switch in mode_switch_calls[1:]:
+                    session.chat_history.append(
+                        {
+                            "role": "tool",
+                            "content": "Ignored: switch_assistant_mode can only be called once per round.",
+                            "tool_call_id": extra_switch.id,
+                        }
+                    )
+                for skipped_tool in visible_tool_calls:
+                    session.chat_history.append(
+                        {
+                            "role": "tool",
+                            "content": (
+                                "Skipped: switch_assistant_mode must be handled in its own round. "
+                                "Call this tool again after the mode switch."
+                            ),
+                            "tool_call_id": skipped_tool.id,
+                        }
+                    )
+            else:
+                for tc in visible_tool_calls:
+                    try:
+                        args = tc.arguments
+                    except Exception:
+                        args = {}
 
-            if tool_activity_callback and any(
+                    try:
+                        context = get_event_context()
+                        result = await self._call_tool_with_route(
+                            tc.name,
+                            args,
+                            session_id=context.get("session_id", session_id),
+                            source=context.get("source"),
+                            tool_activity_callback=tool_activity_callback,
+                            route_context=route_context,
+                        )
+                    except Exception as exc:
+                        result = f"Error: tool {tc.name} failed: {exc}"
+
+                    session.chat_history.append(
+                        {
+                            "role": "tool",
+                            "content": result if isinstance(result, str) else str(result),
+                            "tool_call_id": tc.id,
+                        }
+                    )
+
+            if tool_activity_callback and not mode_switch_calls and any(
                 tc.name in {
                     "research_topic",
                     "inspect_page",
@@ -923,12 +1406,15 @@ class Brain:
                     "search_web",
                     "read_web_page",
                 }
-                for tc in tool_calls
+                for tc in visible_tool_calls
             ):
                 await tool_activity_callback(
                     "synthesizing",
                     "Synthesizing final answer",
-                    {"tool_names": tool_names},
+                    {"tool_names": visible_tool_names},
                 )
+            round_index += 1
 
+        if transient_turn and len(session.chat_history) > turn_input_index:
+            del session.chat_history[turn_input_index:]
         yield BrainOutputEvent(type="done")

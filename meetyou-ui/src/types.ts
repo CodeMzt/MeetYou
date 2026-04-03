@@ -2,7 +2,7 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
-export type AssistantMode = 'auto' | 'documents' | 'research' | 'office' | 'study'
+export type AssistantMode = 'normal' | 'auto' | 'documents' | 'research' | 'office' | 'study'
 
 export type RuntimeStatus =
   | 'initializing'
@@ -11,11 +11,29 @@ export type RuntimeStatus =
   | 'tool_calling'
   | 'answering'
   | 'waiting_confirm'
+  | 'waiting_human_input'
   | 'heartbeat'
   | 'error'
   | 'shutting_down'
 
 export type ThinkingOverride = 'default' | 'off' | 'low' | 'medium' | 'high'
+
+export interface InputRequestPayload {
+  content: string
+  session_id?: string
+  source_id: string
+  client_message_id?: string
+  role: MessageRole
+  preferred_mode?: AssistantMode
+  metadata?: Record<string, unknown>
+  options?: {
+    thinking?: {
+      enabled?: boolean
+      effort?: Exclude<ThinkingOverride, 'default' | 'off'>
+      budget_tokens?: number
+    }
+  }
+}
 
 export interface RuntimeStateSnapshot {
   session_id: string
@@ -96,6 +114,14 @@ export interface ChatTurn {
 export interface ConfirmRequestPayload {
   requestId: string
   content: string
+  timeout?: number
+}
+
+export interface HumanInputRequestPayload {
+  requestId: string
+  question: string
+  options: string[]
+  placeholder?: string
   timeout?: number
 }
 

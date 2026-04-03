@@ -14,8 +14,10 @@ from urllib.parse import urlparse
 
 from core.source_catalog import SourceCatalogManager
 
+ASSISTANT_MODE_NORMAL = "normal"
 ASSISTANT_MODE_AUTO = "auto"
-ASSISTANT_MODES = ("documents", "research", "office", "study")
+ASSISTANT_SPECIALIZED_MODES = ("documents", "research", "office", "study")
+ASSISTANT_MODES = (ASSISTANT_MODE_NORMAL, *ASSISTANT_SPECIALIZED_MODES)
 VALID_ASSISTANT_MODES = (ASSISTANT_MODE_AUTO, *ASSISTANT_MODES)
 
 ACTION_RISKS = ("read", "local_write", "external_write", "destructive")
@@ -163,6 +165,69 @@ _MODE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "教案",
     ),
 }
+
+_NORMAL_WEB_HINTS = (
+    "latest",
+    "recent",
+    "today",
+    "news",
+    "compare",
+    "comparison",
+    "recommend",
+    "review",
+    "what does this page say",
+    "website",
+    "web",
+    "url",
+    "link",
+    "source",
+    "current",
+    "look up",
+    "search online",
+    "web search",
+    "最新",
+    "最近",
+    "今天",
+    "新闻",
+    "比较",
+    "推荐",
+    "评测",
+    "链接",
+    "网址",
+    "查一下",
+    "搜一下",
+    "上网查",
+)
+
+_DEEP_RESEARCH_HINTS = (
+    "watchlist",
+    "track updates",
+    "source updates",
+    "source update",
+    "monitor",
+    "monitoring",
+    "research report",
+    "with citations",
+    "citation",
+    "citations",
+    "evidence",
+    "evidence table",
+    "source verification",
+    "verify with sources",
+    "strictly sourced",
+    "official sources",
+    "持续监测",
+    "更新跟踪",
+    "来源更新",
+    "研究报告",
+    "引用",
+    "引文",
+    "证据",
+    "证据表",
+    "来源核验",
+    "核验来源",
+    "严格引用",
+)
 
 _RESEARCH_PROFILE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "academic": (
@@ -316,9 +381,23 @@ _DEFAULT_SOURCE_PROFILES = {
 }
 
 _DEFAULT_MODE_TOOL_BUNDLES = {
+    "normal": {
+        "tools": [
+            "ask_human",
+            "get_current_system_time",
+            "get_sys_vitals",
+            "search_knowledge",
+            "manage_tasks",
+            "remember_knowledge",
+            "research_topic",
+            "inspect_page",
+        ],
+        "mcp_servers": [],
+    },
     "documents": {
         "tools": [
             "exec_sys_cmd",
+            "ask_human",
             "get_current_system_time",
             "get_sys_vitals",
             "search_knowledge",
@@ -334,6 +413,7 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
     "research": {
         "tools": [
+            "ask_human",
             "get_current_system_time",
             "search_knowledge",
             "remember_knowledge",
@@ -346,6 +426,7 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
     "office": {
         "tools": [
+            "ask_human",
             "get_current_system_time",
             "search_knowledge",
             "manage_tasks",
@@ -362,6 +443,7 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
     "study": {
         "tools": [
+            "ask_human",
             "get_current_system_time",
             "search_knowledge",
             "remember_knowledge",
@@ -378,9 +460,12 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
 }
 
 _DEFAULT_ROUTER_CONFIG = {
-    "default_mode": ASSISTANT_MODE_AUTO,
+    "default_mode": ASSISTANT_MODE_NORMAL,
     "sticky_current_mode": True,
     "allow_preferred_override": True,
+    "allow_in_turn_switch": True,
+    "max_switches_per_turn": 2,
+    "fallback_to_heuristic": True,
 }
 
 _DEFAULT_DOCUMENT_PARSERS = {
@@ -400,6 +485,23 @@ _DEFAULT_OFFICE_INTEGRATIONS = {
 }
 
 _MODE_PROMPT_FALLBACKS = {
+    "auto-router": (
+        "[Auto Router]\n"
+        "Choose the working mode that best matches the user's next immediate step.\n"
+        "Modes:\n"
+        "- normal: ordinary conversation, daily assistant work, and lightweight web search or page reading\n"
+        "- documents: local files, folders, workspace analysis, document writing, report generation\n"
+        "- research: deep research, source tracking, evidence-heavy analysis, and research-style reports\n"
+        "- office: schedules, meeting briefs, drafts, notes sync, coordination\n"
+        "- study: study plans, learning points, quizzes, flashcards, mastery tracking\n"
+        "If signals are mixed, prefer the smallest mode that directly matches the user's next job."
+    ),
+    "normal": (
+        "[Normal Mode]\n"
+        "You are operating as a general daily assistant.\n"
+        "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
+        "Stay in normal mode unless the next immediate step clearly requires file tools, deep research constraints, office coordination tools, or study-specific tools."
+    ),
     "documents": (
         "[Documents Mode]\n"
         "You are operating as a document and workspace specialist.\n"
@@ -410,7 +512,7 @@ _MODE_PROMPT_FALLBACKS = {
         "[Research Mode]\n"
         "You are operating as a research specialist.\n"
         "Prioritize first-party and official sources, reason explicitly about freshness, and ground claims in evidence objects and citations.\n"
-        "When a direct URL exists, prefer inspecting it. When the user asks for latest information, favor fresh sources and say when evidence is partial."
+        "Use this mode for source-heavy analysis, update tracking, and report-style research work where rigorous sourcing matters."
     ),
     "office": (
         "[Office Mode]\n"
@@ -449,7 +551,7 @@ def _parse_json_config(raw_value: Any) -> Any:
     return raw_value or {}
 
 
-def _normalize_mode(value: Any, *, fallback: str = "documents") -> str:
+def _normalize_mode(value: Any, *, fallback: str = ASSISTANT_MODE_NORMAL) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in VALID_ASSISTANT_MODES:
         return normalized
@@ -558,6 +660,27 @@ class AssistantModeManager:
             "mcp_servers": [str(item) for item in payload.get("mcp_servers", []) if str(item).strip()],
         }
 
+    def build_route_for_mode(
+        self,
+        mode: str,
+        *,
+        requested_mode: str = ASSISTANT_MODE_AUTO,
+        reason: str = "",
+        content: str = "",
+    ) -> RouteDecision:
+        normalized_mode = _normalize_mode(mode)
+        bundle = self.get_tool_bundle(normalized_mode)
+        route_reason = str(reason or "").strip() or f"Selected mode: {normalized_mode}"
+        return RouteDecision(
+            requested_mode=_normalize_mode(requested_mode, fallback=ASSISTANT_MODE_AUTO),
+            current_mode=normalized_mode,
+            route_reason=route_reason,
+            source_profile=self._default_source_profile_for_mode(normalized_mode, content),
+            tool_bundle=bundle["tools"],
+            mcp_servers=bundle["mcp_servers"],
+            prompt_bundle=normalized_mode,
+        )
+
     def get_prompt_for_mode(self, mode: str) -> str:
         registry = self._mode_registry()
         prompt_dir = registry.get("prompt_dir") or "prompt/modes"
@@ -566,6 +689,9 @@ class AssistantModeManager:
             return prompt_path.read_text(encoding="utf-8").strip()
         except FileNotFoundError:
             return _MODE_PROMPT_FALLBACKS.get(mode, "")
+
+    def get_auto_router_prompt(self) -> str:
+        return self.get_prompt_for_mode("auto-router")
 
     def get_trusted_write_roots(self) -> list[str]:
         configured = _parse_json_config(self._config.get("trusted_write_roots"))
@@ -637,26 +763,38 @@ class AssistantModeManager:
     ) -> RouteDecision:
         session_metadata = session_metadata or {}
         router_config = self.get_mode_router_config()
-        requested_mode = _normalize_mode(
+        preferred_mode = _normalize_mode(
             (input_info.get("metadata") or {}).get("preferred_mode")
-            or input_info.get("preferred_mode")
+            or input_info.get("preferred_mode"),
+            fallback="",
+        )
+        has_explicit_preference = bool(preferred_mode)
+        requested_mode = _normalize_mode(
+            preferred_mode
             or router_config.get("default_mode")
-            or ASSISTANT_MODE_AUTO,
-            fallback=ASSISTANT_MODE_AUTO,
+            or ASSISTANT_MODE_NORMAL,
+            fallback=ASSISTANT_MODE_NORMAL,
         )
 
         content = str(input_info.get("content") or "").strip()
         current_mode = _normalize_mode(session_metadata.get("current_mode") or "", fallback="")
-        if requested_mode != ASSISTANT_MODE_AUTO and router_config.get("allow_preferred_override", True):
-            bundle = self.get_tool_bundle(requested_mode)
-            return RouteDecision(
+        if (
+            has_explicit_preference
+            and requested_mode in ASSISTANT_SPECIALIZED_MODES
+            and router_config.get("allow_preferred_override", True)
+        ):
+            return self.build_route_for_mode(
+                requested_mode,
                 requested_mode=requested_mode,
-                current_mode=requested_mode,
-                route_reason=f"Preferred mode override requested: {requested_mode}",
-                source_profile=self._default_source_profile_for_mode(requested_mode, content),
-                tool_bundle=bundle["tools"],
-                mcp_servers=bundle["mcp_servers"],
-                prompt_bundle=requested_mode,
+                reason=f"Preferred mode override requested: {requested_mode}",
+                content=content,
+            )
+        if has_explicit_preference and requested_mode == ASSISTANT_MODE_NORMAL:
+            return self.build_route_for_mode(
+                ASSISTANT_MODE_NORMAL,
+                requested_mode=ASSISTANT_MODE_NORMAL,
+                reason="Preferred mode selected: normal",
+                content=content,
             )
 
         scores = {mode: 0 for mode in ASSISTANT_MODES}
@@ -664,53 +802,58 @@ class AssistantModeManager:
         lowered = content.lower()
 
         for mode, keywords in _MODE_KEYWORDS.items():
+            if mode == "research":
+                continue
             for keyword in keywords:
                 if keyword in lowered:
                     scores[mode] += 2
                     if len(triggers[mode]) < 4:
                         triggers[mode].append(keyword)
 
+        for keyword in _NORMAL_WEB_HINTS:
+            if keyword in lowered:
+                scores[ASSISTANT_MODE_NORMAL] += 2
+                if len(triggers[ASSISTANT_MODE_NORMAL]) < 4:
+                    triggers[ASSISTANT_MODE_NORMAL].append(keyword)
+
+        for keyword in _DEEP_RESEARCH_HINTS:
+            if keyword in lowered:
+                scores["research"] += 3
+                if len(triggers["research"]) < 4:
+                    triggers["research"].append(keyword)
+
         if _URL_RE.search(content):
-            scores["research"] += 4
-            triggers["research"].append("direct_url")
+            scores[ASSISTANT_MODE_NORMAL] += 4
+            if len(triggers[ASSISTANT_MODE_NORMAL]) < 4:
+                triggers[ASSISTANT_MODE_NORMAL].append("direct_url")
 
         if _PATH_RE.search(content):
             scores["documents"] += 4
-            triggers["documents"].append("local_path")
-
-        source_kind = getattr(source, "kind", "") or ""
-        source_id = getattr(source, "id", "") or ""
-        if source_kind == "feishu":
-            scores["office"] += 1
-            triggers["office"].append("source:feishu")
-        if source_id.lower().startswith("desktop"):
-            scores["documents"] += 1
+            if len(triggers["documents"]) < 4:
+                triggers["documents"].append("local_path")
 
         if router_config.get("sticky_current_mode", True) and current_mode in ASSISTANT_MODES:
             scores[current_mode] += 1
-            triggers[current_mode].append("sticky_current_mode")
+            if len(triggers[current_mode]) < 4:
+                triggers[current_mode].append("sticky_current_mode")
 
         best_mode = max(scores.items(), key=lambda item: (item[1], item[0]))[0]
         if scores[best_mode] <= 0:
-            best_mode = current_mode if current_mode in ASSISTANT_MODES else "documents"
+            best_mode = current_mode if current_mode in ASSISTANT_MODES else ASSISTANT_MODE_NORMAL
             reason = (
                 f"No strong routing signal found; reusing current mode {best_mode}."
                 if current_mode in ASSISTANT_MODES
-                else "No strong routing signal found; defaulting to documents for local work."
+                else "No strong routing signal found; defaulting to normal for ordinary conversation."
             )
         else:
             matched = ", ".join(dict.fromkeys(triggers[best_mode])) or "keyword_match"
             reason = f"Matched {best_mode} signals: {matched}"
 
-        bundle = self.get_tool_bundle(best_mode)
-        return RouteDecision(
+        return self.build_route_for_mode(
+            best_mode,
             requested_mode=requested_mode,
-            current_mode=best_mode,
-            route_reason=reason,
-            source_profile=self._default_source_profile_for_mode(best_mode, content),
-            tool_bundle=bundle["tools"],
-            mcp_servers=bundle["mcp_servers"],
-            prompt_bundle=best_mode,
+            reason=reason,
+            content=content,
         )
 
     def _default_source_profile_for_mode(self, mode: str, content: str) -> str:

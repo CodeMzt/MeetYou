@@ -104,8 +104,19 @@ class FastAPIGateway:
                 metadata["preferred_mode"] = request.preferred_mode
             if request.options is not None:
                 metadata["input_options"] = request.options.model_dump(exclude_none=True)
+            client_message_id = str(request.client_message_id or "").strip()
+            if client_message_id:
+                metadata["client_message_id"] = client_message_id
             source = make_source(SourceKind.WEB.value, request.source_id, **request.metadata)
             session_id = self._session_manager.get_or_create_session(source, request.session_id)
+            if client_message_id:
+                existing_event_id = self._session_manager.get_recent_inbound_event_id(
+                    session_id,
+                    source,
+                    client_message_id,
+                )
+                if existing_event_id:
+                    return InputAcceptedResponse(session_id=session_id, event_id=existing_event_id)
             event = InboundEvent(
                 session_id=session_id,
                 type=EventType.MESSAGE.value,
@@ -115,6 +126,15 @@ class FastAPIGateway:
                 target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
                 metadata=metadata,
             )
+            if client_message_id:
+                remembered_event_id = self._session_manager.remember_inbound_event_id(
+                    session_id,
+                    source,
+                    client_message_id,
+                    event.event_id,
+                )
+                if remembered_event_id != event.event_id:
+                    return InputAcceptedResponse(session_id=session_id, event_id=remembered_event_id)
             await self._event_bus.inbound_queue.put(event)
             return InputAcceptedResponse(session_id=session_id, event_id=event.event_id)
 
@@ -258,6 +278,48 @@ class FastAPIGateway:
                                 "error": {
                                     "code": "stale_confirm_response",
                                     "message": "确认请求已失效、已处理，或与当前会话不匹配。",
+                                },
+                            })
+                            if not sent:
+                                break
+                            continue
+                        sent = await self._safe_send_json(websocket, {
+                            "schema": "meetyou.ws.v1",
+                            "kind": "ack",
+                            "ack": {
+                                "action": command.action,
+                                "request_id": command.request_id,
+                            },
+                        })
+                        if not sent:
+                            break
+                        continue
+                    if command.action == "input_response":
+                        if command.request_id is None:
+                            sent = await self._safe_send_json(websocket, {
+                                "schema": "meetyou.ws.v1",
+                                "kind": "error",
+                                "error": {
+                                    "code": "invalid_input_response",
+                                    "message": "request_id 为必填字段",
+                                },
+                            })
+                            if not sent:
+                                break
+                            continue
+                        resolved = self._event_bus.submit_human_input_response(
+                            command.answer_text or "",
+                            request_id=command.request_id,
+                            session_id=session_id,
+                            selected_option=command.selected_option,
+                        )
+                        if not resolved:
+                            sent = await self._safe_send_json(websocket, {
+                                "schema": "meetyou.ws.v1",
+                                "kind": "error",
+                                "error": {
+                                    "code": "stale_input_response",
+                                    "message": "输入请求已失效、已处理，或与当前会话不匹配。",
                                 },
                             })
                             if not sent:

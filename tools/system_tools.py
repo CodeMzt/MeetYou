@@ -174,6 +174,38 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None) -> str:
         return f"命令执行失败，错误信息：{decode(stderr).strip()}"
 
 
+async def ask_human(
+    question: str,
+    options: list[str] | None = None,
+    placeholder: str = "",
+    timeout_seconds: int = 60,
+    session_id: str = "",
+    source=None,
+) -> str:
+    payload = {
+        "answered": False,
+        "timed_out": False,
+        "selected_option": None,
+        "answer_text": "",
+        "request_id": "",
+    }
+    if _event_bus is None:
+        logger.warning("Human input requested without EventBus: %s", question)
+        return json.dumps(payload, ensure_ascii=False)
+
+    result = await _event_bus.request_human_input(
+        str(question or "").strip(),
+        options=options or [],
+        placeholder=str(placeholder or "").strip(),
+        timeout=float(timeout_seconds or 60),
+        session_id=session_id or "system:human_input",
+        source=source,
+        target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+    )
+    payload.update(dict(result or {}))
+    return json.dumps(payload, ensure_ascii=False)
+
+
 async def get_current_system_time() -> str:
     """获取当前系统时间"""
     now = datetime.datetime.now()

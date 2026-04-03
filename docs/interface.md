@@ -86,6 +86,7 @@
   "content": "帮我总结今天的工作",
   "session_id": "web:session:001",
   "source_id": "browser-tab-a",
+  "client_message_id": "web-1712076000000-a1b2c3d4",
   "role": "user",
   "metadata": {
     "page": "chat"
@@ -126,6 +127,10 @@
   "event_id": "string"
 }
 ```
+
+幂等说明：
+- `client_message_id` 为可选客户端消息 id。
+- 同一 `(session_id, source_id, client_message_id)` 只会入队一次，并返回首次受理时的 `event_id`。
 
 ### 3.3 `GET /config`
 
@@ -223,6 +228,7 @@
 - `tool_calling`
 - `answering`
 - `waiting_confirm`
+- `waiting_human_input`
 - `heartbeat`
 - `error`
 - `shutting_down`
@@ -341,6 +347,7 @@ GET /ws?session_id=<session_id>&source_id=<source_id>
 - `reasoning`: 思考流
 - `status`: 搜索 / 工具状态
 - `confirm_request`: 确认请求
+- `human_input_request`: 同一轮内的人类补充输入请求
 - `runtime_status`: 运行状态快照
 - `usage`: 使用量快照
 - `error`: 错误消息
@@ -412,6 +419,34 @@ GET /ws?session_id=<session_id>&source_id=<source_id>
 }
 ```
 
+`input_response`:
+
+```json
+{
+  "action": "input_response",
+  "request_id": "string",
+  "answer_text": "B",
+  "selected_option": "B",
+  "metadata": {
+    "from": "human-input-panel"
+  }
+}
+```
+
+`human_input_request` 额外字段：
+
+```json
+{
+  "input_request": {
+    "request_id": "string",
+    "question": "请选择一个方案",
+    "options": ["方案 A", "方案 B"],
+    "placeholder": "也可以直接补充说明",
+    "timeout": 60
+  }
+}
+```
+
 ## 5. Runtime State Flow
 
 会话状态迁移：
@@ -420,8 +455,9 @@ GET /ws?session_id=<session_id>&source_id=<source_id>
 2. 调用工具时进入 `tool_calling`
 3. 开始输出正文时进入 `answering`
 4. 等待用户确认时进入 `waiting_confirm`
-5. 当前轮完成后回到 `idle`
-6. 出错时进入 `error`
+5. 等待用户补充信息时进入 `waiting_human_input`
+6. 当前轮完成后回到 `idle`
+7. 出错时进入 `error`
 
 心跳状态独立维护：
 
@@ -438,6 +474,7 @@ GET /ws?session_id=<session_id>&source_id=<source_id>
 
 - 聊天输入继续走 `POST /inputs`
 - 回答正文只消费 `message`
+- 同一轮追问通过 `human_input_request` / `input_response` 完成，不会创建新的用户 turn
 - 思考摘要只消费 `reasoning`
 - 运行状态消费 `runtime_status`
 - token / context 统计消费 `usage` 或 `GET /runtime/usage`

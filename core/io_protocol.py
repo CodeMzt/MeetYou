@@ -17,6 +17,8 @@ class EventType(str, Enum):
     SIGNAL = "signal"
     CONFIRM_REQUEST = "confirm_request"
     CONFIRM_RESPONSE = "confirm_response"
+    HUMAN_INPUT_REQUEST = "human_input_request"
+    HUMAN_INPUT_RESPONSE = "human_input_response"
     STATUS = "status"
     REASONING = "reasoning"
     RUNTIME_STATUS = "runtime_status"
@@ -101,6 +103,22 @@ class ConfirmResponseEvent(InboundEvent):
     accepted: bool = False
 
 
+@dataclass(slots=True)
+class HumanInputRequestEvent(OutboundEvent):
+    request_id: str = field(default_factory=_new_id)
+    question: str = ""
+    options: list[str] = field(default_factory=list)
+    placeholder: str = ""
+    timeout: float = 60.0
+
+
+@dataclass(slots=True)
+class HumanInputResponseEvent(InboundEvent):
+    request_id: str = ""
+    answer_text: str = ""
+    selected_option: str | None = None
+
+
 def event_to_dict(event: BaseEvent) -> dict[str, Any]:
     payload = {
         "event_id": event.event_id,
@@ -133,6 +151,20 @@ def event_to_dict(event: BaseEvent) -> dict[str, Any]:
         payload["confirm"] = {
             "request_id": event.request_id,
             "accepted": event.accepted,
+        }
+    elif isinstance(event, HumanInputRequestEvent):
+        payload["input_request"] = {
+            "request_id": event.request_id,
+            "question": event.question,
+            "options": list(event.options),
+            "placeholder": event.placeholder,
+            "timeout": event.timeout,
+        }
+    elif isinstance(event, HumanInputResponseEvent):
+        payload["input_response"] = {
+            "request_id": event.request_id,
+            "answer_text": event.answer_text,
+            "selected_option": event.selected_option,
         }
     return payload
 

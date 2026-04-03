@@ -38,7 +38,8 @@ const THINKING_OPTIONS: Array<{ label: string; value: ThinkingOverride }> = [
 ]
 
 const MODE_OPTIONS: Array<{ label: string; value: AssistantMode }> = [
-  { label: 'Auto', value: 'auto' },
+  { label: 'Normal', value: 'normal' },
+  { label: 'Brain Decides', value: 'auto' },
   { label: 'Documents', value: 'documents' },
   { label: 'Research', value: 'research' },
   { label: 'Office', value: 'office' },
@@ -52,6 +53,7 @@ const RUNTIME_LABELS: Record<string, string> = {
   tool_calling: '使用工具中',
   answering: '生成回答中',
   waiting_confirm: '等待确认',
+  waiting_human_input: '等待你补充信息',
   heartbeat: '后台运行中',
   error: '出现错误',
   shutting_down: '关闭中',
@@ -62,6 +64,7 @@ const DETAIL_LABELS: Record<string, string> = {
   'Calling model': '正在调用模型',
   'Generating answer': '正在生成回答',
   'Waiting for confirmation': '等待你的确认',
+  'Waiting for human input': '等待你补充关键信息',
   'Resuming tool call': '继续执行工具调用',
 }
 
@@ -338,6 +341,16 @@ function buildStatusPresentation(
         hiddenToolsTitle,
         activePhase,
       }
+    case 'waiting_human_input':
+      return {
+        title: RUNTIME_LABELS.waiting_human_input,
+        detail: translatedRuntimeDetail || '需要你补充信息后才能继续执行',
+        phaseLabel: '待补充',
+        toolChips,
+        hiddenToolCount,
+        hiddenToolsTitle,
+        activePhase,
+      }
     case 'initializing':
     case 'heartbeat':
     case 'shutting_down':
@@ -401,6 +414,10 @@ function StatusIcon({
 
   if (runtimeSnapshot.status === 'waiting_confirm') {
     return <ShieldAlert size={14} />
+  }
+
+  if (runtimeSnapshot.status === 'waiting_human_input') {
+    return <Sparkles size={14} className="pulse" />
   }
 
   if (runtimeSnapshot.status === 'tool_calling') {
@@ -692,14 +709,17 @@ export default function App() {
     usageSnapshot,
     turnActivities,
     confirmRequest,
+    pendingHumanInput,
     sendConfirmResponse,
+    sendHumanInputResponse,
   } = useMeetYou('http://127.0.0.1:8000')
 
   const [inputVal, setInputVal] = useState('')
+  const [humanInputVal, setHumanInputVal] = useState('')
   const [isPinned, setIsPinned] = useState(true)
   const [usagePanelOpen, setUsagePanelOpen] = useState(false)
   const [thinkingOverride, setThinkingOverride] = useState<ThinkingOverride>('default')
-  const [preferredMode, setPreferredMode] = useState<AssistantMode>('auto')
+  const [preferredMode, setPreferredMode] = useState<AssistantMode>('normal')
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -707,6 +727,7 @@ export default function App() {
   const usagePillText = usageSnapshot && !usageSnapshot.usage_ready
     ? `0 / ${formatTokenCount(usageSnapshot.context_limit_tokens)}`
     : getUsagePillText(usageSnapshot)
+  const composerLocked = Boolean(confirmRequest || pendingHumanInput)
 
   const inputPlaceholder = useMemo(() => {
     if (!connected) {
@@ -715,15 +736,24 @@ export default function App() {
     if (confirmRequest) {
       return '请先处理确认请求'
     }
+    if (pendingHumanInput) {
+      return pendingHumanInput.placeholder || '请先回答当前问题'
+    }
     if (runtimeSnapshot?.status === 'tool_calling') {
       return '工具执行中，请稍候…'
     }
     return '输入消息，按 Enter 发送'
-  }, [confirmRequest, connected, connectionState, runtimeSnapshot])
+  }, [confirmRequest, connected, connectionState, pendingHumanInput, runtimeSnapshot])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [confirmRequest, messages, runtimeSnapshot?.status])
+  }, [confirmRequest, pendingHumanInput, messages, runtimeSnapshot?.status])
+
+  useEffect(() => {
+    if (!pendingHumanInput) {
+      setHumanInputVal('')
+    }
+  }, [pendingHumanInput?.requestId])
 
   const handleClose = () => window.ipcRenderer?.send('window-close')
   const handleMinimize = () => window.ipcRenderer?.send('window-minimize')
@@ -735,11 +765,27 @@ export default function App() {
   }
 
   const handleSend = () => {
-    if (!inputVal.trim() || !connected || confirmRequest) {
+    if (!inputVal.trim() || !connected || composerLocked) {
       return
     }
     void sendMessage(inputVal, thinkingOverride, preferredMode)
     setInputVal('')
+  }
+
+  const handleHumanInputSubmit = () => {
+    if (!pendingHumanInput || !connected || !humanInputVal.trim()) {
+      return
+    }
+    sendHumanInputResponse(pendingHumanInput.requestId, humanInputVal)
+    setHumanInputVal('')
+  }
+
+  const handleHumanInputOption = (option: string) => {
+    if (!pendingHumanInput || !connected) {
+      return
+    }
+    sendHumanInputResponse(pendingHumanInput.requestId, option, option)
+    setHumanInputVal('')
   }
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -846,6 +892,54 @@ export default function App() {
               </div>
             </motion.div>
           )}
+
+          {pendingHumanInput && !confirmRequest && (
+            <motion.div
+              className="human-input-panel"
+              initial={{ opacity: 0, y: 10, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+            >
+              <div className="human-input-header">
+                <Sparkles size={16} color="var(--accent-color)" />
+                <span>继续当前步骤前，需要你补充一下</span>
+              </div>
+              <div className="human-input-body">{pendingHumanInput.question}</div>
+              {pendingHumanInput.options.length > 0 && (
+                <div className="human-input-options">
+                  {pendingHumanInput.options.map((option) => (
+                    <button
+                      key={option}
+                      className="human-input-option"
+                      onClick={() => handleHumanInputOption(option)}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="human-input-form">
+                <input
+                  className="human-input-field"
+                  placeholder={pendingHumanInput.placeholder || '输入你的补充信息'}
+                  value={humanInputVal}
+                  onChange={(event) => setHumanInputVal(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      handleHumanInputSubmit()
+                    }
+                  }}
+                />
+                <button
+                  className="human-input-submit"
+                  onClick={handleHumanInputSubmit}
+                  disabled={!humanInputVal.trim() || !connected}
+                >
+                  提交
+                </button>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
         <div ref={messagesEndRef} />
       </div>
@@ -861,7 +955,14 @@ export default function App() {
             wrapperClassName="thinking-select-wrap"
             value={preferredMode}
             onChange={(event) => setPreferredMode(event.target.value as AssistantMode)}
-            disabled={!connected || Boolean(confirmRequest)}
+            disabled={!connected || composerLocked}
+            title={
+              preferredMode === 'normal'
+                ? 'Normal keeps everyday conversation and lightweight web search in one mode, and may upgrade only when needed.'
+                : preferredMode === 'auto'
+                  ? 'Brain decides the mode and may switch it during the turn.'
+                  : 'The selected mode is locked for this turn.'
+            }
           >
             {MODE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -877,7 +978,7 @@ export default function App() {
             wrapperClassName="thinking-select-wrap"
             value={thinkingOverride}
             onChange={(event) => setThinkingOverride(event.target.value as ThinkingOverride)}
-            disabled={!connected || Boolean(confirmRequest)}
+            disabled={!connected || composerLocked}
           >
             {THINKING_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -893,13 +994,13 @@ export default function App() {
             value={inputVal}
             onChange={(event) => setInputVal(event.target.value)}
             onKeyDown={onKeyDown}
-            disabled={!connected || Boolean(confirmRequest)}
+            disabled={!connected || composerLocked}
             autoFocus
           />
           <button
             className="send-btn"
             onClick={handleSend}
-            disabled={!inputVal.trim() || !connected || Boolean(confirmRequest)}
+            disabled={!inputVal.trim() || !connected || composerLocked}
           >
             <Send size={16} />
           </button>
@@ -1262,6 +1363,90 @@ export default function App() {
           gap: 10px;
           justify-content: flex-end;
           margin-top: 4px;
+        }
+        .human-input-panel {
+          margin-top: 10px;
+          background: rgba(0, 102, 204, 0.08);
+          border: 1px solid rgba(0, 102, 204, 0.2);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          border-radius: var(--radius-md);
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .human-input-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: var(--accent-color);
+          font-weight: 600;
+          font-size: 14px;
+        }
+        .human-input-body {
+          font-size: 13px;
+          line-height: 1.6;
+          color: var(--text-primary);
+          word-break: break-word;
+        }
+        .human-input-options {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .human-input-option {
+          border: 1px solid rgba(0, 102, 204, 0.2);
+          background: rgba(255, 255, 255, 0.72);
+          color: var(--text-primary);
+          border-radius: 999px;
+          padding: 6px 12px;
+          font-size: 12px;
+          cursor: pointer;
+          transition: all 0.18s ease;
+        }
+        .human-input-option:hover {
+          border-color: rgba(0, 102, 204, 0.35);
+          background: rgba(0, 102, 204, 0.08);
+          color: var(--accent-color);
+        }
+        .human-input-form {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+        .human-input-field {
+          flex: 1;
+          min-width: 0;
+          border-radius: 12px;
+          border: 1px solid var(--glass-border);
+          background: rgba(255, 255, 255, 0.78);
+          color: var(--text-primary);
+          padding: 10px 12px;
+          font-size: 13px;
+          outline: none;
+        }
+        .human-input-field:focus {
+          border-color: rgba(0, 102, 204, 0.35);
+          box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.08);
+        }
+        .human-input-submit {
+          border: none;
+          padding: 8px 14px;
+          border-radius: 12px;
+          background: var(--accent-color);
+          color: white;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: transform 0.1s ease, opacity 0.2s ease;
+        }
+        .human-input-submit:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .human-input-submit:active:not(:disabled) {
+          transform: scale(0.96);
         }
         .btn-reject, .btn-accept {
           border: none;
