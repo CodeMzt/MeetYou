@@ -2,8 +2,8 @@
 user/*
 !user/*.example.json
 !user/README.md
-test/
 .pjfacts/
+node_modules/
 
 # Environment variables (API keys)
 .env
@@ -13,6 +13,7 @@ logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+tests/__pycache__/
 *.py[cod]
 *$py.class
 
@@ -175,3 +176,4 @@ memory.json
 .idea/
 *.db
 .npm-cache/
+技术信息日报_2026-04-03.md

@@ -82,33 +82,50 @@ class CLIInputAdapter:
                 event.app.exit()
                 return
 
-            if self._event_bus.has_pending_confirmation:
-                accepted = user_text.strip().lower() in _ACCEPTED_CONFIRM_TOKENS
-                self._event_bus.submit_confirmation_response(
-                    accepted,
-                    request_id=self._event_bus.pending_request_id or "",
-                    session_id=self.session_id,
-                )
-                return
-
-            self.output_field.text += f"You: {user_text}\n"
-            self.output_field.buffer.cursor_position = len(self.output_field.text)
-            self._event_bus.inbound_queue.put_nowait(
-                InboundEvent(
-                    session_id=self.session_id,
-                    type=EventType.MESSAGE.value,
-                    role="user",
-                    content=user_text,
-                    source=self.source,
-                    target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
-                )
-            )
+            self._consume_user_text(user_text)
 
         self.app = Application(
             layout=self.layout,
             key_bindings=self.kb,
             full_screen=True,
             mouse_support=True,
+        )
+
+    def _consume_user_text(self, user_text: str):
+        if (
+            self._event_bus.has_pending_confirmation
+            and self._event_bus.pending_confirmation_session_id == self.session_id
+        ):
+            accepted = user_text.strip().lower() in _ACCEPTED_CONFIRM_TOKENS
+            self._event_bus.submit_confirmation_response(
+                accepted,
+                request_id=self._event_bus.pending_request_id or "",
+                session_id=self.session_id,
+            )
+            return
+
+        if self._event_bus.get_pending_human_input_request(session_id=self.session_id) is not None:
+            response = self._event_bus.normalize_human_input_text(user_text, session_id=self.session_id)
+            if response is not None:
+                self._event_bus.submit_human_input_response(
+                    response.get("answer_text", ""),
+                    request_id=response.get("request_id", ""),
+                    session_id=response.get("session_id", self.session_id),
+                    selected_option=response.get("selected_option"),
+                )
+                return
+
+        self.output_field.text += f"You: {user_text}\n"
+        self.output_field.buffer.cursor_position = len(self.output_field.text)
+        self._event_bus.inbound_queue.put_nowait(
+            InboundEvent(
+                session_id=self.session_id,
+                type=EventType.MESSAGE.value,
+                role="user",
+                content=user_text,
+                source=self.source,
+                target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+            )
         )
 
     async def run(self):

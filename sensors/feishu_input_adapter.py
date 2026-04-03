@@ -36,15 +36,28 @@ class FeishuInputAdapter:
         self._event_bus = event_bus
         self._session_manager = session_manager
         self._config = config
+        self._app_id = str(self._config.get("feishu_app_id") or "").strip()
         self._chat_registry_path = Path(
             self._config.get("feishu_chat_registry_path") or "user/feishu_chat_ids.json"
         )
         self._known_chat_ids = self._load_known_chat_ids()
         self._client = FeishuWSClient(
-            self._config.get("feishu_app_id") or "",
+            self._app_id,
             self._config.get("feishu_app_secret") or "",
             self.handle_event,
         )
+
+    def _is_self_message(self, sender: dict) -> bool:
+        sender = sender or {}
+        sender_type = str(sender.get("sender_type") or "").strip().lower()
+        if sender_type in {"app", "bot"}:
+            return True
+
+        sender_id = sender.get("sender_id", {}) or {}
+        app_id = str(sender_id.get("app_id") or "").strip()
+        if app_id and self._app_id and app_id == self._app_id:
+            return True
+        return False
 
     def _load_known_chat_ids(self) -> set[str]:
         if not self._chat_registry_path.exists():
@@ -126,6 +139,8 @@ class FeishuInputAdapter:
         chat_id = message.get("chat_id", "")
         if not chat_id:
             return
+        if self._is_self_message(sender):
+            return
 
         content_raw = message.get("content", "{}")
         try:
@@ -153,33 +168,74 @@ class FeishuInputAdapter:
             source,
             session_id=f"feishu:chat:{chat_id}",
         )
+        message_id = str(message.get("message_id", "")).strip()
+        if message_id:
+            existing_event_id = self._session_manager.get_recent_inbound_event_id(
+                session_id,
+                source,
+                message_id,
+            )
+            if existing_event_id:
+                return
         confirm_value = _parse_confirm_response(text)
         if (
             confirm_value is not None
             and self._event_bus.has_pending_confirmation
             and session_id == self._event_bus.pending_confirmation_session_id
         ):
+            if message_id:
+                self._session_manager.remember_inbound_event_id(
+                    session_id,
+                    source,
+                    message_id,
+                    f"feishu-confirm:{message_id}",
+                )
             self._event_bus.submit_confirmation_response(
                 confirm_value,
                 request_id=self._event_bus.pending_request_id,
                 session_id=session_id,
             )
             return
-        await self._event_bus.inbound_queue.put(
-            InboundEvent(
-                session_id=session_id,
-                type=EventType.MESSAGE.value,
-                role="user",
-                content=text,
-                source=source,
-                target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
-                metadata={
-                    "message_id": message.get("message_id", ""),
-                    "chat_id": chat_id,
-                    "chat_type": message.get("chat_type", ""),
-                },
-            )
+        if self._event_bus.get_pending_human_input_request(session_id=session_id) is not None:
+            response = self._event_bus.normalize_human_input_text(text, session_id=session_id)
+            if response is not None:
+                if message_id:
+                    self._session_manager.remember_inbound_event_id(
+                        session_id,
+                        source,
+                        message_id,
+                        f"feishu-human-input:{message_id}",
+                    )
+                self._event_bus.submit_human_input_response(
+                    response.get("answer_text", ""),
+                    request_id=response.get("request_id", ""),
+                    session_id=response.get("session_id", session_id),
+                    selected_option=response.get("selected_option"),
+                )
+                return
+        inbound_event = InboundEvent(
+            session_id=session_id,
+            type=EventType.MESSAGE.value,
+            role="user",
+            content=text,
+            source=source,
+            target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+            metadata={
+                "message_id": message_id,
+                "chat_id": chat_id,
+                "chat_type": message.get("chat_type", ""),
+            },
         )
+        if message_id:
+            remembered_event_id = self._session_manager.remember_inbound_event_id(
+                session_id,
+                source,
+                message_id,
+                inbound_event.event_id,
+            )
+            if remembered_event_id != inbound_event.event_id:
+                return
+        await self._event_bus.inbound_queue.put(inbound_event)
 
     async def run(self):
         await self._client.start()

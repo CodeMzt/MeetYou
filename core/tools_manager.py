@@ -76,6 +76,7 @@ class ToolsManager:
 
         self.supported_funcs: dict[str, Any] = {
             "exec_sys_cmd": system_tools_module.exec_sys_cmd,
+            "ask_human": getattr(system_tools_module, "ask_human", None),
             "save_memory": memory.save_memory,
             "remember_knowledge": self._agent_memory_tools.remember_knowledge,
             "search_memory": self._agent_memory_tools.search_memory,
@@ -125,6 +126,7 @@ class ToolsManager:
             )
         self._tool_action_risks: dict[str, str] = {
             "exec_sys_cmd": "destructive",
+            "ask_human": "read",
             "get_current_system_time": "read",
             "get_sys_vitals": "read",
             "get_background_status": "read",
@@ -223,7 +225,6 @@ class ToolsManager:
             "get_background_status",
             "get_current_system_time",
             "get_sys_vitals",
-            "search_memory",
         )
         return [
             tool

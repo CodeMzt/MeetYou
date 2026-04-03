@@ -8,12 +8,22 @@ import logging
 from uuid import uuid4
 
 import aiohttp
-from prompt_toolkit import Application
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.keys import Keys
-from prompt_toolkit.layout.containers import HSplit, Window
-from prompt_toolkit.layout.layout import Layout
-from prompt_toolkit.widgets import TextArea
+
+try:
+    from prompt_toolkit import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+    from prompt_toolkit.layout.containers import HSplit, Window
+    from prompt_toolkit.layout.layout import Layout
+    from prompt_toolkit.widgets import TextArea
+except ImportError:  # pragma: no cover - optional at import time
+    Application = None
+    KeyBindings = None
+    Keys = None
+    HSplit = None
+    Window = None
+    Layout = None
+    TextArea = None
 
 from core.logger import setup_logger
 
@@ -26,6 +36,11 @@ _REJECTED_CONFIRM_TOKENS = {"n", "no", "拒绝", "取消", "不同意"}
 class CILClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8000"):
         setup_logger(enable_console=False, component="cil")
+        if any(
+            dependency is None
+            for dependency in (Application, KeyBindings, Keys, HSplit, Window, Layout, TextArea)
+        ):
+            raise RuntimeError("prompt_toolkit is required to run CILClient.")
 
         self.base_url = base_url.rstrip("/")
         self.ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -37,6 +52,7 @@ class CILClient:
         self._pending_confirm_request_id: str | None = None
         self._ws_task: asyncio.Task | None = None
         self._streaming = False
+        self._stream_prefix_pending = False
         self._connection_logged = False
 
         self.output_field = TextArea(text="", read_only=True, scrollbar=True)
@@ -178,9 +194,10 @@ class CILClient:
             return
 
         if event_type == "error":
-            if self._streaming:
+            if self._streaming and not self._stream_prefix_pending:
                 self._append("\n")
-                self._streaming = False
+            self._streaming = False
+            self._stream_prefix_pending = False
             self._append(f"[系统错误] {evt.get('content', '')}\n")
             return
 
@@ -199,13 +216,28 @@ class CILClient:
 
         if event_type == "message":
             content = str(evt.get("content", "")).replace("\r", "")
+            if stream_phase == "start":
+                self._streaming = True
+                self._stream_prefix_pending = True
+                return
             if stream_phase == "chunk":
-                self._append(content)
+                if content:
+                    if self._stream_prefix_pending:
+                        self._append("Mozart: ")
+                        self._stream_prefix_pending = False
+                    self._append(content)
                 self._streaming = True
                 return
-            if self._streaming:
-                self._append("\n")
+            if stream_phase == "end":
+                if self._streaming and not self._stream_prefix_pending:
+                    self._append("\n")
                 self._streaming = False
+                self._stream_prefix_pending = False
+                return
+            if self._streaming and not self._stream_prefix_pending:
+                self._append("\n")
+            self._streaming = False
+            self._stream_prefix_pending = False
             self._append(f"Mozart: {content}\n")
 
     async def _send_ws_json(self, payload: dict):

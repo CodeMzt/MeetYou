@@ -51,7 +51,7 @@ platform_layer/  平台能力抽象
 prompt/          系统提示词、模式提示词
 meetyou-ui/      Electron + React 桌面端
 docs/            协议与补充文档
-test/            测试文件
+tests/           自动化回归测试
 user/            本地配置、工具 schema、记忆数据、MCP 配置等
 ```
 
@@ -310,7 +310,7 @@ npm run build
 
 ## 测试
 
-仓库当前包含较多后端测试，集中在 `test/` 目录，例如：
+仓库当前包含较多后端测试，集中在 `tests/` 目录，例如：
 
 - 运行态与 usage
 - gateway 配置与记忆接口
@@ -321,7 +321,7 @@ npm run build
 如果本地已安装测试依赖，可执行：
 
 ```bash
-python -m pytest test
+.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```
 
 ## 相关文档
