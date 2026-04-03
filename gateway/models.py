@@ -21,6 +21,7 @@ class InputRequest(BaseModel):
     content: str
     session_id: str | None = None
     source_id: str = "web-client"
+    client_message_id: str | None = None
     role: str = "user"
     preferred_mode: str | None = None
     metadata: dict = Field(default_factory=dict)
@@ -41,6 +42,8 @@ class WebSocketCommand(BaseModel):
     action: str
     request_id: str | None = None
     accepted: bool | None = None
+    answer_text: str | None = None
+    selected_option: str | None = None
     metadata: dict = Field(default_factory=dict)
 
 

@@ -75,6 +75,8 @@ class WebSocketManager:
                 "channel": payload.get("metadata", {}).get("stream_channel", ""),
             },
             "confirm": payload.get("confirm", {}),
+            "input_request": payload.get("input_request", {}),
+            "input_response": payload.get("input_response", {}),
         }
 
 

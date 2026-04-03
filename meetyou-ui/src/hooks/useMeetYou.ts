@@ -4,6 +4,8 @@ import type {
   ChatTurn,
   ConfirmRequestPayload,
   ConnectionState,
+  HumanInputRequestPayload,
+  InputRequestPayload,
   RuntimeStateSnapshot,
   RuntimeUsageSnapshot,
   ThinkingOverride,
@@ -71,6 +73,24 @@ function createAssistantTurn(streamId: string, turnId: string): ChatTurn {
     isStreaming: true,
     createdAt: Date.now(),
   }
+}
+
+function createUserTurn(content: string, turnId = ''): ChatTurn {
+  return {
+    id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    streamId: '',
+    turnId,
+    role: 'user',
+    content,
+    reasoning: '',
+    activities: [],
+    isStreaming: false,
+    createdAt: Date.now(),
+  }
+}
+
+function createClientMessageId(): string {
+  return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function upsertAssistantTurn(
@@ -210,6 +230,7 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeStateSnapshot | null>(null)
   const [usageSnapshot, setUsageSnapshot] = useState<RuntimeUsageSnapshot | null>(null)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequestPayload | null>(null)
+  const [pendingHumanInput, setPendingHumanInput] = useState<HumanInputRequestPayload | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
@@ -368,6 +389,24 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
           return
         }
 
+        if (eventType === 'human_input_request') {
+          const inputRequest = data.input_request ?? {}
+          const options = Array.isArray(inputRequest.options)
+            ? inputRequest.options.filter((item: unknown): item is string => typeof item === 'string')
+            : []
+          setPendingHumanInput({
+            requestId: typeof inputRequest.request_id === 'string' ? inputRequest.request_id : '',
+            question:
+              typeof inputRequest.question === 'string' && inputRequest.question
+                ? inputRequest.question
+                : content,
+            options,
+            placeholder: typeof inputRequest.placeholder === 'string' ? inputRequest.placeholder : '',
+            timeout: typeof inputRequest.timeout === 'number' ? inputRequest.timeout : undefined,
+          })
+          return
+        }
+
         if (eventType === 'runtime_status' && rawEvent.content && typeof rawEvent.content === 'object') {
           const snapshot = rawEvent.content as RuntimeStateSnapshot
           setRuntimeSnapshot(snapshot)
@@ -494,43 +533,45 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     void refreshUsage()
   }, [connectionState, refreshRuntime, refreshUsage, sessionId])
 
+  useEffect(() => {
+    if (!runtimeSnapshot) {
+      return
+    }
+    if (runtimeSnapshot.status !== 'waiting_confirm') {
+      setConfirmRequest(null)
+    }
+    if (runtimeSnapshot.status !== 'waiting_human_input') {
+      setPendingHumanInput(null)
+    }
+  }, [runtimeSnapshot?.status])
+
   const sendMessage = useCallback(
     async (
       text: string,
       thinkingOverride: ThinkingOverride = 'default',
-      preferredMode: AssistantMode = 'auto',
+      preferredMode: AssistantMode = 'normal',
     ) => {
       const content = text.trim()
       if (!content) {
         return
       }
 
-      const userMessage: ChatTurn = {
-        id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        streamId: '',
-        turnId: '',
-        role: 'user',
-        content,
-        reasoning: '',
-        activities: [],
-        isStreaming: false,
-        createdAt: Date.now(),
-      }
-
-      setMessages((prev) => [...prev, userMessage])
+      setMessages((prev) => [...prev, createUserTurn(content)])
 
       try {
+        const requestPayload: InputRequestPayload = {
+          content,
+          session_id: sessionId,
+          source_id: sourceId,
+          client_message_id: createClientMessageId(),
+          role: 'user',
+          preferred_mode: preferredMode === 'auto' ? undefined : preferredMode,
+          options: buildThinkingOptions(thinkingOverride),
+        }
         const response = await fetch(`${baseUrl}/inputs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            content,
-            session_id: sessionId,
-            source_id: sourceId,
-            role: 'user',
-            preferred_mode: preferredMode === 'auto' ? undefined : preferredMode,
-            options: buildThinkingOptions(thinkingOverride),
-          }),
+          body: JSON.stringify(requestPayload),
         })
 
         if (!response.ok) {
@@ -563,6 +604,30 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     setConfirmRequest(null)
   }, [])
 
+  const sendHumanInputResponse = useCallback(
+    (requestId: string, answerText: string, selectedOption: string | null = null) => {
+      const normalizedAnswer = answerText.trim() || selectedOption || ''
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            action: 'input_response',
+            request_id: requestId,
+            answer_text: normalizedAnswer,
+            selected_option: selectedOption,
+            metadata: { from: 'human-input-panel' },
+          }),
+        )
+      }
+      if (normalizedAnswer) {
+        startTransition(() => {
+          setMessages((prev) => [...prev, createUserTurn(normalizedAnswer, runtimeSnapshot?.turn_id || '')])
+        })
+      }
+      setPendingHumanInput(null)
+    },
+    [runtimeSnapshot?.turn_id],
+  )
+
   const turnActivities = useMemo(() => {
     if (runtimeSnapshot?.turn_id) {
       const currentTurn = messages.find((message) => message.turnId === runtimeSnapshot.turn_id)
@@ -582,8 +647,10 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     usageSnapshot,
     turnActivities,
     confirmRequest,
+    pendingHumanInput,
     sendMessage,
     sendConfirmResponse,
+    sendHumanInputResponse,
     refreshRuntime,
     refreshUsage,
     baseUrl,

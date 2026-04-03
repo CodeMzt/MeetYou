@@ -20,6 +20,38 @@
     {
       "type": "function",
       "function": {
+        "name": "ask_human",
+        "description": "Ask the human a follow-up question and continue the same tool-calling round after the reply arrives.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "description": "The question to ask."
+            },
+            "options": {
+              "type": "array",
+              "description": "Optional ordered options for a single-choice reply.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "placeholder": {
+              "type": "string",
+              "description": "Optional short UI placeholder."
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "description": "Optional timeout in seconds."
+            }
+          },
+          "required": ["question"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "get_current_system_time",
         "description": "Get the real current system time from the host machine.",
         "parameters": {

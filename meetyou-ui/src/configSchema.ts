@@ -217,7 +217,7 @@ const KNOWN_FIELDS: Record<string, Omit<ConfigFieldSchema, 'key'>> = {
   },
   mode_router: {
     title: 'Mode Router',
-    description: 'JSON config for automatic mode routing.',
+    description: 'JSON config for Brain-led mode decisions, in-turn switching, and heuristic fallback policy.',
     group: 'modes',
     input: 'json',
   },

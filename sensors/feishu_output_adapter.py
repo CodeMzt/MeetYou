@@ -186,6 +186,18 @@ class FeishuOutputAdapter:
             )
             return
 
+        if event.type == EventType.HUMAN_INPUT_REQUEST.value:
+            request_id = getattr(event, "request_id", "")
+            prompt = str(getattr(event, "question", "") or event.content or "")
+            options = [str(item).strip() for item in getattr(event, "options", []) if str(item).strip()]
+            option_lines = "\n".join(f"{index}. {option}" for index, option in enumerate(options, start=1))
+            suffix = f"\n{option_lines}" if option_lines else ""
+            await self._send_text(
+                chat_id,
+                f"{prompt}{suffix}\n输入编号或直接回复内容。\n请求编号: {request_id}",
+            )
+            return
+
         if event.type == EventType.ERROR.value:
             if event.stream_id:
                 self._stream_buffers.pop(event.stream_id, None)

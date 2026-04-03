@@ -270,35 +270,47 @@ class OpenAIAdapter(LLMAdapter):
     async def _iter_sse_payloads(self, response) -> AsyncGenerator[dict[str, Any], None]:
         event_lines: list[str] = []
 
+        def parse_payload() -> dict[str, Any] | None:
+            payload = "\n".join(event_lines).strip()
+            if not payload:
+                return None
+            if payload == "[DONE]":
+                return {"__done__": True}
+            try:
+                return json.loads(payload)
+            except (json.JSONDecodeError, ValueError):
+                return None
+
         async for raw_line in response.content:
             line = raw_line.decode("utf-8").rstrip("\r\n")
             if not line:
                 if not event_lines:
                     continue
-                payload = "\n".join(event_lines).strip()
+                parsed = parse_payload()
                 event_lines.clear()
-                if not payload:
+                if parsed is None:
                     continue
-                if payload == "[DONE]":
+                if parsed.get("__done__"):
                     break
-                try:
-                    yield json.loads(payload)
-                except (json.JSONDecodeError, ValueError):
-                    continue
+                yield parsed
                 continue
 
             if line.startswith(":"):
                 continue
             if line.startswith("data:"):
                 event_lines.append(line[5:].strip())
+                parsed = parse_payload()
+                if parsed is None:
+                    continue
+                event_lines.clear()
+                if parsed.get("__done__"):
+                    break
+                yield parsed
 
         if event_lines:
-            payload = "\n".join(event_lines).strip()
-            if payload and payload != "[DONE]":
-                try:
-                    yield json.loads(payload)
-                except (json.JSONDecodeError, ValueError):
-                    return
+            parsed = parse_payload()
+            if parsed is not None and not parsed.get("__done__"):
+                yield parsed
 
     @staticmethod
     def _extract_reasoning_texts(item: dict[str, Any] | None) -> list[str]:

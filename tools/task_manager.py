@@ -26,6 +26,9 @@ _MAX_LIST_LIMIT = 20
 _DEFAULT_TIMEZONE = "UTC"
 _DEFAULT_LEASE_SECONDS = 120
 _DEFAULT_FAILURE_BACKOFF_SECONDS = 900
+_URGENT_DUE_WINDOW = timedelta(hours=6)
+_BACKGROUND_DUE_LIST_LIMIT = 3
+_REPEATED_FAILURE_THRESHOLD = 2
 _SPACE_RE = re.compile(r"\s+")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -1095,6 +1098,41 @@ class TaskManager:
             await self._persist()
         return pending
 
+    def _background_task_snapshot(self, record: dict[str, Any], now: datetime) -> dict[str, Any]:
+        self._ensure_task_defaults(record)
+        next_run_text = _normalize_text(record.get("next_run_at"))
+        due_at_text = _normalize_text(record.get("due_at"))
+        next_run_dt = _iso_to_dt(next_run_text or due_at_text)
+        minutes_until_due = None
+        overdue = False
+        if next_run_dt is not None:
+            minutes_until_due = int((next_run_dt - now).total_seconds() / 60)
+            overdue = next_run_dt <= now
+        return {
+            "task_key": _normalize_text(record.get("task_key")),
+            "summary": _normalize_text(record.get("content")),
+            "schedule_kind": _normalize_text(record.get("schedule_kind")),
+            "next_run_at": next_run_text or None,
+            "due_at": due_at_text or None,
+            "minutes_until_due": minutes_until_due,
+            "overdue": overdue,
+            "auto_run": bool(record.get("auto_run", False)),
+        }
+
+    def _consecutive_failures(self, record: dict[str, Any]) -> int:
+        self._ensure_task_defaults(record)
+        history = record.get("run_history")
+        if isinstance(history, list) and history:
+            count = 0
+            for item in reversed(history):
+                status = _normalize_text(item.get("status")).lower()
+                if status != "failed":
+                    break
+                count += 1
+            if count:
+                return count
+        return 1 if _normalize_text(record.get("last_run_status")).lower() == "failed" else 0
+
     def build_background_status(self) -> dict[str, Any]:
         now = _utcnow()
         scheduled: list[dict[str, Any]] = []
@@ -1103,6 +1141,9 @@ class TaskManager:
         recent_failures: list[dict[str, Any]] = []
         recent_runs: list[dict[str, Any]] = []
         pending_delivery_count = 0
+        due_candidates: list[tuple[datetime, dict[str, Any]]] = []
+        urgent_due_tasks: list[tuple[datetime, dict[str, Any]]] = []
+        repeated_failure_tasks: list[dict[str, Any]] = []
 
         for record in self._iter_all_active_tasks():
             schedule_kind = record.get("schedule_kind")
@@ -1114,6 +1155,11 @@ class TaskManager:
                 due_count += 1
             if next_run_dt is not None and next_run_dt <= now - timedelta(minutes=5):
                 overdue_count += 1
+            if next_run_dt is not None:
+                snapshot = self._background_task_snapshot(record, now)
+                due_candidates.append((next_run_dt, snapshot))
+                if next_run_dt <= now + _URGENT_DUE_WINDOW:
+                    urgent_due_tasks.append((next_run_dt, snapshot))
             if record.get("pending_delivery"):
                 pending_delivery_count += 1
             status = _normalize_text(record.get("last_run_status")).lower()
@@ -1123,6 +1169,16 @@ class TaskManager:
                         "task_key": _normalize_text(record.get("task_key")),
                         "last_run_at": _normalize_text(record.get("last_run_at")),
                         "summary": _normalize_text(record.get("last_run_summary")),
+                    }
+                )
+            consecutive_failures = self._consecutive_failures(record)
+            if consecutive_failures >= _REPEATED_FAILURE_THRESHOLD:
+                repeated_failure_tasks.append(
+                    {
+                        **self._background_task_snapshot(record, now),
+                        "consecutive_failures": consecutive_failures,
+                        "last_run_at": _normalize_text(record.get("last_run_at")),
+                        "last_run_summary": _normalize_text(record.get("last_run_summary")),
                     }
                 )
             if status:
@@ -1137,12 +1193,32 @@ class TaskManager:
 
         recent_failures.sort(key=lambda item: item.get("last_run_at", ""), reverse=True)
         recent_runs.sort(key=lambda item: item.get("last_run_at", ""), reverse=True)
+        due_candidates.sort(key=lambda item: item[0])
+        urgent_due_tasks.sort(key=lambda item: item[0])
+        repeated_failure_tasks.sort(
+            key=lambda item: (
+                -int(item.get("consecutive_failures", 0) or 0),
+                str(item.get("last_run_at") or ""),
+            ),
+            reverse=False,
+        )
+        nearest_due_task = due_candidates[0][1] if due_candidates else None
+        nearest_due_in_minutes = (
+            int(nearest_due_task.get("minutes_until_due"))
+            if isinstance(nearest_due_task, dict) and nearest_due_task.get("minutes_until_due") is not None
+            else None
+        )
 
         return {
             "scheduled_task_count": len(scheduled),
             "due_task_count": due_count,
             "overdue_task_count": overdue_count,
             "pending_delivery_count": pending_delivery_count,
+            "nearest_due_task": nearest_due_task,
+            "nearest_due_in_minutes": nearest_due_in_minutes,
+            "urgent_due_tasks": [item[1] for item in urgent_due_tasks[:_BACKGROUND_DUE_LIST_LIMIT]],
+            "urgent_due_task_count": len(urgent_due_tasks),
+            "repeated_failure_tasks": repeated_failure_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
             "recent_failures": recent_failures[:5],
             "recent_runs": recent_runs[:8],
         }
