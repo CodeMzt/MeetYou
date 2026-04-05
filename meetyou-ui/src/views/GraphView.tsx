@@ -182,15 +182,15 @@ function getTheme(isDarkMode: boolean): GraphTheme {
 }
 
 function getTypeLabel(type: string): string {
-  if (type === 'profile_fact') return '用户画像'
-  if (type === 'task') return '任务'
+  if (type === 'profile') return '用户画像'
+  if (type === 'fact') return '长期事实'
   if (type === 'episode') return '事件'
   return '记录'
 }
 
 function getToneByType(type: string, theme: GraphTheme): GraphNodeTone {
-  if (type === 'profile_fact') return theme.profile
-  if (type === 'task') return theme.task
+  if (type === 'profile') return theme.profile
+  if (type === 'fact') return theme.task
   return theme.episode
 }
 
@@ -212,16 +212,16 @@ function getRelationLabel(kind: GraphRelationKind): string {
 
 function buildNodeDisplay(record: MemoryRecord, theme: GraphTheme): GraphNodeDisplay {
   const labelSource =
-    record.type === 'profile_fact'
+    record.type === 'profile'
       ? record.fact_key || record.fact_value || record.content
-      : record.type === 'task'
-        ? record.task_key || record.content
+      : record.type === 'fact'
+        ? record.fact_key || record.content
         : record.content
 
   const previewSource =
-    record.type === 'profile_fact'
+    record.type === 'profile'
       ? record.fact_value || record.content
-      : record.type === 'task'
+      : record.type === 'fact'
         ? record.content
         : record.content
 
@@ -477,12 +477,10 @@ function getInspectorMetaRows(node: GraphNodeDisplay): Array<{ label: string; va
   const { record } = node
 
   return [
-    record.type === 'profile_fact' && record.fact_key ? { label: '画像键', value: record.fact_key } : null,
-    record.type === 'profile_fact' && record.fact_value ? { label: '画像值', value: record.fact_value } : null,
-    record.type === 'task' && record.task_key ? { label: '任务键', value: record.task_key } : null,
-    record.type === 'task' && record.task_status ? { label: '任务状态', value: record.task_status } : null,
-    record.project ? { label: '项目', value: record.project } : null,
-    record.deadline ? { label: '截止时间', value: formatDateTime(record.deadline) } : null,
+    record.type === 'profile' && record.fact_key ? { label: '画像键', value: record.fact_key } : null,
+    record.type === 'profile' && record.fact_value ? { label: '画像值', value: record.fact_value } : null,
+    record.type === 'fact' && record.fact_key ? { label: '事实键', value: record.fact_key } : null,
+    record.type === 'fact' && record.fact_value ? { label: '事实值', value: record.fact_value } : null,
     record.status ? { label: '记录状态', value: record.status } : null,
   ].filter((item): item is { label: string; value: string } => Boolean(item))
 }
@@ -797,8 +795,8 @@ export default function GraphView({ graph }: { graph: MemoryGraph | null }) {
             <div className="graph-canvas-legend" aria-label="graph legend">
               <div className="graph-legend">
                 {[
-                  model.nodeList.find((item) => item.type === 'profile_fact'),
-                  model.nodeList.find((item) => item.type === 'task'),
+                  model.nodeList.find((item) => item.type === 'profile'),
+                  model.nodeList.find((item) => item.type === 'fact'),
                   model.nodeList.find((item) => item.type === 'episode'),
                 ]
                   .filter((item): item is GraphNodeDisplay => Boolean(item))

@@ -1,0 +1,20 @@
+[Task Recognition Skill]
+Detect when the user is creating, listing, updating, blocking, rescheduling, or completing actionable work.
+
+Purpose:
+- Turn user TODO language into persistent TODO tracking only when the user actually wants durable task state.
+- Route any time-triggered, recurring, scheduled, reminder-at-a-time, or assistant-background job request into the scheduled-task tool instead of the user TODO tool.
+
+When to use:
+- Treat explicit TODOs, follow-ups, blockers, status updates, and completion updates as user task-management work.
+- Treat any request that includes trigger time, recurrence, "tomorrow at", "every day", "every week", scheduled reminder, or scheduled execution as assistant scheduled-task work.
+- Activate when the user wants to create, inspect, update, or complete tracked items instead of keeping everything in free-form chat.
+
+Tool paths:
+- manage_tasks for persisted user TODO creation, listing, status changes, and completion.
+- manage_scheduled_tasks for assistant-owned single-run or recurring scheduled tasks.
+
+Boundaries:
+- When the user only wants planning advice without tracking, answer directly and avoid unnecessary task writes.
+- Do not use manage_tasks for anything with trigger time or frequency.
+- Do not imply that a TODO or scheduled task exists unless the corresponding tool confirms the stored state.

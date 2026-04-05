@@ -208,8 +208,14 @@ async def ask_human(
 
 async def get_current_system_time() -> str:
     """获取当前系统时间"""
-    now = datetime.datetime.now()
-    return f"当前宿主机系统时间是：{now.strftime('%Y-%m-%d %H:%M:%S %A')}"
+    local_now = datetime.datetime.now().astimezone()
+    utc_now = local_now.astimezone(datetime.timezone.utc)
+    return (
+        "当前宿主机系统时间："
+        f"{local_now.strftime('%Y-%m-%d %H:%M:%S %A')} "
+        f"(时区 {local_now.tzname() or 'UTC'})；"
+        f"UTC 时间：{utc_now.replace(microsecond=0).isoformat().replace('+00:00', 'Z')}"
+    )
 
 
 async def get_sys_vitals() -> str:

@@ -78,6 +78,46 @@ def _parse_date(value: Any) -> datetime | None:
     return None
 
 
+def _xml_local_name(tag: Any) -> str:
+    raw = str(tag or "")
+    return raw.rsplit("}", 1)[-1].lower()
+
+
+def _xml_child_elements(element: ET.Element, name: str) -> list[ET.Element]:
+    normalized = _normalize_text(name).lower()
+    return [child for child in list(element) if _xml_local_name(child.tag) == normalized]
+
+
+def _xml_descendants(element: ET.Element, name: str) -> list[ET.Element]:
+    normalized = _normalize_text(name).lower()
+    return [child for child in element.iter() if _xml_local_name(child.tag) == normalized]
+
+
+def _xml_element_text(element: ET.Element | None) -> str:
+    if element is None:
+        return ""
+    return _normalize_text("".join(element.itertext()))
+
+
+def _xml_field_value(element: ET.Element, field: str) -> str:
+    normalized = _normalize_text(field)
+    if not normalized:
+        return ""
+    current = element
+    attribute = ""
+    if "@" in normalized:
+        normalized, attribute = normalized.rsplit("@", 1)
+        normalized = normalized.rstrip(".")
+    for part in [item for item in normalized.split(".") if item]:
+        children = _xml_child_elements(current, part)
+        if not children:
+            return ""
+        current = children[0]
+    if attribute:
+        return _normalize_text(current.attrib.get(attribute))
+    return _xml_element_text(current)
+
+
 class AuthoritativeSourceRegistry:
     def __init__(self, mode_manager, web_tools):
         self._mode_manager = mode_manager
@@ -93,6 +133,7 @@ class AuthoritativeSourceRegistry:
             "nvd_api": self._search_nvd_api,
             "cisa_kev": self._search_cisa_kev,
             "generic_json_api": self._search_generic_json_api,
+            "rss_atom_feed": self._search_rss_atom_feed,
             "whitelist_page_reader": self._search_whitelist_page_reader,
         }
 
@@ -590,7 +631,8 @@ class AuthoritativeSourceRegistry:
         params = dict(request_defaults.get("params") or {})
         query_param = _normalize_text(request_defaults.get("query_param")) or "query"
         params[query_param] = query
-        params.setdefault("limit", max(1, min(limit, 5)))
+        limit_param = _normalize_text(request_defaults.get("limit_param")) or "limit"
+        params.setdefault(limit_param, max(1, min(limit, 5)))
         params, headers = self._apply_auth(source_config, params=params)
         payload = await self._get_json(endpoint, params=params, headers=headers)
         result_path = _normalize_text(request_defaults.get("result_path")) or "results"
@@ -615,4 +657,101 @@ class AuthoritativeSourceRegistry:
                     "reader": "generic_json_api",
                 }
             )
+        return results
+
+    def _feed_entries(self, root: ET.Element, entry_path: str = "") -> list[ET.Element]:
+        if entry_path:
+            current: list[ET.Element] = [root]
+            for part in [item for item in _normalize_text(entry_path).split(".") if item]:
+                next_level: list[ET.Element] = []
+                for element in current:
+                    next_level.extend(_xml_child_elements(element, part))
+                current = next_level
+            return current
+        if _xml_local_name(root.tag) == "feed":
+            return _xml_child_elements(root, "entry")
+        items = _xml_descendants(root, "item")
+        if items:
+            return items
+        return _xml_descendants(root, "entry")
+
+    def _feed_link(self, entry: ET.Element, url_field: str = "") -> str:
+        explicit = _xml_field_value(entry, url_field)
+        if explicit:
+            return explicit
+        link_elements = _xml_child_elements(entry, "link")
+        for element in link_elements:
+            href = _normalize_text(element.attrib.get("href"))
+            rel = _normalize_text(element.attrib.get("rel")).lower()
+            if href and rel in {"", "alternate"}:
+                return href
+        for element in link_elements:
+            href = _normalize_text(element.attrib.get("href"))
+            if href:
+                return href
+        for element in link_elements:
+            text = _xml_element_text(element)
+            if text:
+                return text
+        return ""
+
+    def _feed_result_from_entry(self, entry: ET.Element, request_defaults: dict[str, Any]) -> dict[str, Any]:
+        title_field = _normalize_text(request_defaults.get("title_field")) or "title"
+        summary_field = _normalize_text(request_defaults.get("summary_field"))
+        date_field = _normalize_text(request_defaults.get("date_field"))
+        url_field = _normalize_text(request_defaults.get("url_field"))
+
+        title = _xml_field_value(entry, title_field)
+        summary = _xml_field_value(entry, summary_field or "summary") or _xml_field_value(entry, "description")
+        published_date = _xml_field_value(entry, date_field or "published") or _xml_field_value(entry, "updated") or _xml_field_value(entry, "pubDate")
+        url = self._feed_link(entry, url_field)
+        return {
+            "title": title,
+            "url": url,
+            "summary": summary,
+            "snippet": summary,
+            "published_date": published_date,
+            "reader": "rss_atom_feed",
+        }
+
+    async def _search_rss_atom_feed(self, source_config: dict[str, Any], query: str, limit: int) -> list[dict[str, Any]]:
+        request_defaults = source_config.get("request_defaults") or {}
+        endpoint = _normalize_text(request_defaults.get("endpoint"))
+        if not endpoint:
+            return []
+
+        query_mode = _normalize_text(request_defaults.get("query_mode")).lower() or "fixed_feed"
+        params = dict(request_defaults.get("static_params") or {})
+        if query_mode == "query_param":
+            query_param = _normalize_text(request_defaults.get("query_param")) or "q"
+            query_prefix = str(request_defaults.get("query_prefix") or "")
+            params[query_param] = f"{query_prefix}{query}".strip()
+        elif query_mode == "append_query":
+            endpoint = f"{endpoint}{query}"
+
+        params, headers = self._apply_auth(source_config, params=params)
+        payload = await self._get_text(endpoint, params=params, headers=headers)
+        root = ET.fromstring(payload)
+        entries = self._feed_entries(root, _normalize_text(request_defaults.get("entry_path")))
+        keyword = _normalize_text(query).lower()
+        tokens = [token for token in keyword.split() if token]
+
+        results: list[dict[str, Any]] = []
+        for entry in entries:
+            item = self._feed_result_from_entry(entry, request_defaults)
+            if query_mode == "fixed_feed" and tokens:
+                haystack = " ".join(
+                    [
+                        _normalize_text(item.get("title")),
+                        _normalize_text(item.get("summary")),
+                        _normalize_text(item.get("url")),
+                    ]
+                ).lower()
+                if not any(token in haystack for token in tokens):
+                    continue
+            if not any(_normalize_text(item.get(field)) for field in ("title", "url", "summary")):
+                continue
+            results.append(item)
+            if len(results) >= limit:
+                break
         return results

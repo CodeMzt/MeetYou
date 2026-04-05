@@ -143,7 +143,7 @@
       "type": "function",
       "function": {
         "name": "manage_tasks",
-        "description": "Create, list, update, or complete lightweight local tasks.",
+        "description": "Create, list, update, or complete user TODO items.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -157,15 +157,206 @@
             "summary": {
               "type": "string"
             },
+            "completion_summary": {
+              "type": "string"
+            },
             "project": {
               "type": "string"
             },
             "task_status": {
               "type": "string",
               "enum": ["open", "blocked", "done"]
+            },
+            "deadline": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
             }
           },
           "required": ["action"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "manage_scheduled_tasks",
+        "description": "Create, list, update, or complete assistant-owned scheduled tasks.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": ["create", "list", "update", "complete"]
+            },
+            "task_key": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "completion_summary": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            },
+            "task_status": {
+              "type": "string",
+              "enum": ["open", "blocked", "done"]
+            },
+            "deadline": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "schedule_kind": {
+              "type": "string",
+              "enum": ["once", "recurring"]
+            },
+            "due_at": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            },
+            "recurrence": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "freq": {
+                      "type": "string",
+                      "enum": ["daily", "weekly"]
+                    },
+                    "weekday": {
+                      "oneOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "hour": {
+                      "type": "integer"
+                    },
+                    "minute": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              ]
+            },
+            "auto_run": {
+              "type": "boolean"
+            },
+            "job_prompt": {
+              "type": "string"
+            },
+            "notify_policy": {
+              "type": "string",
+              "enum": ["on_due", "on_completion", "silent"]
+            }
+          },
+          "required": ["action"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_skills",
+        "description": "List the currently available open skills.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "skill_type": {
+              "type": "string",
+              "enum": ["all", "mode", "reusable"]
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "load_skill",
+        "description": "Load a skill by identifier and optionally inject it into the current route context.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "skill_id": {
+              "type": "string"
+            },
+            "inject_context": {
+              "type": "boolean"
+            }
+          },
+          "required": ["skill_id"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "create_skill",
+        "description": "Create a new reusable skill in the open skill registry.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "skill_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "recommended_tools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "applicable_modes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "scenarios": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "inject_context": {
+              "type": "boolean"
+            }
+          },
+          "required": ["title", "summary", "content"]
         }
       }
     }
@@ -220,6 +411,46 @@
           "type": "object",
           "properties": {},
           "required": []
+        }
+      }
+    }
+  ],
+  "web_tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "search_web",
+        "description": "Search the web using the configured web-search backend.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The search query."
+            },
+            "max_results": {
+              "type": "integer",
+              "description": "Optional maximum number of search results."
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_web_page",
+        "description": "Read and extract a direct webpage or PDF URL.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "The page URL."
+            }
+          },
+          "required": ["url"]
         }
       }
     }

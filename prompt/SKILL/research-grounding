@@ -1,0 +1,18 @@
+[Research Grounding Skill]
+Prioritize first-party, official, and original sources.
+
+Purpose:
+- Keep research outputs grounded in verifiable evidence, explicit freshness reasoning, and source-backed claims.
+
+When to use:
+- Use for latest, recent, today, current, policy, comparison, or report-style requests where sourcing quality matters.
+- Apply when the response needs citations, evidence objects, source tracking, or a clear separation between evidence and inference.
+
+Tool paths:
+- Start with focused evidence gathering through search_web, read_web_page, search_memory, and search_knowledge.
+- Escalate to research_topic, inspect_page, or track_source_updates when the task expands into broader synthesis or ongoing monitoring.
+
+Boundaries:
+- Reason about freshness explicitly when the user asks for latest, recent, today, or current information.
+- Use evidence objects and source ids from tools instead of inventing citations.
+- Lead with the answer, then cite sourced claims inline like [1], [2], and distinguish direct evidence, secondary coverage, and inference.

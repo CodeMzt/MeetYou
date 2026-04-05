@@ -160,7 +160,7 @@ function validateField(key: string, value: ConfigFormValue, schema: ConfigFieldS
     try {
       JSON.parse(text)
     } catch {
-      return 'Please enter valid JSON'
+      return '请输入有效的 JSON'
     }
     return null
   }
@@ -204,7 +204,7 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
         setLoading(true)
         const response = await fetch(`${baseUrl}/config`)
         if (!response.ok) {
-          throw new Error('Failed to fetch config')
+          throw new Error('获取配置失败')
         }
 
         const data = await response.json()
@@ -225,7 +225,7 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
           setSaveResult(null)
         }
       } catch (fetchError) {
-        setError(fetchError instanceof Error ? fetchError.message : 'Failed to fetch config')
+        setError(fetchError instanceof Error ? fetchError.message : '获取配置失败')
       } finally {
         setLoading(false)
       }
@@ -331,7 +331,7 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
       })
 
       if (!response.ok) {
-        throw new Error('Failed to update config')
+        throw new Error('更新配置失败')
       }
 
       const result: ConfigPatchResult = await response.json()
@@ -339,7 +339,7 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
       setSaveResult(result)
       return true
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Failed to update config')
+      setError(saveError instanceof Error ? saveError.message : '更新配置失败')
       return false
     } finally {
       setSaving(false)

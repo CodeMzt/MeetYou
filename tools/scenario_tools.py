@@ -190,18 +190,11 @@ def _memory_sources_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]
         )
         source_id += 1
 
-    for entry in payload.get("tasks", []):
+    for entry in payload.get("facts", []):
         summary = _normalize_text(entry.get("content"))
         if not summary:
             continue
-        title = _normalize_text(entry.get("project") or "Task")
-        meta_parts = [
-            _normalize_text(entry.get("task_status")),
-            _normalize_text(entry.get("deadline")),
-        ]
-        meta = ", ".join(part for part in meta_parts if part)
-        if meta:
-            summary = f"{summary} ({meta})"
+        title = _normalize_text(entry.get("fact_key") or "Long-term fact")
         sources.append(
             {
                 "id": source_id,
@@ -236,13 +229,13 @@ def _memory_sources_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]
 
 
 class ScenarioTools:
-    def __init__(self, memory, context_manager, mcp_manager, mode_manager=None):
+    def __init__(self, memory, context_manager, mcp_manager, mode_manager=None, task_manager=None):
         self._memory = memory
         self._context_manager = context_manager
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
         self._memory_tools = AgentMemoryTools(memory)
-        self._task_manager = TaskManager(memory)
+        self._task_manager = task_manager or TaskManager(memory)
         self._web_tools = WebSearchTools(mcp_manager)
         self._authoritative_sources = AuthoritativeSourceRegistry(mode_manager, self._web_tools)
 
@@ -279,10 +272,18 @@ class ScenarioTools:
         return relay
 
     def _should_load_context(self, query: str, goal: str = "") -> bool:
+        if self._mode_manager is not None:
+            semantic_getter = getattr(self._mode_manager, "should_preload_context", None)
+            if callable(semantic_getter):
+                return bool(semantic_getter(query, goal))
         haystack = f"{query}\n{goal}".lower()
         return any(hint in haystack for hint in _KNOWLEDGE_HINTS)
 
     def _looks_like_live_web_query(self, query: str) -> bool:
+        if self._mode_manager is not None:
+            semantic_getter = getattr(self._mode_manager, "is_live_web_query", None)
+            if callable(semantic_getter):
+                return bool(semantic_getter(query))
         lowered = str(query or "").lower()
         return any(hint in lowered for hint in _LIVE_WEB_HINTS)
 
@@ -903,6 +904,7 @@ class ScenarioTools:
         action: str,
         task_key: str = "",
         summary: str = "",
+        completion_summary: str = "",
         project: str = "",
         task_status: str = "",
         deadline: str | None = None,
@@ -935,6 +937,7 @@ class ScenarioTools:
             action=action,
             task_key=task_key,
             summary=summary,
+            completion_summary=completion_summary,
             project=project,
             task_status=task_status,
             deadline=deadline,
@@ -950,3 +953,206 @@ class ScenarioTools:
             session_id=session_id,
             source=source,
         )
+
+    async def manage_scheduled_tasks(
+        self,
+        action: str,
+        task_key: str = "",
+        summary: str = "",
+        completion_summary: str = "",
+        project: str = "",
+        task_status: str = "",
+        deadline: str | None = None,
+        query: str = "",
+        limit: int = 8,
+        schedule_kind: str | None = None,
+        due_at: str | None = None,
+        timezone: str | None = None,
+        recurrence: Any = None,
+        auto_run: Any = None,
+        job_prompt: str | None = None,
+        notify_policy: str | None = None,
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+    ) -> str:
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            f"Routing scheduled-task request: {action}",
+            {"tool_name": "manage_scheduled_tasks"},
+        )
+        await self._emit_activity(
+            activity_callback,
+            "updating_tasks",
+            f"Updating scheduled tasks with action: {action}",
+            {"tool_name": "manage_scheduled_tasks"},
+        )
+        return await self._task_manager.manage_scheduled_tasks(
+            action=action,
+            task_key=task_key,
+            summary=summary,
+            completion_summary=completion_summary,
+            project=project,
+            task_status=task_status,
+            deadline=deadline,
+            query=query,
+            limit=limit,
+            schedule_kind=schedule_kind,
+            due_at=due_at,
+            timezone=timezone,
+            recurrence=recurrence,
+            auto_run=auto_run,
+            job_prompt=job_prompt,
+            notify_policy=notify_policy,
+            session_id=session_id,
+            source=source,
+        )
+
+    async def list_skills(
+        self,
+        query: str = "",
+        skill_type: str = "all",
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+    ) -> str:
+        del session_id, source
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            "Listing available skills",
+            {"tool_name": "list_skills", "skill_type": skill_type},
+        )
+        if self._mode_manager is None:
+            payload = {
+                "tool": "list_skills",
+                "skill_count": 0,
+                "skills": [],
+                "error": "skill_registry_unavailable",
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        skills = self._mode_manager.list_skills(skill_type=skill_type, query=query)
+        payload = {
+            "tool": "list_skills",
+            "query": _normalize_text(query),
+            "skill_type": _normalize_text(skill_type) or "all",
+            "skill_count": len(skills),
+            "skills": skills,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    async def load_skill(
+        self,
+        skill_id: str,
+        inject_context: bool = True,
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+        route_context: dict[str, Any] | None = None,
+    ) -> str:
+        del session_id, source
+        normalized_id = _normalize_text(skill_id)
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            f"Loading skill: {normalized_id}",
+            {"tool_name": "load_skill", "skill_id": normalized_id},
+        )
+        if self._mode_manager is None:
+            payload = {
+                "tool": "load_skill",
+                "skill_id": normalized_id,
+                "loaded": False,
+                "error": "skill_registry_unavailable",
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        skill = self._mode_manager.load_skill(normalized_id)
+        if skill is None:
+            payload = {
+                "tool": "load_skill",
+                "skill_id": normalized_id,
+                "loaded": False,
+                "error": "skill_not_found",
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
+        injected_into_context = False
+        if inject_context and isinstance(route_context, dict):
+            loaded_skills = [str(item).strip() for item in route_context.get("loaded_skills", []) if str(item).strip()]
+            if skill["id"] not in loaded_skills:
+                loaded_skills.append(skill["id"])
+                route_context["loaded_skills"] = loaded_skills
+            injected_into_context = True
+
+        payload = {
+            "tool": "load_skill",
+            "skill_id": skill["id"],
+            "loaded": True,
+            "injected_into_context": injected_into_context,
+            "skill": skill,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    async def create_skill(
+        self,
+        title: str,
+        summary: str,
+        content: str,
+        skill_id: str = "",
+        recommended_tools: list[str] | None = None,
+        applicable_modes: list[str] | None = None,
+        scenarios: list[str] | None = None,
+        inject_context: bool = False,
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+        route_context: dict[str, Any] | None = None,
+    ) -> str:
+        del session_id, source
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            f"Creating reusable skill: {_normalize_text(title) or _normalize_text(skill_id)}",
+            {"tool_name": "create_skill"},
+        )
+        if self._mode_manager is None:
+            payload = {
+                "tool": "create_skill",
+                "created": False,
+                "error": "skill_registry_unavailable",
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        try:
+            created = self._mode_manager.create_skill(
+                skill_id=skill_id,
+                title=title,
+                summary=summary,
+                content=content,
+                recommended_tools=recommended_tools,
+                applicable_modes=applicable_modes,
+                scenarios=scenarios,
+            )
+        except Exception as exc:
+            payload = {
+                "tool": "create_skill",
+                "created": False,
+                "error": str(exc),
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
+        injected_into_context = False
+        if inject_context and isinstance(route_context, dict):
+            loaded_skills = [str(item).strip() for item in route_context.get("loaded_skills", []) if str(item).strip()]
+            if created["id"] not in loaded_skills:
+                loaded_skills.append(created["id"])
+                route_context["loaded_skills"] = loaded_skills
+            injected_into_context = True
+
+        payload = {
+            "tool": "create_skill",
+            "created": True,
+            "injected_into_context": injected_into_context,
+            "skill": created,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
