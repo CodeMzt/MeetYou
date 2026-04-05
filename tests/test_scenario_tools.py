@@ -1,11 +1,31 @@
 import json
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.assistant_modes import AssistantModeManager
 from tools.scenario_tools import ScenarioTools
+
+
+def _populate_skill_dir(target_dir: Path) -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    source_dir = repo_root / "prompt" / "SKILL"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for skill_name in (
+        "task-recognition",
+        "research-grounding",
+        "study-coaching",
+        "mode-normal",
+        "mode-documents",
+        "mode-research",
+        "mode-office",
+        "mode-study",
+    ):
+        (target_dir / skill_name).write_text((source_dir / skill_name).read_text(encoding="utf-8"), encoding="utf-8")
 
 
 class _FakeContent:
@@ -42,7 +62,7 @@ class _FakeMemory:
             "query": "payment callback",
             "found": True,
             "profile": [{"fact_key": "team", "fact_value": "Payments", "score": 0.92}],
-            "tasks": [{"content": "Fix callback retries", "task_status": "open", "project": "Billing", "score": 0.88}],
+            "facts": [{"content": "Fix callback retries", "fact_key": "billing_callback", "score": 0.88}],
             "recent_events": [],
         }
 
@@ -129,6 +149,14 @@ class _CatalogModeManager(_FakeModeManager):
     def resolve_source_auth_entries(self, source_config: dict) -> list[dict]:
         del source_config
         return []
+
+
+class _Config:
+    def __init__(self, values=None):
+        self._values = values or {}
+
+    def get(self, key: str):
+        return self._values.get(key)
 
 
 class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
@@ -404,10 +432,95 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
             await tools.manage_tasks(
                 action="complete",
                 task_key=task_key,
+                completion_summary="已确认修复完成",
                 source={"id": "desktop-user"},
             )
         )
         self.assertEqual(completed["tasks"][0]["task_status"], "done")
+        self.assertEqual(completed["tasks"][0]["last_completion_summary"], "已确认修复完成")
+
+    async def test_manage_tasks_rejects_schedule_and_manage_scheduled_tasks_handles_it(self):
+        memory = _FakeMemory()
+        tools = ScenarioTools(memory, _FakeContextManager(), _FakeMCPManager())
+
+        failed = await tools.manage_tasks(
+            action="create",
+            summary="每天早上九点检查日报",
+            schedule_kind="recurring",
+            recurrence={"freq": "daily", "hour": 9, "minute": 0},
+            timezone="UTC",
+            source={"id": "desktop-user"},
+        )
+        self.assertIn("manage_tasks only manages user TODO items", failed)
+
+        created = json.loads(
+            await tools.manage_scheduled_tasks(
+                action="create",
+                summary="每天早上九点检查日报",
+                schedule_kind="recurring",
+                recurrence={"freq": "daily", "hour": 9, "minute": 0},
+                timezone="UTC",
+                source={"id": "desktop-user"},
+            )
+        )
+        self.assertEqual(created["tasks"][0]["task_domain"], "assistant_schedule")
+        self.assertEqual(created["tasks"][0]["schedule_kind"], "recurring")
+
+        todo = json.loads(
+            await tools.manage_tasks(
+                action="create",
+                summary="每天早上九点前完成日报整理",
+                source={"id": "desktop-user"},
+            )
+        )
+        self.assertEqual(todo["tasks"][0]["task_domain"], "user_todo")
+        self.assertEqual(todo["tasks"][0]["schedule_kind"], "none")
+
+    async def test_open_skill_tools_list_load_and_create(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            skill_dir = Path(tmp_dir) / "SKILL"
+            _populate_skill_dir(skill_dir)
+            mode_manager = AssistantModeManager(
+                _Config(
+                    {
+                        "assistant_modes": json.dumps(
+                            {
+                                "skill_prompt_dir": str(skill_dir)
+                            }
+                        )
+                    }
+                )
+            )
+            tools = ScenarioTools(_FakeMemory(), _FakeContextManager(), _FakeMCPManager(), mode_manager=mode_manager)
+            route_context = {"current_mode": "research", "loaded_skills": []}
+
+            listed = json.loads(await tools.list_skills(skill_type="all"))
+            self.assertGreaterEqual(listed["skill_count"], 2)
+            self.assertTrue(any(item["skill_type"] == "mode" for item in listed["skills"]))
+
+            loaded = json.loads(await tools.load_skill("mode:research", route_context=route_context))
+            self.assertTrue(loaded["loaded"])
+            self.assertTrue(loaded["injected_into_context"])
+            self.assertIn("mode:research", route_context["loaded_skills"])
+
+            created = json.loads(
+                await tools.create_skill(
+                    skill_id="release_note_triage",
+                    title="Release Note Triage",
+                    summary="Summarize release notes into actions.",
+                    content="Extract breaking changes and concrete follow-up actions.",
+                    recommended_tools=["research_topic"],
+                    applicable_modes=["research"],
+                    scenarios=["release notes"],
+                    inject_context=True,
+                    route_context=route_context,
+                )
+            )
+            self.assertTrue(created["created"])
+            self.assertIn("release_note_triage", route_context["loaded_skills"])
+
+            loaded_created = json.loads(await tools.load_skill("release_note_triage", route_context=route_context))
+            self.assertEqual(Path(loaded_created["skill"]["storage_path"]).parent, skill_dir.resolve())
 
 
 if __name__ == "__main__":

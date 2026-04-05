@@ -31,8 +31,8 @@ export default function RecordsView({ snapshot }: { snapshot: MemorySnapshot | n
             onChange={(event) => setFilterType(event.target.value)}
           >
             <option value="all">所有类型</option>
-            <option value="profile_fact">用户画像</option>
-            <option value="task">任务</option>
+            <option value="profile">用户画像</option>
+            <option value="fact">长期事实</option>
             <option value="episode">事件记录</option>
           </GlassSelect>
           <GlassSelect
@@ -69,11 +69,11 @@ export default function RecordsView({ snapshot }: { snapshot: MemorySnapshot | n
               </span>
             </div>
             <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.45 }}>
-              {record.type === 'profile_fact' && record.fact_key ? (
+              {record.type === 'profile' && record.fact_key ? (
                 <span style={{ color: 'var(--text-secondary)' }}>[{record.fact_key}] </span>
               ) : null}
-              {record.type === 'task' && record.task_key ? (
-                <span style={{ color: 'var(--text-secondary)' }}>[{record.task_key}] </span>
+              {record.type === 'fact' && record.fact_key ? (
+                <span style={{ color: 'var(--text-secondary)' }}>[{record.fact_key}] </span>
               ) : null}
               {record.content}
             </div>
@@ -84,9 +84,9 @@ export default function RecordsView({ snapshot }: { snapshot: MemorySnapshot | n
               <span style={{ fontSize: 11, background: 'rgba(128,128,128,0.1)', padding: '2px 6px', borderRadius: 4 }}>
                 Str: {(record.strength * 100).toFixed(0)}%
               </span>
-              {record.type === 'task' && record.task_status ? (
+              {record.fact_value ? (
                 <span style={{ fontSize: 11, background: 'rgba(128,128,128,0.1)', padding: '2px 6px', borderRadius: 4 }}>
-                  Status: {record.task_status}
+                  Value: {record.fact_value}
                 </span>
               ) : null}
             </div>

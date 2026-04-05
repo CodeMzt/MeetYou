@@ -155,9 +155,6 @@ class MemoryRecordResponse(BaseModel):
     type: str
     scope: MemoryRecordScopeResponse
     content: str = ""
-    canonical_text: str = ""
-    embedding: list[float] = Field(default_factory=list)
-    embedding_model: str = ""
     strength: float = 0.0
     importance: float = 0.0
     confidence: float = 0.0
@@ -171,22 +168,6 @@ class MemoryRecordResponse(BaseModel):
     source_record_ids: list[str] = Field(default_factory=list)
     fact_key: str | None = None
     fact_value: str | None = None
-    task_key: str | None = None
-    project: str | None = None
-    task_status: str | None = None
-    deadline: str | None = None
-    schedule_kind: str | None = None
-    due_at: str | None = None
-    timezone: str | None = None
-    recurrence: Any = None
-    next_run_at: str | None = None
-    last_run_at: str | None = None
-    last_run_status: str | None = None
-    last_run_summary: str | None = None
-    auto_run: bool | None = None
-    job_prompt: str | None = None
-    notify_policy: str | None = None
-    delivery_target: Any = None
 
 
 class MemoryEdgeResponse(BaseModel):
@@ -234,22 +215,6 @@ class MemoryGraphNodeResponse(BaseModel):
     source_record_ids: list[str] = Field(default_factory=list)
     fact_key: str | None = None
     fact_value: str | None = None
-    task_key: str | None = None
-    project: str | None = None
-    task_status: str | None = None
-    deadline: str | None = None
-    schedule_kind: str | None = None
-    due_at: str | None = None
-    timezone: str | None = None
-    recurrence: Any = None
-    next_run_at: str | None = None
-    last_run_at: str | None = None
-    last_run_status: str | None = None
-    last_run_summary: str | None = None
-    auto_run: bool | None = None
-    job_prompt: str | None = None
-    notify_policy: str | None = None
-    delivery_target: Any = None
 
 
 class MemoryGraphEdgeResponse(BaseModel):

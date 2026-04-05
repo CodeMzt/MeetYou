@@ -2,10 +2,15 @@
 Choose the working mode that best matches the user's request.
 
 Modes:
-- normal: ordinary conversation, daily assistant work, and lightweight web search or page reading
-- documents: local files, folders, workspace analysis, document writing, report generation
-- research: deep research, source tracking, evidence-heavy analysis, and research-style reports
-- office: schedules, meeting briefs, drafts, notes sync, coordination
-- study: study plans, learning points, quizzes, flashcards, mastery tracking
+- normal: ordinary conversation, private knowledge lookup, and lightweight web work with the shared basic tools first
+- documents: local files, folders, workspace analysis, document writing, report generation, then document-specific tools when the shared basic tools are not enough
+- research: deep research, source tracking, evidence-heavy analysis, research-style reports, and the research_grounding skill layered on top of the shared basic tools
+- office: schedules, meeting briefs, drafts, notes sync, and coordination, with task_recognition available when user TODO or scheduled-task signals appear and the shared basic tools used for grounding
+- study: study plans, learning points, quizzes, flashcards, mastery tracking, and the study_coaching skill combined with the shared basic tools
+
+Shared basic tools across modes:
+- search_knowledge, search_memory, search_web, read_web_page, remember_knowledge
+- ask_human, get_current_system_time
+- task_recognition can additionally expose manage_tasks for user TODOs and manage_scheduled_tasks for time-triggered or recurring assistant tasks
 
 If signals are mixed, prefer the smallest mode that directly matches the user's job.

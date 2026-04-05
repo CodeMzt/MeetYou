@@ -58,7 +58,7 @@ def _should_expose_mcp_tool(tool_name: str, server_name: str = "") -> bool:
 class ToolsManager:
     """Central dispatcher for built-in tools and MCP tools."""
 
-    def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None):
+    def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None, task_manager=None):
         self.tools_schema_dict: dict[str, Any] = {}
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
@@ -70,6 +70,7 @@ class ToolsManager:
             context_manager,
             mcp_manager,
             mode_manager=mode_manager,
+            task_manager=task_manager,
         )
         self._office_tools = OfficeTools(mode_manager, self._document_tools) if self._document_tools else None
         self._study_tools = StudyTools(self._document_tools) if self._document_tools else None
@@ -93,6 +94,10 @@ class ToolsManager:
             "track_source_updates": self._scenario_tools.track_source_updates,
             "search_knowledge": self._scenario_tools.search_knowledge,
             "manage_tasks": self._scenario_tools.manage_tasks,
+            "manage_scheduled_tasks": self._scenario_tools.manage_scheduled_tasks,
+            "list_skills": self._scenario_tools.list_skills,
+            "load_skill": self._scenario_tools.load_skill,
+            "create_skill": self._scenario_tools.create_skill,
         }
         self.supported_funcs = {name: func for name, func in self.supported_funcs.items() if func is not None}
         if self._document_tools is not None:
@@ -131,11 +136,18 @@ class ToolsManager:
             "get_sys_vitals": "read",
             "get_background_status": "read",
             "remember_knowledge": "local_write",
+            "search_memory": "read",
+            "search_web": "read",
+            "read_web_page": "read",
             "research_topic": "read",
             "inspect_page": "read",
             "track_source_updates": "read",
             "search_knowledge": "read",
             "manage_tasks": "local_write",
+            "manage_scheduled_tasks": "local_write",
+            "list_skills": "read",
+            "load_skill": "read",
+            "create_skill": "local_write",
             "analyze_workspace": "read",
             "read_local_documents": "read",
             "write_local_document": "local_write",
@@ -151,6 +163,18 @@ class ToolsManager:
             "generate_flashcards": "read",
             "track_mastery": "local_write",
         }
+
+    def set_mode_manager(self, mode_manager) -> None:
+        self._mode_manager = mode_manager
+        if self._document_tools is not None:
+            self._document_tools._mode_manager = mode_manager
+        if self._scenario_tools is not None:
+            self._scenario_tools._mode_manager = mode_manager
+            authoritative_sources = getattr(self._scenario_tools, "_authoritative_sources", None)
+            if authoritative_sources is not None:
+                authoritative_sources._mode_manager = mode_manager
+        if self._office_tools is not None:
+            self._office_tools._mode_manager = mode_manager
 
     async def init_tools(self, tools_schema_path: str, mcp_servers: dict):
         """Load built-in tool schema and initialize MCP servers."""
@@ -170,10 +194,24 @@ class ToolsManager:
             len(self.tools_schema_dict.get("mcp_tools", [])),
         )
 
-    def _iter_llm_visible_tools(self) -> list[dict]:
+    def _iter_llm_visible_tools(self, *, allowed_tool_names: set[str] | None = None) -> list[dict]:
         tools: list[dict] = []
+        seen: set[str] = set()
         for key in ("common_tools", "chain_tools"):
-            tools.extend(self.tools_schema_dict.get(key, []))
+            for tool in self.tools_schema_dict.get(key, []):
+                tool_name = tool.get("function", {}).get("name", "")
+                if tool_name in seen:
+                    continue
+                seen.add(tool_name)
+                tools.append(tool)
+        if allowed_tool_names:
+            for key in ("memory_tools", "web_tools"):
+                for tool in self.tools_schema_dict.get(key, []):
+                    tool_name = tool.get("function", {}).get("name", "")
+                    if tool_name not in allowed_tool_names or tool_name in seen:
+                        continue
+                    seen.add(tool_name)
+                    tools.append(tool)
         return tools
 
     def _tool_schema_by_name(self, tool_name: str, sections: tuple[str, ...] | None = None) -> dict | None:
@@ -200,7 +238,7 @@ class ToolsManager:
         }
 
         visible_tools: list[dict] = []
-        for tool in self._iter_llm_visible_tools():
+        for tool in self._iter_llm_visible_tools(allowed_tool_names=allowed_tool_names):
             function = tool.get("function", {})
             tool_name = function.get("name", "")
             if tool_name not in self.supported_funcs:
@@ -236,7 +274,8 @@ class ToolsManager:
         allowlist = (
             "research_topic",
             "track_source_updates",
-            "manage_tasks",
+            "manage_scheduled_tasks",
+            "get_current_system_time",
             "remember_knowledge",
             "analyze_workspace",
             "read_local_documents",

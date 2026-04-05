@@ -8,11 +8,16 @@ import asyncio
 import json
 import logging
 import traceback
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python < 3.9 fallback
+    ZoneInfo = None  # type: ignore[assignment]
+
 from adapters.base import create_adapter
-from core.background_agent import BackgroundAgentRunner
 from core.assistant_modes import AssistantModeManager
 from core.brain import Brain, BrainOutputEvent
 from core.config import ConfigManager
@@ -51,6 +56,47 @@ logger = logging.getLogger("meetyou.app")
 
 def _normalize_task_summary(task_record: dict[str, Any]) -> str:
     return str(task_record.get("content") or task_record.get("summary") or task_record.get("task_key") or "scheduled task").strip()
+
+
+def _task_time_context(task_record: dict[str, Any]) -> dict[str, Any]:
+    timezone_name = str(task_record.get("timezone") or "UTC").strip() or "UTC"
+    if timezone_name == "UTC" or ZoneInfo is None:
+        zone = timezone.utc
+    else:
+        try:
+            zone = ZoneInfo(timezone_name)
+        except Exception:
+            zone = timezone.utc
+            timezone_name = "UTC"
+    current_utc = datetime.now(timezone.utc).replace(microsecond=0)
+    current_local = current_utc.astimezone(zone)
+
+    def _to_local(value: Any) -> str | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return str(value or "").strip() or None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(zone).isoformat(timespec="seconds")
+
+    return {
+        "current_time_utc": current_utc.isoformat().replace("+00:00", "Z"),
+        "task_timezone": timezone_name,
+        "current_time_local": current_local.isoformat(timespec="seconds"),
+        "local_date": current_local.strftime("%Y-%m-%d"),
+        "local_time": current_local.strftime("%H:%M:%S"),
+        "weekday": current_local.strftime("%A"),
+        "next_run_at_local": _to_local(task_record.get("next_run_at")),
+        "due_at_local": _to_local(task_record.get("due_at")),
+        "current_cycle_start_at_local": _to_local(task_record.get("current_cycle_start_at")),
+        "current_cycle_end_at_local": _to_local(task_record.get("current_cycle_end_at")),
+    }
 
 _BRAIN_IMMEDIATE_KEYS = {
     "api_provider",
@@ -132,6 +178,7 @@ class App:
             self.mcp_manager,
             system_tools,
             self.mode_manager,
+            task_manager=self.task_manager,
         )
         self.brain = Brain(
             self.main_adapter,
@@ -152,7 +199,6 @@ class App:
             self.exception_router,
             status_callback=self._update_heartbeat_status,
         )
-        self.background_agent = BackgroundAgentRunner(self.main_adapter, self.tools_manager)
         system_tools.set_background_status_provider(self.heart.get_background_status)
 
         self.session_manager = SessionManager()
@@ -408,7 +454,6 @@ class App:
         self.context_manager.set_adapter(self.main_adapter)
         self.brain.set_adapter(self.main_adapter)
         self.brain.set_provider_name(self._get_main_provider())
-        self.background_agent = BackgroundAgentRunner(self.main_adapter, self.tools_manager)
         sys_prompt = self.config.get_prompt("soul")
         if not self.brain.is_initialized:
             await self.brain.init_brain(sys_prompt)
@@ -422,9 +467,21 @@ class App:
         await self.heart.refresh_config()
         system_tools.set_background_status_provider(self.heart.get_background_status)
 
+    async def _refresh_mode_runtime(self):
+        self.mode_manager = AssistantModeManager(self.config)
+        tools_manager_setter = getattr(self.tools_manager, "set_mode_manager", None)
+        if callable(tools_manager_setter):
+            tools_manager_setter(self.mode_manager)
+        brain_setter = getattr(self.brain, "set_mode_manager", None)
+        if callable(brain_setter):
+            brain_setter(self.mode_manager)
+
     def _scheduled_job_route_context(self) -> tuple[list[dict], dict[str, Any]]:
         tools = self.tools_manager.get_scheduled_job_tools()
         return tools, {
+            "current_mode": "scheduled_task",
+            "route_reason": "Scheduler claimed an assistant-owned background task.",
+            "source_profile": "scheduled_tasks",
             "tool_bundle": [
                 str(tool.get("function", {}).get("name", "")).strip()
                 for tool in tools
@@ -476,9 +533,11 @@ class App:
         pending = await self.task_manager.collect_pending_delivery_messages(source=source)
         if not pending:
             return
-        lines = ["Background updates since your last active session:"]
+        lines = ["以下是之前未送达的后台更新补发："]
         for item in pending[:6]:
-            lines.append(f"- {item['message']}")
+            kind = str(item.get("kind") or "").strip()
+            prefix = "提醒补发" if kind == "task_due" else "结果补发" if kind == "task_completion" else "后台补发"
+            lines.append(f"- {prefix}：{item['message']}")
         await self.speaker.emit_text(
             session_id,
             "\n".join(lines),
@@ -527,10 +586,10 @@ class App:
         severity = "high" if decision == "escalate" else "medium"
         guidance_map = {
             "urgent_deadline": (
-                "There is a genuinely urgent deadline.\n"
+                "There is a time-sensitive scheduled follow-up that may need user attention.\n"
                 "If you respond, keep it to at most two short sentences.\n"
-                "Mention only the nearest urgent task and the next helpful step.\n"
-                "Do not recap unrelated backlog."
+                "Do not frame it as a hard deadline unless the issue explicitly says the user is at risk of missing something.\n"
+                "Mention only the nearest scheduled follow-up and the next helpful step."
             ),
             "system_issue": (
                 "There is a concrete background issue that may affect task execution or reminders.\n"
@@ -538,7 +597,7 @@ class App:
                 "Focus only on the relevant issue and the practical next step."
             ),
             "idle_poke": (
-                "There is no urgent deadline or critical system issue.\n"
+                "There is no critical system issue.\n"
                 "If you respond, send exactly one short natural sentence.\n"
                 "Do not mention background checks, diagnostics, or internal signals."
             ),
@@ -565,7 +624,18 @@ class App:
             },
         }
 
-    async def _handle_scheduled_reminder(self, task_key: str):
+    def _control_claim_valid(self, task_key: str, claim_token: str) -> bool:
+        normalized_claim_token = str(claim_token or "").strip()
+        if not normalized_claim_token:
+            return True
+        checker = getattr(self.task_manager, "has_current_claim", None)
+        if not callable(checker):
+            return True
+        return bool(checker(task_key, normalized_claim_token))
+
+    async def _handle_scheduled_reminder(self, task_key: str, claim_token: str = ""):
+        if not self._control_claim_valid(task_key, claim_token):
+            return
         task_record = self.task_manager.get_task_by_key(task_key)
         if task_record is None:
             return
@@ -583,28 +653,30 @@ class App:
             delivered=(delivered or not should_notify),
         )
 
-    async def _handle_scheduled_task(self, task_key: str):
+    async def _handle_scheduled_task(self, task_key: str, claim_token: str = ""):
+        if not self._control_claim_valid(task_key, claim_token):
+            return
         task_record = self.task_manager.get_task_by_key(task_key)
         if task_record is None:
             return
-
-        session = getattr(self.brain, "_http_session", None)
-        if session is None:
-            raise RuntimeError("Brain HTTP session not initialized for scheduled tasks.")
 
         tools, route_context = self._scheduled_job_route_context()
         summary = _normalize_task_summary(task_record)
         system_prompt = (
             "[Scheduled Job Mode]\n"
-            "You are executing a scheduled background job.\n"
+            "You are executing an assistant-owned scheduled background job, not a user TODO.\n"
             "Use only the allowed tools.\n"
             "Do the smallest reliable amount of work needed to complete the scheduled task.\n"
+            "When the business task is truly complete, call manage_scheduled_tasks with action=complete and the exact task_key.\n"
+            "If the work ran but the business task is not fully complete yet, do not mark it complete.\n"
             "Never use destructive or external-send behavior.\n"
             "Return a concise execution summary in plain text."
         )
         user_payload = {
             "task": task_record,
             "current_time": utcnow_iso(),
+            "time_context": _task_time_context(task_record),
+            "orchestration": task_record.get("orchestration") if isinstance(task_record.get("orchestration"), dict) else {},
         }
         task_source = self._task_source(task_record)
         task_session_id, task_target = self._task_delivery(task_record)
@@ -614,8 +686,7 @@ class App:
             target=task_target,
         )
         try:
-            result = await self.background_agent.run(
-                session=session,
+            result = await self.brain.run_background_turn(
                 api_url=self.config.get("api_url") or "",
                 api_key=self.config.get("api_key") or "",
                 model=self.config.get("model") or "",
@@ -633,9 +704,17 @@ class App:
             reset_event_context(token)
 
         content = str(result.get("content") or "").strip() or f"Scheduled task completed: {summary}"
+        completed_task_keys = {
+            str(item).strip()
+            for item in (result.get("completed_task_keys") or [])
+            if str(item).strip()
+        }
+        completed_by_brain = task_key in completed_task_keys
         succeeded = result.get("status") == "ok" and not content.lower().startswith("error:")
         user_message = (
             f"Scheduled task completed: {summary}\n{content}"
+            if succeeded and completed_by_brain
+            else f"Scheduled task ran successfully and is awaiting completion confirmation: {summary}\n{content}"
             if succeeded
             else f"Scheduled task failed: {summary}\n{content}"
         )
@@ -655,11 +734,12 @@ class App:
         control_kind = str(metadata.get("control_kind") or "").strip().lower()
         payload = event.content if isinstance(event.content, dict) else {}
         task_key = str(payload.get("task_key") or "").strip()
+        claim_token = str(payload.get("claim_token") or metadata.get("claim_token") or "").strip()
         if control_kind == "scheduled_task" and task_key:
-            await self._handle_scheduled_task(task_key)
+            await self._handle_scheduled_task(task_key, claim_token=claim_token)
             return True
         if control_kind == "scheduled_reminder" and task_key:
-            await self._handle_scheduled_reminder(task_key)
+            await self._handle_scheduled_reminder(task_key, claim_token=claim_token)
             return True
         return False
 
@@ -822,6 +902,7 @@ class App:
             reloaded_components.add("memory")
 
         if _MODE_IMMEDIATE_KEYS.intersection(applied_keys):
+            await self._refresh_mode_runtime()
             reloaded_components.add("mode_manager")
 
         if restart_required:
@@ -848,233 +929,6 @@ class App:
             target=EventTarget(kind=TargetKind.BROADCAST.value),
             metadata={"transient": True, "boot_event": True},
         )
-
-    async def _brain_processor_legacy(self):
-        shutdown = self.event_bus.shutdown_event
-        queue = self.event_bus.inbound_queue
-
-        while True:
-            get_task = asyncio.create_task(queue.get())
-            shutdown_task = asyncio.create_task(shutdown.wait())
-            done, pending = await asyncio.wait(
-                [get_task, shutdown_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            if shutdown_task in done:
-                break
-
-            event = get_task.result()
-            if event.type == EventType.CONFIRM_RESPONSE.value:
-                resolved = self.event_bus.resolve_confirmation(
-                    event.accepted,
-                    request_id=event.request_id,
-                    session_id=event.session_id,
-                )
-                if not resolved:
-                    await self.speaker.emit_error(
-                        event.session_id,
-                        "Confirmation request expired or does not match the current session.",
-                        make_source(SourceKind.SYSTEM.value, "confirm"),
-                    )
-                continue
-
-            if event.type == EventType.CONTROL.value:
-                try:
-                    handled = await self._handle_control_event(event)
-                    if not handled:
-                        logger.warning("Unhandled control event: %s", getattr(event, "metadata", {}))
-                except Exception as exc:
-                    logger.error("Control event processing failed: %s\n%s", exc, traceback.format_exc())
-                continue
-
-            if event.type == EventType.SIGNAL.value:
-                input_info = {
-                    "role": "system",
-                    "content": f"系统后台心跳捕获到重要潜意识事务，请立刻作为内部处理：{event.content}",
-                }
-            else:
-                input_info = {
-                    "role": event.role,
-                    "content": event.content,
-                    "metadata": dict(getattr(event, "metadata", {}) or {}),
-                }
-
-            is_boot = event.session_id == "system:boot"
-            target = (
-                EventTarget(kind=TargetKind.BROADCAST.value)
-                if is_boot
-                else EventTarget(kind=TargetKind.CURRENT_SESSION.value)
-            )
-            token = bind_event_context(
-                session_id=event.session_id,
-                source=event.source,
-                target=target,
-            )
-
-            stream_id = ""
-            turn_id = uuid4().hex
-            reasoning_started = False
-            reasoning_ended = False
-
-            try:
-                api_key = self.config.get("api_key") or ""
-                api_url = self.config.get("api_url") or ""
-                model = self.config.get("model") or ""
-                model_options = self._build_model_options(getattr(event, "metadata", {}))
-
-                if event.type == EventType.MESSAGE.value and event.role == "user":
-                    await self._emit_pending_task_updates(event.session_id, target, event.source)
-
-                stream_id = await self.speaker.emit_stream_start(
-                    event.session_id,
-                    self._brain_source,
-                    target=target,
-                    stream_channel="answer",
-                )
-
-                async def emit_tool_activity(phase: str, content: str, metadata: dict | None = None):
-                    metadata = metadata or {}
-                    await self.speaker.emit_status(
-                        event.session_id,
-                        content,
-                        make_source(SourceKind.SYSTEM.value, "search"),
-                        target=target,
-                        metadata={
-                            "activity_kind": metadata.get("activity_kind", "tool_chain"),
-                            "search_phase": phase,
-                            "activity_phase": phase,
-                            "turn_id": turn_id,
-                            **metadata,
-                        },
-                    )
-
-                async def phase_callback(status: str, detail: str = "", active_tools: list[str] | None = None):
-                    self.brain.set_session_runtime_state(
-                        event.session_id,
-                        status,
-                        detail=detail,
-                        active_tools=active_tools or [],
-                        stream_id=stream_id,
-                        turn_id=turn_id,
-                    )
-                    await self._emit_runtime_status_event(event.session_id, target, turn_id)
-
-                self.brain.set_session_runtime_state(
-                    event.session_id,
-                    RuntimeStatus.THINKING.value,
-                    detail="Starting turn",
-                    active_tools=[],
-                    stream_id=stream_id,
-                    turn_id=turn_id,
-                )
-                await self._emit_runtime_status_event(event.session_id, target, turn_id)
-
-                async for output in self.brain.input_brain(
-                    event.session_id,
-                    input_info,
-                    api_key,
-                    api_url,
-                    model,
-                    provider_name=self._get_main_provider(),
-                    tool_activity_callback=emit_tool_activity,
-                    model_options=model_options,
-                    phase_callback=phase_callback,
-                ):
-                    if not isinstance(output, BrainOutputEvent):
-                        continue
-
-                    if output.type == "reasoning_text" and output.text:
-                        if not reasoning_started:
-                            await self._emit_reasoning_stream_event(
-                                event.session_id,
-                                stream_id,
-                                StreamEventType.START.value,
-                                "",
-                                target,
-                                turn_id,
-                            )
-                            reasoning_started = True
-                        await self._emit_reasoning_stream_event(
-                            event.session_id,
-                            stream_id,
-                            StreamEventType.CHUNK.value,
-                            output.text,
-                            target,
-                            turn_id,
-                        )
-                    elif output.type == "answer_text" and output.text:
-                        if reasoning_started and not reasoning_ended:
-                            await self._emit_reasoning_stream_event(
-                                event.session_id,
-                                stream_id,
-                                StreamEventType.END.value,
-                                "",
-                                target,
-                                turn_id,
-                            )
-                            reasoning_ended = True
-                        await self.speaker.emit_stream_chunk(
-                            event.session_id,
-                            output.text,
-                            self._brain_source,
-                            stream_id,
-                            target=target,
-                            stream_channel="answer",
-                        )
-                    elif output.type == "usage" and output.usage:
-                        await self._emit_usage_event(event.session_id, output.usage, target, turn_id)
-
-                if reasoning_started and not reasoning_ended:
-                    await self._emit_reasoning_stream_event(
-                        event.session_id,
-                        stream_id,
-                        StreamEventType.END.value,
-                        "",
-                        target,
-                        turn_id,
-                    )
-
-                self.brain.set_session_runtime_state(
-                    event.session_id,
-                    RuntimeStatus.IDLE.value,
-                    detail="",
-                    active_tools=[],
-                    stream_id=stream_id,
-                    turn_id=turn_id,
-                )
-                await self._emit_runtime_status_event(event.session_id, target, turn_id)
-                await self.speaker.emit_stream_end(
-                    event.session_id,
-                    self._brain_source,
-                    stream_id,
-                    target=target,
-                    stream_channel="answer",
-                )
-            except Exception as exc:
-                logger.error("Brain processing error: %s\n%s", exc, traceback.format_exc())
-                self.brain.set_session_runtime_state(
-                    event.session_id,
-                    RuntimeStatus.ERROR.value,
-                    detail=str(exc),
-                    active_tools=[],
-                    stream_id=stream_id,
-                    turn_id=turn_id,
-                )
-                await self._emit_runtime_status_event(event.session_id, target, turn_id)
-                await self.speaker.emit_error(
-                    event.session_id,
-                    str(exc),
-                    self._brain_source,
-                    target=target,
-                    stream_id=stream_id,
-                    metadata={"turn_id": turn_id, "stream_channel": "answer"},
-                )
-            finally:
-                reset_event_context(token)
-                if is_boot:
-                    await self.brain.close_session(event.session_id)
 
     async def brain_processor(self):
         shutdown = self.event_bus.shutdown_event
@@ -1317,6 +1171,7 @@ class App:
 
         self.status_manager.set_global(RuntimeStatus.INITIALIZING.value, "Starting up")
         await self.memory.init_memory(self.config)
+        await self.task_manager.sync_legacy_memory_tasks()
         await self.tools_manager.init_tools(tools_schema_path, mcp_servers)
         await self._refresh_brain_runtime()
         await self.heart.init_heart()

@@ -44,7 +44,7 @@ class FakeToolsManager:
             "query": tool_args.get("query", ""),
             "found": False,
             "profile": [],
-            "tasks": [],
+            "facts": [],
             "recent_events": [],
         }, ensure_ascii=False)
 

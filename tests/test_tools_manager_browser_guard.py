@@ -62,6 +62,9 @@ class ToolsManagerExposureTests(unittest.TestCase):
         self.assertIn("inspect_page", visible_names)
         self.assertIn("search_knowledge", visible_names)
         self.assertIn("manage_tasks", visible_names)
+        self.assertIn("list_skills", visible_names)
+        self.assertIn("load_skill", visible_names)
+        self.assertIn("create_skill", visible_names)
         self.assertIn("remember_knowledge", visible_names)
         self.assertNotIn("search_memory", visible_names)
         self.assertNotIn("search_web", visible_names)
@@ -107,6 +110,42 @@ class ToolsManagerExposureTests(unittest.TestCase):
         self.assertIn("compile_report", visible_names)
         self.assertNotIn("research_topic", visible_names)
         self.assertNotIn("manage_schedule", visible_names)
+
+    def test_route_context_can_expose_bundled_memory_and_web_primitives(self):
+        memory = SimpleNamespace(
+            save_memory=None,
+            recall_memory=None,
+            recall_memory_structured=None,
+        )
+        context_manager = SimpleNamespace(update_context=None)
+        mcp_manager = SimpleNamespace(tool_map={})
+        system_tools = SimpleNamespace(
+            exec_sys_cmd=None,
+            get_current_system_time=None,
+            get_sys_vitals=None,
+        )
+        manager = ToolsManager(memory, context_manager, mcp_manager, system_tools)
+        with open(
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "user", "tools.json"),
+            "r",
+            encoding="utf-8",
+        ) as fh:
+            manager.tools_schema_dict = json.load(fh)
+
+        visible_names = {
+            tool["function"]["name"]
+            for tool in manager.get_all_tools(
+                route_context={
+                    "tool_bundle": ["search_memory", "search_web", "read_web_page"],
+                    "mcp_servers": [],
+                }
+            )
+        }
+
+        self.assertIn("search_memory", visible_names)
+        self.assertIn("search_web", visible_names)
+        self.assertIn("read_web_page", visible_names)
+        self.assertNotIn("research_topic", visible_names)
 
     def test_heartbeat_tools_use_explicit_allowlist(self):
         memory = SimpleNamespace(

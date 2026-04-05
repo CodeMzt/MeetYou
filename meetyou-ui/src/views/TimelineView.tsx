@@ -31,7 +31,7 @@ export default function TimelineView({ snapshot }: { snapshot: MemorySnapshot | 
                 height: 16,
                 borderRadius: '50%',
                 background:
-                  event.type === 'episode' ? '#8e8e93' : event.type === 'task' ? '#34c759' : '#0a84ff',
+                  event.type === 'episode' ? '#8e8e93' : event.type === 'fact' ? '#34c759' : '#0a84ff',
                 border: '4px solid var(--bg-color)',
                 flexShrink: 0,
               }}

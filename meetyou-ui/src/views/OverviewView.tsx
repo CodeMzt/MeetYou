@@ -24,12 +24,12 @@ export default function OverviewView({ snapshot }: { snapshot: MemorySnapshot | 
 
       <div style={{ display: 'flex', gap: 16 }}>
         <div className="card" style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--accent-color)' }}>{stats.by_type.profile_fact || 0}</div>
+          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--accent-color)' }}>{stats.by_type.profile || 0}</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>用户画像</div>
         </div>
         <div className="card" style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--accent-color)' }}>{stats.by_type.task || 0}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>任务</div>
+          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--accent-color)' }}>{stats.by_type.fact || 0}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>长期事实</div>
         </div>
         <div className="card" style={{ flex: 1, textAlign: 'center' }}>
           <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--accent-color)' }}>{stats.by_type.episode || 0}</div>

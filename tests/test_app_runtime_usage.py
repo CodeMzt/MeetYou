@@ -1,6 +1,8 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -40,6 +42,22 @@ class _FakeAdapter:
     def get_context_limit(self, model_name: str) -> int:
         del model_name
         return 8192
+
+
+class _FakeBrainRuntime:
+    def __init__(self):
+        self.mode_manager = None
+
+    def set_mode_manager(self, mode_manager):
+        self.mode_manager = mode_manager
+
+
+class _FakeToolsManager:
+    def __init__(self):
+        self.mode_manager = None
+
+    def set_mode_manager(self, mode_manager):
+        self.mode_manager = mode_manager
 
 
 class _FakeConfig:
@@ -124,6 +142,38 @@ class AppRuntimeUsageTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ValueError, "Session not found"):
             await App.get_runtime_usage(app, "missing-session")
+
+    async def test_apply_config_updates_refreshes_mode_manager_bindings(self):
+        class _ConfigWithUpdates(_FakeConfig):
+            def apply_updates(self, updates):
+                return sorted(updates.keys()), []
+
+            def reload(self):
+                return None
+
+        app = App.__new__(App)
+        app.config = _ConfigWithUpdates()
+        app.brain = _FakeBrainRuntime()
+        app.tools_manager = _FakeToolsManager()
+        app.memory = SimpleNamespace(refresh_config=lambda config: None)
+
+        async def _refresh_brain_runtime():
+            return None
+
+        async def _refresh_heart_runtime():
+            return None
+
+        app._refresh_brain_runtime = _refresh_brain_runtime
+        app._refresh_heart_runtime = _refresh_heart_runtime
+
+        created_manager = object()
+        with patch("core.app.AssistantModeManager", return_value=created_manager):
+            payload = await App.apply_config_updates(app, {"mode_router": '{"semantic_routing_enabled": true}'})
+
+        self.assertIs(app.mode_manager, created_manager)
+        self.assertIs(app.brain.mode_manager, created_manager)
+        self.assertIs(app.tools_manager.mode_manager, created_manager)
+        self.assertEqual(payload["reloaded_components"], ["mode_manager"])
 
 
 if __name__ == "__main__":
