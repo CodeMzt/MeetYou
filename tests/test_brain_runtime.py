@@ -325,6 +325,46 @@ class ProviderItemsToolAdapter:
 
 
 class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_brain_injects_structured_time_context_into_turn(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="text", text="done"),
+                ]
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-time",
+                {"role": "user", "content": "现在几点"},
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                pass
+
+            messages = adapter.stream_calls[0]["messages"]
+            time_messages = [
+                message["content"]
+                for message in messages
+                if message.get("role") == "system" and "当前时间上下文：" in str(message.get("content") or "")
+            ]
+            self.assertEqual(len(time_messages), 1)
+            self.assertIn("current_time_local", time_messages[0])
+            self.assertIn("timezone", time_messages[0])
+            self.assertIn("weekday", time_messages[0])
+        finally:
+            await brain.close_brain()
+
     async def test_brain_emits_reasoning_usage_and_snapshot(self):
         brain = Brain(
             ReasoningAdapter(),

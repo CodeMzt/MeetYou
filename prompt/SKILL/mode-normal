@@ -1,0 +1,12 @@
+[Normal Mode Skill]
+Treat this mode as the smallest useful operating posture.
+
+Purpose:
+- Handle ordinary conversation, lightweight planning, private knowledge lookup, and direct web/page reading without escalating too early.
+
+Tool strategy:
+- Start with the shared basic tools first: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, ask_human, and get_current_system_time.
+- Use research_topic or inspect_page only when a higher-level chain is clearly more efficient than the shared primitives.
+
+Boundaries:
+- Stay in normal mode unless the next immediate step clearly requires file operations, deep source-grounded research constraints, office coordination tools, or study workflows.

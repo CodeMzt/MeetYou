@@ -8,6 +8,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 try:
@@ -213,6 +214,9 @@ class Brain:
     def set_provider_name(self, provider_name: str):
         self._provider_name = str(provider_name or "").strip()
 
+    def set_mode_manager(self, mode_manager):
+        self._mode_manager = mode_manager
+
     async def refresh_base_prompt(self, sys_prompt: str, persisted_context: str):
         self._base_messages = [
             {"role": "system", "content": sys_prompt},
@@ -251,6 +255,23 @@ class Brain:
 
     async def _save_session_context(self, session: BrainSession):
         await self._persist_session_context(session)
+
+    def _build_time_context_message(self) -> dict[str, str]:
+        local_now = datetime.now().astimezone()
+        utc_now = local_now.astimezone(timezone.utc)
+        payload = {
+            "current_time_local": local_now.isoformat(timespec="seconds"),
+            "current_time_utc": utc_now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "timezone": str(local_now.tzinfo or "UTC"),
+            "local_date": local_now.strftime("%Y-%m-%d"),
+            "local_time": local_now.strftime("%H:%M:%S"),
+            "weekday": local_now.strftime("%A"),
+            "iso_weekday": local_now.isoweekday(),
+        }
+        return {
+            "role": "system",
+            "content": "当前时间上下文：" + json.dumps(payload, ensure_ascii=False),
+        }
 
     def get_session_runtime_snapshot(self, session_id: str) -> dict | None:
         session = self._sessions.get(session_id)
@@ -324,6 +345,8 @@ class Brain:
             "tool_bundle": [],
             "mcp_servers": [],
             "prompt_bundle": current_mode or ASSISTANT_MODE_NORMAL,
+            "active_skills": [],
+            "loaded_skills": list((session.metadata.get("current_route") or {}).get("loaded_skills") or []),
         }
 
     def _apply_route_metadata_overrides(self, route_context: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
@@ -342,6 +365,7 @@ class Brain:
 
     def _resolve_route(self, input_info: dict, session: BrainSession, *, reason_prefix: str = "") -> dict[str, Any]:
         metadata = dict(input_info.get("metadata") or {}) if isinstance(input_info, dict) else {}
+        content = str(input_info.get("content") or "").strip() if isinstance(input_info, dict) else ""
         if self._mode_manager is None:
             route = self._build_default_route(
                 session,
@@ -357,6 +381,7 @@ class Brain:
             )
             if reason_prefix:
                 route["route_reason"] = f"{reason_prefix} {route['route_reason']}".strip()
+            route["content"] = content
             return self._apply_route_metadata_overrides(route, metadata)
 
         route = self._mode_manager.route(
@@ -370,6 +395,7 @@ class Brain:
             route_dict["route_reason"] = (
                 f"{reason_prefix} {existing_reason}".strip() if existing_reason else reason_prefix.strip()
             )
+        route_dict["content"] = content
         return self._apply_route_metadata_overrides(route_dict, metadata)
 
     def _build_locked_route(self, input_info: dict, session: BrainSession, requested_mode: str) -> dict[str, Any]:
@@ -445,7 +471,9 @@ class Brain:
                 reason=reason,
                 content=content,
             )
-        return self._apply_route_metadata_overrides(self._route_to_dict(route), metadata)
+        route_dict = self._route_to_dict(route)
+        route_dict["content"] = content
+        return self._apply_route_metadata_overrides(route_dict, metadata)
 
     def _initialize_route_for_turn(
         self,
@@ -525,6 +553,7 @@ class Brain:
         session.metadata["current_mode"] = route_context.get("current_mode", "")
         session.metadata["route_reason"] = route_context.get("route_reason", "")
         session.metadata["source_profile"] = route_context.get("source_profile", "")
+        session.metadata["loaded_skills"] = list(route_context.get("loaded_skills") or [])
 
     def _append_route_history_entry(
         self,
@@ -669,7 +698,11 @@ class Brain:
         )
         messages = [{"role": "system", "content": header}]
         if self._mode_manager is not None:
-            prompt_text = self._mode_manager.get_prompt_for_mode(mode)
+            assembler = getattr(self._mode_manager, "assemble_prompt_for_route", None)
+            if callable(assembler):
+                prompt_text = assembler(route_context)
+            else:
+                prompt_text = self._mode_manager.get_prompt_for_mode(mode)
             if prompt_text:
                 messages.append({"role": "system", "content": prompt_text})
         messages.extend(self._build_mode_switch_policy_messages(requested_mode))
@@ -727,6 +760,173 @@ class Brain:
         if callable(getter):
             return str(getter(tool_names))
         return "read"
+
+    async def run_background_turn(
+        self,
+        *,
+        session_id: str,
+        api_url: str,
+        api_key: str,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        source=None,
+        route_context: dict[str, Any] | None = None,
+        max_rounds: int = 6,
+        adapter_options: dict[str, Any] | None = None,
+        tool_activity_callback=None,
+        phase_callback=None,
+    ) -> dict[str, Any]:
+        if self._http_session is None:
+            raise RuntimeError("Brain HTTP session not initialized. Call init_brain() first.")
+
+        normalized_session_id = str(session_id or "").strip() or "system:background"
+        session = self.get_or_create_session(normalized_session_id)
+        visible_tools = list(tools or [])
+        resolved_route_context = dict(route_context or {})
+        resolved_route_context.setdefault(
+            "tool_bundle",
+            [
+                str(tool.get("function", {}).get("name", "")).strip()
+                for tool in visible_tools
+                if str(tool.get("function", {}).get("name", "")).strip()
+            ],
+        )
+        resolved_route_context.setdefault("mcp_servers", [])
+        resolved_route_context.setdefault("current_mode", "scheduled_task")
+        resolved_route_context.setdefault("route_reason", "Running a scheduled background task.")
+        resolved_route_context.setdefault("source_profile", "scheduled_tasks")
+        self._store_route_context(session, resolved_route_context)
+        self._sync_runtime_route_state(normalized_session_id, session, resolved_route_context)
+
+        adapter_options = dict(adapter_options or {})
+        history = [dict(message) for message in messages]
+        last_content = ""
+        last_tool_names: list[str] = []
+        completed_task_keys: list[str] = []
+        manage_task_actions: list[dict[str, Any]] = []
+
+        try:
+            for _ in range(max_rounds):
+                if phase_callback:
+                    self.set_session_runtime_state(
+                        normalized_session_id,
+                        RuntimeStatus.THINKING.value,
+                        detail="Calling model",
+                        active_tools=[],
+                        current_mode=resolved_route_context.get("current_mode", ""),
+                        route_reason=resolved_route_context.get("route_reason", ""),
+                        action_risk="read",
+                        source_profile=resolved_route_context.get("source_profile", ""),
+                    )
+                    await phase_callback(RuntimeStatus.THINKING.value, "Calling model")
+
+                result = await self._adapter.chat(
+                    self._http_session,
+                    api_url,
+                    api_key,
+                    model,
+                    history,
+                    tools=visible_tools,
+                    **adapter_options,
+                )
+
+                last_content = str(result.get("content") or "").strip()
+                tool_calls = list(result.get("tool_calls") or [])
+                assistant_message: dict[str, Any] = {"role": "assistant", "content": last_content or None}
+                if tool_calls:
+                    assistant_message["tool_calls"] = [
+                        {
+                            "type": "function",
+                            "id": tc.id,
+                            "function": {
+                                "name": tc.name,
+                                "arguments": tc.arguments_str,
+                            },
+                        }
+                        for tc in tool_calls
+                    ]
+                history.append(assistant_message)
+
+                if not tool_calls:
+                    return {
+                        "status": "ok",
+                        "content": last_content,
+                        "tool_names": last_tool_names,
+                        "completed_task_keys": list(dict.fromkeys(completed_task_keys)),
+                        "manage_task_actions": manage_task_actions,
+                        "history": history,
+                    }
+
+                last_tool_names = [tc.name for tc in tool_calls]
+                action_risk = self._get_action_risk_for_tools(last_tool_names)
+                self.set_session_runtime_state(
+                    normalized_session_id,
+                    RuntimeStatus.TOOL_CALLING.value,
+                    detail=", ".join(last_tool_names),
+                    active_tools=last_tool_names,
+                    current_mode=resolved_route_context.get("current_mode", ""),
+                    route_reason=resolved_route_context.get("route_reason", ""),
+                    action_risk=action_risk,
+                    source_profile=resolved_route_context.get("source_profile", ""),
+                )
+                if phase_callback:
+                    await phase_callback(RuntimeStatus.TOOL_CALLING.value, ", ".join(last_tool_names), last_tool_names)
+
+                for tool_call in tool_calls:
+                    tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+                    if tool_call.name in {"manage_tasks", "manage_scheduled_tasks"}:
+                        action = str(tool_args.get("action") or "").strip().lower()
+                        task_key = str(tool_args.get("task_key") or "").strip()
+                        manage_task_actions.append(
+                            {
+                                "action": action,
+                                "task_key": task_key,
+                                "arguments": json.loads(json.dumps(tool_args, ensure_ascii=False, default=str)),
+                            }
+                        )
+                        if action == "complete" and task_key:
+                            completed_task_keys.append(task_key)
+                    try:
+                        tool_result = await self._call_tool_with_route(
+                            tool_call.name,
+                            tool_args,
+                            session_id=normalized_session_id,
+                            source=source,
+                            tool_activity_callback=tool_activity_callback,
+                            route_context=resolved_route_context,
+                        )
+                    except Exception as exc:
+                        logger.error("Background tool call failed: %s", exc)
+                        tool_result = f"Error: tool {tool_call.name} failed: {exc}"
+
+                    history.append(
+                        {
+                            "role": "tool",
+                            "content": tool_result if isinstance(tool_result, str) else str(tool_result),
+                            "tool_call_id": tool_call.id,
+                        }
+                    )
+
+            return {
+                "status": "error",
+                "content": "Error: background task exceeded max tool rounds.",
+                "tool_names": last_tool_names,
+                "completed_task_keys": list(dict.fromkeys(completed_task_keys)),
+                "manage_task_actions": manage_task_actions,
+                "history": history,
+            }
+        finally:
+            self.set_session_runtime_state(
+                normalized_session_id,
+                RuntimeStatus.IDLE.value,
+                detail="",
+                active_tools=[],
+                current_mode=resolved_route_context.get("current_mode", ""),
+                route_reason=resolved_route_context.get("route_reason", ""),
+                action_risk="read",
+                source_profile=resolved_route_context.get("source_profile", ""),
+            )
 
     def _build_recent_context_summary(self, session: BrainSession) -> str:
         if len(session.chat_history) <= 2:
@@ -792,6 +992,27 @@ class Brain:
                 + json.dumps(payload, ensure_ascii=False)
             ),
         }
+
+    async def _store_turn_episode(self, session_id: str, input_info: dict, *, transient_turn: bool) -> None:
+        if transient_turn:
+            return
+        if str(input_info.get("role") or "") != "user":
+            return
+        content = input_info.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return
+        memory = getattr(self._context_manager, "_memory", None)
+        if memory is None:
+            return
+        context = get_event_context()
+        try:
+            await memory.save_memory(
+                memory_text=content,
+                session_id=context.get("session_id", session_id),
+                source=context.get("source"),
+            )
+        except Exception as exc:
+            logger.warning("Automatic episode write failed: %s", exc)
 
     def _detect_memory_trigger_categories(self, content: str) -> list[dict]:
         text = str(content or "").strip()
@@ -1087,6 +1308,7 @@ class Brain:
         transient_turn = bool(dict(input_info.get("metadata") or {}).get("transient")) if isinstance(input_info, dict) else False
         auto_memory_message = await self._build_auto_memory_message(session_id, input_info)
         memory_trigger_message = self._build_memory_trigger_message(input_info)
+        await self._store_turn_episode(session_id, input_info, transient_turn=transient_turn)
         session.chat_history.append(input_info)
         session.touch()
         route_context, route_origin = self._initialize_route_for_turn(input_info, session, requested_mode)
@@ -1144,6 +1366,7 @@ class Brain:
             policy_messages = self._build_mode_policy_messages(route_context, requested_mode=requested_mode) + [
                 {"role": "system", "content": TOOL_JUDGMENT_POLICY_MESSAGE},
                 {"role": "system", "content": MEMORY_POLICY_MESSAGE},
+                self._build_time_context_message(),
             ]
             if memory_trigger_message:
                 policy_messages.append(memory_trigger_message)
@@ -1396,6 +1619,8 @@ class Brain:
                             "tool_call_id": tc.id,
                         }
                     )
+                self._store_route_context(session, route_context)
+                self._sync_runtime_route_state(session_id, session, route_context)
 
             if tool_activity_callback and not mode_switch_calls and any(
                 tc.name in {

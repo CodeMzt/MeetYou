@@ -54,12 +54,11 @@ def _compact_profile_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value not in ("", None)}
 
 
-def _compact_task_entry(entry: dict[str, Any]) -> dict[str, Any]:
+def _compact_fact_entry(entry: dict[str, Any]) -> dict[str, Any]:
     payload = {
+        "fact_key": str(entry.get("fact_key") or "").strip(),
+        "fact_value": str(entry.get("fact_value") or "").strip(),
         "content": str(entry.get("content") or "").strip(),
-        "task_status": str(entry.get("task_status") or "").strip(),
-        "project": str(entry.get("project") or "").strip(),
-        "deadline": entry.get("deadline"),
         "score": entry.get("score"),
     }
     return {key: value for key, value in payload.items() if value not in ("", None)}
@@ -151,9 +150,9 @@ class AgentMemoryTools:
             for item in payload.get("profile", [])
             if isinstance(item, dict)
         ]
-        tasks = [
-            _compact_task_entry(item)
-            for item in payload.get("tasks", [])
+        facts = [
+            _compact_fact_entry(item)
+            for item in payload.get("facts", [])
             if isinstance(item, dict)
         ]
         recent_events = [
@@ -165,13 +164,13 @@ class AgentMemoryTools:
         return json.dumps(
             {
                 "query": normalized_query,
-                "found": bool(profile or tasks or recent_events),
+                "found": bool(profile or facts or recent_events),
                 "usage_hint": (
                     "Use only details that are explicitly supported by memory. "
                     "If the current user message conflicts with memory, trust the current user message."
                 ),
                 "profile": profile,
-                "tasks": tasks,
+                "facts": facts,
                 "recent_events": recent_events,
             },
             ensure_ascii=False,

@@ -48,7 +48,7 @@ adapters/        大模型与外部服务适配器
 sensors/         输入/输出适配层与系统感知
 tools/           工具集合，含 memory、mcp、documents、web_search 等
 platform_layer/  平台能力抽象
-prompt/          系统提示词、模式提示词
+prompt/          系统提示词、模式提示词、技能提示词（统一位于 prompt/SKILL）
 meetyou-ui/      Electron + React 桌面端
 docs/            协议与补充文档
 tests/           自动化回归测试

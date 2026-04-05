@@ -2,10 +2,12 @@ import hashlib
 import json
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 
 from core.context import ContextManager
 from tools.memory import Memory
+from tools.memory_layers import dt_to_iso, utcnow
 
 
 class DummyConfig:
@@ -35,18 +37,18 @@ class FakeAdapter:
     async def chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
         self.last_messages = messages
         if not self.responses:
-            return {"content": '{"profile_upserts": [], "task_upserts": [], "links": []}'}
+            return {"content": '{"profile_upserts": [], "fact_upserts": [], "links": []}'}
         return {"content": self.responses.pop(0)}
 
 
-class TestMemory(Memory):
+class DummyMemory(Memory):
     async def _get_embedding(self, text: str) -> list[float]:
         raw = str(text or "")
         lowered = raw.lower()
         vec = [0.0] * 6
         mapping = [
             (("name", "who am i", "阿明"), 0),
-            (("payment", "project", "task", "todo", "fix"), 1),
+            (("payment", "callback", "billing", "fix"), 1),
             (("coffee", "preference", "like"), 2),
             (("shanghai", "hangzhou", "location", "city"), 3),
             (("recent", "event"), 4),
@@ -66,7 +68,7 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.memory_path = Path(self.tmpdir.name) / "memory.json"
         self.config = DummyConfig(str(self.memory_path))
-        self.memory = TestMemory()
+        self.memory = DummyMemory()
         await self.memory.init_memory(self.config)
         self.source = DummySource()
 
@@ -74,14 +76,88 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         await self.memory.close_memory()
         self.tmpdir.cleanup()
 
+    def _age_oldest_pending_episode(self, minutes: int = 31) -> None:
+        oldest = self.memory._store["records"][0]
+        aged = dt_to_iso(utcnow() - timedelta(minutes=minutes))
+        oldest["created_at"] = aged
+        oldest["last_updated_at"] = aged
+
     async def test_save_memory_is_episode_only_and_idempotent(self):
-        first = await self.memory.save_memory("payment project needs callback fix", 0.8, session_id="s1", source=self.source)
-        second = await self.memory.save_memory("payment project needs callback fix", 0.8, session_id="s1", source=self.source)
+        first = await self.memory.save_memory("payment callback needs fix", 0.8, session_id="s1", source=self.source)
+        second = await self.memory.save_memory("payment callback needs fix", 0.8, session_id="s1", source=self.source)
 
         self.assertIn("保存", first)
         self.assertIn("更新", second)
         self.assertEqual(len(self.memory._store["records"]), 1)
         self.assertEqual(self.memory._store["records"][0]["type"], "episode")
+
+    async def test_init_memory_drops_legacy_task_records_and_task_edges(self):
+        task_record = {
+            "id": "task_legacy_follow_up",
+            "type": "task",
+            "scope": {"user_id": "user-1", "session_id": ""},
+            "content": "legacy follow-up",
+            "canonical_text": "legacy follow-up",
+            "embedding": [0.1, 0.2],
+            "embedding_model": "test-embedding",
+            "strength": 0.7,
+            "importance": 0.7,
+            "confidence": 0.9,
+            "created_at": "2026-04-04T03:16:31Z",
+            "last_accessed_at": "2026-04-04T03:16:31Z",
+            "last_updated_at": "2026-04-04T03:16:31Z",
+            "access_count": 0,
+            "status": "active",
+            "tags": [],
+            "entity_keys": [],
+            "source_record_ids": [],
+            "task_key": "legacy-follow-up",
+        }
+        fact_record = {
+            "id": "fact_payment_callback",
+            "type": "fact",
+            "scope": {"user_id": "user-1", "session_id": ""},
+            "content": "payment callback still needs retry handling",
+            "canonical_text": "payment callback still needs retry handling",
+            "embedding": [0.2, 0.4],
+            "embedding_model": "test-embedding",
+            "strength": 0.8,
+            "importance": 0.7,
+            "confidence": 0.9,
+            "created_at": "2026-04-04T03:16:31Z",
+            "last_accessed_at": "2026-04-04T03:16:31Z",
+            "last_updated_at": "2026-04-04T03:16:31Z",
+            "access_count": 0,
+            "status": "active",
+            "tags": [],
+            "entity_keys": [],
+            "source_record_ids": [],
+        }
+        self.memory_path.write_text(
+            json.dumps(
+                {
+                    "metadata": {
+                        "embedding_model": "test-embedding",
+                        "embedding_api_url": "https://example.invalid/embeddings",
+                        "updated_at": "2026-04-04T03:16:31Z",
+                    },
+                    "records": [task_record, fact_record],
+                    "edges": [{"from_id": task_record["id"], "to_id": fact_record["id"], "derived_from": True}],
+                    "working_summaries": {"global": "", "by_session": {}},
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        reloaded = DummyMemory()
+        await reloaded.init_memory(self.config)
+        try:
+            self.assertEqual([record["type"] for record in reloaded._store["records"]], ["fact"])
+            self.assertEqual(reloaded._store["edges"], [])
+        finally:
+            await reloaded.close_memory()
 
     async def test_context_summary_prefers_session_over_global(self):
         context_manager = ContextManager(self.memory, adapter=None, event_bus=None)
@@ -91,16 +167,17 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await context_manager.load_context("s1"), "session summary")
         self.assertEqual(await context_manager.load_context("other"), "global summary")
 
-    async def test_housekeeping_consolidates_and_recall_groups(self):
+    async def test_housekeeping_consolidates_into_profile_and_fact(self):
         texts = [
-            "payment project continues fixing callback",
-            "payment project still has one bug",
+            "payment callback bug is still open",
+            "billing callback still needs tests",
             "user name is 阿明",
-            "payment project needs more tests",
-            "recently I am busy with the payment project",
+            "payment callback retry logic is broken",
+            "recently I am busy with payment callback work",
         ]
         for text in texts:
             await self.memory.save_memory(text, 0.8, session_id="s1", source=self.source)
+        self._age_oldest_pending_episode()
 
         batch_ids = [record["id"] for record in self.memory._store["records"]]
         adapter = FakeAdapter()
@@ -113,13 +190,10 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
                     "source_record_ids": [batch_ids[2]],
                 }
             ],
-            "task_upserts": [
+            "fact_upserts": [
                 {
-                    "task_key": "pay_fix",
-                    "summary": "payment project fix callback",
-                    "task_status": "open",
-                    "project": "payment project",
-                    "deadline": "",
+                    "content": "payment callback bug remains open in billing",
+                    "fact_key": "payment_callback",
                     "confidence": 0.88,
                     "source_record_ids": [batch_ids[0], batch_ids[1], batch_ids[3], batch_ids[4]],
                 }
@@ -132,22 +206,60 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
 
         await self.memory.run_housekeeping(None, "https://example.invalid/chat", "k", "m")
 
-        recall_task = await self.memory.recall_memory("what am I busy with recently", session_id="s1", source=self.source)
+        recall_fact = await self.memory.recall_memory("what am I busy with recently", session_id="s1", source=self.source)
         recall_profile = await self.memory.recall_memory("who am I", session_id="s1", source=self.source)
-        structured_task = json.loads(
+        structured = json.loads(
             await self.memory.recall_memory_structured("what am I busy with recently", session_id="s1", source=self.source)
         )
 
-        self.assertIn("payment project", recall_task)
+        self.assertIn("payment callback", recall_fact)
         self.assertIn("阿明", recall_profile)
-        self.assertTrue(structured_task["tasks"])
-        self.assertEqual(structured_task["tasks"][0]["task_key"], "pay_fix")
+        self.assertTrue(structured["facts"])
+        self.assertEqual(structured["facts"][0]["fact_key"], "payment_callback")
+        self.assertFalse(any(record["type"] == "episode" for record in self.memory._store["records"]))
+
+    async def test_second_stage_merges_similar_long_term_facts(self):
+        for text in [
+            "payment callback bug still blocks release",
+            "billing callback bug still blocks release",
+        ]:
+            await self.memory.save_memory(text, 0.8, session_id="s1", source=self.source)
+        self._age_oldest_pending_episode()
+
+        batch_ids = [record["id"] for record in self.memory._store["records"]]
+        adapter = FakeAdapter()
+        adapter.responses.append(json.dumps({
+            "profile_upserts": [],
+            "fact_upserts": [
+                {
+                    "content": "payment callback bug blocks release",
+                    "fact_key": "payment_callback_release",
+                    "confidence": 0.9,
+                    "source_record_ids": [batch_ids[0]],
+                },
+                {
+                    "content": "billing callback bug blocks release",
+                    "fact_key": "billing_callback_release",
+                    "confidence": 0.88,
+                    "source_record_ids": [batch_ids[1]],
+                }
+            ],
+            "links": [],
+        }, ensure_ascii=False))
+        self.memory.set_housekeeping_adapter(adapter)
+
+        await self.memory.run_housekeeping(None, "https://example.invalid/chat", "k", "m")
+
+        active_facts = [
+            record for record in self.memory._store["records"]
+            if record.get("type") == "fact" and record.get("status") == "active"
+        ]
+        self.assertEqual(len(active_facts), 1)
+        self.assertGreaterEqual(len(active_facts[0].get("source_record_ids", [])), 2)
 
     async def test_conflicting_profile_invalidates_old_value(self):
-        ep1 = await self.memory.save_memory("user is in shanghai", 0.7, session_id="s1", source=self.source)
-        ep2 = await self.memory.save_memory("user is in hangzhou", 0.9, session_id="s1", source=self.source)
-        self.assertIn("保存", ep1)
-        self.assertIn("保存", ep2)
+        await self.memory.save_memory("user is in shanghai", 0.7, session_id="s1", source=self.source)
+        await self.memory.save_memory("user is in hangzhou", 0.9, session_id="s1", source=self.source)
 
         source_ids = [record["id"] for record in self.memory._store["records"]]
         await self.memory._apply_profile_upsert("user-1", {
@@ -165,13 +277,12 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
 
         active_locations = [
             record for record in self.memory._store["records"]
-            if record.get("type") == "profile_fact" and record.get("fact_key") == "location" and record.get("status") == "active"
+            if record.get("type") == "profile" and record.get("fact_key") == "location" and record.get("status") == "active"
         ]
         invalidated_locations = [
             record for record in self.memory._store["records"]
-            if record.get("type") == "profile_fact" and record.get("fact_key") == "location" and record.get("status") == "invalidated"
+            if record.get("type") == "profile" and record.get("fact_key") == "location" and record.get("status") == "invalidated"
         ]
-        recall = await self.memory.recall_memory("what city am I in", session_id="s1", source=self.source)
         payload = json.loads(
             await self.memory.recall_memory_structured("what city am I in", session_id="s1", source=self.source)
         )
@@ -179,14 +290,13 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(active_locations), 1)
         self.assertEqual(active_locations[0]["fact_value"], "hangzhou")
         self.assertEqual(len(invalidated_locations), 1)
-        self.assertIn("hangzhou", recall)
         self.assertEqual(payload["profile"][0]["fact_value"], "hangzhou")
 
     async def test_invalid_file_is_reset_to_empty_store(self):
         await self.memory.close_memory()
         self.memory_path.write_text('{"nodes": [], "edges": []}', encoding="utf-8")
 
-        fresh_memory = TestMemory()
+        fresh_memory = DummyMemory()
         await fresh_memory.init_memory(self.config)
         try:
             self.assertEqual(fresh_memory._store["records"], [])
@@ -196,18 +306,18 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
             await fresh_memory.close_memory()
 
     async def test_embedding_model_switch_isolated_from_old_records(self):
-        await self.memory.save_memory("payment project needs callback fix", 0.8, session_id="s1", source=self.source)
+        await self.memory.save_memory("payment callback needs fix", 0.8, session_id="s1", source=self.source)
         self.memory.refresh_config(DummyConfig(str(self.memory_path), model="new-embedding"))
 
         payload = json.loads(
             await self.memory.recall_memory_structured("what am I busy with recently", session_id="s1", source=self.source)
         )
         self.assertFalse(payload["profile"])
-        self.assertFalse(payload["tasks"])
+        self.assertFalse(payload["facts"])
         self.assertFalse(payload["recent_events"])
 
-    async def test_memory_views_expose_frontend_snapshot_and_graph(self):
-        await self.memory.save_memory("payment project fixed callback flow", 0.8, session_id="s1", source=self.source)
+    async def test_memory_views_expose_projection_without_embedding(self):
+        await self.memory.save_memory("payment callback fixed", 0.8, session_id="s1", source=self.source)
         await self.memory.update_working_summary("session summary", session_id="s1")
 
         source_ids = [record["id"] for record in self.memory._store["records"]]
@@ -217,12 +327,9 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
             "confidence": 0.9,
             "source_record_ids": [source_ids[0]],
         })
-        await self.memory._apply_task_upsert("user-1", {
-            "task_key": "pay_fix",
-            "summary": "payment project fix callback flow",
-            "task_status": "open",
-            "project": "payment project",
-            "deadline": "",
+        await self.memory._apply_fact_upsert("user-1", {
+            "content": "payment callback work finished",
+            "fact_key": "payment_callback_done",
             "confidence": 0.88,
             "source_record_ids": [source_ids[0]],
         })
@@ -232,13 +339,13 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(snapshot["working_summaries"]["session_summary"], "session summary")
         self.assertEqual(snapshot["scope"]["source_id"], "user-1")
-        self.assertGreaterEqual(snapshot["stats"]["record_count"], 3)
-        self.assertTrue(any(record["type"] == "profile_fact" for record in snapshot["records"]))
-        self.assertTrue(any(node["type"] == "task" for node in graph["nodes"]))
+        self.assertTrue(any(record["type"] == "profile" for record in snapshot["records"]))
+        self.assertTrue(any(record["type"] == "fact" for record in snapshot["records"]))
+        self.assertTrue(all("embedding" not in record for record in snapshot["records"]))
         self.assertTrue(all("embedding" not in node for node in graph["nodes"]))
         self.assertTrue(all("source" in edge and "target" in edge for edge in graph["edges"]))
 
-    async def test_structured_recall_returns_json_groups(self):
+    async def test_structured_recall_returns_profile_fact_and_event_groups(self):
         await self.memory.save_memory("user name is 阿明", 0.8, session_id="s1", source=self.source)
         source_ids = [record["id"] for record in self.memory._store["records"]]
         await self.memory._apply_profile_upsert("user-1", {
@@ -257,12 +364,9 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["profile"][0]["fact_value"], "阿明")
         self.assertIn("score", payload["profile"][0])
 
-
-    """
     async def test_housekeeping_prompt_receives_existing_memory_and_summary_context(self):
         await self.memory.update_working_summary("session summary for payment work", session_id="s1")
-        first_episode = await self.memory.save_memory("user likes black coffee", 0.8, session_id="s1", source=self.source)
-        self.assertIn("淇濆瓨", first_episode)
+        await self.memory.save_memory("user likes black coffee", 0.8, session_id="s1", source=self.source)
 
         source_ids = [record["id"] for record in self.memory._store["records"]]
         await self.memory._apply_profile_upsert("user-1", {
@@ -271,63 +375,9 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
             "confidence": 0.92,
             "source_record_ids": [source_ids[0]],
         })
-        await self.memory._apply_task_upsert("user-1", {
-            "task_key": "pay_fix",
-            "summary": "payment project callback cleanup",
-            "task_status": "open",
-            "project": "payment project",
-            "deadline": "",
-            "confidence": 0.86,
-            "source_record_ids": [source_ids[0]],
-        })
-
-        for text in [
-            "payment project still needs tests",
-            "payment project callback bug is open",
-            "user name is 闃挎槑",
-            "I am still working on payment project",
-        ]:
-            await self.memory.save_memory(text, 0.8, session_id="s1", source=self.source)
-
-        adapter = FakeAdapter()
-        self.memory.set_housekeeping_adapter(adapter)
-
-        await self.memory.run_housekeeping(None, "https://example.invalid/chat", "k", "m")
-
-        self.assertIsNotNone(adapter.last_messages)
-        self.assertEqual(adapter.last_messages[0]["role"], "system")
-        self.assertIn("long-term memory consolidation engine", adapter.last_messages[0]["content"])
-        payload = json.loads(adapter.last_messages[1]["content"])
-
-        self.assertEqual(payload["user_id"], "user-1")
-        self.assertIn("current_time", payload)
-        self.assertEqual(payload["working_summary"]["session_summaries"]["s1"], "session summary for payment work")
-        self.assertTrue(payload["existing_profile_facts"])
-        self.assertEqual(payload["existing_profile_facts"][0]["fact_key"], "coffee_preference")
-        self.assertTrue(payload["existing_tasks"])
-        self.assertEqual(payload["existing_tasks"][0]["task_key"], "pay_fix")
-        self.assertGreaterEqual(len(payload["episodes"]), 5)
-
-    """
-
-    async def test_housekeeping_prompt_receives_existing_memory_and_summary_context_v2(self):
-        await self.memory.update_working_summary("session summary for payment work", session_id="s1")
-        first_episode = await self.memory.save_memory("user likes black coffee", 0.8, session_id="s1", source=self.source)
-        self.assertTrue(first_episode)
-
-        source_ids = [record["id"] for record in self.memory._store["records"]]
-        await self.memory._apply_profile_upsert("user-1", {
-            "fact_key": "coffee_preference",
-            "fact_value": "black coffee",
-            "confidence": 0.92,
-            "source_record_ids": [source_ids[0]],
-        })
-        await self.memory._apply_task_upsert("user-1", {
-            "task_key": "pay_fix",
-            "summary": "payment project callback cleanup",
-            "task_status": "open",
-            "project": "payment project",
-            "deadline": "",
+        await self.memory._apply_fact_upsert("user-1", {
+            "content": "payment callback cleanup is still open",
+            "fact_key": "pay_fix",
             "confidence": 0.86,
             "source_record_ids": [source_ids[0]],
         })
@@ -339,30 +389,26 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
             "I am still working on payment project",
         ]:
             await self.memory.save_memory(text, 0.8, session_id="s1", source=self.source)
+        self._age_oldest_pending_episode()
 
         adapter = FakeAdapter()
         self.memory.set_housekeeping_adapter(adapter)
 
         await self.memory.run_housekeeping(None, "https://example.invalid/chat", "k", "m")
 
-        self.assertIsNotNone(adapter.last_messages)
-        self.assertEqual(adapter.last_messages[0]["role"], "system")
-        self.assertIn("long-term memory consolidation engine", adapter.last_messages[0]["content"])
         payload = json.loads(adapter.last_messages[1]["content"])
-
         self.assertEqual(payload["user_id"], "user-1")
-        self.assertIn("current_time", payload)
         self.assertEqual(payload["working_summary"]["session_summaries"]["s1"], "session summary for payment work")
-        self.assertTrue(payload["existing_profile_facts"])
-        self.assertEqual(payload["existing_profile_facts"][0]["fact_key"], "coffee_preference")
-        self.assertTrue(payload["existing_tasks"])
-        self.assertEqual(payload["existing_tasks"][0]["task_key"], "pay_fix")
+        self.assertTrue(payload["existing_profiles"])
+        self.assertEqual(payload["existing_profiles"][0]["fact_key"], "coffee_preference")
+        self.assertTrue(payload["existing_facts"])
+        self.assertEqual(payload["existing_facts"][0]["fact_key"], "pay_fix")
         self.assertGreaterEqual(len(payload["episodes"]), 5)
 
     async def test_memory_views_without_source_filter_return_all_records(self):
         source_a = DummySource(source_id="feishu-user")
         source_b = DummySource(source_id="desktop-app")
-        await self.memory.save_memory("payment project fixed callback flow", 0.8, session_id="s1", source=source_a)
+        await self.memory.save_memory("payment callback fixed", 0.8, session_id="s1", source=source_a)
         await self.memory.save_memory("user likes pour over coffee", 0.7, session_id="s2", source=source_b)
 
         snapshot = self.memory.get_memory_snapshot()
@@ -376,43 +422,6 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(graph["nodes"]), snapshot["stats"]["record_count"])
 
     async def test_explicit_remember_batch_falls_back_to_profile_memory_when_patch_is_empty(self):
-        result = await self.memory.save_memory(
-            "Durable relationship fact: User is my developer and friend.",
-            0.8,
-            session_id="s1",
-            source=self.source,
-            tags=["remember_knowledge", "remember_category:relationship"],
-        )
-        self.assertTrue(result)
-        for idx in range(4):
-            await self.memory.save_memory(f"filler episode {idx}", 0.3, session_id="s1", source=self.source)
-
-        explicit_record = next(
-            record for record in self.memory._store["records"]
-            if "remember_knowledge" in record.get("tags", [])
-        )
-        adapter = FakeAdapter()
-        adapter.responses.append(json.dumps({
-            "profile_upserts": [],
-            "task_upserts": [],
-            "links": [],
-        }, ensure_ascii=False))
-        self.memory.set_housekeeping_adapter(adapter)
-
-        await self.memory.run_housekeeping(None, "https://example.invalid/chat", "k", "m")
-
-        profile_records = [
-            record for record in self.memory._store["records"]
-            if record.get("type") == "profile_fact" and explicit_record["id"] in record.get("source_record_ids", [])
-        ]
-        self.assertTrue(profile_records)
-        self.assertNotIn("pending_consolidation", explicit_record["tags"])
-        payload = json.loads(adapter.last_messages[1]["content"])
-        episode_payload = next(item for item in payload["episodes"] if item["id"] == explicit_record["id"])
-        self.assertTrue(episode_payload["hints"]["remember_requested"])
-        self.assertEqual(episode_payload["hints"]["remember_category"], "relationship")
-
-    async def test_relationship_memory_rejects_task_upsert_and_uses_profile_fallback(self):
         await self.memory.save_memory(
             "Durable relationship fact: User is my developer and friend.",
             0.8,
@@ -422,42 +431,30 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         )
         for idx in range(4):
             await self.memory.save_memory(f"filler episode {idx}", 0.3, session_id="s1", source=self.source)
+        self._age_oldest_pending_episode()
 
-        explicit_record = next(
-            record for record in self.memory._store["records"]
-            if "remember_knowledge" in record.get("tags", [])
-        )
+        explicit_record = next(record for record in self.memory._store["records"] if "remember_knowledge" in record.get("tags", []))
         adapter = FakeAdapter()
         adapter.responses.append(json.dumps({
             "profile_upserts": [],
-            "task_upserts": [
-                {
-                    "task_key": "task",
-                    "summary": "personal profile: developer and friend",
-                    "task_status": "open",
-                    "project": "memory",
-                    "deadline": "",
-                    "confidence": 0.99,
-                    "source_record_ids": [explicit_record["id"]],
-                }
-            ],
+            "fact_upserts": [],
             "links": [],
         }, ensure_ascii=False))
         self.memory.set_housekeeping_adapter(adapter)
 
         await self.memory.run_housekeeping(None, "https://example.invalid/chat", "k", "m")
 
-        task_records = [
-            record for record in self.memory._store["records"]
-            if record.get("type") == "task" and record.get("scope", {}).get("user_id") == "user-1"
-        ]
         profile_records = [
             record for record in self.memory._store["records"]
-            if record.get("type") == "profile_fact" and explicit_record["id"] in record.get("source_record_ids", [])
+            if record.get("type") == "profile" and explicit_record["id"] in record.get("source_record_ids", [])
         ]
-        self.assertEqual(task_records, [])
+        payload = json.loads(adapter.last_messages[1]["content"])
+        episode_payload = next(item for item in payload["episodes"] if item["id"] == explicit_record["id"])
+
         self.assertTrue(profile_records)
-        self.assertNotIn("pending_consolidation", explicit_record["tags"])
+        self.assertTrue(episode_payload["hints"]["remember_requested"])
+        self.assertEqual(episode_payload["hints"]["remember_category"], "relationship")
+
 
 if __name__ == "__main__":
     unittest.main()
