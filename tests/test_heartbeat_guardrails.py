@@ -75,6 +75,30 @@ class _FakeConfig:
         return f"prompt:{name}"
 
 
+class _HeartbeatProcessorConfig(_FakeConfig):
+    def get(self, key: str):
+        defaults = {
+            "heartbeat_interval": 1,
+            "housekeeping_interval": 60,
+            "scheduler_interval": 15,
+            "heartbeat_api_url": "https://example.com/v1/responses",
+            "heartbeat_api_key": "test-key",
+            "heart_model": "test-heart",
+        }
+        return defaults.get(key)
+
+
+class _FakeHeartbeatRunner:
+    def __init__(self, payloads, shutdown_event):
+        self._payloads = list(payloads)
+        self._shutdown_event = shutdown_event
+
+    async def run(self, **kwargs):
+        payload = self._payloads.pop(0)
+        self._shutdown_event.set()
+        return {"content": payload}
+
+
 class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
     def _make_heart(self, payload=None):
         return Heart(
@@ -101,6 +125,8 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(payload["last_user_activity_at"], "")
         self.assertTrue(payload["idle_poke_eligible"])
         self.assertEqual(payload["last_idle_poke_at"], "")
+        self.assertIn("system", payload)
+        self.assertIn("scheduler_stalled", payload["system"])
 
     async def test_idle_poke_is_silenced_when_not_eligible(self):
         heart = self._make_heart()
@@ -181,6 +207,73 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalized["signal_kind"], "none")
         self.assertEqual(normalized["message"], "")
 
+    async def test_task_oriented_heartbeat_signal_is_ignored_even_when_due_payload_exists(self):
+        heart = self._make_heart()
+        background_status = {
+            "idle_poke_eligible": False,
+            "urgent_due_task_count": 1,
+            "last_user_activity_at": "2026-04-03T00:10:00Z",
+            "nearest_due_task": {
+                "task_key": "task-1",
+                "summary": "daily digest sync",
+                "due_at": "2026-04-03T00:30:00Z",
+                "minutes_until_due": 29,
+                "overdue": False,
+            },
+            "repeated_failure_tasks": [],
+            "scheduler_stalled": False,
+            "housekeeping_stalled": False,
+            "pending_consolidation_stale": False,
+            "last_housekeeping_error": "",
+        }
+
+        normalized = heart._normalize_heartbeat_result(
+            {
+                "decision": "notify",
+                "signal_kind": "urgent_deadline",
+                "message": "这个任务快到期了",
+            },
+            background_status,
+        )
+
+        self.assertEqual(normalized["decision"], "ok")
+        self.assertEqual(normalized["signal_kind"], "none")
+        self.assertEqual(normalized["message"], "")
+
+    async def test_urgent_deadline_is_silenced_for_auto_run_or_awaiting_completion_task(self):
+        heart = self._make_heart()
+        normalized = heart._normalize_heartbeat_result(
+            {
+                "decision": "notify",
+                "signal_kind": "urgent_deadline",
+                "message": "任务快到期了",
+            },
+            {
+                "idle_poke_eligible": False,
+                "urgent_due_task_count": 1,
+                "last_user_activity_at": "2026-04-03T00:10:00Z",
+                "nearest_due_task": {
+                    "task_key": "task-1",
+                    "summary": "daily digest sync",
+                    "due_at": "2026-04-03T00:30:00Z",
+                    "minutes_until_due": 10,
+                    "overdue": False,
+                    "auto_run": True,
+                    "awaiting_completion": True,
+                    "completion_state": "awaiting_completion",
+                },
+                "repeated_failure_tasks": [],
+                "scheduler_stalled": False,
+                "housekeeping_stalled": False,
+                "pending_consolidation_stale": False,
+                "last_housekeeping_error": "",
+            },
+        )
+
+        self.assertEqual(normalized["decision"], "ok")
+        self.assertEqual(normalized["signal_kind"], "none")
+        self.assertEqual(normalized["message"], "")
+
     async def test_hallucinated_system_issue_message_is_replaced_with_structured_note(self):
         heart = self._make_heart()
         normalized = heart._normalize_heartbeat_result(
@@ -234,6 +327,60 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalized["decision"], "ok")
         self.assertEqual(normalized["signal_kind"], "none")
         self.assertEqual(normalized["message"], "")
+
+    async def test_ok_cycle_keeps_last_signal_cooldown_state(self):
+        task_manager = _FakeTaskManager(
+            {
+                "scheduled_task_count": 0,
+                "due_task_count": 0,
+                "overdue_task_count": 0,
+                "pending_delivery_count": 0,
+                "nearest_due_task": None,
+                "nearest_due_in_minutes": None,
+                "urgent_due_tasks": [],
+                "urgent_due_task_count": 0,
+                "repeated_failure_tasks": [{"task_key": "task-1"}],
+                "recent_failures": [],
+                "recent_runs": [],
+            }
+        )
+        event_bus = _FakeEventBus()
+        heart = Heart(
+            adapter=object(),
+            config=_HeartbeatProcessorConfig(),
+            tools_manager=_FakeToolsManager(),
+            memory=_FakeMemory(),
+            task_manager=task_manager,
+            event_bus=event_bus,
+            exception_router=None,
+        )
+        heart._http_session = object()
+        heart._last_heartbeat_signal_kind = "system_issue"
+        heart._last_heartbeat_signal_message = (
+            'Task "task-1" has failed repeatedly. Keep the follow-up brief and practical.'
+        )
+        heart._last_heartbeat_signal_fingerprint = "system_issue:repeated:task-1"
+        heart._last_heartbeat_signal_at = (
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+        heart._agent_runner = _FakeHeartbeatRunner(
+            [
+                '{"decision":"ok","signal_kind":"none","message":"","reasons":[],"confidence":"low"}',
+            ],
+            event_bus.shutdown_event,
+        )
+        manager = SessionManager()
+        session_id = manager.get_or_create_session(make_source(SourceKind.WEB.value, "tab-a"), "web:1")
+        binding = manager.get_binding(session_id)
+        binding.metadata["last_active_at"] = time.time() - 120
+        binding.default_target = EventTarget(kind="web", id="tab-a")
+        heart.set_session_manager(manager)
+        await heart.refresh_config()
+
+        await heart.heartbeat_processor()
+
+        self.assertEqual(heart._last_heartbeat_signal_kind, "system_issue")
+        self.assertEqual(heart._last_heartbeat_signal_fingerprint, "system_issue:repeated:task-1")
 
 
 if __name__ == "__main__":

@@ -185,7 +185,7 @@ export default function SettingsView() {
     <div className="settings-page">
       <div className="settings-header-card">
         <div>
-          <div className="settings-kicker">Settings</div>
+          <div className="settings-kicker">设置中心</div>
           <h2 className="settings-title">系统配置中心</h2>
           <div className="settings-subtitle">常用配置直接编辑，高级配置按分组折叠展示。</div>
         </div>

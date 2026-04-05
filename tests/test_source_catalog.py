@@ -41,7 +41,7 @@ class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
             {
                 "version": "1",
                 "default_source_profiles": {
-                    "tech_updates": {
+                    "academic_research": {
                         "preferred_source_ids": ["source_b"],
                         "official_only": True,
                         "primary_domains": [],
@@ -55,7 +55,7 @@ class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
                         "domain": "a.example.com",
                         "label": "A",
                         "connector_type": "whitelist_page_reader",
-                        "profiles": ["tech_updates"],
+                        "profiles": ["academic_research"],
                         "priority": 50,
                         "primary_source": True,
                     },
@@ -64,8 +64,8 @@ class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
                         "enabled": True,
                         "domain": "b.example.com",
                         "label": "B",
-                        "connector_type": "whitelist_page_reader",
-                        "profiles": ["tech_updates"],
+                        "connector_type": "rss_atom_feed",
+                        "profiles": ["academic_research"],
                         "priority": 10,
                         "primary_source": True,
                     },
@@ -75,7 +75,7 @@ class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
                         "domain": "c.example.com",
                         "label": "C",
                         "connector_type": "whitelist_page_reader",
-                        "profiles": ["tech_updates"],
+                        "profiles": ["academic_research"],
                         "priority": 100,
                         "primary_source": True,
                     },
@@ -85,7 +85,7 @@ class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
                         "domain": "bad.example.com",
                         "label": "Bad",
                         "connector_type": "not_real",
-                        "profiles": ["tech_updates"],
+                        "profiles": ["academic_research"],
                         "priority": 100,
                         "primary_source": True,
                     }
@@ -95,7 +95,7 @@ class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
         manager = SourceCatalogManager(_FakeConfig({"source_catalog_path": path}))
 
         status = manager.get_catalog_status()
-        ordered = manager.get_sources("tech_updates")
+        ordered = manager.get_sources("academic_research")
 
         self.assertTrue(status["available"])
         self.assertEqual(status["source_count"], 3)

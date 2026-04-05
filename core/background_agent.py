@@ -4,6 +4,7 @@ Shared non-streaming tool-enabled background agent loop.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -34,6 +35,8 @@ class BackgroundAgentRunner:
         adapter_options = dict(adapter_options or {})
         last_content = ""
         last_tool_names: list[str] = []
+        completed_task_keys: list[str] = []
+        manage_task_actions: list[dict[str, Any]] = []
 
         for _ in range(max_rounds):
             result = await self._adapter.chat(
@@ -68,15 +71,30 @@ class BackgroundAgentRunner:
                     "status": "ok",
                     "content": last_content,
                     "tool_names": last_tool_names,
+                    "completed_task_keys": list(dict.fromkeys(completed_task_keys)),
+                    "manage_task_actions": manage_task_actions,
                     "history": history,
                 }
 
             last_tool_names = [tc.name for tc in tool_calls]
             for tool_call in tool_calls:
+                tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+                if tool_call.name in {"manage_tasks", "manage_scheduled_tasks"}:
+                    action = str(tool_args.get("action") or "").strip().lower()
+                    task_key = str(tool_args.get("task_key") or "").strip()
+                    manage_task_actions.append(
+                        {
+                            "action": action,
+                            "task_key": task_key,
+                            "arguments": json.loads(json.dumps(tool_args, ensure_ascii=False, default=str)),
+                        }
+                    )
+                    if action == "complete" and task_key:
+                        completed_task_keys.append(task_key)
                 try:
                     tool_result = await self._tools_manager.call_tool(
                         tool_call.name,
-                        tool_call.arguments,
+                        tool_args,
                         session_id=session_id,
                         source=source,
                         route_context=route_context or {},
@@ -97,5 +115,7 @@ class BackgroundAgentRunner:
             "status": "error",
             "content": "Error: background agent exceeded max tool rounds.",
             "tool_names": last_tool_names,
+            "completed_task_keys": list(dict.fromkeys(completed_task_keys)),
+            "manage_task_actions": manage_task_actions,
             "history": history,
         }

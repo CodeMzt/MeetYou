@@ -18,6 +18,23 @@
   "heartbeat_path": "prompt/heartbeat",
   "memory_file_path": "user/memory_graph.json",
   "tools_schema_path": "user/tools.json",
+  "assistant_modes": {
+    "skill_prompt_dir": "prompt/SKILL",
+    "basic_tools": [
+      "ask_human",
+      "get_current_system_time",
+      "search_knowledge",
+      "search_memory",
+      "search_web",
+      "read_web_page",
+      "remember_knowledge"
+    ],
+    "skills": {
+      "task_recognition": {
+        "tools": ["manage_tasks"]
+      }
+    }
+  },
   "source_catalog_path": "user/source_catalog.json",
   "cmd_policy_path": "user/cmd_policy.json",
   "mcp_registry_url": "https://registry.modelcontextprotocol.io/v0.1/servers",

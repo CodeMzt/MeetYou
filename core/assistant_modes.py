@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from core.semantic_router import SemanticRouterAgent
+from core.skill_registry import SkillRegistryManager
 from core.source_catalog import SourceCatalogManager
 
 ASSISTANT_MODE_NORMAL = "normal"
@@ -383,12 +385,7 @@ _DEFAULT_SOURCE_PROFILES = {
 _DEFAULT_MODE_TOOL_BUNDLES = {
     "normal": {
         "tools": [
-            "ask_human",
-            "get_current_system_time",
             "get_sys_vitals",
-            "search_knowledge",
-            "manage_tasks",
-            "remember_knowledge",
             "research_topic",
             "inspect_page",
         ],
@@ -397,12 +394,7 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     "documents": {
         "tools": [
             "exec_sys_cmd",
-            "ask_human",
-            "get_current_system_time",
             "get_sys_vitals",
-            "search_knowledge",
-            "manage_tasks",
-            "remember_knowledge",
             "analyze_workspace",
             "read_local_documents",
             "write_local_document",
@@ -413,10 +405,6 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
     "research": {
         "tools": [
-            "ask_human",
-            "get_current_system_time",
-            "search_knowledge",
-            "remember_knowledge",
             "research_topic",
             "inspect_page",
             "track_source_updates",
@@ -426,11 +414,6 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
     "office": {
         "tools": [
-            "ask_human",
-            "get_current_system_time",
-            "search_knowledge",
-            "manage_tasks",
-            "remember_knowledge",
             "read_local_documents",
             "write_local_document",
             "compile_report",
@@ -443,10 +426,6 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
     "study": {
         "tools": [
-            "ask_human",
-            "get_current_system_time",
-            "search_knowledge",
-            "remember_knowledge",
             "read_local_documents",
             "compile_report",
             "build_study_plan",
@@ -459,6 +438,48 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
 }
 
+_DEFAULT_BASIC_MODE_TOOLS = [
+    "ask_human",
+    "get_current_system_time",
+    "search_knowledge",
+    "search_memory",
+    "search_web",
+    "read_web_page",
+    "remember_knowledge",
+    "list_skills",
+    "load_skill",
+    "create_skill",
+]
+
+_TASK_RECOGNITION_HINTS = (
+    "todo",
+    "to-do",
+    "task",
+    "tasks",
+    "reminder",
+    "remind me",
+    "deadline",
+    "due",
+    "follow up",
+    "follow-up",
+    "blocker",
+    "blocked",
+    "complete",
+    "completed",
+    "finish this",
+    "记一下",
+    "待办",
+    "任务",
+    "提醒我",
+    "提醒",
+    "截止",
+    "到期",
+    "跟进",
+    "阻塞",
+    "卡住",
+    "完成",
+)
+
 _DEFAULT_ROUTER_CONFIG = {
     "default_mode": ASSISTANT_MODE_NORMAL,
     "sticky_current_mode": True,
@@ -466,6 +487,7 @@ _DEFAULT_ROUTER_CONFIG = {
     "allow_in_turn_switch": True,
     "max_switches_per_turn": 2,
     "fallback_to_heuristic": True,
+    "semantic_routing_enabled": True,
 }
 
 _DEFAULT_DOCUMENT_PARSERS = {
@@ -489,43 +511,157 @@ _MODE_PROMPT_FALLBACKS = {
         "[Auto Router]\n"
         "Choose the working mode that best matches the user's next immediate step.\n"
         "Modes:\n"
-        "- normal: ordinary conversation, daily assistant work, and lightweight web search or page reading\n"
-        "- documents: local files, folders, workspace analysis, document writing, report generation\n"
-        "- research: deep research, source tracking, evidence-heavy analysis, and research-style reports\n"
-        "- office: schedules, meeting briefs, drafts, notes sync, coordination\n"
-        "- study: study plans, learning points, quizzes, flashcards, mastery tracking\n"
+        "- normal: ordinary conversation, daily assistant work, private knowledge lookup, and lightweight web work with the shared basic tools first\n"
+        "- documents: local files, folders, workspace analysis, document writing, report generation, then document-specific tools when the shared basic tools are not enough\n"
+        "- research: deep research, source tracking, evidence-heavy analysis, research-style reports, and the research_grounding skill layered on top of the shared basic tools\n"
+        "- office: schedules, meeting briefs, drafts, notes sync, and coordination, with task_recognition available when task signals appear and the shared basic tools used for grounding\n"
+        "- study: study plans, learning points, quizzes, flashcards, mastery tracking, and the study_coaching skill combined with the shared basic tools\n"
+        "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, ask_human, and get_current_system_time.\n"
+        "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled work.\n"
         "If signals are mixed, prefer the smallest mode that directly matches the user's next job."
     ),
     "normal": (
         "[Normal Mode]\n"
         "You are operating as a general daily assistant.\n"
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
+        "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, ask_human, and get_current_system_time.\n"
+        "When the user's message clearly contains user TODO or scheduled-task work, the task_recognition skill can activate manage_tasks or manage_scheduled_tasks.\n"
         "Stay in normal mode unless the next immediate step clearly requires file tools, deep research constraints, office coordination tools, or study-specific tools."
     ),
     "documents": (
         "[Documents Mode]\n"
         "You are operating as a document and workspace specialist.\n"
         "Prefer local files, directory analysis, structured document reading, and safe draft-first writing.\n"
+        "Start with the shared basic tools for knowledge lookup, memory lookup, and web/page reading when they help ground the document task, then move to document-specific tools for repository or file operations.\n"
+        "If the user also mixes in user TODO or scheduled-task work, task_recognition can activate the matching task tool without leaving this mode.\n"
         "When editing documents, inspect first, summarize the current structure, and keep writes inside trusted roots unless the user explicitly confirms a broader target."
     ),
     "research": (
         "[Research Mode]\n"
         "You are operating as a research specialist.\n"
         "Prioritize first-party and official sources, reason explicitly about freshness, and ground claims in evidence objects and citations.\n"
+        "Start with the shared basic tools such as search_web, read_web_page, search_memory, and search_knowledge for focused evidence collection, then use the research_grounding skill and heavier research flows when the task needs broader synthesis or source tracking.\n"
         "Use this mode for source-heavy analysis, update tracking, and report-style research work where rigorous sourcing matters."
     ),
     "office": (
         "[Office Mode]\n"
         "You are operating as an office and coordination specialist.\n"
         "Favor schedules, drafts, task state, meeting notes, and note synchronization.\n"
+        "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted, then use office-specific tools when coordination artifacts must be produced.\n"
+        "Task-style requests can also activate the task_recognition skill so user TODO and scheduled-task tools stay available inside office workflows.\n"
         "External side effects stay draft-first. Do not pretend that a message or calendar entry has been sent unless the tool confirms it."
     ),
     "study": (
         "[Study Mode]\n"
         "You are operating as a study coach.\n"
         "Favor plans, extracted learning points, quizzes, flashcards, and mastery tracking.\n"
-        "Base explanations on the provided materials when possible, preserve source references, and optimize for retention and practice."
+        "Start with the shared basic tools when you need memory lookup, private knowledge lookup, or lightweight page reading, then use the study_coaching skill to turn the retrieved material into guided learning work.\n"
+        "If the user adds user TODOs or scheduled follow-ups, task_recognition can also activate the matching task tool."
     ),
+}
+
+_SKILL_PROMPT_FALLBACKS = {
+    "task-recognition": (
+        "[Task Recognition Skill]\n"
+        "Detect when the user is creating, listing, updating, blocking, rescheduling, or completing actionable tasks.\n"
+        "Use manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled tasks when task work is actually requested, instead of keeping task tracking only in free-form chat."
+    ),
+    "research-grounding": (
+        "[Research Grounding Skill]\n"
+        "Prioritize first-party and official sources, reason explicitly about freshness, and ground claims in evidence objects and citations.\n"
+        "Start with focused basic-tool evidence gathering, then lead with the answer and cite sourced claims inline like [1], [2]. Distinguish between direct evidence and inference."
+    ),
+    "study-coaching": (
+        "[Study Coaching Skill]\n"
+        "Optimize for retention, practice, and source-grounded explanations.\n"
+        "Start from the user's retrieved materials when available, preserve source references, and turn outputs into concrete study steps."
+    ),
+}
+
+_DEFAULT_PROMPT_REGISTRY = {
+    "auto-router": {"path": "prompt/modes/auto-router", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["auto-router"]},
+    "mode:normal": {"path": "prompt/modes/normal", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["normal"]},
+    "mode:documents": {"path": "prompt/modes/documents", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["documents"]},
+    "mode:research": {"path": "prompt/modes/research", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["research"]},
+    "mode:office": {"path": "prompt/modes/office", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["office"]},
+    "mode:study": {"path": "prompt/modes/study", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["study"]},
+    "skill:task-recognition": {
+        "path": "prompt/SKILL/task-recognition",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["task-recognition"],
+    },
+    "skill:research-grounding": {
+        "path": "prompt/SKILL/research-grounding",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["research-grounding"],
+    },
+    "skill:study-coaching": {
+        "path": "prompt/SKILL/study-coaching",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["study-coaching"],
+    },
+}
+
+_DEFAULT_SKILL_REGISTRY = {
+    "task_recognition": {
+        "prompts": ["skill:task-recognition"],
+        "tools": ["manage_tasks", "manage_scheduled_tasks"],
+        "mcp_servers": [],
+        "activation_keywords": list(_TASK_RECOGNITION_HINTS),
+    },
+    "research_grounding": {
+        "prompts": ["skill:research-grounding"],
+        "tools": [],
+        "mcp_servers": [],
+    },
+    "study_coaching": {
+        "prompts": ["skill:study-coaching"],
+        "tools": [],
+        "mcp_servers": [],
+    },
+}
+
+_DEFAULT_MODE_DEFINITIONS = {
+    "normal": {
+        "prompts": ["mode:normal"],
+        "mode_skills": ["mode:normal"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES["normal"]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["normal"]["mcp_servers"],
+        "skills": [],
+        "auto_skills": ["task_recognition"],
+    },
+    "documents": {
+        "prompts": ["mode:documents"],
+        "mode_skills": ["mode:documents"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES["documents"]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["documents"]["mcp_servers"],
+        "skills": [],
+        "auto_skills": ["task_recognition"],
+    },
+    "research": {
+        "prompts": ["mode:research"],
+        "mode_skills": ["mode:research"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES["research"]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["research"]["mcp_servers"],
+        "skills": ["research_grounding"],
+        "auto_skills": ["task_recognition"],
+    },
+    "office": {
+        "prompts": ["mode:office"],
+        "mode_skills": ["mode:office"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES["office"]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["office"]["mcp_servers"],
+        "skills": [],
+        "auto_skills": ["task_recognition"],
+    },
+    "study": {
+        "prompts": ["mode:study"],
+        "mode_skills": ["mode:study"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES["study"]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["study"]["mcp_servers"],
+        "skills": ["study_coaching"],
+        "auto_skills": ["task_recognition"],
+    },
 }
 
 
@@ -549,6 +685,18 @@ def _parse_json_config(raw_value: Any) -> Any:
         except json.JSONDecodeError:
             return {}
     return raw_value or {}
+
+
+def _unique_strings(values: list[Any] | tuple[Any, ...] | None) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        normalized = str(value or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 def _normalize_mode(value: Any, *, fallback: str = ASSISTANT_MODE_NORMAL) -> str:
@@ -580,6 +728,8 @@ class RouteDecision:
     tool_bundle: list[str]
     mcp_servers: list[str]
     prompt_bundle: str
+    active_skills: list[str] | None = None
+    loaded_skills: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -590,19 +740,31 @@ class RouteDecision:
             "tool_bundle": list(self.tool_bundle),
             "mcp_servers": list(self.mcp_servers),
             "prompt_bundle": self.prompt_bundle,
+            "active_skills": list(self.active_skills or []),
+            "loaded_skills": list(self.loaded_skills or []),
         }
 
 
 class AssistantModeManager:
-    def __init__(self, config_manager):
+    def __init__(self, config_manager, *, semantic_router: SemanticRouterAgent | None = None):
         self._config = config_manager
         self._source_catalog = SourceCatalogManager(config_manager)
+        self._semantic_router = semantic_router or SemanticRouterAgent()
+        assistant_modes_config = _parse_json_config(self._config.get("assistant_modes"))
+        self._skill_registry = SkillRegistryManager(
+            skill_dir=str(assistant_modes_config.get("skill_prompt_dir") or "prompt/SKILL")
+        )
 
     def _mode_registry(self) -> dict[str, Any]:
         return _deep_merge(
             {
                 "enabled_modes": list(ASSISTANT_MODES),
                 "prompt_dir": "prompt/modes",
+                "skill_prompt_dir": "prompt/SKILL",
+                "basic_tools": list(_DEFAULT_BASIC_MODE_TOOLS),
+                "prompt_registry": _DEFAULT_PROMPT_REGISTRY,
+                "skills": _DEFAULT_SKILL_REGISTRY,
+                "mode_definitions": _DEFAULT_MODE_DEFINITIONS,
                 "tool_bundles": _DEFAULT_MODE_TOOL_BUNDLES,
             },
             _parse_json_config(self._config.get("assistant_modes")),
@@ -651,13 +813,125 @@ class AssistantModeManager:
     def resolve_source_auth_entries(self, source_config: dict[str, Any]) -> list[dict[str, Any]]:
         return self._source_catalog.resolve_auth_entries(source_config)
 
-    def get_tool_bundle(self, mode: str) -> dict[str, list[str]]:
+    def _get_mode_definition(self, mode: str) -> dict[str, Any]:
         registry = self._mode_registry()
+        normalized_mode = _normalize_mode(mode)
+        definitions = registry.get("mode_definitions") or {}
+        payload = _deep_merge(_DEFAULT_MODE_DEFINITIONS.get(normalized_mode, {}), definitions.get(normalized_mode) or {})
         bundles = registry.get("tool_bundles") or {}
-        payload = bundles.get(mode) or _DEFAULT_MODE_TOOL_BUNDLES.get(mode) or {"tools": [], "mcp_servers": []}
+        bundle_payload = bundles.get(normalized_mode) or {}
+        if isinstance(bundle_payload, dict):
+            if "tools" in bundle_payload:
+                payload["tools"] = bundle_payload.get("tools", [])
+            if "mcp_servers" in bundle_payload:
+                payload["mcp_servers"] = bundle_payload.get("mcp_servers", [])
+        if not payload:
+            payload = {
+                "prompts": [f"mode:{normalized_mode}"],
+                "mode_skills": [f"mode:{normalized_mode}"],
+                "tools": [],
+                "mcp_servers": [],
+                "skills": [],
+                "auto_skills": [],
+            }
+        payload.setdefault("prompts", [f"mode:{normalized_mode}"])
+        payload.setdefault("mode_skills", [f"mode:{normalized_mode}"])
+        payload.setdefault("tools", [])
+        payload.setdefault("mcp_servers", [])
+        payload.setdefault("skills", [])
+        payload.setdefault("auto_skills", [])
+        return payload
+
+    def _get_skill_definition(self, skill_name: str) -> dict[str, Any]:
+        registry = self._mode_registry()
+        skills = registry.get("skills") or {}
+        payload = _deep_merge(_DEFAULT_SKILL_REGISTRY.get(skill_name, {}), skills.get(skill_name) or {})
+        payload.setdefault("prompts", [])
+        payload.setdefault("tools", [])
+        payload.setdefault("mcp_servers", [])
+        payload.setdefault("activation_keywords", [])
+        return payload
+
+    def _should_activate_skill(self, skill_name: str, *, content: str) -> bool:
+        return self._semantic_router.should_activate_skill(skill_name, content)
+
+    def _resolve_active_skills(self, mode: str, *, content: str = "") -> list[str]:
+        definition = self._get_mode_definition(mode)
+        active_skills = _unique_strings(definition.get("skills"))
+        for skill_name in _unique_strings(definition.get("auto_skills")):
+            if self._should_activate_skill(skill_name, content=content):
+                active_skills.append(skill_name)
+        return _unique_strings(active_skills)
+
+    def _resolve_prompt_text(self, prompt_name: str) -> str:
+        registry = self._mode_registry()
+        prompt_registry = registry.get("prompt_registry") or {}
+        entry = _deep_merge(_DEFAULT_PROMPT_REGISTRY.get(prompt_name, {}), prompt_registry.get(prompt_name) or {})
+        fallback = str(entry.get("fallback") or "").strip()
+        explicit_text = str(entry.get("text") or "").strip()
+        if explicit_text:
+            return explicit_text
+        path_value = str(entry.get("path") or "").strip()
+        if not path_value:
+            file_name = str(entry.get("file") or "").strip()
+            kind = str(entry.get("kind") or "mode").strip().lower()
+            base_dir = registry.get("skill_prompt_dir") if kind == "skill" else registry.get("prompt_dir")
+            if file_name and base_dir:
+                path_value = str(Path(str(base_dir)) / file_name)
+        if not path_value:
+            return fallback
+        try:
+            prompt_path = Path(path_value)
+            if not prompt_path.is_absolute():
+                prompt_path = Path(__file__).resolve().parent.parent / prompt_path
+            return prompt_path.read_text(encoding="utf-8").strip() or fallback
+        except FileNotFoundError:
+            return fallback
+
+    def assemble_prompt_for_mode(
+        self,
+        mode: str,
+        *,
+        content: str = "",
+        active_skills: list[str] | None = None,
+        loaded_skills: list[str] | None = None,
+    ) -> str:
+        normalized_mode = _normalize_mode(mode, fallback=mode)
+        definition = self._get_mode_definition(normalized_mode)
+        resolved_skills = _unique_strings(active_skills or self._resolve_active_skills(normalized_mode, content=content))
+        prompt_names = list(_unique_strings(definition.get("prompts")))
+        prompt_sections: list[str] = []
+        for prompt_name in _unique_strings(prompt_names):
+            text = self._resolve_prompt_text(prompt_name)
+            if text and text not in prompt_sections:
+                prompt_sections.append(text)
+        for skill_id in _unique_strings(definition.get("mode_skills")):
+            loaded = self._skill_registry.load_skill(skill_id)
+            text = str((loaded or {}).get("content") or "").strip()
+            if text and text not in prompt_sections:
+                prompt_sections.append(text)
+        for skill_name in _unique_strings([*resolved_skills, *(loaded_skills or [])]):
+            loaded = self._skill_registry.load_skill(skill_name)
+            text = str((loaded or {}).get("content") or "").strip()
+            if text and text not in prompt_sections:
+                prompt_sections.append(text)
+        return "\n\n".join(prompt_sections).strip()
+
+    def get_tool_bundle(self, mode: str, *, content: str = "", active_skills: list[str] | None = None) -> dict[str, list[str]]:
+        registry = self._mode_registry()
+        definition = self._get_mode_definition(mode)
+        active_skills = _unique_strings(active_skills or self._resolve_active_skills(mode, content=content))
+        tools = _unique_strings(registry.get("basic_tools"))
+        tools.extend(_unique_strings(definition.get("tools")))
+        mcp_servers = _unique_strings(definition.get("mcp_servers"))
+        for skill_name in active_skills:
+            skill_definition = self._get_skill_definition(skill_name)
+            tools.extend(_unique_strings(skill_definition.get("tools")))
+            mcp_servers.extend(_unique_strings(skill_definition.get("mcp_servers")))
         return {
-            "tools": [str(item) for item in payload.get("tools", []) if str(item).strip()],
-            "mcp_servers": [str(item) for item in payload.get("mcp_servers", []) if str(item).strip()],
+            "tools": _unique_strings(tools),
+            "mcp_servers": _unique_strings(mcp_servers),
+            "active_skills": active_skills,
         }
 
     def build_route_for_mode(
@@ -667,31 +941,91 @@ class AssistantModeManager:
         requested_mode: str = ASSISTANT_MODE_AUTO,
         reason: str = "",
         content: str = "",
+        active_skills: list[str] | None = None,
+        source_profile: str = "",
+        loaded_skills: list[str] | None = None,
     ) -> RouteDecision:
         normalized_mode = _normalize_mode(mode)
-        bundle = self.get_tool_bundle(normalized_mode)
+        bundle = self.get_tool_bundle(normalized_mode, content=content, active_skills=active_skills)
         route_reason = str(reason or "").strip() or f"Selected mode: {normalized_mode}"
+        active_skills = list(bundle.get("active_skills", []))
+        loaded_skill_ids = _unique_strings(loaded_skills)
+        prompt_bundle_parts = [normalized_mode, *active_skills, *loaded_skill_ids]
         return RouteDecision(
             requested_mode=_normalize_mode(requested_mode, fallback=ASSISTANT_MODE_AUTO),
             current_mode=normalized_mode,
             route_reason=route_reason,
-            source_profile=self._default_source_profile_for_mode(normalized_mode, content),
+            source_profile=source_profile or self._default_source_profile_for_mode(normalized_mode, content),
             tool_bundle=bundle["tools"],
             mcp_servers=bundle["mcp_servers"],
-            prompt_bundle=normalized_mode,
+            prompt_bundle="+".join(prompt_bundle_parts) if prompt_bundle_parts else normalized_mode,
+            active_skills=active_skills,
+            loaded_skills=loaded_skill_ids,
         )
 
-    def get_prompt_for_mode(self, mode: str) -> str:
-        registry = self._mode_registry()
-        prompt_dir = registry.get("prompt_dir") or "prompt/modes"
-        prompt_path = Path(str(prompt_dir)) / mode
-        try:
-            return prompt_path.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            return _MODE_PROMPT_FALLBACKS.get(mode, "")
+    def get_prompt_for_mode(
+        self,
+        mode: str,
+        *,
+        content: str = "",
+        active_skills: list[str] | None = None,
+        loaded_skills: list[str] | None = None,
+    ) -> str:
+        if mode == "auto-router":
+            return self._resolve_prompt_text("auto-router")
+        return self.assemble_prompt_for_mode(
+            mode,
+            content=content,
+            active_skills=active_skills,
+            loaded_skills=loaded_skills,
+        )
+
+    def assemble_prompt_for_route(self, route_context: dict[str, Any] | None) -> str:
+        route_context = route_context or {}
+        return self.get_prompt_for_mode(
+            str(route_context.get("current_mode") or "").strip() or ASSISTANT_MODE_NORMAL,
+            content=str(route_context.get("content") or "").strip(),
+            active_skills=list(route_context.get("active_skills") or []),
+            loaded_skills=list(route_context.get("loaded_skills") or []),
+        )
 
     def get_auto_router_prompt(self) -> str:
         return self.get_prompt_for_mode("auto-router")
+
+    def list_skills(self, *, skill_type: str = "all", query: str = "") -> list[dict[str, Any]]:
+        return self._skill_registry.list_skills(skill_type=skill_type, query=query)
+
+    def load_skill(self, skill_id: str) -> dict[str, Any] | None:
+        return self._skill_registry.load_skill(skill_id)
+
+    def create_skill(
+        self,
+        *,
+        skill_id: str,
+        title: str,
+        summary: str,
+        content: str,
+        recommended_tools: list[str] | None = None,
+        applicable_modes: list[str] | None = None,
+        scenarios: list[str] | None = None,
+        source: str = "agent",
+    ) -> dict[str, Any]:
+        return self._skill_registry.create_skill(
+            skill_id=skill_id,
+            title=title,
+            summary=summary,
+            content=content,
+            recommended_tools=recommended_tools,
+            applicable_modes=applicable_modes,
+            scenarios=scenarios,
+            source=source,
+        )
+
+    def should_preload_context(self, query: str, goal: str = "") -> bool:
+        return self._semantic_router.should_preload_context(query, goal)
+
+    def is_live_web_query(self, query: str) -> bool:
+        return self._semantic_router.is_live_web_query(query)
 
     def get_trusted_write_roots(self) -> list[str]:
         configured = _parse_json_config(self._config.get("trusted_write_roots"))
@@ -727,6 +1061,9 @@ class AssistantModeManager:
         return False
 
     def classify_research_source_profile(self, text: str) -> str:
+        classified = self._semantic_router.classify_source_profile(text)
+        if classified:
+            return classified
         classified = self._source_catalog.classify_research_profile(text)
         if classified:
             return classified
@@ -754,49 +1091,16 @@ class AssistantModeManager:
             )
         ).to_dict()
 
-    def route(
-        self,
-        input_info: dict[str, Any],
-        *,
-        session_metadata: dict[str, Any] | None = None,
-        source=None,
-    ) -> RouteDecision:
+    def _restore_loaded_skills(self, session_metadata: dict[str, Any] | None) -> list[str]:
         session_metadata = session_metadata or {}
-        router_config = self.get_mode_router_config()
-        preferred_mode = _normalize_mode(
-            (input_info.get("metadata") or {}).get("preferred_mode")
-            or input_info.get("preferred_mode"),
-            fallback="",
-        )
-        has_explicit_preference = bool(preferred_mode)
-        requested_mode = _normalize_mode(
-            preferred_mode
-            or router_config.get("default_mode")
-            or ASSISTANT_MODE_NORMAL,
-            fallback=ASSISTANT_MODE_NORMAL,
-        )
+        current_route = session_metadata.get("current_route")
+        if isinstance(current_route, dict):
+            restored = _unique_strings(current_route.get("loaded_skills"))
+            if restored:
+                return restored
+        return _unique_strings(session_metadata.get("loaded_skills"))
 
-        content = str(input_info.get("content") or "").strip()
-        current_mode = _normalize_mode(session_metadata.get("current_mode") or "", fallback="")
-        if (
-            has_explicit_preference
-            and requested_mode in ASSISTANT_SPECIALIZED_MODES
-            and router_config.get("allow_preferred_override", True)
-        ):
-            return self.build_route_for_mode(
-                requested_mode,
-                requested_mode=requested_mode,
-                reason=f"Preferred mode override requested: {requested_mode}",
-                content=content,
-            )
-        if has_explicit_preference and requested_mode == ASSISTANT_MODE_NORMAL:
-            return self.build_route_for_mode(
-                ASSISTANT_MODE_NORMAL,
-                requested_mode=ASSISTANT_MODE_NORMAL,
-                reason="Preferred mode selected: normal",
-                content=content,
-            )
-
+    def _fallback_route_by_keywords(self, content: str, *, current_mode: str, sticky_current_mode: bool) -> tuple[str, str]:
         scores = {mode: 0 for mode in ASSISTANT_MODES}
         triggers = {mode: [] for mode in ASSISTANT_MODES}
         lowered = content.lower()
@@ -832,7 +1136,7 @@ class AssistantModeManager:
             if len(triggers["documents"]) < 4:
                 triggers["documents"].append("local_path")
 
-        if router_config.get("sticky_current_mode", True) and current_mode in ASSISTANT_MODES:
+        if sticky_current_mode and current_mode in ASSISTANT_MODES:
             scores[current_mode] += 1
             if len(triggers[current_mode]) < 4:
                 triggers[current_mode].append("sticky_current_mode")
@@ -845,15 +1149,78 @@ class AssistantModeManager:
                 if current_mode in ASSISTANT_MODES
                 else "No strong routing signal found; defaulting to normal for ordinary conversation."
             )
-        else:
-            matched = ", ".join(dict.fromkeys(triggers[best_mode])) or "keyword_match"
-            reason = f"Matched {best_mode} signals: {matched}"
+            return best_mode, reason
+
+        matched = ", ".join(dict.fromkeys(triggers[best_mode])) or "keyword_match"
+        return best_mode, f"Keyword fallback selected {best_mode}: {matched}"
+
+    def route(
+        self,
+        input_info: dict[str, Any],
+        *,
+        session_metadata: dict[str, Any] | None = None,
+        source=None,
+    ) -> RouteDecision:
+        session_metadata = session_metadata or {}
+        router_config = self.get_mode_router_config()
+        preferred_mode = _normalize_mode(
+            (input_info.get("metadata") or {}).get("preferred_mode")
+            or input_info.get("preferred_mode"),
+            fallback="",
+        )
+        has_explicit_preference = bool(preferred_mode)
+        requested_mode = _normalize_mode(
+            preferred_mode
+            or router_config.get("default_mode")
+            or ASSISTANT_MODE_NORMAL,
+            fallback=ASSISTANT_MODE_NORMAL,
+        )
+
+        content = str(input_info.get("content") or "").strip()
+        current_mode = _normalize_mode(session_metadata.get("current_mode") or "", fallback="")
+        loaded_skills = self._restore_loaded_skills(session_metadata)
+        if (
+            has_explicit_preference
+            and requested_mode in ASSISTANT_SPECIALIZED_MODES
+            and router_config.get("allow_preferred_override", True)
+        ):
+            return self.build_route_for_mode(
+                requested_mode,
+                requested_mode=requested_mode,
+                reason=f"Preferred mode override requested: {requested_mode}",
+                content=content,
+                loaded_skills=loaded_skills,
+            )
+        if has_explicit_preference and requested_mode == ASSISTANT_MODE_NORMAL:
+            return self.build_route_for_mode(
+                ASSISTANT_MODE_NORMAL,
+                requested_mode=ASSISTANT_MODE_NORMAL,
+                reason="Preferred mode selected: normal",
+                content=content,
+                loaded_skills=loaded_skills,
+            )
+
+        semantic_routing_enabled = bool(router_config.get("semantic_routing_enabled", True))
+        semantic_decision = self._semantic_router.analyze(
+            content,
+            current_mode=current_mode,
+            source_kind=getattr(source, "kind", "") or "",
+            sticky_current_mode=bool(router_config.get("sticky_current_mode", True)),
+            enable_keyword_fallback=semantic_routing_enabled and bool(router_config.get("fallback_to_heuristic", True)),
+        )
+        best_mode = semantic_decision.mode
+        reason = semantic_decision.reason
+        active_skills = semantic_decision.active_skills
+        source_profile = semantic_decision.source_profile
 
         return self.build_route_for_mode(
             best_mode,
             requested_mode=requested_mode,
             reason=reason,
             content=content,
+            active_skills=active_skills,
+            source_profile=source_profile,
+            loaded_skills=loaded_skills,
         )
 
     def _default_source_profile_for_mode(self, mode: str, content: str) -> str:

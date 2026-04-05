@@ -39,6 +39,7 @@ VALID_CONNECTOR_TYPES = {
     "nvd_api",
     "cisa_kev",
     "generic_json_api",
+    "rss_atom_feed",
     "whitelist_page_reader",
 }
 FALLBACK_SOURCE_PROFILES = {

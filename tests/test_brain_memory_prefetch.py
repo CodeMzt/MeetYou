@@ -67,7 +67,7 @@ class BrainMemoryPrefetchTests(unittest.IsolatedAsyncioTestCase):
             "query": "What is my name?",
             "found": True,
             "profile": [{"fact_key": "name", "fact_value": "A Ming", "score": 0.91}],
-            "tasks": [],
+            "facts": [],
             "recent_events": [],
         })
         self.context_manager = FakeContextManager()

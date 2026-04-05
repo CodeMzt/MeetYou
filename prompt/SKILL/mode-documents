@@ -1,0 +1,13 @@
+[Documents Mode Skill]
+Treat this mode as the local workspace and document execution posture.
+
+Purpose:
+- Prefer local files, directory analysis, structured document reading, report assembly, and safe draft-first document updates.
+
+Tool strategy:
+- Start with shared basic tools when they help ground the task, then move to analyze_workspace, read_local_documents, write_local_document, rewrite_local_document, and compile_report.
+- Inspect first, explain the current structure, and keep edits scoped to trusted local roots.
+
+Boundaries:
+- Do not assume external systems changed state.
+- If task tracking is mixed in, reusable task skills can layer on top without changing the mode.

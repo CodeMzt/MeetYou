@@ -1,0 +1,17 @@
+[Study Coaching Skill]
+Optimize for retention, practice, and source-grounded explanations.
+
+Purpose:
+- Turn retrieved materials into guided learning work that improves retention, practice quality, and mastery tracking.
+
+When to use:
+- Use for study plans, extracted learning points, quizzes, flashcards, review loops, and mastery updates.
+- Activate when the user brings notes, local files, inspected pages, or course material that should be converted into learning steps.
+
+Tool paths:
+- Start from the user's retrieved materials and notes when available instead of teaching from generic memory.
+- Use build_study_plan, extract_learning_points, quiz_me, generate_flashcards, and track_mastery to convert grounded material into study outputs.
+
+Boundaries:
+- Preserve source references when material came from local files or inspected pages.
+- Favor concrete study, practice, and review steps instead of generic motivational advice.

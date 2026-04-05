@@ -99,6 +99,7 @@ class Heart:
         self._last_heartbeat_signal_kind = "none"
         self._last_heartbeat_signal_at = ""
         self._last_heartbeat_signal_message = ""
+        self._last_heartbeat_signal_fingerprint = ""
         self._last_idle_poke_at = ""
 
     async def init_heart(self):
@@ -249,7 +250,7 @@ class Heart:
     @staticmethod
     def _normalize_signal_kind(value: Any) -> str:
         normalized = str(value or "none").strip().lower() or "none"
-        if normalized not in {"none", "urgent_deadline", "system_issue", "idle_poke"}:
+        if normalized not in {"none", "system_issue", "idle_poke"}:
             return "none"
         return normalized
 
@@ -270,15 +271,6 @@ class Heart:
         return raw[:120].strip()
 
     def _fallback_signal_message(self, signal_kind: str, payload: dict[str, Any]) -> str:
-        if signal_kind == "urgent_deadline":
-            task = payload.get("nearest_due_task") or {}
-            summary = str(task.get("summary") or task.get("task_key") or "近期任务").strip()
-            minutes = task.get("minutes_until_due")
-            if task.get("overdue"):
-                return f"任务“{summary}”已经过期，建议尽快处理。"
-            if isinstance(minutes, int):
-                return f"任务“{summary}”将在约{max(minutes, 0)}分钟后到期，建议尽快确认下一步。"
-            return f"任务“{summary}”即将到期，建议尽快确认下一步。"
         if signal_kind == "system_issue":
             if payload.get("repeated_failure_tasks"):
                 task = payload["repeated_failure_tasks"][0]
@@ -294,18 +286,6 @@ class Heart:
         return ""
 
     def _canonical_signal_message(self, signal_kind: str, payload: dict[str, Any]) -> str:
-        if signal_kind == "urgent_deadline":
-            task = payload.get("nearest_due_task") or {}
-            summary = str(task.get("summary") or task.get("task_key") or "scheduled task").strip()
-            minutes = task.get("minutes_until_due")
-            if task.get("overdue"):
-                return f'Nearest urgent task "{summary}" is overdue. Focus only on that task and the next step.'
-            if isinstance(minutes, int):
-                return (
-                    f'Nearest urgent task "{summary}" is due in about {max(minutes, 0)} minutes. '
-                    "Focus only on that task and the next step."
-                )
-            return f'Nearest urgent task "{summary}" is due soon. Focus only on that task and the next step.'
         if signal_kind == "system_issue":
             if payload.get("repeated_failure_tasks"):
                 task = payload["repeated_failure_tasks"][0]
@@ -328,7 +308,7 @@ class Heart:
                 "Keep the follow-up short."
             )
         if signal_kind == "idle_poke":
-            return "There is no urgent deadline or critical issue. A single short casual check-in is enough."
+            return "There is no critical system issue. A single short casual check-in is enough."
         return self._fallback_signal_message(signal_kind, payload)
 
     def _signal_cooldown_seconds(self, signal_kind: str) -> int:
@@ -336,11 +316,47 @@ class Heart:
             return _IDLE_POKE_COOLDOWN_SECONDS
         return _DEFAULT_SIGNAL_COOLDOWN_SECONDS
 
-    def _signal_in_cooldown(self, signal_kind: str, message: str) -> bool:
+    def _signal_fingerprint(self, signal_kind: str, payload: dict[str, Any]) -> str:
+        if signal_kind == "system_issue":
+            issues: list[str] = []
+            repeated_failure_tasks = payload.get("repeated_failure_tasks") or []
+            repeated_task_keys = [
+                str(task.get("task_key") or task.get("summary") or "").strip()
+                for task in repeated_failure_tasks
+                if str(task.get("task_key") or task.get("summary") or "").strip()
+            ]
+            if repeated_task_keys:
+                issues.append("repeated:" + ",".join(sorted(dict.fromkeys(repeated_task_keys))[:3]))
+            if payload.get("scheduler_stalled"):
+                issues.append("scheduler_stalled")
+            if payload.get("housekeeping_stalled"):
+                issues.append("housekeeping_stalled")
+            if str(payload.get("last_housekeeping_error") or "").strip():
+                issues.append("housekeeping_error")
+            if issues:
+                return "system_issue:" + "|".join(issues)
+        if signal_kind == "idle_poke":
+            session_id = str(payload.get("recent_user_session_id") or "").strip()
+            last_user_activity_at = str(payload.get("last_user_activity_at") or "").strip()
+            if session_id or last_user_activity_at:
+                return f"idle_poke:{session_id}|{last_user_activity_at}"
+        single_sentence = signal_kind == "idle_poke"
+        message = self._sanitize_message(
+            self._canonical_signal_message(signal_kind, payload),
+            single_sentence=single_sentence,
+        )
+        return f"{signal_kind}:{message}"
+
+    def _signal_in_cooldown(self, signal_kind: str, signal_fingerprint: str, message: str) -> bool:
         last_sent_at = _iso_to_dt(self._last_heartbeat_signal_at)
         if last_sent_at is None:
             return False
-        if self._last_heartbeat_signal_kind != signal_kind or self._last_heartbeat_signal_message != message:
+        if self._last_heartbeat_signal_kind != signal_kind:
+            return False
+        if self._last_heartbeat_signal_fingerprint:
+            if self._last_heartbeat_signal_fingerprint != signal_fingerprint:
+                return False
+        elif self._last_heartbeat_signal_message != message:
             return False
         cooldown = timedelta(seconds=self._signal_cooldown_seconds(signal_kind))
         return last_sent_at > datetime.now(timezone.utc) - cooldown
@@ -355,14 +371,10 @@ class Heart:
             signal_kind = "none"
 
         system_issue_candidates = self._build_system_issue_candidates(background_status)
-        urgent_due_task_count = int(background_status.get("urgent_due_task_count") or 0)
         has_recent_user_session = bool(str(background_status.get("last_user_activity_at") or "").strip())
         idle_poke_eligible = bool(background_status.get("idle_poke_eligible"))
 
-        if signal_kind == "urgent_deadline" and urgent_due_task_count <= 0:
-            decision = "ok"
-            signal_kind = "none"
-        elif signal_kind == "system_issue" and not system_issue_candidates:
+        if signal_kind == "system_issue" and not system_issue_candidates:
             decision = "ok"
             signal_kind = "none"
         elif signal_kind == "idle_poke" and not idle_poke_eligible:
@@ -374,26 +386,31 @@ class Heart:
 
         single_sentence = signal_kind == "idle_poke"
         message = ""
+        signal_fingerprint = ""
         if decision != "ok" and signal_kind != "none":
             message = self._sanitize_message(
                 self._canonical_signal_message(signal_kind, background_status),
                 single_sentence=single_sentence,
             )
+            signal_fingerprint = self._signal_fingerprint(signal_kind, background_status)
 
         if decision == "ok" or signal_kind == "none":
             message = ""
             signal_kind = "none"
+            signal_fingerprint = ""
             decision = "ok"
 
-        if message and self._signal_in_cooldown(signal_kind, message):
+        if message and signal_fingerprint and self._signal_in_cooldown(signal_kind, signal_fingerprint, message):
             message = ""
             signal_kind = "none"
+            signal_fingerprint = ""
             decision = "ok"
 
         return {
             "decision": decision,
             "signal_kind": signal_kind,
             "message": message,
+            "signal_fingerprint": signal_fingerprint,
             "reasons": list(payload.get("reasons") or []),
             "confidence": str(payload.get("confidence") or "medium").strip().lower() or "medium",
         }
@@ -427,12 +444,18 @@ class Heart:
                 "last_housekeeping_error": self._last_housekeeping_error,
             }
         )
+        payload["system"] = {
+            "scheduler_stalled": scheduler_stalled,
+            "housekeeping_stalled": housekeeping_stalled,
+            "pending_consolidation_stale": pending_consolidation_stale,
+            "last_housekeeping_error": self._last_housekeeping_error,
+            "system_issue_candidates": list(payload.get("system_issue_candidates") or []),
+        }
         payload["last_idle_poke_at"] = self._last_idle_poke_at
         payload["idle_poke_eligible"] = bool(
             has_recent_user_session
             and idle_window_ready
             and idle_cooldown_ready
-            and int(payload.get("urgent_due_task_count") or 0) == 0
             and not payload["system_issue_candidates"]
         )
         payload.update(
@@ -489,15 +512,22 @@ class Heart:
                 self._last_scheduler_claim_count = len(claimed)
                 for record in claimed:
                     control_kind = "scheduled_task" if record.get("auto_run") else "scheduled_reminder"
+                    claim_token = str(record.get("active_claim_token") or "").strip()
                     await self._event_bus.inbound_queue.put(
                         InboundEvent(
                             session_id=f"system:task:{record.get('task_key', '')}",
                             type=EventType.CONTROL.value,
                             role="system",
-                            content={"task_key": record.get("task_key", "")},
+                            content={
+                                "task_key": record.get("task_key", ""),
+                                "claim_token": claim_token,
+                            },
                             source=self._source,
                             target=EventTarget(kind=TargetKind.INTERNAL.value),
-                            metadata={"control_kind": control_kind},
+                            metadata={
+                                "control_kind": control_kind,
+                                "claim_token": claim_token,
+                            },
                         )
                     )
             except Exception as exc:
@@ -580,6 +610,7 @@ class Heart:
                     decision = normalized["decision"]
                     signal_kind = normalized["signal_kind"]
                     message = normalized["message"]
+                    signal_fingerprint = normalized["signal_fingerprint"]
                     self._last_heartbeat_at = _utcnow_iso()
                     self._last_heartbeat_decision = decision
                     self._last_heartbeat_summary = message
@@ -589,6 +620,7 @@ class Heart:
                         emitted_at = _utcnow_iso()
                         self._last_heartbeat_signal_kind = signal_kind
                         self._last_heartbeat_signal_message = message
+                        self._last_heartbeat_signal_fingerprint = signal_fingerprint
                         self._last_heartbeat_signal_at = emitted_at
                         if signal_kind == "idle_poke":
                             self._last_idle_poke_at = emitted_at
@@ -608,8 +640,6 @@ class Heart:
                                 },
                             )
                         )
-                    else:
-                        self._last_heartbeat_signal_kind = "none"
                 except Exception as exc:
                     logger.error("Heartbeat request failed: %s", exc)
                     self._last_heartbeat_at = _utcnow_iso()

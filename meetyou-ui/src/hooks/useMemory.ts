@@ -4,19 +4,24 @@ export interface MemoryRecord {
   id: string;
   type: string;
   content: string;
+  label?: string;
   status: string;
   strength: number;
   importance: number;
   confidence: number;
   created_at: string;
+  last_accessed_at?: string;
   last_updated_at: string;
+  access_count?: number;
   tags: string[];
-  project?: string;
-  task_status?: string;
-  deadline?: string;
+  entity_keys?: string[];
+  source_record_ids?: string[];
+  scope?: {
+    user_id: string;
+    session_id: string;
+  };
   fact_key?: string;
   fact_value?: string;
-  task_key?: string;
 }
 
 export interface MemoryEdge {

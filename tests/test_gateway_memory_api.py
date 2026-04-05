@@ -28,12 +28,9 @@ class GatewayMemoryApiTests(unittest.TestCase):
                 "records": [
                     {
                         "id": "pf_1",
-                        "type": "profile_fact",
+                        "type": "profile",
                         "scope": {"user_id": source_id or "global", "session_id": ""},
                         "content": "name: 阿明",
-                        "canonical_text": "name: 阿明",
-                        "embedding": [0.1, 0.2],
-                        "embedding_model": "text-embedding-3-small",
                         "strength": 0.72,
                         "importance": 0.9,
                         "confidence": 0.95,
@@ -47,17 +44,13 @@ class GatewayMemoryApiTests(unittest.TestCase):
                         "source_record_ids": [],
                         "fact_key": "name",
                         "fact_value": "阿明",
-                        "task_key": None,
-                        "project": None,
-                        "task_status": None,
-                        "deadline": None,
                     }
                 ],
                 "edges": [],
                 "stats": {
                     "record_count": 1,
                     "edge_count": 0,
-                    "by_type": {"profile_fact": 1, "task": 0, "episode": 0},
+                    "by_type": {"profile": 1, "fact": 0, "episode": 0},
                 },
             }
 
@@ -80,7 +73,7 @@ class GatewayMemoryApiTests(unittest.TestCase):
                 "nodes": [
                     {
                         "id": "pf_1",
-                        "type": "profile_fact",
+                        "type": "profile",
                         "label": "阿明",
                         "content": "name: 阿明",
                         "status": "active",
@@ -97,17 +90,13 @@ class GatewayMemoryApiTests(unittest.TestCase):
                         "source_record_ids": [],
                         "fact_key": "name",
                         "fact_value": "阿明",
-                        "task_key": None,
-                        "project": None,
-                        "task_status": None,
-                        "deadline": None,
                     }
                 ],
                 "edges": [],
                 "stats": {
                     "record_count": 1,
                     "edge_count": 0,
-                    "by_type": {"profile_fact": 1, "task": 0, "episode": 0},
+                    "by_type": {"profile": 1, "fact": 0, "episode": 0},
                 },
             }
 
