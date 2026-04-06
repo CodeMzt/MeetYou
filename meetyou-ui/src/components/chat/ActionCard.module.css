@@ -1,0 +1,89 @@
+.cardWrapper {
+  margin-top: var(--spacing-sm);
+  padding: 0;
+  display: flex;
+  justify-content: flex-end;
+  position: relative;
+  z-index: 60;
+}
+
+.actionCard {
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-focus);
+  padding: var(--spacing-md);
+  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-md);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  color: var(--text-primary);
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+  font-size: 14px;
+}
+
+.icon {
+  color: var(--text-accent);
+}
+
+.content {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-md);
+  line-height: 1.5;
+}
+
+.buttonGroup {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.btnCancel {
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--text-primary);
+}
+
+.btnCancel:hover {
+  background: rgba(128, 128, 128, 0.2);
+}
+
+.btnConfirm {
+  background: var(--text-accent);
+  color: var(--text-inverse);
+}
+
+.btnConfirm:hover {
+  filter: brightness(1.1);
+}
+
+/* Input Request Styles */
+.inputField {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  margin-bottom: var(--spacing-md);
+  transition: border-color 0.2s;
+}
+
+.inputField:focus {
+  border-color: var(--border-focus);
+  outline: none;
+}

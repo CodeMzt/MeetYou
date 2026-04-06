@@ -1,0 +1,118 @@
+.islandContainer {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.islandPill {
+  background: var(--bg-island);
+  backdrop-filter: var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--shadow-island);
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  color: var(--text-primary);
+  pointer-events: auto;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background-color 0.2s ease;
+}
+
+.islandPill:hover {
+  background: var(--bg-card);
+}
+
+.islandContent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.statusIndicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.statusIndicator.online {
+  background: #34c759;
+  box-shadow: 0 0 8px #34c75988;
+}
+
+.statusIndicator.thinking {
+  background: var(--text-accent);
+  box-shadow: 0 0 8px var(--text-accent);
+}
+
+.statusIndicator.error {
+  background: #ff3b30;
+  box-shadow: 0 0 8px #ff3b3088;
+}
+
+.usageDropdown {
+  margin-top: 12px;
+  width: 320px;
+  padding: 16px;
+  pointer-events: auto;
+  font-size: 13px;
+}
+
+.usageHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.usageBar {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: rgba(128, 128, 128, 0.2);
+  overflow: hidden;
+  display: flex;
+  margin-bottom: 12px;
+}
+
+.usageChunk {
+  height: 100%;
+}
+
+.usageChunk.system { background: #ff9500; }
+.usageChunk.history { background: #34c759; }
+.usageChunk.memory { background: #af52de; }
+.usageChunk.current { background: var(--text-accent); }
+
+.usageLegend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}

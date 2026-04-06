@@ -794,6 +794,7 @@ class OpenAIAdapter(LLMAdapter):
         model,
         messages,
         tools=None,
+        cancel_event=None,
         **kwargs,
     ) -> AsyncGenerator[StreamEvent, None]:
         if self._is_official_openai(url):
@@ -806,6 +807,8 @@ class OpenAIAdapter(LLMAdapter):
                 tools,
                 **kwargs,
             ):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 yield event
             return
 
@@ -833,6 +836,8 @@ class OpenAIAdapter(LLMAdapter):
                 payload=payload,
                 model=model,
             ):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 yield event
         except ProviderRequestError as exc:
             retry_payload = self._build_retry_payload_for_compatible_400(payload, exc.runtime_error_payload)
@@ -851,6 +856,8 @@ class OpenAIAdapter(LLMAdapter):
                 payload=retry_payload,
                 model=model,
             ):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 yield event
 
     async def chat(self, session, url, api_key, model, messages, tools=None, **kwargs) -> dict:

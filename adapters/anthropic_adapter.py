@@ -137,6 +137,7 @@ class AnthropicAdapter(LLMAdapter):
         model,
         messages,
         tools=None,
+        cancel_event=None,
         **kwargs,
     ) -> AsyncGenerator[StreamEvent, None]:
         msg_data = self.format_messages(messages)
@@ -164,6 +165,8 @@ class AnthropicAdapter(LLMAdapter):
         async with session.post(url, headers=headers, json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.content:
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 raw = line.decode("utf-8").strip()
                 if not raw.startswith("data:"):
                     continue
@@ -204,9 +207,10 @@ class AnthropicAdapter(LLMAdapter):
                 elif evt == "message_stop":
                     break
 
-        if tool_calls:
-            yield StreamEvent(type="tool_calls", tool_calls=tool_calls)
-        yield StreamEvent(type="done")
+        if cancel_event is None or not cancel_event.is_set():
+            if tool_calls:
+                yield StreamEvent(type="tool_calls", tool_calls=tool_calls)
+            yield StreamEvent(type="done")
 
     async def chat(self, session, url, api_key, model, messages, tools=None, **kwargs) -> dict:
         msg_data = self.format_messages(messages)
