@@ -41,6 +41,9 @@ _DEFAULT_TOOL_ACTION_RISKS: dict[str, str] = {
     "quiz_me": "read",
     "generate_flashcards": "read",
     "track_mastery": "local_write",
+    "summarize_text": "read",
+    "organize_notes": "read",
+    "extract_action_items": "read",
 }
 
 

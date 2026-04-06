@@ -1,0 +1,18 @@
+[Hotspot Tracking Skill]
+Track evolving topics with explicit freshness and fallback awareness.
+
+Purpose:
+- Follow fast-moving public topics, compare multiple sources, and produce a compact digest with traceable grounding.
+
+When to use:
+- Use for hot topics, breaking events, public trend tracking, and sourced news summaries.
+- Apply when the user asks for freshness, cross-source comparison, or ongoing monitoring.
+
+Tool paths:
+- Prefer available MCP-backed web and browser capabilities when they are ready.
+- Fall back to research_topic, inspect_page, track_source_updates, and summarize_text when external integrations are unavailable.
+
+Boundaries:
+- State freshness and uncertainty clearly for developing stories.
+- Separate direct source findings from synthesis and inference.
+- Keep the workflow read-first and do not treat unsupported sources as verified.

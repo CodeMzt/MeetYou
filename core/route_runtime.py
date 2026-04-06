@@ -23,6 +23,9 @@ class RouteRuntime:
     used_keyword_fallback: bool = False
     authorization_policy: dict[str, Any] | None = None
     capability_set: dict[str, Any] | None = None
+    skill_activations: list[dict[str, Any]] | None = None
+    capability_sources: dict[str, Any] | None = None
+    degradation_notes: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +46,9 @@ class RouteRuntime:
             "used_keyword_fallback": bool(self.used_keyword_fallback),
             "authorization_policy": dict(self.authorization_policy or {}),
             "capability_set": dict(self.capability_set or {}),
+            "skill_activations": [dict(item) for item in (self.skill_activations or [])],
+            "capability_sources": dict(self.capability_sources or {}),
+            "degradation_notes": [dict(item) for item in (self.degradation_notes or [])],
         }
 
     @classmethod
@@ -66,4 +72,7 @@ class RouteRuntime:
             used_keyword_fallback=bool(payload.get("used_keyword_fallback", False)),
             authorization_policy=dict(payload.get("authorization_policy") or {}),
             capability_set=dict(payload.get("capability_set") or {}),
+            skill_activations=[dict(item) for item in payload.get("skill_activations", []) if isinstance(item, dict)],
+            capability_sources=dict(payload.get("capability_sources") or {}),
+            degradation_notes=[dict(item) for item in payload.get("degradation_notes", []) if isinstance(item, dict)],
         )

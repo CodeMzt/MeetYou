@@ -47,6 +47,35 @@ class PromptAssembler:
             skill_content = str((skill_capability.content if skill_capability is not None else "") or "").strip()
             if skill_content and skill_content not in prompt_sections:
                 prompt_sections.append(skill_content)
+        plan_lines: list[str] = ["[Capability Plan]"]
+        if capability_set.scene_ids:
+            plan_lines.append(f"Scenes: {', '.join(capability_set.scene_ids)}")
+        if capability_set.skill_activations:
+            skill_bits = []
+            for item in capability_set.skill_activations:
+                skill_id = str(item.get("skill_id") or "").strip()
+                reason = str(item.get("reason") or "").strip()
+                if not skill_id:
+                    continue
+                skill_bits.append(f"{skill_id} ({reason})" if reason else skill_id)
+            if skill_bits:
+                plan_lines.append(f"Skills: {'; '.join(skill_bits)}")
+        preferred_servers = [
+            item["server_name"]
+            for item in capability_set.mcp_diagnostics
+            if item.get("usable")
+        ]
+        degraded_servers = [
+            f"{item['server_name']} -> {', '.join(item.get('fallback_tools') or [])}"
+            for item in capability_set.mcp_diagnostics
+            if item.get("degraded")
+        ]
+        if preferred_servers:
+            plan_lines.append(f"Preferred MCP: {', '.join(preferred_servers)}")
+        if degraded_servers:
+            plan_lines.append(f"Fallbacks: {'; '.join(degraded_servers)}")
+        if len(plan_lines) > 1:
+            prompt_sections.append("\n".join(plan_lines))
         return "\n\n".join(prompt_sections).strip()
 
     def assemble_for_route(self, route_context: dict[str, Any] | None) -> str:

@@ -146,6 +146,19 @@ class SemanticRouterAgentTests(unittest.TestCase):
         self.assertEqual(world, "world_affairs")
         self.assertEqual(frontier, "frontier_tech")
 
+    def test_evaluate_skill_activation_returns_reasoned_decision(self):
+        agent = SemanticRouterAgent()
+
+        decision = agent.evaluate_skill_activation(
+            "knowledge_synthesis",
+            "Please summarize these notes, organize the outline, and extract action items.",
+            mode="office",
+        )
+
+        self.assertTrue(decision.value)
+        self.assertIn(decision.confidence, {"high", "medium"})
+        self.assertTrue(decision.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

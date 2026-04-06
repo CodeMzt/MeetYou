@@ -134,6 +134,36 @@ _DEFAULT_REUSABLE_SKILL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "track_mastery",
         ],
     },
+    "knowledge_synthesis": {
+        "id": "knowledge_synthesis",
+        "skill_type": "reusable",
+        "title": "Knowledge Synthesis Skill",
+        "summary": "把材料提炼为摘要、结构化笔记与重点行动项。",
+        "file_name": "knowledge-synthesis",
+        "applicable_modes": ["normal", "documents", "research", "office", "study"],
+        "scenarios": ["summaries", "outlines", "structured notes"],
+        "recommended_tools": ["summarize_text", "organize_notes", "extract_action_items"],
+    },
+    "office_coordination": {
+        "id": "office_coordination",
+        "skill_type": "reusable",
+        "title": "Office Coordination Skill",
+        "summary": "将会议与协同材料转成简报、待办与后续沟通稿。",
+        "file_name": "office-coordination",
+        "applicable_modes": ["office", "documents"],
+        "scenarios": ["meeting notes", "coordination briefs", "follow-up actions"],
+        "recommended_tools": ["organize_notes", "extract_action_items", "meeting_brief", "draft_message"],
+    },
+    "hotspot_tracking": {
+        "id": "hotspot_tracking",
+        "skill_type": "reusable",
+        "title": "Hotspot Tracking Skill",
+        "summary": "追踪热点话题、多源比对并形成结构化摘要。",
+        "file_name": "hotspot-tracking",
+        "applicable_modes": ["normal", "research"],
+        "scenarios": ["news digests", "hot topics", "trend tracking"],
+        "recommended_tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
+    },
 }
 
 

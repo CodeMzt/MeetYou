@@ -1,0 +1,19 @@
+[Knowledge Synthesis Skill]
+Transform raw material into concise, structured understanding.
+
+Purpose:
+- Distill notes, source excerpts, and rough drafts into summaries, outlines, and clear takeaways.
+
+When to use:
+- Use for summarization, note cleanup, action-item extraction, and low-cost structure building.
+- Prefer this skill when the user needs clarity, not heavy external research.
+
+Tool paths:
+- Start with summarize_text for a concise digest.
+- Use organize_notes to reshape rough content into sections.
+- Use extract_action_items when the text implies next steps, owners, or follow-ups.
+
+Boundaries:
+- Preserve source wording for critical claims.
+- Do not invent owners, deadlines, or facts that are not present in the material.
+- Escalate to research or document workflows only when lightweight restructuring is insufficient.

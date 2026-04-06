@@ -69,6 +69,9 @@ def _populate_skill_dir(target_dir: Path) -> None:
         "task-recognition",
         "research-grounding",
         "study-coaching",
+        "knowledge-synthesis",
+        "office-coordination",
+        "hotspot-tracking",
         "mode-normal",
         "mode-documents",
         "mode-research",
@@ -186,6 +189,9 @@ class AssistantModeManagerTests(unittest.TestCase):
             "task-recognition",
             "research-grounding",
             "study-coaching",
+            "knowledge-synthesis",
+            "office-coordination",
+            "hotspot-tracking",
             "mode-normal",
             "mode-documents",
             "mode-research",
@@ -268,8 +274,77 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("list_skills", route.tool_bundle)
         self.assertIn("load_skill", route.tool_bundle)
         self.assertIn("create_skill", route.tool_bundle)
+        self.assertIn("summarize_text", route.tool_bundle)
         self.assertTrue(route.authorization_policy["read_only"])
         self.assertIn("mode:research", route.authorization_policy["policy_sources"])
+
+    def test_route_records_capability_sources_and_skill_activation_reasons(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        route = manager.route(
+            {
+                "content": "Summarize these meeting notes into action items and a structured outline.",
+                "metadata": {},
+            },
+            session_metadata={},
+            source=SimpleNamespace(kind="desktop", id="desktop-user"),
+        )
+
+        self.assertIn("knowledge_synthesis", route.active_skills or [])
+        self.assertTrue(route.skill_activations)
+        self.assertIn("knowledge_synthesis", route.capability_sources.get("skills", {}))
+        self.assertIn("summarize_text", route.capability_sources.get("tools", {}))
+        self.assertIn("Skills ->", route.route_reason)
+
+    def test_capability_diagnostics_reports_mcp_fallback_states(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        diagnostics = manager.get_capability_diagnostics(
+            tool_names=[
+                "ask_human",
+                "get_current_system_time",
+                "search_knowledge",
+                "search_memory",
+                "search_web",
+                "read_web_page",
+                "remember_knowledge",
+                "manage_memories",
+                "list_skills",
+                "load_skill",
+                "create_skill",
+                "summarize_text",
+                "organize_notes",
+                "extract_action_items",
+                "get_sys_vitals",
+                "research_topic",
+                "inspect_page",
+                "track_source_updates",
+                "exec_sys_cmd",
+                "analyze_workspace",
+                "read_local_documents",
+                "write_local_document",
+                "rewrite_local_document",
+                "compile_report",
+                "manage_schedule",
+                "draft_message",
+                "meeting_brief",
+                "sync_notes",
+                "build_study_plan",
+                "extract_learning_points",
+                "quiz_me",
+                "generate_flashcards",
+                "track_mastery",
+                "manage_tasks",
+                "manage_scheduled_tasks",
+            ],
+            available_mcp_servers=["filesystem_tools"],
+            configured_mcp_servers=["filesystem_tools", "tavily_web", "notion_knowledge"],
+        )
+
+        mcp_states = {item["server_name"]: item for item in diagnostics["mcp_servers"]}
+        self.assertEqual(mcp_states["filesystem_tools"]["status"], "enabled")
+        self.assertIn(mcp_states["tavily_web"]["status"], {"requires_auth", "unavailable", "not_enabled"})
+        self.assertTrue(mcp_states["tavily_web"]["fallback_tools"])
 
     def test_skill_management_tools_are_available_in_all_modes(self):
         manager = AssistantModeManager(_FakeConfig())
@@ -433,6 +508,12 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "list_skills",
                     "load_skill",
                     "create_skill",
+                "summarize_text",
+                "organize_notes",
+                "extract_action_items",
+                    "get_sys_vitals",
+                    "organize_notes",
+                    "extract_action_items",
                     "get_sys_vitals",
                     "research_topic",
                     "inspect_page",
