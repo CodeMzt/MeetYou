@@ -1,20 +1,34 @@
 """
 统一日志配置。
-
-支持按组件拆分日志文件，并可选接管控制台输出。
-格式: [2026-03-29 20:00:00] [meetyou.module] [LEVEL] message
 """
 
+import json
 import logging
 import os
 from datetime import datetime
 
+from core.runtime_context import get_correlation_context
+
+
+class StructuredFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "logger": record.name,
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "context": get_correlation_context(),
+        }
+        structured_data = getattr(record, "structured_data", None)
+        if isinstance(structured_data, dict) and structured_data:
+            payload["data"] = structured_data
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
 
 def _build_formatter() -> logging.Formatter:
-    return logging.Formatter(
-        "[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    return StructuredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
 
 
 def _reset_logger(logger: logging.Logger, level: int):

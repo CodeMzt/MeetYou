@@ -35,12 +35,27 @@
       }
     }
   },
+  "mode_router": {
+    "default_mode": "normal",
+    "sticky_current_mode": true,
+    "allow_preferred_override": true,
+    "allow_in_turn_switch": true,
+    "max_switches_per_turn": 2,
+    "fallback_to_heuristic": true
+  },
+  "trusted_write_roots": [
+    "docs",
+    "user"
+  ],
   "source_catalog_path": "user/source_catalog.json",
   "cmd_policy_path": "user/cmd_policy.json",
   "mcp_registry_url": "https://registry.modelcontextprotocol.io/v0.1/servers",
   "research_contact_email": "",
   "enable_feishu_bot": false,
-  "enable_gateway": true,
+  "gateway_cors_origins": [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173"
+  ],
   "gateway_host": "127.0.0.1",
   "gateway_port": 8000,
   "feishu_broadcast_chat_ids": []

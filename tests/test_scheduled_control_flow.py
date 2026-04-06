@@ -46,12 +46,24 @@ class _FakeTaskManager:
             return True
         return task_key == self._record.get("task_key") and expected == claim_token
 
-    async def complete_due_notification(self, task_key: str, *, summary: str, delivered: bool, now=None):
-        del now
+    async def complete_due_notification(
+        self,
+        task_key: str,
+        *,
+        summary: str,
+        delivered: bool,
+        runtime_source="",
+        delivery_channel="task_update",
+        delivery_details=None,
+        now=None,
+    ):
+        del delivery_details, now
         self.completed_due = {
             "task_key": task_key,
             "summary": summary,
             "delivered": delivered,
+            "runtime_source": runtime_source,
+            "delivery_channel": delivery_channel,
         }
         return copy.deepcopy(self._record)
 
@@ -63,14 +75,28 @@ class _FakeTaskManager:
         summary: str,
         next_retry_seconds=900,
         delivered: bool = True,
+        completed: bool = False,
+        failure_category="",
+        failure_retryable=None,
+        failure_code="",
+        failure_details=None,
+        runtime_source="",
+        delivery_channel="task_update",
+        delivery_details=None,
         now=None,
     ):
-        del next_retry_seconds, now
+        del next_retry_seconds, failure_details, delivery_details, now
         self.completed_run = {
             "task_key": task_key,
             "succeeded": succeeded,
             "summary": summary,
             "delivered": delivered,
+            "completed": completed,
+            "failure_category": failure_category,
+            "failure_retryable": failure_retryable,
+            "failure_code": failure_code,
+            "runtime_source": runtime_source,
+            "delivery_channel": delivery_channel,
         }
         return copy.deepcopy(self._record)
 
@@ -283,7 +309,19 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
             "origin_session_id": "web:session-3",
             "scope": {"user_id": "user-3"},
         }
-        app = self._make_app(task_record, {"status": "error", "content": "Error: digest sync failed."})
+        app = self._make_app(
+            task_record,
+            {
+                "status": "error",
+                "content": "Digest sync failed.",
+                "error": {
+                    "category": "manual_intervention",
+                    "retryable": False,
+                    "code": "digest_sync_denied",
+                    "details": {"provider": "digest-api"},
+                },
+            },
+        )
 
         delivered_messages = []
 
@@ -311,8 +349,11 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(app.task_manager.completed_run["succeeded"])
         self.assertTrue(app.task_manager.completed_run["delivered"])
         self.assertIn("Scheduled task failed:", app.task_manager.completed_run["summary"])
+        self.assertEqual(app.task_manager.completed_run["failure_category"], "manual_intervention")
+        self.assertFalse(app.task_manager.completed_run["failure_retryable"])
+        self.assertEqual(app.task_manager.completed_run["runtime_source"], "app.scheduled_task")
         self.assertEqual(len(delivered_messages), 1)
-        self.assertIn("Error: digest sync failed.", delivered_messages[0]["message"])
+        self.assertIn("Digest sync failed.", delivered_messages[0]["message"])
 
     async def test_scheduled_control_ignores_stale_claim_token(self):
         task_record = {

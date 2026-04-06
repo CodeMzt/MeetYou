@@ -8,6 +8,7 @@ import json
 import re
 from typing import Any, Awaitable, Callable
 
+from core.tool_runtime.models import ToolCallResult, ToolErrorCategory, ToolSourceType
 from tools.agent_memory import AgentMemoryTools
 from tools.authoritative_sources import AuthoritativeSourceRegistry
 from tools.task_manager import TaskManager
@@ -116,6 +117,16 @@ def _extract_json_payload(text: str) -> dict[str, Any] | list[Any] | None:
         except (TypeError, json.JSONDecodeError):
             continue
     return None
+
+
+def _tool_failure_message(result: ToolCallResult) -> str:
+    if result.error is None:
+        return ""
+    message = _normalize_text(result.error.message)
+    backend_error = _normalize_text(result.error.details.get("backend_error")) if isinstance(result.error.details, dict) else ""
+    if backend_error:
+        return f"{message} {backend_error}".strip()
+    return message
 
 
 def _collect_strings(value: Any, *, limit: int = 12) -> list[str]:
@@ -412,7 +423,7 @@ class ScenarioTools:
         source_profile: str,
         session_id: str,
         activity_callback: ActivityCallback | None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | ToolCallResult:
         raw = await self._web_tools.search_web(
             query,
             session_id=session_id,
@@ -422,6 +433,8 @@ class ScenarioTools:
             ),
             source_profile=source_profile,
         )
+        if isinstance(raw, ToolCallResult):
+            return raw
         payload = _extract_json_payload(raw)
         if not isinstance(payload, dict):
             return {
@@ -441,11 +454,18 @@ class ScenarioTools:
         source=None,
         activity_callback: ActivityCallback | None = None,
         route_context: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> str | ToolCallResult:
         del source
         normalized_query = _normalize_text(query)
         if not normalized_query:
-            return "Error: research_topic requires a non-empty query."
+            return ToolCallResult.failure(
+                tool_name="research_topic",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="research_query_required",
+                category=ToolErrorCategory.VALIDATION,
+                message="research_topic requires a non-empty query.",
+            )
         source_profile = self._default_source_profile(route_context, normalized_query)
 
         await self._emit_activity(
@@ -482,6 +502,11 @@ class ScenarioTools:
                 activity_callback=activity_callback,
             )
 
+        if isinstance(fallback_payload, ToolCallResult):
+            fallback_error = _tool_failure_message(fallback_payload)
+        else:
+            fallback_error = ""
+
         if not authoritative_payload.get("sources") and not isinstance(fallback_payload, dict):
             return json.dumps(
                 {
@@ -490,7 +515,7 @@ class ScenarioTools:
                     "goal": _normalize_text(goal),
                     "source_profile": source_profile,
                     "session_context": session_context,
-                    "search_error": "Research backends returned no usable results.",
+                    "search_error": fallback_error or "Research backends returned no usable results.",
                     "catalog_unavailable": not self._can_use_authoritative_catalog(),
                     "answer_style": "If search failed, say web search is unavailable instead of inventing facts.",
                 },
@@ -545,11 +570,18 @@ class ScenarioTools:
         source=None,
         activity_callback: ActivityCallback | None = None,
         route_context: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> str | ToolCallResult:
         del source
         normalized_url = _normalize_text(url)
         if not normalized_url:
-            return "Error: inspect_page requires a non-empty URL."
+            return ToolCallResult.failure(
+                tool_name="inspect_page",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="inspect_url_required",
+                category=ToolErrorCategory.VALIDATION,
+                message="inspect_page requires a non-empty URL.",
+            )
         source_profile = self._default_source_profile(route_context, normalized_url)
 
         await self._emit_activity(
@@ -570,7 +602,12 @@ class ScenarioTools:
             activity_callback=self._relay_activity(activity_callback),
             source_profile=source_profile,
         )
-        payload = _extract_json_payload(raw)
+        if isinstance(raw, ToolCallResult):
+            payload = None
+            raw_text = _tool_failure_message(raw)
+        else:
+            payload = _extract_json_payload(raw)
+            raw_text = raw
 
         if not isinstance(payload, dict):
             return json.dumps(
@@ -580,7 +617,7 @@ class ScenarioTools:
                     "goal": _normalize_text(goal),
                     "source_profile": source_profile,
                     "session_context": session_context,
-                    "page_error": _trim_text(raw),
+                    "page_error": _trim_text(raw_text),
                     "answer_style": "If the page could not be read, say what failed and avoid pretending to know the page contents.",
                 },
                 ensure_ascii=False,
@@ -796,13 +833,28 @@ class ScenarioTools:
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
-    ) -> str:
+    ) -> str | ToolCallResult:
         normalized_query = _normalize_text(query)
         normalized_scope = str(scope or "auto").strip().lower() or "auto"
         if normalized_scope not in {"auto", "memory", "notion"}:
-            return "Error: search_knowledge scope must be one of auto, memory, notion."
+            return ToolCallResult.failure(
+                tool_name="search_knowledge",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="knowledge_scope_invalid",
+                category=ToolErrorCategory.VALIDATION,
+                message="search_knowledge scope must be one of auto, memory, notion.",
+                details={"scope": normalized_scope},
+            )
         if not normalized_query:
-            return "Error: search_knowledge requires a non-empty query."
+            return ToolCallResult.failure(
+                tool_name="search_knowledge",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="knowledge_query_required",
+                category=ToolErrorCategory.VALIDATION,
+                message="search_knowledge requires a non-empty query.",
+            )
 
         await self._emit_activity(
             activity_callback,
@@ -903,6 +955,7 @@ class ScenarioTools:
         self,
         action: str,
         task_key: str = "",
+        task_keys: list[str] | None = None,
         summary: str = "",
         completion_summary: str = "",
         project: str = "",
@@ -936,6 +989,7 @@ class ScenarioTools:
         return await self._task_manager.manage_tasks(
             action=action,
             task_key=task_key,
+            task_keys=task_keys,
             summary=summary,
             completion_summary=completion_summary,
             project=project,
@@ -958,6 +1012,7 @@ class ScenarioTools:
         self,
         action: str,
         task_key: str = "",
+        task_keys: list[str] | None = None,
         summary: str = "",
         completion_summary: str = "",
         project: str = "",
@@ -991,6 +1046,7 @@ class ScenarioTools:
         return await self._task_manager.manage_scheduled_tasks(
             action=action,
             task_key=task_key,
+            task_keys=task_keys,
             summary=summary,
             completion_summary=completion_summary,
             project=project,

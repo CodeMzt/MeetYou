@@ -13,6 +13,7 @@ except ImportError:
     aiohttp = None
 import numpy as np
 
+from core.repositories import MemoryRepository
 from tools.memory_layers import MemoryConsolidatorLayer, MemoryRetrieverLayer, MemoryStoreLayer, MemoryViewLayer, dt_to_iso, utcnow
 
 logger = logging.getLogger("meetyou.memory")
@@ -67,7 +68,7 @@ class MemoryEdge(TypedDict, total=False):
     updated_at: str
 
 
-class Memory:
+class Memory(MemoryRepository):
     def __init__(self):
         self._memory_file_path = "memory.json"
         self._embedding_model = ""
@@ -101,15 +102,7 @@ class Memory:
         self._store = self._store_layer.empty_store()
         if os.path.exists(self._memory_file_path):
             try:
-                with open(self._memory_file_path, "r", encoding="utf-8") as handle:
-                    content = handle.read().strip()
-                if content:
-                    data = json.loads(content)
-                    if self._store_layer.is_valid_store(data):
-                        self._store = data
-                        self._store_layer.normalize_store()
-                    else:
-                        logger.warning("记忆文件格式无效，使用空记忆初始化")
+                self._store = self._store_layer.load_store()
             except Exception as exc:
                 logger.warning("加载记忆文件失败，使用空记忆初始化: %s", exc)
         logger.info("记忆系统初始化完成: %s 条记录", len(self._store["records"]))
@@ -118,7 +111,7 @@ class Memory:
         self._embedding_model = config.get("embedding_model") or ""
         self._embedding_api_key = config.get("embedding_api_key") or ""
         self._embedding_api_url = config.get("embedding_api_url") or ""
-        self._store.setdefault("metadata", {})
+        self._store_layer.ensure_repository_metadata()
         self._store["metadata"]["embedding_model"] = self._embedding_model
         self._store["metadata"]["embedding_api_url"] = self._embedding_api_url
         self._store["metadata"]["updated_at"] = dt_to_iso(utcnow())
@@ -194,6 +187,24 @@ class Memory:
     def _is_explicit_memory(self, record: MemoryRecord) -> bool:
         return EXPLICIT_REMEMBER_TAG in record.get("tags", [])
 
+    def _summary_store(self) -> dict[str, Any]:
+        layer = self._store.get("conversation_summaries")
+        if not isinstance(layer, dict):
+            layer = self._store.get("working_summaries")
+        if not isinstance(layer, dict):
+            layer = {"global": "", "by_session": {}}
+        layer["global"] = str(layer.get("global", "") or "")
+        by_session = layer.get("by_session")
+        layer["by_session"] = by_session if isinstance(by_session, dict) else {}
+        self._store["working_summaries"] = layer
+        self._store["conversation_summaries"] = layer
+        return layer
+
+    async def _apply_strong_consistent_memory_write(self, user_id: str, record: MemoryRecord) -> bool:
+        if not self._is_explicit_memory(record):
+            return False
+        return await self._consolidator_layer.apply_explicit_memory_record(user_id, record)
+
     async def save_memory(
         self,
         memory_text: str,
@@ -234,6 +245,9 @@ class Memory:
                 tag_text = str(tag or "").strip()
                 if tag_text and tag_text not in existing_tags:
                     existing_tags.append(tag_text)
+            if await self._apply_strong_consistent_memory_write(user_id, existing):
+                existing_tags = [tag for tag in existing_tags if tag != "pending_consolidation"]
+                existing["tags"] = existing_tags
             await self.save_memory_graph()
             return f"记忆已更新, id={existing['id']}"
 
@@ -269,12 +283,14 @@ class Memory:
         }
         self._store["records"].append(record)
         self._store_layer.link_semantic_edges(record)
+        if await self._apply_strong_consistent_memory_write(user_id, record):
+            record["tags"] = [tag for tag in record.get("tags", []) if tag != "pending_consolidation"]
         await self.save_memory_graph()
         return f"成功保存记忆, id={record['id']}"
 
     async def update_working_summary(self, context: str, session_id: str = "") -> str:
         text = str(context or "").strip()
-        working = self._store["working_summaries"]
+        working = self._summary_store()
         if session_id:
             if text:
                 working["by_session"][session_id] = text
@@ -286,7 +302,7 @@ class Memory:
         return "成功更新上下文"
 
     async def load_working_summary(self, session_id: str = "") -> str:
-        working = self._store["working_summaries"]
+        working = self._summary_store()
         if session_id:
             text = working.get("by_session", {}).get(session_id, "").strip()
             if text:

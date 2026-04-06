@@ -9,7 +9,20 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from core.background_jobs import (
+    default_job_record,
+    delivery_payload,
+    failure_payload,
+    normalize_delivery,
+    normalize_failure,
+    normalize_job_record,
+)
+from core.persistence import atomic_write_json, load_json_with_recovery
+from core.repositories import TaskRepository
 from core.runtime_context import get_event_context
+from core.tool_runtime.models import ToolCallResult, ToolErrorCategory, ToolSourceType
+from tools.object_operations import build_object_operation_payload
+from tools.system_tools import request_user_confirmation
 
 try:
     from zoneinfo import ZoneInfo
@@ -25,9 +38,12 @@ _MAX_LIST_LIMIT = 20
 _DEFAULT_TIMEZONE = "UTC"
 _DEFAULT_LEASE_SECONDS = 120
 _DEFAULT_FAILURE_BACKOFF_SECONDS = 900
+_DEFAULT_JOB_MAX_RETRIES = 3
 _URGENT_DUE_WINDOW = timedelta(hours=6)
 _BACKGROUND_DUE_LIST_LIMIT = 3
 _REPEATED_FAILURE_THRESHOLD = 2
+_TASK_SCHEMA_VERSION = "2"
+_UNSET = object()
 _SPACE_RE = re.compile(r"\s+")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -658,7 +674,7 @@ def _delivery_target_payload(session_id: str, source, explicit_target: Any | Non
     return payload
 
 
-class TaskManager:
+class TaskManager(TaskRepository):
     def __init__(self, memory):
         self._memory = memory
         self._task_file_path = self._derive_task_file_path()
@@ -680,29 +696,38 @@ class TaskManager:
     def _empty_store(self) -> dict[str, Any]:
         return {
             "metadata": {
+                "schema_version": _TASK_SCHEMA_VERSION,
+                "revision": 0,
                 "updated_at": _utcnow_iso(),
             },
             "tasks": [],
         }
 
+    def _normalize_store_metadata(self) -> None:
+        metadata = self._store.setdefault("metadata", {})
+        metadata["schema_version"] = str(metadata.get("schema_version") or _TASK_SCHEMA_VERSION)
+        try:
+            metadata["revision"] = max(int(metadata.get("revision", 0) or 0), 0)
+        except (TypeError, ValueError):
+            metadata["revision"] = 0
+        metadata["updated_at"] = str(metadata.get("updated_at") or _utcnow_iso())
+
     def _load_store(self) -> dict[str, Any]:
         if not self._task_file_path:
             return self._empty_store()
-        if not os.path.exists(self._task_file_path):
-            return self._empty_store()
         try:
-            with open(self._task_file_path, "r", encoding="utf-8") as handle:
-                raw = handle.read().strip()
-            if not raw:
-                return self._empty_store()
-            data = json.loads(raw)
+            data = load_json_with_recovery(
+                self._task_file_path,
+                validator=lambda payload: isinstance(payload, dict) and isinstance(payload.get("tasks"), list),
+                default_factory=self._empty_store,
+            )
         except Exception:
-            return self._empty_store()
-        if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
             return self._empty_store()
         store = self._empty_store()
         store["metadata"] = data.get("metadata") if isinstance(data.get("metadata"), dict) else store["metadata"]
         store["tasks"] = [item for item in data.get("tasks", []) if isinstance(item, dict)]
+        self._store = store
+        self._normalize_store_metadata()
         return store
 
     def _refresh_store_binding(self) -> None:
@@ -712,101 +737,30 @@ class TaskManager:
         self._task_file_path = task_file_path
         self._store = self._load_store()
 
-    def _load_legacy_memory_tasks(self) -> list[dict[str, Any]]:
-        memory_store = getattr(self._memory, "_store", {})
-        current_records = memory_store.get("records", []) if isinstance(memory_store, dict) else []
-        if isinstance(current_records, list):
-            current_tasks = [
-                copy.deepcopy(record)
-                for record in current_records
-                if isinstance(record, dict) and record.get("type") == "task"
-            ]
-            if current_tasks:
-                return current_tasks
-
-        memory_path = _normalize_text(getattr(self._memory, "_memory_file_path", ""))
-        if not memory_path or not os.path.exists(memory_path):
-            return []
-        try:
-            with open(memory_path, "r", encoding="utf-8") as handle:
-                raw = handle.read().strip()
-            if not raw:
-                return []
-            data = json.loads(raw)
-        except Exception:
-            return []
-        records = data.get("records", []) if isinstance(data, dict) else []
-        if not isinstance(records, list):
-            return []
-        return [
-            copy.deepcopy(record)
-            for record in records
-            if isinstance(record, dict) and record.get("type") == "task"
-        ]
-
-    def _prune_task_records_from_memory_store(self, task_ids: set[str]) -> None:
-        memory_store = getattr(self._memory, "_store", {})
-        if not isinstance(memory_store, dict):
-            return
-        records = memory_store.get("records", [])
-        if isinstance(records, list):
-            memory_store["records"] = [
-                record
-                for record in records
-                if not (isinstance(record, dict) and record.get("type") == "task")
-            ]
-        edges = memory_store.get("edges", [])
-        if not task_ids or not isinstance(edges, list):
-            return
-        memory_store["edges"] = [
-            edge
-            for edge in edges
-            if isinstance(edge, dict)
-            and edge.get("from_id") not in task_ids
-            and edge.get("to_id") not in task_ids
-        ]
-
     def _touch_updated(self) -> None:
-        self._store.setdefault("metadata", {})
+        self._normalize_store_metadata()
         self._store["metadata"]["updated_at"] = _utcnow_iso()
 
     async def _save_store(self) -> None:
         if not self._task_file_path:
             return
         self._touch_updated()
-        with open(self._task_file_path, "w", encoding="utf-8") as handle:
-            json.dump(self._store, handle, ensure_ascii=False, indent=2)
+        self._store["metadata"]["revision"] = int(self._store["metadata"].get("revision", 0) or 0) + 1
+        atomic_write_json(self._task_file_path, self._store)
 
-    async def sync_legacy_memory_tasks(self) -> int:
-        self._refresh_store_binding()
-        legacy_records = self._load_legacy_memory_tasks()
-        if not legacy_records:
-            return 0
-        migrated = 0
-        task_ids = {
-            _normalize_text(record.get("id"))
-            for record in legacy_records
-            if isinstance(record, dict) and _normalize_text(record.get("id"))
-        }
-        for record in legacy_records:
-            task_key = _normalize_text(record.get("task_key"))
-            if not task_key:
-                continue
-            if self._find_task_by_key_any_user(task_key) is None:
-                task_copy = copy.deepcopy(record)
-                self._ensure_task_defaults(task_copy)
-                self._store["tasks"].append(task_copy)
-                migrated += 1
-        self._prune_task_records_from_memory_store(task_ids)
-        await self._memory.save_memory_graph()
-        if migrated:
-            await self._save_store()
-        return migrated
-
-    def _iter_user_tasks(self, user_id: str, *, task_domain: str | None = None) -> list[dict[str, Any]]:
+    def _iter_user_tasks(
+        self,
+        user_id: str,
+        *,
+        task_domain: str | None = None,
+        statuses: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         tasks: list[dict[str, Any]] = []
         for record in self._store.get("tasks", []):
-            if record.get("status") != "active":
+            record_status = _normalize_text(record.get("status")) or "active"
+            if statuses is not None and record_status not in statuses:
+                continue
+            if statuses is None and record_status != "active":
                 continue
             if record.get("scope", {}).get("user_id") not in {user_id, "global"}:
                 continue
@@ -827,11 +781,18 @@ class TaskManager:
             tasks.append(record)
         return tasks
 
-    def _find_task_record(self, user_id: str, task_key: str, *, task_domain: str | None = None) -> dict[str, Any] | None:
+    def _find_task_record(
+        self,
+        user_id: str,
+        task_key: str,
+        *,
+        task_domain: str | None = None,
+        statuses: set[str] | None = None,
+    ) -> dict[str, Any] | None:
         normalized_key = _normalize_text(task_key)
         if not normalized_key:
             return None
-        for record in self._iter_user_tasks(user_id, task_domain=task_domain):
+        for record in self._iter_user_tasks(user_id, task_domain=task_domain, statuses=statuses):
             if _normalize_text(record.get("task_key")) == normalized_key:
                 return record
         return None
@@ -844,6 +805,112 @@ class TaskManager:
             if _normalize_text(record.get("task_key")) == normalized_key:
                 return record
         return None
+
+    @staticmethod
+    def _task_object_type(task_domain: str) -> str:
+        return "scheduled_task" if task_domain == "assistant_schedule" else "task"
+
+    def _task_candidate_payload(self, record: dict[str, Any]) -> dict[str, Any]:
+        compact = self._compact_task(record)
+        return {
+            "object_type": compact.get("object_type"),
+            "object_id": compact.get("object_id"),
+            "record_id": compact.get("record_id"),
+            "title": compact.get("summary"),
+            "summary": compact.get("summary"),
+            "status": compact.get("status"),
+            "task_status": compact.get("task_status"),
+            "schedule_kind": compact.get("schedule_kind"),
+            "next_run_at": compact.get("next_run_at"),
+            "due_at": compact.get("due_at"),
+        }
+
+    def _find_task_targets(
+        self,
+        *,
+        user_id: str,
+        task_domain: str,
+        task_key: str = "",
+        query: str = "",
+        summary: str = "",
+        include_deleted: bool = False,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+        statuses = {"active", "deleted"} if include_deleted else {"active"}
+        exact = self._find_task_record(user_id, task_key, task_domain=task_domain, statuses=statuses)
+        if exact is not None:
+            return [exact], [self._task_candidate_payload(exact)], True
+        needle = _normalize_text(query or summary)
+        if not needle:
+            return [], [], False
+        pool = self._iter_user_tasks(user_id, task_domain=task_domain, statuses=statuses)
+        exact_matches = [
+            record
+            for record in pool
+            if needle.lower()
+            in {
+                _normalize_text(record.get("task_key")).lower(),
+                _normalize_text(record.get("content")).lower(),
+                _normalize_text(record.get("id")).lower(),
+            }
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches, [self._task_candidate_payload(exact_matches[0])], True
+        matched = [record for record in pool if _looks_like_match(record, needle)]
+        matched = self._sort_tasks(matched)
+        return matched, [self._task_candidate_payload(record) for record in matched[:5]], False
+
+    async def _confirm_task_operation(
+        self,
+        *,
+        action: str,
+        object_type: str,
+        task_count: int,
+        summary: str,
+        session_id: str,
+        source,
+    ) -> bool:
+        action_label = {
+            "delete": "删除",
+            "restore": "恢复",
+            "cancel": "取消执行",
+            "disable": "禁用",
+        }.get(action, action)
+        prompt = f"即将{action_label}{task_count}个{object_type}：{summary}"
+        return await request_user_confirmation(
+            prompt,
+            session_id=session_id,
+            source=source,
+            timeout_seconds=30,
+        )
+
+    def _task_operation_payload(
+        self,
+        *,
+        action: str,
+        task_domain: str,
+        status: str,
+        tasks: list[dict[str, Any]],
+        summary: str = "",
+        candidates: list[dict[str, Any]] | None = None,
+        error: dict[str, Any] | None = None,
+        filters: dict[str, Any] | None = None,
+        next_action_hint: str = "",
+    ) -> dict[str, Any]:
+        return build_object_operation_payload(
+            action=action,
+            object_type=self._task_object_type(task_domain),
+            status=status,
+            objects=tasks,
+            summary=summary,
+            candidates=candidates,
+            error=error,
+            filters_applied=filters,
+            next_action_hint=next_action_hint,
+            extra={
+                "tasks": tasks,
+                "task_count": len(tasks),
+            },
+        )
 
     def _ensure_unique_task_key(self, user_id: str, preferred_key: str) -> str:
         base = _slugify(preferred_key)
@@ -991,7 +1058,7 @@ class TaskManager:
             "lock_active": bool(run_lock_until is not None and run_lock_until > current),
         }
 
-    def _orchestration_state(self, record: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    def _structured_task_state(self, record: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
         current = now or _utcnow()
         schedule_state = self._schedule_state(record, now=current)
         cycle_start_at = _normalize_text(schedule_state.get("current_cycle_start_at"))
@@ -1007,6 +1074,15 @@ class TaskManager:
         last_run_status = _normalize_text(record.get("last_run_status")).lower()
         notify_policy = _normalize_text(record.get("notify_policy")).lower()
         auto_run = bool(record.get("auto_run", False))
+        job = normalize_job_record(
+            record.get("job"),
+            kind=self._task_job_kind(record),
+            name=self._task_job_name(record),
+            max_retries=self._task_job_max_retries(record),
+            status_source="task_manager.defaults",
+        )
+        last_failure = normalize_failure(job.get("last_failure"))
+        last_delivery = normalize_delivery(job.get("last_delivery"))
 
         if schedule_state.get("is_due") and not schedule_state.get("triggered_in_cycle"):
             scheduler_status = "due"
@@ -1062,27 +1138,161 @@ class TaskManager:
             or _normalize_text(record.get("last_triggered_at"))
             or _normalize_text(record.get("last_updated_at"))
         )
+        completion_status = _normalize_text(schedule_state.get("completion_state")) or "pending"
 
         return {
-            "cycle_key": cycle_key,
-            "cycle_start_at": cycle_start_at or None,
-            "cycle_due_at": cycle_due_at or None,
-            "cycle_end_at": cycle_end_at or None,
-            "scheduler_status": scheduler_status,
-            "execution_status": execution_status,
-            "delivery_status": delivery_status,
-            "completion_status": _normalize_text(schedule_state.get("completion_state")) or "pending",
-            "pending_redelivery": bool(pending_payload),
-            "visible_channel": "completion_result" if auto_run else "due_reminder",
-            "event_kind": event_kind or None,
-            "event_id": event_id or None,
-            "source_event_id": source_event_id or None,
-            "last_transition_at": last_transition_at or None,
+            "schedule": {
+                "status": scheduler_status,
+                "cycle_key": cycle_key,
+                "cycle_start_at": cycle_start_at or None,
+                "cycle_due_at": cycle_due_at or None,
+                "cycle_end_at": cycle_end_at or None,
+                "next_run_at": _normalize_text(record.get("next_run_at")) or None,
+                "due_at": _normalize_text(record.get("due_at")) or None,
+                "triggered_in_cycle": bool(schedule_state.get("triggered_in_cycle")),
+                "completed_in_cycle": bool(schedule_state.get("completed_in_cycle")),
+                "lock_active": bool(schedule_state.get("lock_active")),
+            },
+            "execution": {
+                "status": execution_status,
+                "job_status": job.get("status"),
+                "attempt_count": int(job.get("attempt_count", 0) or 0),
+                "retry_count": int(job.get("retry_count", 0) or 0),
+                "next_retry_at": job.get("next_retry_at"),
+                "status_source": job.get("status_source"),
+                "last_runtime_source": job.get("last_runtime_source"),
+                "failure_category": last_failure.get("category") if last_failure else None,
+                "failure_retryable": bool(last_failure.get("retryable")) if last_failure else False,
+            },
+            "delivery": {
+                "status": delivery_status,
+                "pending_redelivery": bool(pending_payload),
+                "visible_channel": "completion_result" if auto_run else "due_reminder",
+                "event_kind": event_kind or None,
+                "event_id": event_id or None,
+                "source_event_id": source_event_id or None,
+                "last_transition_at": last_transition_at or None,
+                "result": copy.deepcopy(last_delivery),
+                "pending": copy.deepcopy(pending_payload) if pending_payload else None,
+            },
+            "orchestration": {
+                "completion_status": completion_status,
+                "awaiting_completion": bool(schedule_state.get("awaiting_completion", False)),
+                "auto_run": auto_run,
+                "notify_policy": notify_policy,
+            },
+        }
+
+    def _orchestration_state(self, record: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+        state = self._structured_task_state(record, now=now)
+        return {
+            **copy.deepcopy(state),
+            "cycle_key": state["schedule"]["cycle_key"],
+            "cycle_start_at": state["schedule"]["cycle_start_at"],
+            "cycle_due_at": state["schedule"]["cycle_due_at"],
+            "cycle_end_at": state["schedule"]["cycle_end_at"],
+            "scheduler_status": state["schedule"]["status"],
+            "execution_status": state["execution"]["status"],
+            "delivery_status": state["delivery"]["status"],
+            "completion_status": state["orchestration"]["completion_status"],
+            "pending_redelivery": state["delivery"]["pending_redelivery"],
+            "visible_channel": state["delivery"]["visible_channel"],
+            "event_kind": state["delivery"]["event_kind"],
+            "event_id": state["delivery"]["event_id"],
+            "source_event_id": state["delivery"]["source_event_id"],
+            "last_transition_at": state["delivery"]["last_transition_at"],
+            "job_status": state["execution"]["job_status"],
+            "attempt_count": state["execution"]["attempt_count"],
+            "retry_count": state["execution"]["retry_count"],
+            "next_retry_at": state["execution"]["next_retry_at"],
+            "status_source": state["execution"]["status_source"],
+            "last_runtime_source": state["execution"]["last_runtime_source"],
+            "failure_category": state["execution"]["failure_category"],
+            "failure_retryable": state["execution"]["failure_retryable"],
+            "delivery_result": copy.deepcopy(state["delivery"]["result"]),
         }
 
     def _sync_orchestration_state(self, record: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
         record["orchestration"] = self._orchestration_state(record, now=now)
         return record["orchestration"]
+
+    def _task_job_kind(self, record: dict[str, Any]) -> str:
+        if record.get("task_domain") != "assistant_schedule":
+            return "user_task"
+        if record.get("auto_run"):
+            return "scheduled_task"
+        return "scheduled_reminder"
+
+    def _task_job_name(self, record: dict[str, Any]) -> str:
+        return _normalize_text(record.get("task_key")) or _normalize_text(record.get("content")) or "task"
+
+    def _task_job_max_retries(self, record: dict[str, Any]) -> int:
+        return _DEFAULT_JOB_MAX_RETRIES if record.get("auto_run") else 0
+
+    def _task_default_delivery_state(self, record: dict[str, Any]) -> str:
+        if self._task_job_kind(record) == "user_task":
+            return "not_applicable"
+        if _normalize_text(record.get("notify_policy")).lower() == "silent":
+            return "suppressed"
+        return "pending"
+
+    def _update_task_job(
+        self,
+        record: dict[str, Any],
+        *,
+        status: Any = _UNSET,
+        runtime_source: Any = _UNSET,
+        started_at: Any = _UNSET,
+        finished_at: Any = _UNSET,
+        success_at: Any = _UNSET,
+        next_retry_at: Any = _UNSET,
+        last_result: dict[str, Any] | None | object = _UNSET,
+        last_failure: dict[str, Any] | None | object = _UNSET,
+        last_delivery: dict[str, Any] | None | object = _UNSET,
+        retry_count: Any = _UNSET,
+        increment_attempt: bool = False,
+        metadata: dict[str, Any] | None | object = _UNSET,
+    ) -> dict[str, Any]:
+        job = normalize_job_record(
+            record.get("job"),
+            kind=self._task_job_kind(record),
+            name=self._task_job_name(record),
+            max_retries=self._task_job_max_retries(record),
+            status_source="task_manager.defaults",
+        )
+        if increment_attempt:
+            job["attempt_count"] = max(int(job.get("attempt_count", 0) or 0), 0) + 1
+        if status is not _UNSET:
+            normalized_status = _normalize_text(status).lower()
+            if normalized_status:
+                job["status"] = normalized_status
+        if runtime_source is not _UNSET:
+            normalized_source = _normalize_text(runtime_source)
+            job["last_runtime_source"] = normalized_source
+            job["status_source"] = normalized_source
+        if started_at is not _UNSET:
+            job["last_started_at"] = _normalize_text(started_at) or None
+        if finished_at is not _UNSET:
+            job["last_finished_at"] = _normalize_text(finished_at) or None
+        if success_at is not _UNSET:
+            job["last_success_at"] = _normalize_text(success_at) or None
+        if next_retry_at is not _UNSET:
+            job["next_retry_at"] = _normalize_text(next_retry_at) or None
+        if retry_count is not _UNSET:
+            try:
+                job["retry_count"] = max(int(retry_count or 0), 0)
+            except (TypeError, ValueError):
+                job["retry_count"] = 0
+        if last_result is not _UNSET:
+            job["last_result"] = copy.deepcopy(last_result) if isinstance(last_result, dict) else {}
+        if last_failure is not _UNSET:
+            job["last_failure"] = normalize_failure(last_failure)
+        if last_delivery is not _UNSET:
+            job["last_delivery"] = normalize_delivery(last_delivery)
+        if metadata is not _UNSET:
+            job["metadata"] = copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+        record["job"] = job
+        return job
 
     def _ensure_task_defaults(self, record: dict[str, Any]) -> None:
         if record.get("type") != "task":
@@ -1111,11 +1321,46 @@ class TaskManager:
         record["active_claim_token"] = _normalize_text(record.get("active_claim_token")) or None
         record["run_history"] = copy.deepcopy(record.get("run_history")) if isinstance(record.get("run_history"), list) else []
         record["pending_delivery"] = copy.deepcopy(record.get("pending_delivery")) if isinstance(record.get("pending_delivery"), dict) else None
+        record["job"] = normalize_job_record(
+            record.get("job"),
+            kind=self._task_job_kind(record),
+            name=self._task_job_name(record),
+            max_retries=self._task_job_max_retries(record),
+            status_source="task_manager.defaults",
+        )
         record["orchestration"] = copy.deepcopy(record.get("orchestration")) if isinstance(record.get("orchestration"), dict) else {}
         record["schedule_anchor_at"] = _normalize_text(record.get("schedule_anchor_at")) or _normalize_text(record.get("created_at")) or _normalize_text(record.get("last_updated_at")) or _utcnow_iso()
         record["last_completed_at"] = _normalize_text(record.get("last_completed_at")) or None
         record["last_triggered_at"] = _normalize_text(record.get("last_triggered_at")) or None
         record["last_completion_summary"] = _normalize_text(record.get("last_completion_summary"))
+        if self._task_job_kind(record) == "user_task":
+            self._update_task_job(
+                record,
+                status="not_applicable",
+                next_retry_at=None,
+                last_delivery=delivery_payload(state="not_applicable"),
+            )
+        elif record.get("pending_delivery"):
+            payload = record.get("pending_delivery") or {}
+            self._update_task_job(
+                record,
+                status="awaiting_delivery",
+                next_retry_at=record.get("run_lock_until"),
+                last_delivery=delivery_payload(
+                    state="pending_redelivery",
+                    delivered=False,
+                    channel="task_update",
+                    message=payload.get("message"),
+                    event_id=payload.get("event_id"),
+                    source_event_id=payload.get("source_event_id"),
+                    at=payload.get("created_at"),
+                ),
+            )
+        elif not record["job"].get("last_delivery") or record["job"]["last_delivery"].get("state") == "not_applicable":
+            self._update_task_job(
+                record,
+                last_delivery=delivery_payload(state=self._task_default_delivery_state(record)),
+            )
         if record.get("schedule_kind") == "recurring" and record.get("task_status") == "done":
             record["last_completed_at"] = (
                 record.get("last_completed_at")
@@ -1132,10 +1377,15 @@ class TaskManager:
     def _compact_task(self, record: dict[str, Any]) -> dict[str, Any]:
         self._ensure_task_defaults(record)
         schedule_state = self._schedule_state(record)
+        orchestration = copy.deepcopy(record.get("orchestration")) if isinstance(record.get("orchestration"), dict) else self._orchestration_state(record)
         return {
+            "record_id": _normalize_text(record.get("id")),
+            "object_id": _normalize_text(record.get("task_key")),
+            "object_type": "scheduled_task" if record.get("task_domain") == "assistant_schedule" else "task",
             "task_key": _normalize_text(record.get("task_key")),
             "content": _normalize_text(record.get("content")),
             "summary": _normalize_text(record.get("content")),
+            "status": _normalize_text(record.get("status")) or "active",
             "task_domain": _normalize_text(record.get("task_domain")),
             "project": _normalize_text(record.get("project")),
             "task_status": _normalize_text(record.get("task_status")),
@@ -1153,13 +1403,15 @@ class TaskManager:
             "last_run_status": _normalize_text(record.get("last_run_status")),
             "last_run_summary": _normalize_text(record.get("last_run_summary")),
             "active_claim_token": _normalize_text(record.get("active_claim_token")) or None,
+            "job": copy.deepcopy(record.get("job")) if isinstance(record.get("job"), dict) else {},
             "current_cycle_start_at": schedule_state.get("current_cycle_start_at"),
             "current_cycle_end_at": schedule_state.get("current_cycle_end_at"),
             "completed_in_cycle": bool(schedule_state.get("completed_in_cycle", False)),
             "triggered_in_cycle": bool(schedule_state.get("triggered_in_cycle", False)),
             "awaiting_completion": bool(schedule_state.get("awaiting_completion", False)),
             "completion_state": _normalize_text(schedule_state.get("completion_state")),
-            "orchestration": copy.deepcopy(record.get("orchestration")) if isinstance(record.get("orchestration"), dict) else self._orchestration_state(record),
+            "orchestration": orchestration,
+            "state": copy.deepcopy(orchestration),
             "auto_run": bool(record.get("auto_run", False)),
             "job_prompt": _normalize_text(record.get("job_prompt")),
             "notify_policy": _normalize_text(record.get("notify_policy")),
@@ -1373,6 +1625,12 @@ class TaskManager:
             "active_claim_token": None,
             "run_history": [],
             "pending_delivery": None,
+            "job": default_job_record(
+                kind="scheduled_task" if schedule_payload.get("auto_run") else "scheduled_reminder" if normalized_task_domain == "assistant_schedule" else "user_task",
+                name=task_key_value,
+                max_retries=_DEFAULT_JOB_MAX_RETRIES if schedule_payload.get("auto_run") else 0,
+                status_source="task_manager.create",
+            ),
             "orchestration": {},
         }
         record["next_run_at"] = self._schedule_state(record, now=now_dt)["next_run_at"]
@@ -1590,6 +1848,21 @@ class TaskManager:
             record["task_status"] = "open"
         else:
             record["task_status"] = "done"
+        self._update_task_job(
+            record,
+            status="completed",
+            runtime_source="task_manager.complete",
+            finished_at=current_text,
+            success_at=current_text,
+            next_retry_at=None,
+            retry_count=0,
+            last_failure=None,
+            last_result={
+                "status": "completed",
+                "summary": record["last_completion_summary"],
+                "at": current_text,
+            },
+        )
         record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
         self._sync_orchestration_state(record, now=current)
 
@@ -1658,6 +1931,8 @@ class TaskManager:
         for record in self._sort_tasks(self._iter_all_active_tasks(task_domain="assistant_schedule")):
             if len(claimed) >= limit:
                 break
+            if _normalize_text(record.get("task_status")).lower() != "open":
+                continue
             if not self._is_task_due(record, now=current):
                 continue
             if record.get("schedule_kind") not in {"once", "recurring"} and not record.get("auto_run"):
@@ -1668,6 +1943,19 @@ class TaskManager:
             record["active_claim_token"] = claim_token
             record["last_triggered_at"] = current_text
             record["last_run_status"] = "queued" if record.get("auto_run") else "due"
+            self._update_task_job(
+                record,
+                status="queued",
+                runtime_source="heart.scheduler",
+                started_at=current_text,
+                next_retry_at=None,
+                increment_attempt=True,
+                last_result={
+                    "status": record["last_run_status"],
+                    "summary": "Task was claimed by the scheduler.",
+                    "at": current_text,
+                },
+            )
             record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
             self._sync_orchestration_state(record, now=current)
             record["last_updated_at"] = current_text
@@ -1677,6 +1965,7 @@ class TaskManager:
                     "timestamp": current_text,
                     "status": record["last_run_status"],
                     "summary": "Task was claimed by the scheduler for execution." if record.get("auto_run") else "Task was claimed by the scheduler for notification.",
+                    "runtime_source": "heart.scheduler",
                 },
             )
             claimed.append(copy.deepcopy(record))
@@ -1690,6 +1979,9 @@ class TaskManager:
         *,
         summary: str,
         delivered: bool,
+        runtime_source: str = "",
+        delivery_channel: str = "task_update",
+        delivery_details: dict[str, Any] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         record = self._find_task_by_key_any_user(task_key)
@@ -1709,6 +2001,7 @@ class TaskManager:
         record["last_triggered_at"] = _dt_to_iso(current)
         record["run_lock_until"] = None
         record["active_claim_token"] = None
+        notify_policy = _normalize_text(record.get("notify_policy")).lower()
         if not delivered and record.get("notify_policy") != "silent":
             record["pending_delivery"] = {
                 "created_at": _dt_to_iso(current),
@@ -1720,6 +2013,49 @@ class TaskManager:
             }
         else:
             record["pending_delivery"] = None
+        if notify_policy == "silent":
+            delivery_state = "suppressed"
+            job_status = "completed"
+            last_failure = None
+        elif delivered:
+            delivery_state = "delivered"
+            job_status = "completed"
+            last_failure = None
+        else:
+            delivery_state = "pending_redelivery"
+            job_status = "awaiting_delivery"
+            last_failure = failure_payload(
+                category="delivery",
+                code="scheduled_reminder_delivery_pending",
+                message=record["last_run_summary"],
+                at=_dt_to_iso(current),
+                details={"task_key": task_key, "event_id": event_id},
+            )
+        self._update_task_job(
+            record,
+            status=job_status,
+            runtime_source=_normalize_text(runtime_source) or "app.scheduled_reminder",
+            finished_at=_dt_to_iso(current),
+            success_at=_dt_to_iso(current),
+            next_retry_at=None,
+            retry_count=0,
+            last_failure=last_failure,
+            last_result={
+                "status": record["last_run_status"],
+                "summary": record["last_run_summary"],
+                "at": _dt_to_iso(current),
+            },
+            last_delivery=delivery_payload(
+                state=delivery_state,
+                delivered=(delivered or notify_policy == "silent"),
+                channel=delivery_channel,
+                message=record["last_run_summary"],
+                event_id=event_id,
+                source_event_id=event_id,
+                at=_dt_to_iso(current),
+                details=delivery_details or {},
+            ),
+        )
         record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
         self._sync_orchestration_state(record, now=current)
         record["last_updated_at"] = _dt_to_iso(current)
@@ -1729,6 +2065,8 @@ class TaskManager:
                 "timestamp": _dt_to_iso(current),
                 "status": record["last_run_status"],
                 "summary": record["last_run_summary"],
+                "runtime_source": _normalize_text(runtime_source) or "app.scheduled_reminder",
+                "delivery_state": delivery_state,
             },
         )
         await self._persist()
@@ -1742,6 +2080,14 @@ class TaskManager:
         summary: str,
         next_retry_seconds: int = _DEFAULT_FAILURE_BACKOFF_SECONDS,
         delivered: bool = True,
+        completed: bool = False,
+        failure_category: str = "",
+        failure_retryable: bool | None = None,
+        failure_code: str = "",
+        failure_details: dict[str, Any] | None = None,
+        runtime_source: str = "",
+        delivery_channel: str = "task_update",
+        delivery_details: dict[str, Any] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         record = self._find_task_by_key_any_user(task_key)
@@ -1760,6 +2106,7 @@ class TaskManager:
         record["last_run_summary"] = _normalize_text(summary)
         record["last_triggered_at"] = _dt_to_iso(current)
         record["active_claim_token"] = None
+        notify_policy = _normalize_text(record.get("notify_policy")).lower()
         if succeeded:
             record["run_lock_until"] = None
         else:
@@ -1775,6 +2122,73 @@ class TaskManager:
             }
         elif delivered and record.get("notify_policy") == "on_completion":
             record["pending_delivery"] = None
+        if notify_policy != "on_completion":
+            delivery_state = "not_applicable"
+        elif delivered:
+            delivery_state = "delivered"
+        else:
+            delivery_state = "pending_redelivery"
+
+        last_failure = None
+        if succeeded:
+            if delivery_state == "pending_redelivery":
+                job_status = "awaiting_delivery"
+                last_failure = failure_payload(
+                    category="delivery",
+                    code="scheduled_task_delivery_pending",
+                    message=record["last_run_summary"],
+                    at=_dt_to_iso(current),
+                    details={"task_key": task_key, "event_id": event_id},
+                )
+            elif completed:
+                job_status = "completed"
+            else:
+                job_status = "succeeded"
+        else:
+            normalized_failure_category = _normalize_text(failure_category).lower() or "retryable"
+            retryable = normalized_failure_category == "retryable" if failure_retryable is None else bool(failure_retryable)
+            if not retryable and normalized_failure_category == "retryable":
+                normalized_failure_category = "non_retryable"
+            if normalized_failure_category not in {"retryable", "non_retryable", "manual_intervention", "delivery"}:
+                normalized_failure_category = "retryable" if retryable else "non_retryable"
+            job_status = "retry_waiting" if retryable else "failed"
+            last_failure = failure_payload(
+                category=normalized_failure_category,
+                retryable=retryable,
+                code=failure_code or "scheduled_task_run_failed",
+                message=record["last_run_summary"],
+                at=_dt_to_iso(current),
+                details=failure_details or {},
+            )
+
+        current_retry_count = int(record.get("job", {}).get("retry_count", 0) or 0)
+        next_retry_at = record.get("run_lock_until") if not succeeded and job_status == "retry_waiting" else None
+        self._update_task_job(
+            record,
+            status=job_status,
+            runtime_source=_normalize_text(runtime_source) or "app.scheduled_task",
+            finished_at=_dt_to_iso(current),
+            success_at=_dt_to_iso(current) if succeeded else _UNSET,
+            next_retry_at=next_retry_at,
+            retry_count=0 if succeeded else current_retry_count + 1,
+            last_failure=last_failure,
+            last_result={
+                "status": record["last_run_status"],
+                "summary": record["last_run_summary"],
+                "at": _dt_to_iso(current),
+                "completed": bool(completed),
+            },
+            last_delivery=delivery_payload(
+                state=delivery_state,
+                delivered=(delivered or notify_policy != "on_completion"),
+                channel=delivery_channel,
+                message=record["last_run_summary"],
+                event_id=event_id,
+                source_event_id=event_id,
+                at=_dt_to_iso(current),
+                details=delivery_details or {},
+            ),
+        )
         record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
         self._sync_orchestration_state(record, now=current)
         record["last_updated_at"] = _dt_to_iso(current)
@@ -1784,12 +2198,16 @@ class TaskManager:
                 "timestamp": _dt_to_iso(current),
                 "status": record["last_run_status"],
                 "summary": record["last_run_summary"],
+                "runtime_source": _normalize_text(runtime_source) or "app.scheduled_task",
+                "job_status": job_status,
+                "failure_category": last_failure.get("category") if last_failure else None,
+                "delivery_state": delivery_state,
             },
         )
         await self._persist()
         return copy.deepcopy(record)
 
-    async def collect_pending_delivery_messages(self, source=None) -> list[dict[str, Any]]:
+    async def _pending_delivery_messages(self, source=None, *, clear: bool) -> list[dict[str, Any]]:
         user_id = self._memory._resolve_user_id(source)
         pending: list[dict[str, Any]] = []
         changed = False
@@ -1814,17 +2232,97 @@ class TaskManager:
                     "created_at": _normalize_text(payload.get("created_at")),
                 }
             )
-            record["pending_delivery"] = None
-            self._sync_orchestration_state(record)
-            changed = True
+            if clear:
+                record["pending_delivery"] = None
+                self._update_task_job(
+                    record,
+                    status="completed" if record.get("task_domain") == "assistant_schedule" else "not_applicable",
+                    runtime_source="app.pending_redelivery",
+                    finished_at=_normalize_text(payload.get("created_at")) or _utcnow_iso(),
+                    next_retry_at=None,
+                    last_failure=None,
+                    last_delivery=delivery_payload(
+                        state="delivered",
+                        delivered=True,
+                        channel="task_update",
+                        message=message,
+                        event_id=payload.get("event_id"),
+                        source_event_id=payload.get("source_event_id"),
+                    ),
+                )
+                self._sync_orchestration_state(record)
+                changed = True
         if changed:
             await self._persist()
         return pending
+
+    async def peek_pending_delivery_messages(self, source=None) -> list[dict[str, Any]]:
+        return await self._pending_delivery_messages(source=source, clear=False)
+
+    async def collect_pending_delivery_messages(self, source=None) -> list[dict[str, Any]]:
+        return await self._pending_delivery_messages(source=source, clear=True)
+
+    async def acknowledge_pending_delivery_messages(
+        self,
+        *,
+        source=None,
+        event_ids: list[str] | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        user_id = self._memory._resolve_user_id(source)
+        target_ids = {
+            _normalize_text(item)
+            for item in (event_ids or [])
+            if _normalize_text(item)
+        }
+        changed = 0
+        current_text = _dt_to_iso(now or _utcnow())
+        for record in self._iter_user_tasks(user_id):
+            payload = record.get("pending_delivery")
+            if not isinstance(payload, dict):
+                continue
+            event_id = _normalize_text(payload.get("event_id"))
+            if target_ids and event_id not in target_ids:
+                continue
+            message = _normalize_text(payload.get("message"))
+            record["pending_delivery"] = None
+            self._update_task_job(
+                record,
+                status="completed" if record.get("last_run_status") in {"notified", "succeeded"} else record.get("job", {}).get("status") or "completed",
+                runtime_source="app.pending_redelivery",
+                finished_at=current_text,
+                next_retry_at=None,
+                last_failure=None,
+                last_delivery=delivery_payload(
+                    state="delivered",
+                    delivered=True,
+                    channel="task_update",
+                    message=message,
+                    event_id=payload.get("event_id"),
+                    source_event_id=payload.get("source_event_id"),
+                    at=current_text,
+                ),
+            )
+            self._sync_orchestration_state(record)
+            record["last_updated_at"] = current_text
+            changed += 1
+        if changed:
+            await self._persist()
+        return changed
 
     def _background_task_snapshot(self, record: dict[str, Any], now: datetime) -> dict[str, Any]:
         self._ensure_task_defaults(record)
         schedule_state = self._schedule_state(record, now=now)
         orchestration = self._orchestration_state(record, now=now)
+        job = normalize_job_record(
+            record.get("job"),
+            kind=self._task_job_kind(record),
+            name=self._task_job_name(record),
+            max_retries=self._task_job_max_retries(record),
+            status_source="task_manager.defaults",
+        )
+        last_failure = normalize_failure(job.get("last_failure"))
+        last_delivery = normalize_delivery(job.get("last_delivery"))
         next_run_text = _normalize_text(record.get("next_run_at"))
         due_at_text = _normalize_text(record.get("due_at"))
         next_run_dt = _iso_to_dt(next_run_text or due_at_text)
@@ -1847,7 +2345,16 @@ class TaskManager:
             "awaiting_completion": bool(schedule_state.get("awaiting_completion", False)),
             "completion_state": _normalize_text(schedule_state.get("completion_state")),
             "orchestration": orchestration,
+            "state": copy.deepcopy(orchestration),
             "auto_run": bool(record.get("auto_run", False)),
+            "job": copy.deepcopy(job),
+            "job_status": job.get("status"),
+            "retry_count": int(job.get("retry_count", 0) or 0),
+            "next_retry_at": job.get("next_retry_at"),
+            "status_source": job.get("status_source"),
+            "failure_category": last_failure.get("category") if last_failure else None,
+            "failure_retryable": bool(last_failure.get("retryable")) if last_failure else False,
+            "delivery_state": last_delivery.get("state"),
         }
 
     def _consecutive_failures(self, record: dict[str, Any]) -> int:
@@ -1879,6 +2386,23 @@ class TaskManager:
         repeated_failure_tasks: list[dict[str, Any]] = []
         awaiting_completion_tasks: list[dict[str, Any]] = []
         pending_delivery_tasks: list[dict[str, Any]] = []
+        retry_waiting_tasks: list[dict[str, Any]] = []
+        failure_category_counts = {
+            "retryable": 0,
+            "non_retryable": 0,
+            "manual_intervention": 0,
+            "delivery": 0,
+        }
+        delivery_state_counts = {
+            "pending": 0,
+            "delivered": 0,
+            "pending_redelivery": 0,
+            "suppressed": 0,
+            "failed": 0,
+            "not_applicable": 0,
+        }
+        job_status_counts: dict[str, int] = {}
+        background_status_sources = ["task_manager.schedule", "task_manager.execution", "task_manager.delivery"]
 
         for record in self._iter_all_active_tasks():
             schedule_kind = record.get("schedule_kind")
@@ -1886,6 +2410,22 @@ class TaskManager:
                 continue
             scheduled.append(record)
             schedule_state = self._schedule_state(record, now=now)
+            job = normalize_job_record(
+                record.get("job"),
+                kind=self._task_job_kind(record),
+                name=self._task_job_name(record),
+                max_retries=self._task_job_max_retries(record),
+                status_source="task_manager.defaults",
+            )
+            last_failure = normalize_failure(job.get("last_failure"))
+            last_delivery = normalize_delivery(job.get("last_delivery"))
+            job_status = _normalize_text(job.get("status")).lower() or "idle"
+            job_status_counts[job_status] = int(job_status_counts.get(job_status, 0) or 0) + 1
+            delivery_state = _normalize_text(last_delivery.get("state")).lower() or "not_applicable"
+            delivery_state_counts[delivery_state] = int(delivery_state_counts.get(delivery_state, 0) or 0) + 1
+            if last_failure:
+                category = _normalize_text(last_failure.get("category")).lower() or "retryable"
+                failure_category_counts[category] = int(failure_category_counts.get(category, 0) or 0) + 1
             next_run_dt = _iso_to_dt(record.get("next_run_at"))
             actionable_user_follow_up = bool(
                 not record.get("auto_run")
@@ -1913,6 +2453,8 @@ class TaskManager:
                         "pending_delivery": copy.deepcopy(record.get("pending_delivery")),
                     }
                 )
+            if job_status == "retry_waiting":
+                retry_waiting_tasks.append(self._background_task_snapshot(record, now))
             status = _normalize_text(record.get("last_run_status")).lower()
             if status == "failed":
                 recent_failures.append(
@@ -1920,6 +2462,8 @@ class TaskManager:
                         "task_key": _normalize_text(record.get("task_key")),
                         "last_run_at": _normalize_text(record.get("last_run_at")),
                         "summary": _normalize_text(record.get("last_run_summary")),
+                        "failure_category": last_failure.get("category") if last_failure else None,
+                        "retryable": bool(last_failure.get("retryable")) if last_failure else False,
                     }
                 )
             consecutive_failures = self._consecutive_failures(record)
@@ -1939,6 +2483,8 @@ class TaskManager:
                         "status": status,
                         "last_run_at": _normalize_text(record.get("last_run_at")),
                         "summary": _normalize_text(record.get("last_run_summary")),
+                        "job_status": job_status,
+                        "status_source": job.get("status_source"),
                     }
                 )
 
@@ -1972,13 +2518,17 @@ class TaskManager:
             "awaiting_completion_count": awaiting_completion_count,
             "run_succeeded_pending_completion_count": run_succeeded_pending_completion_count,
             "awaiting_completion_tasks": awaiting_completion_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
+            "retry_waiting_tasks": retry_waiting_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
+            "job_status_counts": job_status_counts,
             "repeated_failure_tasks": repeated_failure_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
+            "failure_summary": {"by_category": failure_category_counts},
             "recent_failures": recent_failures[:5],
             "recent_runs": recent_runs[:8],
         }
         delivery_layer = {
             "pending_redelivery_count": pending_delivery_count,
             "pending_redelivery_tasks": pending_delivery_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
+            "delivery_state_counts": delivery_state_counts,
         }
 
         return {
@@ -1986,6 +2536,7 @@ class TaskManager:
             "execution": execution_layer,
             "delivery": delivery_layer,
             "system": {},
+            "background_status_sources": background_status_sources,
             "scheduled_task_count": len(scheduled),
             "due_task_count": due_count,
             "overdue_task_count": overdue_count,
@@ -1996,6 +2547,10 @@ class TaskManager:
             "nearest_due_in_minutes": nearest_due_in_minutes,
             "urgent_due_tasks": [item[1] for item in urgent_due_tasks[:_BACKGROUND_DUE_LIST_LIMIT]],
             "urgent_due_task_count": len(urgent_due_tasks),
+            "job_status_counts": job_status_counts,
+            "retry_waiting_tasks": retry_waiting_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
+            "failure_summary": {"by_category": failure_category_counts},
+            "delivery_state_counts": delivery_state_counts,
             "repeated_failure_tasks": repeated_failure_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
             "recent_failures": recent_failures[:5],
             "recent_runs": recent_runs[:8],
@@ -2009,6 +2564,7 @@ class TaskManager:
         self,
         action: str,
         task_key: str = "",
+        task_keys: list[str] | None = None,
         summary: str = "",
         completion_summary: str = "",
         project: str = "",
@@ -2025,10 +2581,18 @@ class TaskManager:
         notify_policy: str | None = None,
         session_id: str = "",
         source=None,
-    ) -> str:
+    ) -> str | ToolCallResult:
         normalized_action = str(action or "").strip().lower()
-        if normalized_action not in {"create", "list", "update", "complete"}:
-            return "Error: manage_tasks action must be one of create, list, update, complete."
+        if normalized_action not in {"create", "list", "detail", "update", "complete", "delete", "restore"}:
+            return ToolCallResult.failure(
+                tool_name="manage_tasks",
+                source=ToolSourceType.BUILTIN,
+                action_risk="write",
+                code="task_action_invalid",
+                category=ToolErrorCategory.VALIDATION,
+                message="manage_tasks action must be one of create, list, detail, update, complete, delete, restore.",
+                details={"action": normalized_action},
+            )
 
         try:
             safe_limit = max(1, min(int(limit), _MAX_LIST_LIMIT))
@@ -2038,6 +2602,11 @@ class TaskManager:
         user_id = self._memory._resolve_user_id(source)
         current_session_id = _normalize_text(session_id or get_event_context().get("session_id"))
         normalized_timezone = _resolve_timezone_name(timezone or _DEFAULT_TIMEZONE)
+        normalized_task_keys = [
+            _normalize_text(item)
+            for item in (task_keys or [])
+            if _normalize_text(item)
+        ]
         if self._has_schedule_inputs(
             schedule_kind=schedule_kind,
             due_at=due_at,
@@ -2047,9 +2616,17 @@ class TaskManager:
             job_prompt=job_prompt,
             notify_policy=notify_policy,
         ):
-            return (
-                "Error: manage_tasks only manages user TODO items. "
-                "Use manage_scheduled_tasks for any task with trigger time or recurrence."
+            return ToolCallResult.failure(
+                tool_name="manage_tasks",
+                source=ToolSourceType.BUILTIN,
+                action_risk="write",
+                code="task_domain_invalid",
+                category=ToolErrorCategory.VALIDATION,
+                message=(
+                    "manage_tasks only manages user TODO items. "
+                    "Use manage_scheduled_tasks for any task with trigger time or recurrence."
+                ),
+                details={"action": normalized_action},
             )
 
         try:
@@ -2074,6 +2651,15 @@ class TaskManager:
                 )
                 tasks = [self._compact_task(record)]
                 filters = self._filters_payload(limit=1, task_domain="user_todo")
+                payload = self._task_operation_payload(
+                    action=normalized_action,
+                    task_domain="user_todo",
+                    status="success",
+                    tasks=tasks,
+                    summary=f"已创建任务 {tasks[0]['task_key']}。",
+                    filters=filters,
+                    next_action_hint=self._next_action_hint(normalized_action, tasks),
+                )
             elif normalized_action == "list":
                 query_text = _normalize_text(query)
                 project_filter = _normalize_text(project)
@@ -2102,11 +2688,93 @@ class TaskManager:
                     query=query_text,
                     limit=safe_limit,
                 )
-            elif normalized_action == "update":
-                record = await self._update_task(
+                payload = self._task_operation_payload(
+                    action=normalized_action,
+                    task_domain="user_todo",
+                    status="success",
+                    tasks=tasks,
+                    summary=f"已返回 {len(tasks)} 个任务。",
+                    filters=filters,
+                    next_action_hint=self._next_action_hint(normalized_action, tasks),
+                )
+            elif normalized_action == "detail":
+                matched, candidates, exact = self._find_task_targets(
                     user_id=user_id,
                     task_domain="user_todo",
                     task_key=task_key,
+                    query=query,
+                    summary=summary,
+                )
+                if not matched:
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="user_todo",
+                        status="not_found",
+                        tasks=[],
+                        summary="未找到匹配的任务。",
+                        candidates=candidates,
+                        error={"code": "task_not_found", "message": "未找到匹配的任务。", "details": {"task_key": task_key, "query": query}},
+                        next_action_hint="请先列出任务，或提供更明确的 task_key。",
+                    )
+                elif len(matched) > 1 and not exact:
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="user_todo",
+                        status="ambiguous",
+                        tasks=[],
+                        summary="存在多个相似任务，请先明确目标。",
+                        candidates=candidates,
+                        error={"code": "task_ambiguous", "message": "存在多个相似任务，请先明确目标。", "details": {"candidate_count": len(matched)}},
+                        next_action_hint="请改用 task_key 指定要查看的任务。",
+                    )
+                else:
+                    tasks = [self._compact_task(matched[0])]
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="user_todo",
+                        status="success",
+                        tasks=tasks,
+                        summary=f"已定位任务 {tasks[0]['task_key']}。",
+                        filters=self._filters_payload(limit=1, task_domain="user_todo"),
+                        next_action_hint="如需修改，可继续使用 update、complete、delete 或 restore。",
+                    )
+            elif normalized_action == "update":
+                resolved_task_key = task_key
+                if not resolved_task_key and query:
+                    matched, candidates, exact = self._find_task_targets(
+                        user_id=user_id,
+                        task_domain="user_todo",
+                        query=query,
+                    )
+                    if not matched:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="user_todo",
+                            status="not_found",
+                            tasks=[],
+                            summary="未找到可更新的任务。",
+                            candidates=candidates,
+                            error={"code": "task_not_found", "message": "未找到可更新的任务。", "details": {"query": query}},
+                            next_action_hint="请先列出任务，或提供更明确的 task_key。",
+                        )
+                        return json.dumps(payload, ensure_ascii=False, indent=2)
+                    if len(matched) > 1 and not exact:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="user_todo",
+                            status="ambiguous",
+                            tasks=[],
+                            summary="存在多个相似任务，暂不执行更新。",
+                            candidates=candidates,
+                            error={"code": "task_ambiguous", "message": "存在多个相似任务，暂不执行更新。", "details": {"candidate_count": len(matched)}},
+                            next_action_hint="请改用 task_key 指定要更新的任务。",
+                        )
+                        return json.dumps(payload, ensure_ascii=False, indent=2)
+                    resolved_task_key = _normalize_text(matched[0].get("task_key"))
+                record = await self._update_task(
+                    user_id=user_id,
+                    task_domain="user_todo",
+                    task_key=resolved_task_key,
                     summary=summary,
                     project=project,
                     task_status=task_status,
@@ -2125,11 +2793,52 @@ class TaskManager:
                 )
                 tasks = [self._compact_task(record)]
                 filters = self._filters_payload(limit=1, task_domain="user_todo")
-            else:
+                payload = self._task_operation_payload(
+                    action=normalized_action,
+                    task_domain="user_todo",
+                    status="success",
+                    tasks=tasks,
+                    summary=f"已更新任务 {tasks[0]['task_key']}。",
+                    filters=filters,
+                    next_action_hint=self._next_action_hint(normalized_action, tasks),
+                )
+            elif normalized_action == "complete":
+                resolved_task_key = task_key
+                if not resolved_task_key and query:
+                    matched, candidates, exact = self._find_task_targets(
+                        user_id=user_id,
+                        task_domain="user_todo",
+                        query=query,
+                    )
+                    if not matched:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="user_todo",
+                            status="not_found",
+                            tasks=[],
+                            summary="未找到可完成的任务。",
+                            candidates=candidates,
+                            error={"code": "task_not_found", "message": "未找到可完成的任务。", "details": {"query": query}},
+                            next_action_hint="请先列出任务，或提供更明确的 task_key。",
+                        )
+                        return json.dumps(payload, ensure_ascii=False, indent=2)
+                    if len(matched) > 1 and not exact:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="user_todo",
+                            status="ambiguous",
+                            tasks=[],
+                            summary="存在多个相似任务，暂不执行完成。",
+                            candidates=candidates,
+                            error={"code": "task_ambiguous", "message": "存在多个相似任务，暂不执行完成。", "details": {"candidate_count": len(matched)}},
+                            next_action_hint="请改用 task_key 指定要完成的任务。",
+                        )
+                        return json.dumps(payload, ensure_ascii=False, indent=2)
+                    resolved_task_key = _normalize_text(matched[0].get("task_key"))
                 record = await self._update_task(
                     user_id=user_id,
                     task_domain="user_todo",
-                    task_key=task_key,
+                    task_key=resolved_task_key,
                     task_status="done",
                     completion_summary=completion_summary or summary,
                     session_id=current_session_id,
@@ -2137,22 +2846,120 @@ class TaskManager:
                 )
                 tasks = [self._compact_task(record)]
                 filters = self._filters_payload(limit=1, task_domain="user_todo")
+                payload = self._task_operation_payload(
+                    action=normalized_action,
+                    task_domain="user_todo",
+                    status="success",
+                    tasks=tasks,
+                    summary=f"已完成任务 {tasks[0]['task_key']}。",
+                    filters=filters,
+                    next_action_hint=self._next_action_hint(normalized_action, tasks),
+                )
+            else:
+                if normalized_task_keys:
+                    matched = [
+                        record
+                        for key in normalized_task_keys
+                        if (record := self._find_task_record(
+                            user_id,
+                            key,
+                            task_domain="user_todo",
+                            statuses={"active", "deleted"},
+                        ))
+                        is not None
+                    ]
+                    candidates = [self._task_candidate_payload(record) for record in matched]
+                    exact = True
+                else:
+                    matched, candidates, exact = self._find_task_targets(
+                        user_id=user_id,
+                        task_domain="user_todo",
+                        task_key=task_key,
+                        query=query,
+                        summary=summary,
+                        include_deleted=normalized_action == "restore",
+                    )
+                if not matched:
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="user_todo",
+                        status="not_found",
+                        tasks=[],
+                        summary="未找到匹配的任务。",
+                        candidates=candidates,
+                        error={"code": "task_not_found", "message": "未找到匹配的任务。", "details": {"task_key": task_key, "query": query}},
+                        next_action_hint="请先列出任务，或提供更明确的 task_key。",
+                    )
+                elif len(matched) > 1 and not exact:
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="user_todo",
+                        status="ambiguous",
+                        tasks=[],
+                        summary="存在多个相似任务，暂不执行对象操作。",
+                        candidates=candidates,
+                        error={"code": "task_ambiguous", "message": "存在多个相似任务，暂不执行对象操作。", "details": {"candidate_count": len(matched)}},
+                        next_action_hint="请改用 task_key 指定目标任务。",
+                    )
+                else:
+                    prompt_summary = "、".join(
+                        _normalize_text(record.get("content")) or _normalize_text(record.get("task_key"))
+                        for record in matched[:3]
+                    )
+                    confirmed = await self._confirm_task_operation(
+                        action=normalized_action,
+                        object_type="任务",
+                        task_count=len(matched),
+                        summary=prompt_summary,
+                        session_id=current_session_id,
+                        source=source,
+                    )
+                    if not confirmed:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="user_todo",
+                            status="cancelled",
+                            tasks=[],
+                            summary="用户未确认任务对象操作，未执行变更。",
+                            candidates=candidates,
+                            next_action_hint="如需继续，请重新发起操作并在确认框中同意。",
+                        )
+                    else:
+                        current_text = _utcnow_iso()
+                        for record in matched:
+                            if normalized_action == "delete":
+                                record["status"] = "deleted"
+                            else:
+                                record["status"] = "active"
+                            record["last_updated_at"] = current_text
+                        await self._persist()
+                        tasks = [self._compact_task(record) for record in matched]
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="user_todo",
+                            status="success",
+                            tasks=tasks,
+                            summary="已删除任务。" if normalized_action == "delete" else "已恢复任务。",
+                            filters=self._filters_payload(limit=len(tasks), task_domain="user_todo"),
+                            next_action_hint="可继续使用 detail 查看结果。",
+                        )
         except ValueError as exc:
-            return f"Error: manage_tasks failed: {exc}"
-
-        payload = {
-            "action": normalized_action,
-            "tasks": tasks,
-            "task_count": len(tasks),
-            "filters_applied": filters,
-            "next_action_hint": self._next_action_hint(normalized_action, tasks),
-        }
+            return ToolCallResult.failure(
+                tool_name="manage_tasks",
+                source=ToolSourceType.BUILTIN,
+                action_risk="write",
+                code="task_operation_invalid",
+                category=ToolErrorCategory.VALIDATION,
+                message=str(exc),
+                details={"action": normalized_action},
+            )
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
     async def manage_scheduled_tasks(
         self,
         action: str,
         task_key: str = "",
+        task_keys: list[str] | None = None,
         summary: str = "",
         completion_summary: str = "",
         project: str = "",
@@ -2169,10 +2976,18 @@ class TaskManager:
         notify_policy: str | None = None,
         session_id: str = "",
         source=None,
-    ) -> str:
+    ) -> str | ToolCallResult:
         normalized_action = str(action or "").strip().lower()
-        if normalized_action not in {"create", "list", "update", "complete"}:
-            return "Error: manage_scheduled_tasks action must be one of create, list, update, complete."
+        if normalized_action not in {"create", "list", "detail", "update", "complete", "delete", "cancel", "disable", "restore"}:
+            return ToolCallResult.failure(
+                tool_name="manage_scheduled_tasks",
+                source=ToolSourceType.BUILTIN,
+                action_risk="write",
+                code="scheduled_task_action_invalid",
+                category=ToolErrorCategory.VALIDATION,
+                message="manage_scheduled_tasks action must be one of create, list, detail, update, complete, delete, cancel, disable, restore.",
+                details={"action": normalized_action},
+            )
 
         try:
             safe_limit = max(1, min(int(limit), _MAX_LIST_LIMIT))
@@ -2182,6 +2997,11 @@ class TaskManager:
         user_id = self._memory._resolve_user_id(source)
         current_session_id = _normalize_text(session_id or get_event_context().get("session_id"))
         normalized_timezone = _resolve_timezone_name(timezone or _DEFAULT_TIMEZONE)
+        normalized_task_keys = [
+            _normalize_text(item)
+            for item in (task_keys or [])
+            if _normalize_text(item)
+        ]
 
         try:
             if normalized_action == "create":
@@ -2205,6 +3025,15 @@ class TaskManager:
                 )
                 tasks = [self._compact_task(record)]
                 filters = self._filters_payload(limit=1, task_domain="assistant_schedule")
+                payload = self._task_operation_payload(
+                    action=normalized_action,
+                    task_domain="assistant_schedule",
+                    status="success",
+                    tasks=tasks,
+                    summary=f"已创建定时任务 {tasks[0]['task_key']}。",
+                    filters=filters,
+                    next_action_hint=self._next_action_hint(normalized_action, tasks),
+                )
             elif normalized_action == "list":
                 query_text = _normalize_text(query)
                 project_filter = _normalize_text(project)
@@ -2233,14 +3062,96 @@ class TaskManager:
                     query=query_text,
                     limit=safe_limit,
                 )
+                payload = self._task_operation_payload(
+                    action=normalized_action,
+                    task_domain="assistant_schedule",
+                    status="success",
+                    tasks=tasks,
+                    summary=f"已返回 {len(tasks)} 个定时任务。",
+                    filters=filters,
+                    next_action_hint=self._next_action_hint(normalized_action, tasks),
+                )
+            elif normalized_action == "detail":
+                matched, candidates, exact = self._find_task_targets(
+                    user_id=user_id,
+                    task_domain="assistant_schedule",
+                    task_key=task_key,
+                    query=query,
+                    summary=summary,
+                )
+                if not matched:
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="assistant_schedule",
+                        status="not_found",
+                        tasks=[],
+                        summary="未找到匹配的定时任务。",
+                        candidates=candidates,
+                        error={"code": "scheduled_task_not_found", "message": "未找到匹配的定时任务。", "details": {"task_key": task_key, "query": query}},
+                        next_action_hint="请先列出定时任务，或提供更明确的 task_key。",
+                    )
+                elif len(matched) > 1 and not exact:
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="assistant_schedule",
+                        status="ambiguous",
+                        tasks=[],
+                        summary="存在多个相似定时任务，请先明确目标。",
+                        candidates=candidates,
+                        error={"code": "scheduled_task_ambiguous", "message": "存在多个相似定时任务，请先明确目标。", "details": {"candidate_count": len(matched)}},
+                        next_action_hint="请改用 task_key 指定要查看的定时任务。",
+                    )
+                else:
+                    tasks = [self._compact_task(matched[0])]
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="assistant_schedule",
+                        status="success",
+                        tasks=tasks,
+                        summary=f"已定位定时任务 {tasks[0]['task_key']}。",
+                        filters=self._filters_payload(limit=1, task_domain="assistant_schedule"),
+                        next_action_hint="如需修改，可继续使用 update、disable、cancel、delete 或 restore。",
+                    )
             elif normalized_action == "update":
                 normalized_schedule_kind = schedule_kind
                 if normalized_schedule_kind is not None and _normalize_schedule_kind(normalized_schedule_kind or "none") == "none":
                     raise ValueError("scheduled tasks cannot be updated to schedule_kind=none.")
+                resolved_task_key = task_key
+                if not resolved_task_key and query:
+                    matched, candidates, exact = self._find_task_targets(
+                        user_id=user_id,
+                        task_domain="assistant_schedule",
+                        query=query,
+                    )
+                    if not matched:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="assistant_schedule",
+                            status="not_found",
+                            tasks=[],
+                            summary="未找到可更新的定时任务。",
+                            candidates=candidates,
+                            error={"code": "scheduled_task_not_found", "message": "未找到可更新的定时任务。", "details": {"query": query}},
+                            next_action_hint="请先列出定时任务，或提供更明确的 task_key。",
+                        )
+                        return json.dumps(payload, ensure_ascii=False, indent=2)
+                    if len(matched) > 1 and not exact:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="assistant_schedule",
+                            status="ambiguous",
+                            tasks=[],
+                            summary="存在多个相似定时任务，暂不执行更新。",
+                            candidates=candidates,
+                            error={"code": "scheduled_task_ambiguous", "message": "存在多个相似定时任务，暂不执行更新。", "details": {"candidate_count": len(matched)}},
+                            next_action_hint="请改用 task_key 指定要更新的定时任务。",
+                        )
+                        return json.dumps(payload, ensure_ascii=False, indent=2)
+                    resolved_task_key = _normalize_text(matched[0].get("task_key"))
                 record = await self._update_task(
                     user_id=user_id,
                     task_domain="assistant_schedule",
-                    task_key=task_key,
+                    task_key=resolved_task_key,
                     summary=summary,
                     project=project,
                     task_status=task_status,
@@ -2259,11 +3170,52 @@ class TaskManager:
                 )
                 tasks = [self._compact_task(record)]
                 filters = self._filters_payload(limit=1, task_domain="assistant_schedule")
-            else:
+                payload = self._task_operation_payload(
+                    action=normalized_action,
+                    task_domain="assistant_schedule",
+                    status="success",
+                    tasks=tasks,
+                    summary=f"已更新定时任务 {tasks[0]['task_key']}。",
+                    filters=filters,
+                    next_action_hint=self._next_action_hint(normalized_action, tasks),
+                )
+            elif normalized_action == "complete":
+                resolved_task_key = task_key
+                if not resolved_task_key and query:
+                    matched, candidates, exact = self._find_task_targets(
+                        user_id=user_id,
+                        task_domain="assistant_schedule",
+                        query=query,
+                    )
+                    if not matched:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="assistant_schedule",
+                            status="not_found",
+                            tasks=[],
+                            summary="未找到可完成的定时任务。",
+                            candidates=candidates,
+                            error={"code": "scheduled_task_not_found", "message": "未找到可完成的定时任务。", "details": {"query": query}},
+                            next_action_hint="请先列出定时任务，或提供更明确的 task_key。",
+                        )
+                        return json.dumps(payload, ensure_ascii=False, indent=2)
+                    if len(matched) > 1 and not exact:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="assistant_schedule",
+                            status="ambiguous",
+                            tasks=[],
+                            summary="存在多个相似定时任务，暂不执行完成。",
+                            candidates=candidates,
+                            error={"code": "scheduled_task_ambiguous", "message": "存在多个相似定时任务，暂不执行完成。", "details": {"candidate_count": len(matched)}},
+                            next_action_hint="请改用 task_key 指定要完成的定时任务。",
+                        )
+                        return json.dumps(payload, ensure_ascii=False, indent=2)
+                    resolved_task_key = _normalize_text(matched[0].get("task_key"))
                 record = await self._update_task(
                     user_id=user_id,
                     task_domain="assistant_schedule",
-                    task_key=task_key,
+                    task_key=resolved_task_key,
                     task_status="done",
                     completion_summary=completion_summary or summary,
                     session_id=current_session_id,
@@ -2271,14 +3223,123 @@ class TaskManager:
                 )
                 tasks = [self._compact_task(record)]
                 filters = self._filters_payload(limit=1, task_domain="assistant_schedule")
+                payload = self._task_operation_payload(
+                    action=normalized_action,
+                    task_domain="assistant_schedule",
+                    status="success",
+                    tasks=tasks,
+                    summary=f"已完成定时任务 {tasks[0]['task_key']}。",
+                    filters=filters,
+                    next_action_hint=self._next_action_hint(normalized_action, tasks),
+                )
+            else:
+                if normalized_task_keys:
+                    matched = [
+                        record
+                        for key in normalized_task_keys
+                        if (record := self._find_task_record(
+                            user_id,
+                            key,
+                            task_domain="assistant_schedule",
+                            statuses={"active", "deleted"},
+                        ))
+                        is not None
+                    ]
+                    candidates = [self._task_candidate_payload(record) for record in matched]
+                    exact = True
+                else:
+                    matched, candidates, exact = self._find_task_targets(
+                        user_id=user_id,
+                        task_domain="assistant_schedule",
+                        task_key=task_key,
+                        query=query,
+                        summary=summary,
+                        include_deleted=normalized_action in {"restore"},
+                    )
+                if not matched:
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="assistant_schedule",
+                        status="not_found",
+                        tasks=[],
+                        summary="未找到匹配的定时任务。",
+                        candidates=candidates,
+                        error={"code": "scheduled_task_not_found", "message": "未找到匹配的定时任务。", "details": {"task_key": task_key, "query": query}},
+                        next_action_hint="请先列出定时任务，或提供更明确的 task_key。",
+                    )
+                elif len(matched) > 1 and not exact:
+                    payload = self._task_operation_payload(
+                        action=normalized_action,
+                        task_domain="assistant_schedule",
+                        status="ambiguous",
+                        tasks=[],
+                        summary="存在多个相似定时任务，暂不执行对象操作。",
+                        candidates=candidates,
+                        error={"code": "scheduled_task_ambiguous", "message": "存在多个相似定时任务，暂不执行对象操作。", "details": {"candidate_count": len(matched)}},
+                        next_action_hint="请改用 task_key 指定目标定时任务。",
+                    )
+                else:
+                    prompt_summary = "、".join(
+                        _normalize_text(record.get("content")) or _normalize_text(record.get("task_key"))
+                        for record in matched[:3]
+                    )
+                    confirmed = await self._confirm_task_operation(
+                        action=normalized_action,
+                        object_type="定时任务",
+                        task_count=len(matched),
+                        summary=prompt_summary,
+                        session_id=current_session_id,
+                        source=source,
+                    )
+                    if not confirmed:
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="assistant_schedule",
+                            status="cancelled",
+                            tasks=[],
+                            summary="用户未确认定时任务对象操作，未执行变更。",
+                            candidates=candidates,
+                            next_action_hint="如需继续，请重新发起操作并在确认框中同意。",
+                        )
+                    else:
+                        current_text = _utcnow_iso()
+                        for record in matched:
+                            if normalized_action == "delete":
+                                record["status"] = "deleted"
+                            elif normalized_action in {"cancel", "disable"}:
+                                record["task_status"] = "blocked"
+                            else:
+                                record["status"] = "active"
+                                if record.get("task_status") == "blocked":
+                                    record["task_status"] = "open"
+                            record["last_updated_at"] = current_text
+                            record["next_run_at"] = self._schedule_state(record, now=_iso_to_dt(current_text) or _utcnow())["next_run_at"]
+                            self._sync_orchestration_state(record, now=_iso_to_dt(current_text) or _utcnow())
+                        await self._persist()
+                        tasks = [self._compact_task(record) for record in matched]
+                        summary_text = {
+                            "delete": "已删除定时任务。",
+                            "cancel": "已取消定时任务执行。",
+                            "disable": "已禁用定时任务。",
+                            "restore": "已恢复定时任务。",
+                        }[normalized_action]
+                        payload = self._task_operation_payload(
+                            action=normalized_action,
+                            task_domain="assistant_schedule",
+                            status="success",
+                            tasks=tasks,
+                            summary=summary_text,
+                            filters=self._filters_payload(limit=len(tasks), task_domain="assistant_schedule"),
+                            next_action_hint="可继续使用 detail 查看结果。",
+                        )
         except ValueError as exc:
-            return f"Error: manage_scheduled_tasks failed: {exc}"
-
-        payload = {
-            "action": normalized_action,
-            "tasks": tasks,
-            "task_count": len(tasks),
-            "filters_applied": filters,
-            "next_action_hint": self._next_action_hint(normalized_action, tasks),
-        }
+            return ToolCallResult.failure(
+                tool_name="manage_scheduled_tasks",
+                source=ToolSourceType.BUILTIN,
+                action_risk="write",
+                code="scheduled_task_operation_invalid",
+                category=ToolErrorCategory.VALIDATION,
+                message=str(exc),
+                details={"action": normalized_action},
+            )
         return json.dumps(payload, ensure_ascii=False, indent=2)

@@ -8,12 +8,14 @@ import logging
 from core.io_protocol import event_to_dict
 
 logger = logging.getLogger("meetyou.gateway.ws")
+_WS_SCHEMA = "meetyou.ws.v1"
 
 
 class WebSocketManager:
-    def __init__(self):
+    def __init__(self, delivery_observer=None):
         self._connections: dict[str, set] = {}
         self._lock = asyncio.Lock()
+        self._delivery_observer = delivery_observer
 
     async def connect(self, session_id: str, websocket):
         async with self._lock:
@@ -35,8 +37,23 @@ class WebSocketManager:
         for websocket in connections:
             try:
                 await websocket.send_json(payload)
+                self._notify_delivery_observer(
+                    success=True,
+                    session_id=session_id,
+                    delivery_mode="session",
+                    event_type=str(payload.get("event", {}).get("type") or payload.get("runtime", {}).get("resource") or ""),
+                    metadata=self._payload_metadata(payload),
+                )
             except Exception:
                 logger.debug("发送 WebSocket 事件失败，连接将被移除: session=%s", session_id)
+                self._notify_delivery_observer(
+                    success=False,
+                    session_id=session_id,
+                    delivery_mode="session",
+                    event_type=str(payload.get("event", {}).get("type") or payload.get("runtime", {}).get("resource") or ""),
+                    reason="websocket_send_failed",
+                    metadata=self._payload_metadata(payload),
+                )
                 await self.disconnect(session_id, websocket)
 
     async def broadcast_event(self, event):
@@ -50,8 +67,23 @@ class WebSocketManager:
             for websocket in connections:
                 try:
                     await websocket.send_json(payload)
+                    self._notify_delivery_observer(
+                        success=True,
+                        session_id=session_id,
+                        delivery_mode="broadcast",
+                        event_type=str(payload.get("event", {}).get("type") or payload.get("runtime", {}).get("resource") or ""),
+                        metadata=self._payload_metadata(payload),
+                    )
                 except Exception:
                     logger.debug("广播 WebSocket 事件失败，连接将被移除: session=%s", session_id)
+                    self._notify_delivery_observer(
+                        success=False,
+                        session_id=session_id,
+                        delivery_mode="broadcast",
+                        event_type=str(payload.get("event", {}).get("type") or payload.get("runtime", {}).get("resource") or ""),
+                        reason="websocket_broadcast_failed",
+                        metadata=self._payload_metadata(payload),
+                    )
                     await self.disconnect(session_id, websocket)
 
     def has_session(self, session_id: str) -> bool:
@@ -60,13 +92,37 @@ class WebSocketManager:
     def _serialize_event(self, event):
         if isinstance(event, dict):
             return {
-                "schema": "meetyou.ws.v1",
+                "schema": _WS_SCHEMA,
                 "kind": "event",
                 "event": dict(event),
             }
         payload = event_to_dict(event)
+        if payload.get("type") == "runtime_status":
+            return {
+                "schema": _WS_SCHEMA,
+                "kind": "runtime",
+                "runtime": {
+                    "resource": "state",
+                    "session_id": payload.get("session_id", ""),
+                    "state": payload.get("content", {}),
+                    "metadata": payload.get("metadata", {}),
+                    "event_id": payload.get("event_id", ""),
+                },
+            }
+        if payload.get("type") == "usage":
+            return {
+                "schema": _WS_SCHEMA,
+                "kind": "runtime",
+                "runtime": {
+                    "resource": "usage",
+                    "session_id": payload.get("session_id", ""),
+                    "usage": payload.get("content", {}),
+                    "metadata": payload.get("metadata", {}),
+                    "event_id": payload.get("event_id", ""),
+                },
+            }
         return {
-            "schema": "meetyou.ws.v1",
+            "schema": _WS_SCHEMA,
             "kind": "event",
             "event": payload,
             "stream": {
@@ -78,6 +134,38 @@ class WebSocketManager:
             "input_request": payload.get("input_request", {}),
             "input_response": payload.get("input_response", {}),
         }
+
+    @staticmethod
+    def _payload_metadata(payload: dict) -> dict:
+        if "event" in payload and isinstance(payload.get("event"), dict):
+            return dict(payload["event"].get("metadata") or {})
+        if "runtime" in payload and isinstance(payload.get("runtime"), dict):
+            return dict(payload["runtime"].get("metadata") or {})
+        return {}
+
+    def _notify_delivery_observer(
+        self,
+        *,
+        success: bool,
+        session_id: str,
+        delivery_mode: str,
+        event_type: str = "",
+        reason: str = "",
+        metadata: dict | None = None,
+    ) -> None:
+        if self._delivery_observer is None:
+            return
+        try:
+            self._delivery_observer(
+                success=success,
+                session_id=session_id,
+                delivery_mode=delivery_mode,
+                event_type=event_type,
+                reason=reason,
+                metadata=dict(metadata or {}),
+            )
+        except Exception:
+            logger.debug("WebSocket delivery observer failed", exc_info=True)
 
 
 class WebSocketOutputAdapter:

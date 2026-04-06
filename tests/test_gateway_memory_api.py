@@ -9,6 +9,8 @@ from gateway.api import FastAPIGateway
 
 class GatewayMemoryApiTests(unittest.TestCase):
     def setUp(self):
+        self.access_token = "memory-token"
+
         def snapshot_getter(source_id="", session_id="", include_invalidated=False):
             return {
                 "metadata": {
@@ -105,12 +107,20 @@ class GatewayMemoryApiTests(unittest.TestCase):
             SessionManager(),
             memory_snapshot_getter=snapshot_getter,
             memory_graph_getter=graph_getter,
+            access_token=self.access_token,
         )
         self.client = TestClient(self.gateway.app)
         self.addCleanup(self.client.close)
 
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {self.access_token}"}
+
     def test_get_memory_snapshot(self):
-        response = self.client.get("/memory", params={"source_id": "browser-tab-a", "session_id": "s1"})
+        response = self.client.get(
+            "/memory",
+            params={"source_id": "browser-tab-a", "session_id": "s1"},
+            headers=self._auth_headers(),
+        )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["scope"]["source_id"], "browser-tab-a")
@@ -118,12 +128,24 @@ class GatewayMemoryApiTests(unittest.TestCase):
         self.assertEqual(payload["records"][0]["fact_value"], "阿明")
 
     def test_get_memory_graph(self):
-        response = self.client.get("/memory/graph", params={"source_id": "browser-tab-a"})
+        response = self.client.get(
+            "/memory/graph",
+            params={"source_id": "browser-tab-a"},
+            headers=self._auth_headers(),
+        )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["nodes"][0]["label"], "阿明")
         self.assertIn("stats", payload)
         self.assertEqual(payload["stats"]["record_count"], 1)
+
+    def test_get_memory_requires_auth(self):
+        response = self.client.get("/memory")
+
+        self.assertEqual(response.status_code, 401)
+        payload = response.json()
+        self.assertEqual(payload["kind"], "error")
+        self.assertEqual(payload["error"]["code"], "unauthorized")
 
 
 if __name__ == "__main__":

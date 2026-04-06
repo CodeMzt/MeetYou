@@ -10,6 +10,8 @@ import re
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
+from core.tool_runtime.models import ToolCallResult, ToolErrorCategory, ToolSourceType
+
 logger = logging.getLogger("meetyou.web_search")
 
 ActivityCallback = Callable[[str, str, dict[str, Any] | None], Awaitable[None]]
@@ -369,20 +371,38 @@ class WebSearchTools:
         source=None,
         activity_callback: ActivityCallback | None = None,
         source_profile: str = "",
-    ) -> str:
+    ) -> str | ToolCallResult:
         del session_id, source
 
         normalized_query = str(query or "").strip()
         if not normalized_query:
-            return "Error: search_web requires a non-empty query."
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_query_required",
+                category=ToolErrorCategory.VALIDATION,
+                message="search_web requires a non-empty query.",
+            )
 
         if _looks_like_url(normalized_query):
-            return "Error: search_web is for discovery queries. Use read_web_page for a direct URL."
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_direct_url_unsupported",
+                category=ToolErrorCategory.VALIDATION,
+                message="search_web is for discovery queries. Use read_web_page for a direct URL.",
+            )
 
         if not self.has_tavily_search():
-            return (
-                "Error: Web search is unavailable because Tavily MCP is not configured "
-                "or TAVILY_API_KEY is missing."
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_unavailable",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Web search is unavailable because Tavily MCP is not configured or TAVILY_API_KEY is missing.",
             )
 
         try:
@@ -413,11 +433,29 @@ class WebSearchTools:
             )
         except Exception as exc:
             logger.error("Tavily search failed: %s", exc)
-            return f"Error: Web search is unavailable right now: {exc}"
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_backend_failed",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Web search is unavailable right now.",
+                details={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+                retryable=True,
+            )
 
         backend_error = _extract_tavily_error(search_text)
         if backend_error:
-            return f"Error: Web search is unavailable right now: {backend_error}"
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_backend_failed",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Web search is unavailable right now.",
+                details={"backend_error": backend_error},
+                retryable=True,
+            )
 
         payload = _extract_tavily_payload(search_text)
         normalized = _normalize_tavily_search_payload(payload, normalized_query, safe_max_results)
@@ -429,7 +467,15 @@ class WebSearchTools:
                     normalized_query,
                     _trim_text(search_text, 240),
                 )
-                return "Error: Web search backend returned an unexpected response format."
+                return ToolCallResult.failure(
+                    tool_name="search_web",
+                    source=ToolSourceType.BUILTIN,
+                    action_risk="read",
+                    code="web_search_response_invalid",
+                    category=ToolErrorCategory.DEPENDENCY,
+                    message="Web search backend returned an unexpected response format.",
+                    details={"response_excerpt": _trim_text(search_text, 240)},
+                )
             return json.dumps(
                 {
                     "query": normalized_query,
@@ -511,12 +557,19 @@ class WebSearchTools:
         source=None,
         activity_callback: ActivityCallback | None = None,
         source_profile: str = "",
-    ) -> str:
+    ) -> str | ToolCallResult:
         del session_id, source
 
         normalized_url = str(url or "").strip()
         if not _looks_like_url(normalized_url):
-            return "Error: read_web_page requires a direct URL."
+            return ToolCallResult.failure(
+                tool_name="read_web_page",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_url_required",
+                category=ToolErrorCategory.VALIDATION,
+                message="read_web_page requires a direct URL.",
+            )
 
         await self._emit_activity(
             activity_callback,
@@ -531,8 +584,25 @@ class WebSearchTools:
 
         if detailed is None:
             if failure:
-                return f"Error: Could not read the page: {failure}"
-            return "Error: Could not read the page."
+                return ToolCallResult.failure(
+                    tool_name="read_web_page",
+                    source=ToolSourceType.BUILTIN,
+                    action_risk="read",
+                    code="web_page_read_failed",
+                    category=ToolErrorCategory.DEPENDENCY,
+                    message="Could not read the page.",
+                    details={"backend_error": failure},
+                    retryable=True,
+                )
+            return ToolCallResult.failure(
+                tool_name="read_web_page",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_page_read_failed",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Could not read the page.",
+                retryable=True,
+            )
 
         payload = {
             "source_profile": str(source_profile or ""),

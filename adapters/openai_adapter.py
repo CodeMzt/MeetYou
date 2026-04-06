@@ -14,6 +14,12 @@ from adapters.base import LLMAdapter, StreamEvent, ToolCallInfo
 logger = logging.getLogger("meetyou.adapter.openai")
 
 
+class ProviderRequestError(RuntimeError):
+    def __init__(self, payload: dict[str, Any]):
+        self.runtime_error_payload = dict(payload)
+        super().__init__(str(payload.get("message") or "Provider request failed"))
+
+
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -64,6 +70,23 @@ def _extract_responses_usage(payload: dict | None) -> dict | None:
     }
 
 
+def _safe_lower(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _extract_error_message(error_body: dict[str, Any] | None, status: int) -> str:
+    payload = error_body or {}
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message") or "").strip()
+        if message:
+            return message
+    message = str(payload.get("message") or "").strip()
+    if message:
+        return message
+    return f"HTTP {status}"
+
+
 class OpenAIAdapter(LLMAdapter):
     def format_messages(self, messages: list[dict]) -> list[dict]:
         formatted = []
@@ -110,6 +133,15 @@ class OpenAIAdapter(LLMAdapter):
         url = str(url or "").lower()
         model = str(model or "").lower()
         return "openai.com" in url or model.startswith(("gpt-", "o"))
+
+    @staticmethod
+    def _supports_chat_reasoning_effort(url: str, model: str) -> bool:
+        host = (urlparse(str(url or "").strip()).hostname or "").lower()
+        normalized_model = str(model or "").strip().lower()
+        return (
+            host in {"api.openai.com", "api.deepseek.com"}
+            or normalized_model.startswith(("gpt-", "o", "deepseek-"))
+        )
 
     @staticmethod
     def _is_official_openai(url: str) -> bool:
@@ -221,13 +253,14 @@ class OpenAIAdapter(LLMAdapter):
         return formatted
 
     def _apply_chat_reasoning_options(self, payload: dict, model: str, **kwargs) -> None:
+        request_url = str(kwargs.pop("request_url", "") or "")
         thinking = kwargs.pop("thinking", None)
         effort = kwargs.pop("thinking_effort", None)
         kwargs.pop("thinking_budget", None)
 
-        if effort:
+        if effort and self._supports_chat_reasoning_effort(request_url, model):
             payload["reasoning_effort"] = effort
-        elif thinking is False and str(model or "").lower().startswith("gpt-5"):
+        elif thinking is False and self._supports_chat_reasoning_effort(request_url, model):
             payload["reasoning_effort"] = "none"
 
         payload.update(kwargs)
@@ -266,6 +299,261 @@ class OpenAIAdapter(LLMAdapter):
             str(data.get("content_index", "")),
             str(data.get("summary_index", "")),
         )
+
+    @staticmethod
+    async def _read_error_body(response) -> dict[str, Any]:
+        json_loader = getattr(response, "json", None)
+        if callable(json_loader):
+            try:
+                payload = await json_loader()
+                if isinstance(payload, dict):
+                    return payload
+            except Exception:
+                pass
+        text_loader = getattr(response, "text", None)
+        if callable(text_loader):
+            try:
+                return {"message": await text_loader()}
+            except Exception:
+                pass
+        return {}
+
+    @staticmethod
+    def _extract_invalid_parameter(error_body: dict[str, Any] | None, message: str) -> str:
+        payload = error_body or {}
+        error = payload.get("error")
+        candidates = []
+        if isinstance(error, dict):
+            candidates.extend(
+                [
+                    error.get("param"),
+                    error.get("parameter"),
+                    error.get("field"),
+                ]
+            )
+        candidates.extend(
+            [
+                payload.get("param"),
+                payload.get("parameter"),
+                payload.get("field"),
+            ]
+        )
+        for candidate in candidates:
+            value = str(candidate or "").strip()
+            if value:
+                return value
+        lowered = _safe_lower(message)
+        for field_name in ("stream_options", "reasoning_effort", "reasoning", "tools", "messages"):
+            if field_name in lowered:
+                return field_name
+        return ""
+
+    def _classify_error_payload(
+        self,
+        *,
+        url: str,
+        status: int,
+        error_body: dict[str, Any] | None,
+        request_payload: dict[str, Any],
+        model: str,
+    ) -> dict[str, Any]:
+        parsed = urlparse(str(url or "").strip())
+        host = (parsed.hostname or "").lower()
+        path = parsed.path or ""
+        provider_mode = "official_openai_responses" if self._is_official_openai(url) else "openai_compatible_chat"
+        message = _extract_error_message(error_body, status)
+        lowered = _safe_lower(message)
+        invalid_parameter = self._extract_invalid_parameter(error_body, message)
+
+        code = "provider_request_failed"
+        category = "dependency"
+        retryable = status in {408, 409, 429} or status >= 500
+
+        if status in {401, 403} or any(
+            token in lowered
+            for token in ("api key", "authentication", "unauthorized", "forbidden", "invalid key", "incorrect api key")
+        ):
+            code = "provider_auth_failed"
+        elif status == 429 or "rate limit" in lowered:
+            code = "provider_rate_limited"
+            retryable = True
+        elif any(
+            token in lowered
+            for token in (
+                "maximum context length",
+                "context length",
+                "context window",
+                "too many tokens",
+                "prompt is too long",
+                "reduce the length",
+                "token limit",
+            )
+        ):
+            code = "provider_context_limit_exceeded"
+            category = "validation"
+            retryable = False
+        elif status in {400, 404, 422} and any(
+            token in lowered
+            for token in (
+                "unknown parameter",
+                "unsupported parameter",
+                "unsupported field",
+                "unexpected field",
+                "invalid field",
+                "extra fields not permitted",
+                "invalid_request_error",
+                "invalid request",
+            )
+        ):
+            code = "provider_invalid_request_fields"
+            category = "validation"
+            retryable = False
+        elif status in {400, 422}:
+            code = "provider_bad_request"
+            category = "validation"
+            retryable = False
+        elif status >= 500:
+            code = "provider_upstream_unavailable"
+            retryable = True
+
+        details = {
+            "provider_host": host,
+            "provider_path": path,
+            "provider_mode": provider_mode,
+            "status_code": int(status),
+            "model": str(model or ""),
+            "request_message_count": len(request_payload.get("messages") or request_payload.get("input") or []),
+            "request_has_tools": bool(request_payload.get("tools")),
+            "request_has_stream_options": bool(request_payload.get("stream_options")),
+            "request_has_reasoning_effort": "reasoning_effort" in request_payload,
+            "request_has_reasoning": "reasoning" in request_payload,
+            "invalid_parameter": invalid_parameter,
+            "provider_error_type": str((error_body or {}).get("type") or ((error_body or {}).get("error") or {}).get("type") or ""),
+        }
+        return {
+            "code": code,
+            "category": category,
+            "message": message,
+            "retryable": retryable,
+            "details": details,
+        }
+
+    def _build_retry_payload_for_compatible_400(
+        self,
+        payload: dict[str, Any],
+        error_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if str(error_payload.get("code") or "") != "provider_invalid_request_fields":
+            return None
+        next_payload = dict(payload)
+        removed = False
+        for key in ("stream_options", "reasoning_effort"):
+            if key in next_payload:
+                next_payload.pop(key, None)
+                removed = True
+        return next_payload if removed else None
+
+    async def _raise_http_error(self, response, *, url: str, request_payload: dict[str, Any], model: str) -> None:
+        payload = self._classify_error_payload(
+            url=url,
+            status=int(getattr(response, "status", 0) or 0),
+            error_body=await self._read_error_body(response),
+            request_payload=request_payload,
+            model=model,
+        )
+        raise ProviderRequestError(payload)
+
+    async def _stream_chat_completions_once(
+        self,
+        session,
+        *,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        model: str,
+    ) -> AsyncGenerator[StreamEvent, None]:
+        tool_calls_acc: dict[int, ToolCallInfo] = {}
+
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if int(getattr(resp, "status", 200) or 200) >= 400:
+                await self._raise_http_error(resp, url=url, request_payload=payload, model=model)
+            async for data in self._iter_sse_payloads(resp):
+                usage = _extract_chat_usage(data)
+                if usage:
+                    yield StreamEvent(type="usage", usage=usage)
+
+                choices = data.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                if isinstance(reasoning, str) and reasoning:
+                    yield StreamEvent(type="reasoning", reasoning_text=reasoning)
+
+                if "tool_calls" in delta:
+                    for tc_chunk in delta["tool_calls"]:
+                        idx = tc_chunk.get("index", 0)
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = ToolCallInfo()
+                        if "id" in tc_chunk:
+                            tool_calls_acc[idx].id = tc_chunk["id"]
+                        if "function" in tc_chunk:
+                            fn = tc_chunk["function"]
+                            if "name" in fn:
+                                tool_calls_acc[idx].name = fn["name"]
+                            if "arguments" in fn:
+                                tool_calls_acc[idx].arguments_str += fn["arguments"]
+                    continue
+
+                text = delta.get("content")
+                if text:
+                    yield StreamEvent(type="text", text=text)
+
+        if tool_calls_acc:
+            yield StreamEvent(type="tool_calls", tool_calls=list(tool_calls_acc.values()))
+        yield StreamEvent(type="done")
+
+    async def _chat_completions_once(
+        self,
+        session,
+        *,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        model: str,
+    ) -> dict[str, Any]:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if int(getattr(resp, "status", 200) or 200) >= 400:
+                await self._raise_http_error(resp, url=url, request_payload=payload, model=model)
+            data = await resp.json()
+
+        choices = data.get("choices") or []
+        if not choices:
+            return {
+                "content": "",
+                "tool_calls": [],
+                "usage": _extract_chat_usage(data),
+            }
+
+        message = choices[0].get("message") or {}
+        result = {
+            "content": message.get("content") or "",
+            "tool_calls": [],
+            "usage": _extract_chat_usage(data),
+        }
+
+        if "tool_calls" in message:
+            for tc in message["tool_calls"]:
+                fn = tc.get("function", {})
+                result["tool_calls"].append(
+                    ToolCallInfo(
+                        id=tc.get("id", ""),
+                        name=fn.get("name", ""),
+                        arguments_str=fn.get("arguments", "{}"),
+                    )
+                )
+        return result
 
     async def _iter_sse_payloads(self, response) -> AsyncGenerator[dict[str, Any], None]:
         event_lines: list[str] = []
@@ -406,7 +694,8 @@ class OpenAIAdapter(LLMAdapter):
         saw_reasoning_summary = False
 
         async with session.post(request_url, headers=headers, json=payload) as resp:
-            resp.raise_for_status()
+            if int(getattr(resp, "status", 200) or 200) >= 400:
+                await self._raise_http_error(resp, url=request_url, request_payload=payload, model=model)
             async for data in self._iter_sse_payloads(resp):
                 event_type = data.get("type", "")
                 if event_type == "response.output_text.delta":
@@ -534,48 +823,35 @@ class OpenAIAdapter(LLMAdapter):
             payload["tools"] = ft
         if self._supports_stream_usage(url, model):
             payload["stream_options"] = {"include_usage": True}
-        self._apply_chat_reasoning_options(payload, model, **kwargs)
+        self._apply_chat_reasoning_options(payload, model, request_url=url, **kwargs)
 
-        tool_calls_acc: dict[int, ToolCallInfo] = {}
-
-        async with session.post(url, headers=headers, json=payload) as resp:
-            resp.raise_for_status()
-            async for data in self._iter_sse_payloads(resp):
-                usage = _extract_chat_usage(data)
-                if usage:
-                    yield StreamEvent(type="usage", usage=usage)
-
-                choices = data.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-
-                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
-                if isinstance(reasoning, str) and reasoning:
-                    yield StreamEvent(type="reasoning", reasoning_text=reasoning)
-
-                if "tool_calls" in delta:
-                    for tc_chunk in delta["tool_calls"]:
-                        idx = tc_chunk.get("index", 0)
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = ToolCallInfo()
-                        if "id" in tc_chunk:
-                            tool_calls_acc[idx].id = tc_chunk["id"]
-                        if "function" in tc_chunk:
-                            fn = tc_chunk["function"]
-                            if "name" in fn:
-                                tool_calls_acc[idx].name = fn["name"]
-                            if "arguments" in fn:
-                                tool_calls_acc[idx].arguments_str += fn["arguments"]
-                    continue
-
-                text = delta.get("content")
-                if text:
-                    yield StreamEvent(type="text", text=text)
-
-        if tool_calls_acc:
-            yield StreamEvent(type="tool_calls", tool_calls=list(tool_calls_acc.values()))
-        yield StreamEvent(type="done")
+        try:
+            async for event in self._stream_chat_completions_once(
+                session,
+                url=url,
+                headers=headers,
+                payload=payload,
+                model=model,
+            ):
+                yield event
+        except ProviderRequestError as exc:
+            retry_payload = self._build_retry_payload_for_compatible_400(payload, exc.runtime_error_payload)
+            if retry_payload is None:
+                raise
+            logger.warning(
+                "Retrying OpenAI-compatible request without optional fields for %s%s after %s",
+                (urlparse(str(url or "").strip()).hostname or "").lower(),
+                urlparse(str(url or "").strip()).path or "",
+                exc.runtime_error_payload.get("code"),
+            )
+            async for event in self._stream_chat_completions_once(
+                session,
+                url=url,
+                headers=headers,
+                payload=retry_payload,
+                model=model,
+            ):
+                yield event
 
     async def chat(self, session, url, api_key, model, messages, tools=None, **kwargs) -> dict:
         headers = {
@@ -599,7 +875,8 @@ class OpenAIAdapter(LLMAdapter):
             self._apply_responses_reasoning_options(payload, **kwargs)
 
             async with session.post(request_url, headers=headers, json=payload) as resp:
-                resp.raise_for_status()
+                if int(getattr(resp, "status", 200) or 200) >= 400:
+                    await self._raise_http_error(resp, url=request_url, request_payload=payload, model=model)
                 data = await resp.json()
 
             tool_calls_acc: dict[str, ToolCallInfo] = {}
@@ -630,35 +907,30 @@ class OpenAIAdapter(LLMAdapter):
         ft = self.format_tools(tools)
         if ft:
             payload["tools"] = ft
-        self._apply_chat_reasoning_options(payload, model, **kwargs)
+        self._apply_chat_reasoning_options(payload, model, request_url=url, **kwargs)
 
-        async with session.post(url, headers=headers, json=payload) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
-
-        choices = data.get("choices") or []
-        if not choices:
-            return {
-                "content": "",
-                "tool_calls": [],
-                "usage": _extract_chat_usage(data),
-            }
-
-        message = choices[0].get("message") or {}
-        result = {
-            "content": message.get("content") or "",
-            "tool_calls": [],
-            "usage": _extract_chat_usage(data),
-        }
-
-        if "tool_calls" in message:
-            for tc in message["tool_calls"]:
-                fn = tc.get("function", {})
-                result["tool_calls"].append(
-                    ToolCallInfo(
-                        id=tc.get("id", ""),
-                        name=fn.get("name", ""),
-                        arguments_str=fn.get("arguments", "{}"),
-                    )
-                )
-        return result
+        try:
+            return await self._chat_completions_once(
+                session,
+                url=url,
+                headers=headers,
+                payload=payload,
+                model=model,
+            )
+        except ProviderRequestError as exc:
+            retry_payload = self._build_retry_payload_for_compatible_400(payload, exc.runtime_error_payload)
+            if retry_payload is None:
+                raise
+            logger.warning(
+                "Retrying OpenAI-compatible non-stream request without optional fields for %s%s after %s",
+                (urlparse(str(url or "").strip()).hostname or "").lower(),
+                urlparse(str(url or "").strip()).path or "",
+                exc.runtime_error_payload.get("code"),
+            )
+            return await self._chat_completions_once(
+                session,
+                url=url,
+                headers=headers,
+                payload=retry_payload,
+                model=model,
+            )

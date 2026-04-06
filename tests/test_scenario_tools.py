@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.assistant_modes import AssistantModeManager
+from core.tool_runtime.models import ToolCallResult
 from tools.scenario_tools import ScenarioTools
 
 
@@ -451,7 +452,9 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
             timezone="UTC",
             source={"id": "desktop-user"},
         )
-        self.assertIn("manage_tasks only manages user TODO items", failed)
+        self.assertIsInstance(failed, ToolCallResult)
+        self.assertFalse(failed.ok)
+        self.assertIn("manage_tasks only manages user TODO items", failed.error.message)
 
         created = json.loads(
             await tools.manage_scheduled_tasks(
