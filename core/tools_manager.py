@@ -14,6 +14,7 @@ from core.tool_runtime import (
 )
 from tools.agent_memory import AgentMemoryTools
 from tools.document_tools import DocumentTools
+from tools.lightweight_tools import LightweightTools
 from tools.office_tools import OfficeTools
 from tools.scenario_tools import ScenarioTools
 from tools.study_tools import StudyTools
@@ -30,6 +31,7 @@ class ToolsManager:
         self._agent_memory_tools = AgentMemoryTools(memory)
         self._web_search_tools = WebSearchTools(mcp_manager)
         self._document_tools = DocumentTools(mode_manager) if mode_manager is not None else None
+        self._lightweight_tools = LightweightTools()
         self._scenario_tools = ScenarioTools(
             memory,
             context_manager,
@@ -64,6 +66,9 @@ class ToolsManager:
             "list_skills": self._scenario_tools.list_skills,
             "load_skill": self._scenario_tools.load_skill,
             "create_skill": self._scenario_tools.create_skill,
+            "summarize_text": self._lightweight_tools.summarize_text,
+            "organize_notes": self._lightweight_tools.organize_notes,
+            "extract_action_items": self._lightweight_tools.extract_action_items,
         }
         supported_funcs = {name: func for name, func in supported_funcs.items() if func is not None}
         if self._document_tools is not None:
@@ -194,6 +199,16 @@ class ToolsManager:
             "visible_tools": visible_tool_names,
             "candidate_tools": candidate_tool_names,
             "authorization_preview": decisions,
+            "mcp_server_diagnostics": list(
+                route_context.get("capability_set", {}).get("mcp_diagnostics")
+                or route_context.get("mcp_diagnostics")
+                or getattr(self._mcp_manager, "get_server_diagnostics", lambda: [])()
+            ),
+            "degradation_notes": list(
+                route_context.get("capability_set", {}).get("degradation_notes")
+                or route_context.get("degradation_notes")
+                or []
+            ),
         }
 
     async def call_tool(

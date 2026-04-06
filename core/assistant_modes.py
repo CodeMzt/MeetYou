@@ -452,6 +452,9 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "list_skills",
     "load_skill",
     "create_skill",
+    "summarize_text",
+    "organize_notes",
+    "extract_action_items",
 ]
 
 _TASK_RECOGNITION_HINTS = (
@@ -579,6 +582,21 @@ _SKILL_PROMPT_FALLBACKS = {
         "Optimize for retention, practice, and source-grounded explanations.\n"
         "Start from the user's retrieved materials when available, preserve source references, and turn outputs into concrete study steps."
     ),
+    "knowledge-synthesis": (
+        "[Knowledge Synthesis Skill]\n"
+        "Condense source material into a clear outline, concise summary, and actionable takeaways.\n"
+        "Prefer lightweight native tools before escalating to heavier research or document workflows."
+    ),
+    "office-coordination": (
+        "[Office Coordination Skill]\n"
+        "Turn meeting notes, coordination context, and fragmented updates into structured briefs and action items.\n"
+        "Keep outputs draft-first and make owners, follow-ups, and open questions explicit."
+    ),
+    "hotspot-tracking": (
+        "[Hotspot Tracking Skill]\n"
+        "Track evolving public topics, compare multiple sources, and produce a structured digest with clear freshness boundaries.\n"
+        "Prefer available web and browser MCP capabilities, and fall back to native research tools when those integrations are unavailable."
+    ),
 }
 
 _DEFAULT_PROMPT_REGISTRY = {
@@ -603,6 +621,21 @@ _DEFAULT_PROMPT_REGISTRY = {
         "kind": "skill",
         "fallback": _SKILL_PROMPT_FALLBACKS["study-coaching"],
     },
+    "skill:knowledge-synthesis": {
+        "path": "prompt/SKILL/knowledge-synthesis",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["knowledge-synthesis"],
+    },
+    "skill:office-coordination": {
+        "path": "prompt/SKILL/office-coordination",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["office-coordination"],
+    },
+    "skill:hotspot-tracking": {
+        "path": "prompt/SKILL/hotspot-tracking",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["hotspot-tracking"],
+    },
 }
 
 _DEFAULT_SKILL_REGISTRY = {
@@ -623,6 +656,144 @@ _DEFAULT_SKILL_REGISTRY = {
         "tools": [],
         "mcp_servers": [],
     },
+    "knowledge_synthesis": {
+        "prompts": ["skill:knowledge-synthesis"],
+        "tools": ["summarize_text", "organize_notes", "extract_action_items"],
+        "mcp_servers": [],
+        "scenes": ["knowledge_synthesis"],
+        "activation_keywords": [
+            "summary",
+            "summarize",
+            "outline",
+            "organize",
+            "takeaways",
+            "整理",
+            "提炼",
+            "归纳",
+            "摘要",
+            "结构化",
+        ],
+    },
+    "office_coordination": {
+        "prompts": ["skill:office-coordination"],
+        "tools": ["organize_notes", "extract_action_items"],
+        "mcp_servers": ["notion_knowledge"],
+        "scenes": ["office_coordination"],
+        "activation_keywords": ["meeting", "minutes", "action items", "纪要", "同步", "后续"],
+    },
+    "hotspot_tracking": {
+        "prompts": ["skill:hotspot-tracking"],
+        "tools": ["summarize_text"],
+        "mcp_servers": ["tavily_web", "browser_automation"],
+        "scenes": ["hotspot_tracking"],
+        "fallback_tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
+        "activation_keywords": ["hotspot", "trending", "breaking", "热点", "时政热点", "热搜", "舆情"],
+        "authorization": {"read_only": True},
+    },
+}
+
+_DEFAULT_SCENE_DEFINITIONS = {
+    "knowledge_synthesis": {
+        "title": "Knowledge Synthesis",
+        "summary": "轻量总结、重组笔记与提炼行动项。",
+        "applicable_modes": ["normal", "documents", "research", "office", "study"],
+        "skills": ["knowledge_synthesis"],
+        "tools": ["summarize_text", "organize_notes", "extract_action_items"],
+        "mcp_servers": [],
+        "fallback_tools": ["summarize_text", "organize_notes"],
+        "activation_keywords": ["summary", "outline", "整理", "提炼", "摘要", "结构化"],
+    },
+    "workspace_delivery": {
+        "title": "Workspace Delivery",
+        "summary": "处理工作区读取、报告整理与结构化交付。",
+        "applicable_modes": ["documents", "office"],
+        "skills": ["knowledge_synthesis"],
+        "tools": ["analyze_workspace", "read_local_documents", "compile_report", "organize_notes"],
+        "mcp_servers": ["filesystem_tools"],
+        "fallback_tools": ["analyze_workspace", "read_local_documents", "compile_report"],
+        "activation_keywords": ["workspace", "repo", "目录", "工作区", "项目结构"],
+    },
+    "research_synthesis": {
+        "title": "Research Synthesis",
+        "summary": "科研、资料核验与来源追踪。",
+        "applicable_modes": ["research", "normal"],
+        "skills": ["research_grounding", "knowledge_synthesis"],
+        "tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
+        "mcp_servers": ["tavily_web", "browser_automation"],
+        "fallback_tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
+        "activation_keywords": ["citation", "evidence", "policy", "research", "引用", "证据", "核验"],
+        "authorization": {"read_only": True},
+    },
+    "office_coordination": {
+        "title": "Office Coordination",
+        "summary": "办公整理、会议纪要、跟进事项与沟通草稿。",
+        "applicable_modes": ["office", "documents"],
+        "skills": ["office_coordination", "task_recognition"],
+        "tools": ["meeting_brief", "draft_message", "sync_notes", "organize_notes", "extract_action_items"],
+        "mcp_servers": ["filesystem_tools", "notion_knowledge"],
+        "fallback_tools": ["meeting_brief", "draft_message", "organize_notes", "extract_action_items"],
+        "activation_keywords": ["meeting", "agenda", "minutes", "纪要", "同步", "消息"],
+    },
+    "study_guidance": {
+        "title": "Study Guidance",
+        "summary": "学习计划、知识提炼与复盘练习。",
+        "applicable_modes": ["study"],
+        "skills": ["study_coaching", "knowledge_synthesis"],
+        "tools": ["build_study_plan", "extract_learning_points", "quiz_me", "generate_flashcards", "summarize_text"],
+        "mcp_servers": ["filesystem_tools"],
+        "fallback_tools": ["build_study_plan", "extract_learning_points", "summarize_text"],
+        "activation_keywords": ["study", "quiz", "flashcard", "学习", "复习", "知识点"],
+    },
+    "hotspot_tracking": {
+        "title": "Hotspot Tracking",
+        "summary": "热点事件追踪、多源比对与摘要输出。",
+        "applicable_modes": ["normal", "research"],
+        "skills": ["hotspot_tracking", "research_grounding"],
+        "tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
+        "mcp_servers": ["tavily_web", "browser_automation"],
+        "fallback_tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
+        "activation_keywords": ["hotspot", "trending", "breaking", "热点", "时政热点", "热搜", "舆情"],
+        "authorization": {"read_only": True},
+    },
+}
+
+_DEFAULT_MCP_CATALOG = {
+    "filesystem_tools": {
+        "title": "Filesystem Tools",
+        "summary": "访问本地文件、目录与工作区元数据。",
+        "scenarios": ["documents", "workspace", "office sync", "study materials"],
+        "risk_level": "read",
+        "auth_env": [],
+        "fallback_tools": ["analyze_workspace", "read_local_documents"],
+        "enabled_by_default": True,
+    },
+    "tavily_web": {
+        "title": "Tavily Web Search",
+        "summary": "为外部网页搜索与抽取提供更强的在线检索能力。",
+        "scenarios": ["research", "news", "hotspot tracking"],
+        "risk_level": "read",
+        "auth_env": ["TAVILY_API_KEY"],
+        "fallback_tools": ["search_web", "read_web_page", "research_topic"],
+        "enabled_by_default": False,
+    },
+    "browser_automation": {
+        "title": "Browser Automation",
+        "summary": "浏览器导航与页面快照能力，用于复杂网页观察。",
+        "scenarios": ["research", "inspection", "hotspot tracking"],
+        "risk_level": "read",
+        "auth_env": [],
+        "fallback_tools": ["inspect_page", "read_web_page"],
+        "enabled_by_default": False,
+    },
+    "notion_knowledge": {
+        "title": "Notion Knowledge",
+        "summary": "私有 Notion 知识库读取与检索。",
+        "scenarios": ["office", "knowledge base", "workspace memory"],
+        "risk_level": "read",
+        "auth_env": ["NOTION_API_KEY"],
+        "fallback_tools": ["search_knowledge", "search_memory", "organize_notes"],
+        "enabled_by_default": False,
+    },
 }
 
 _DEFAULT_MODE_DEFINITIONS = {
@@ -633,6 +804,7 @@ _DEFAULT_MODE_DEFINITIONS = {
         "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["normal"]["mcp_servers"],
         "skills": [],
         "auto_skills": ["task_recognition"],
+        "scenes": ["knowledge_synthesis"],
     },
     "documents": {
         "prompts": ["mode:documents"],
@@ -641,6 +813,7 @@ _DEFAULT_MODE_DEFINITIONS = {
         "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["documents"]["mcp_servers"],
         "skills": [],
         "auto_skills": ["task_recognition"],
+        "scenes": ["workspace_delivery", "knowledge_synthesis"],
     },
     "research": {
         "prompts": ["mode:research"],
@@ -648,7 +821,8 @@ _DEFAULT_MODE_DEFINITIONS = {
         "tools": _DEFAULT_MODE_TOOL_BUNDLES["research"]["tools"],
         "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["research"]["mcp_servers"],
         "skills": ["research_grounding"],
-        "auto_skills": ["task_recognition"],
+        "auto_skills": ["task_recognition", "hotspot_tracking", "knowledge_synthesis"],
+        "scenes": ["research_synthesis", "hotspot_tracking"],
         "authorization": {"read_only": True},
     },
     "office": {
@@ -657,7 +831,8 @@ _DEFAULT_MODE_DEFINITIONS = {
         "tools": _DEFAULT_MODE_TOOL_BUNDLES["office"]["tools"],
         "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["office"]["mcp_servers"],
         "skills": [],
-        "auto_skills": ["task_recognition"],
+        "auto_skills": ["task_recognition", "office_coordination", "knowledge_synthesis"],
+        "scenes": ["office_coordination", "knowledge_synthesis"],
     },
     "study": {
         "prompts": ["mode:study"],
@@ -665,7 +840,8 @@ _DEFAULT_MODE_DEFINITIONS = {
         "tools": _DEFAULT_MODE_TOOL_BUNDLES["study"]["tools"],
         "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["study"]["mcp_servers"],
         "skills": ["study_coaching"],
-        "auto_skills": ["task_recognition"],
+        "auto_skills": ["task_recognition", "knowledge_synthesis"],
+        "scenes": ["study_guidance", "knowledge_synthesis"],
     },
 }
 
@@ -749,6 +925,8 @@ class AssistantModeManager:
                 "prompt_registry": _DEFAULT_PROMPT_REGISTRY,
                 "skills": _DEFAULT_SKILL_REGISTRY,
                 "mode_definitions": _DEFAULT_MODE_DEFINITIONS,
+                "scene_definitions": _DEFAULT_SCENE_DEFINITIONS,
+                "mcp_catalog": _DEFAULT_MCP_CATALOG,
                 "tool_bundles": _DEFAULT_MODE_TOOL_BUNDLES,
             },
             _parse_json_config(self._config.get("assistant_modes")),
@@ -802,14 +980,37 @@ class AssistantModeManager:
         capability = self._capability_registry.get_skill_capability(skill_name)
         return capability.to_dict(include_content=True) if capability is not None else {}
 
-    def _should_activate_skill(self, skill_name: str, *, content: str) -> bool:
-        return self._semantic_router.should_activate_skill(skill_name, content)
+    def _evaluate_skill_activation(self, skill_name: str, *, content: str, mode: str = "") -> dict[str, Any]:
+        if hasattr(self._semantic_router, "evaluate_skill_activation"):
+            decision = self._semantic_router.evaluate_skill_activation(skill_name, content, mode=mode)
+            return {
+                "skill_id": skill_name,
+                "active": bool(getattr(decision, "value", False)),
+                "reason": str(getattr(decision, "reason", "") or "").strip(),
+                "signals": _unique_strings(getattr(decision, "signals", [])),
+                "confidence": str(getattr(decision, "confidence", "") or "").strip(),
+                "adapter_name": str(getattr(decision, "adapter_name", "") or "").strip(),
+                "source": "router",
+            }
+        return {
+            "skill_id": skill_name,
+            "active": bool(self._semantic_router.should_activate_skill(skill_name, content, mode=mode)),
+            "reason": "",
+            "signals": [],
+            "confidence": "",
+            "adapter_name": "",
+            "source": "router",
+        }
 
     def _resolve_active_skills(self, mode: str, *, content: str = "") -> list[str]:
         return self._capability_registry.resolve_active_skills(
             mode,
             content=content,
-            activator=lambda skill_name, skill_content: self._should_activate_skill(skill_name, content=skill_content),
+            activator=lambda skill_name, skill_content: self._evaluate_skill_activation(
+                skill_name,
+                content=skill_content,
+                mode=mode,
+            ),
         )
 
     def _resolve_prompt_text(self, prompt_name: str) -> str:
@@ -844,13 +1045,20 @@ class AssistantModeManager:
             content=content,
             active_skills=active_skills,
             loaded_skills=loaded_skills,
-            activator=lambda skill_name, skill_content: self._should_activate_skill(skill_name, content=skill_content),
+            activator=lambda skill_name, skill_content: self._evaluate_skill_activation(
+                skill_name,
+                content=skill_content,
+                mode=_normalize_mode(mode),
+            ),
         )
         return {
             "tools": list(capability_set.tools),
             "mcp_servers": list(capability_set.mcp_servers),
             "active_skills": list(capability_set.active_skills),
+            "scene_ids": list(capability_set.scene_ids),
             "authorization": dict(capability_set.authorization),
+            "mcp_diagnostics": [dict(item) for item in capability_set.mcp_diagnostics],
+            "degradation_notes": [dict(item) for item in capability_set.degradation_notes],
         }
 
     def build_route_for_mode(
@@ -876,9 +1084,29 @@ class AssistantModeManager:
             content=content,
             active_skills=active_skills,
             loaded_skills=loaded_skills,
-            activator=lambda skill_name, skill_content: self._should_activate_skill(skill_name, content=skill_content),
+            activator=lambda skill_name, skill_content: self._evaluate_skill_activation(
+                skill_name,
+                content=skill_content,
+                mode=normalized_mode,
+            ),
         )
         route_reason = str(reason or "").strip() or f"Selected mode: {normalized_mode}"
+        if capability_set.skill_activations:
+            skill_reasons = [
+                f"{item['skill_id']}:{item['reason']}"
+                for item in capability_set.skill_activations
+                if str(item.get("skill_id") or "").strip() and str(item.get("reason") or "").strip()
+            ]
+            if skill_reasons:
+                route_reason = f"{route_reason} Skills -> {'; '.join(skill_reasons)}"
+        if capability_set.degradation_notes:
+            degradation_labels = [
+                f"{item['capability_id']}:{item['status']}"
+                for item in capability_set.degradation_notes
+                if str(item.get("capability_id") or "").strip()
+            ]
+            if degradation_labels:
+                route_reason = f"{route_reason} Fallbacks -> {', '.join(degradation_labels)}"
         active_skill_ids = list(capability_set.active_skills)
         loaded_skill_ids = list(capability_set.loaded_skills)
         prompt_bundle_parts = [normalized_mode, *active_skill_ids, *loaded_skill_ids]
@@ -900,6 +1128,9 @@ class AssistantModeManager:
             used_keyword_fallback=bool(used_keyword_fallback),
             authorization_policy=dict(capability_set.authorization),
             capability_set=capability_set.to_dict(),
+            skill_activations=[dict(item) for item in capability_set.skill_activations],
+            capability_sources=dict(capability_set.capability_sources),
+            degradation_notes=[dict(item) for item in capability_set.degradation_notes],
         )
 
     def get_prompt_for_mode(
@@ -952,6 +1183,19 @@ class AssistantModeManager:
         return self._capability_registry.validate(
             tool_checker=(lambda tool_name: tool_name in available_tool_names) if available_tool_names else None,
             mcp_checker=(lambda server_name: server_name in available_mcp_servers) if available_mcp_servers else None,
+        )
+
+    def get_capability_diagnostics(
+        self,
+        *,
+        tool_names: list[str] | None = None,
+        available_mcp_servers: list[str] | None = None,
+        configured_mcp_servers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self._capability_registry.get_diagnostics(
+            tool_names=tool_names,
+            available_mcp_servers=available_mcp_servers,
+            configured_mcp_servers=configured_mcp_servers,
         )
 
     def create_skill(

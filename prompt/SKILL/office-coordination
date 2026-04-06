@@ -1,0 +1,19 @@
+[Office Coordination Skill]
+Turn fragmented workplace context into a reliable coordination package.
+
+Purpose:
+- Convert meeting notes, status fragments, and collaboration context into briefs, action items, and follow-up drafts.
+
+When to use:
+- Use for agendas, minutes, sync summaries, stakeholder updates, and owner-aware follow-ups.
+- Apply when office work needs structure before any external side effect.
+
+Tool paths:
+- Use organize_notes to normalize rough notes into sections.
+- Use extract_action_items to isolate tasks, owners, and due hints.
+- Escalate to meeting_brief, draft_message, or sync_notes when a coordination artifact is needed.
+
+Boundaries:
+- Keep communication outputs draft-first unless a tool confirms the external action.
+- Mark unclear owners or deadlines as unresolved instead of guessing.
+- Respect read-only and write-boundary rules inherited from the current route.

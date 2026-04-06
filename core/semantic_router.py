@@ -83,6 +83,10 @@ _RESEARCH_INTENTS = (
     "policy change",
     "latest guidance",
     "deep research",
+    "hot topic",
+    "hotspot",
+    "trending topic",
+    "breaking event",
     "研究报告",
     "引用",
     "引文",
@@ -92,6 +96,11 @@ _RESEARCH_INTENTS = (
     "更新跟踪",
     "来源更新",
     "严格引用",
+    "热点",
+    "时政热点",
+    "热搜",
+    "事件追踪",
+    "舆情",
 )
 _OFFICE_INTENTS = (
     "meeting",
@@ -414,6 +423,18 @@ _SKILL_EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("learning_coach", "quiz me, generate flashcards, explain concepts, and track mastery"),
         ("study_plan", "create a study plan and coach me through the lesson"),
     ),
+    "knowledge_synthesis": (
+        ("structured_summary", "summarize this material into a clean outline, organize the notes, and surface key takeaways"),
+        ("note_rewrite", "整理这些笔记，提炼重点，并改写成结构化摘要"),
+    ),
+    "office_coordination": (
+        ("meeting_actions", "turn these meeting notes into action items, owners, and a follow-up brief"),
+        ("coordination_digest", "整理会议纪要、同步事项和后续消息草稿"),
+    ),
+    "hotspot_tracking": (
+        ("trend_watch", "track hot topics, compare breaking developments, and produce a sourced summary"),
+        ("news_digest", "追踪时政热点、交叉核验来源并输出摘要"),
+    ),
 }
 
 _CONTEXT_EXAMPLES = (
@@ -709,6 +730,15 @@ class ExampleSemanticAdapter:
                 signals=["mode:study"],
                 adapter_name=self.adapter_name,
             )
+        if normalized_name == "office_coordination" and normalized_mode == ASSISTANT_MODE_OFFICE:
+            return SemanticDecisionResult(
+                value=True,
+                confidence="high",
+                score=1.0,
+                reason="Semantic adapter activated office_coordination from office mode.",
+                signals=["mode:office"],
+                adapter_name=self.adapter_name,
+            )
         examples = _SKILL_EXAMPLES.get(normalized_name, ())
         score, signals = self._best_example_match(raw_content, examples)
         value = score >= 0.42
@@ -871,6 +901,47 @@ class KeywordFallbackAdapter:
             value = normalized_mode == ASSISTANT_MODE_STUDY or bool(matches)
             if normalized_mode == ASSISTANT_MODE_STUDY:
                 matches = ["mode:study", *matches]
+        elif normalized_name == "knowledge_synthesis":
+            matches = _contains_any(
+                lowered,
+                (
+                    "summarize",
+                    "summary",
+                    "outline",
+                    "organize notes",
+                    "action items",
+                    "takeaways",
+                    "整理",
+                    "提炼",
+                    "归纳",
+                    "摘要",
+                    "结构化",
+                    "纪要",
+                ),
+            )
+            value = bool(matches)
+        elif normalized_name == "office_coordination":
+            matches = _contains_any(lowered, (*_OFFICE_INTENTS, "action items", "owner", "follow-up"))
+            value = normalized_mode == ASSISTANT_MODE_OFFICE or bool(matches)
+            if normalized_mode == ASSISTANT_MODE_OFFICE:
+                matches = ["mode:office", *matches]
+        elif normalized_name == "hotspot_tracking":
+            matches = _contains_any(
+                lowered,
+                (
+                    "hotspot",
+                    "hot topic",
+                    "trending",
+                    "breaking",
+                    "news",
+                    "热点",
+                    "时政热点",
+                    "热搜",
+                    "事件追踪",
+                    "舆情",
+                ),
+            )
+            value = bool(matches)
         return SemanticDecisionResult(
             value=value,
             confidence="high" if value else "low",
@@ -970,12 +1041,28 @@ class SemanticRouterAgent:
         mode: str = "",
         enable_keyword_fallback: bool = True,
     ) -> bool:
+        decision = self.evaluate_skill_activation(
+            skill_name,
+            content,
+            mode=mode,
+            enable_keyword_fallback=enable_keyword_fallback,
+        )
+        return bool(decision.value)
+
+    def evaluate_skill_activation(
+        self,
+        skill_name: str,
+        content: str,
+        *,
+        mode: str = "",
+        enable_keyword_fallback: bool = True,
+    ) -> SemanticDecisionResult:
         decision = self._choose_signal(
             lambda: self._route_adapters[0].should_activate_skill(skill_name, content, mode=mode),
             lambda: self._fallback_adapter.should_activate_skill(skill_name, content, mode=mode),
             enable_keyword_fallback=enable_keyword_fallback,
         )
-        return bool(decision.value)
+        return decision
 
     def analyze(
         self,
@@ -1004,13 +1091,21 @@ class SemanticRouterAgent:
                 reason = f"{primary.reason} {fallback.reason}".strip()
         best_mode = str(selected.value or ASSISTANT_MODE_NORMAL)
         active_skills: list[str] = []
-        for skill_name in ("task_recognition", "research_grounding", "study_coaching"):
-            if self.should_activate_skill(
+        for skill_name in (
+            "task_recognition",
+            "research_grounding",
+            "study_coaching",
+            "knowledge_synthesis",
+            "office_coordination",
+            "hotspot_tracking",
+        ):
+            decision = self.evaluate_skill_activation(
                 skill_name,
                 request.content,
                 mode=best_mode,
                 enable_keyword_fallback=enable_keyword_fallback,
-            ):
+            )
+            if decision.value:
                 active_skills.append(skill_name)
         if best_mode == ASSISTANT_MODE_RESEARCH:
             source_profile = self.classify_source_profile(request.content, enable_keyword_fallback=enable_keyword_fallback)

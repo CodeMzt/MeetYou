@@ -371,6 +371,407 @@
           "required": ["title", "summary", "content"]
         }
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "summarize_text",
+        "description": "Summarize raw text into a concise digest or outline without relying on external MCP integrations.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "style": {
+              "type": "string",
+              "enum": ["brief", "outline"]
+            },
+            "focus": {
+              "type": "string"
+            },
+            "max_points": {
+              "type": "integer"
+            }
+          },
+          "required": ["text"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "organize_notes",
+        "description": "Reshape rough notes into structured sections and rendered markdown.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "structure": {
+              "type": "string",
+              "enum": ["outline"]
+            },
+            "title": {
+              "type": "string"
+            },
+            "focus": {
+              "type": "string"
+            }
+          },
+          "required": ["text"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "extract_action_items",
+        "description": "Extract likely action items, due hints, and owner hints from free-form notes.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "focus": {
+              "type": "string"
+            },
+            "max_items": {
+              "type": "integer"
+            }
+          },
+          "required": ["text"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "remember_knowledge",
+        "description": "Persist durable user or project knowledge into long-term memory.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            }
+          },
+          "required": ["content"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "analyze_workspace",
+        "description": "Analyze a local workspace or folder and summarize its structure.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_local_documents",
+        "description": "Read local files and extract normalized content chunks.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "paths": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "goal": {
+              "type": "string"
+            }
+          },
+          "required": ["paths"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "write_local_document",
+        "description": "Write a local document, usually in preview mode first.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "preview": {
+              "type": "boolean"
+            },
+            "confirmed": {
+              "type": "boolean"
+            }
+          },
+          "required": ["path", "content"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "rewrite_local_document",
+        "description": "Rewrite an existing local document with updated content.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "preview": {
+              "type": "boolean"
+            },
+            "confirmed": {
+              "type": "boolean"
+            }
+          },
+          "required": ["path", "instructions"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "compile_report",
+        "description": "Compile a structured report from collected materials or sections.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["title", "sections"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "manage_schedule",
+        "description": "Create or draft a schedule item, or list existing schedule drafts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": ["draft", "create", "list"]
+            },
+            "when": {
+              "type": "string"
+            },
+            "attendees": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "details": {
+              "type": "string"
+            }
+          },
+          "required": ["action"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "draft_message",
+        "description": "Draft a message or email from structured context.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "recipient": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "topic": {
+              "type": "string"
+            },
+            "tone": {
+              "type": "string"
+            }
+          },
+          "required": ["topic"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "meeting_brief",
+        "description": "Prepare a structured meeting brief from agenda inputs or notes.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "string"
+            }
+          },
+          "required": ["topic"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "sync_notes",
+        "description": "Normalize notes into a sync-ready structure.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "notes": {
+              "type": "string"
+            },
+            "topic": {
+              "type": "string"
+            }
+          },
+          "required": ["notes"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "build_study_plan",
+        "description": "Build a study plan from materials or goals.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "goal": {
+              "type": "string"
+            },
+            "materials": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["goal"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "extract_learning_points",
+        "description": "Extract key learning points from study material.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": ["text"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "quiz_me",
+        "description": "Generate quiz questions from provided study material.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": ["text"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "generate_flashcards",
+        "description": "Generate flashcards from study material.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": ["text"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "track_mastery",
+        "description": "Track mastery state for a study topic.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string"
+            },
+            "score": {
+              "type": "number"
+            }
+          },
+          "required": ["topic"]
+        }
+      }
     }
   ],
   "memory_tools": [
