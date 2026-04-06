@@ -497,12 +497,13 @@ class DocumentTools:
         content: str,
         mode: str = "overwrite",
         preview: bool = True,
+        confirmed: bool = False,
         session_id: str = "",
         source=None,
         route_context: dict[str, Any] | None = None,
         activity_callback=None,
     ) -> str:
-        del session_id, source, route_context, activity_callback
+        del session_id, source, route_context, activity_callback, confirmed
         target = self._resolve_path(path)
         normalized_mode = str(mode or "overwrite").strip().lower() or "overwrite"
         trusted = self._mode_manager.is_trusted_write_path(str(target))
@@ -582,12 +583,13 @@ class DocumentTools:
         section_selector: str = "",
         preview: bool = True,
         replacement_content: str = "",
+        confirmed: bool = False,
         session_id: str = "",
         source=None,
         route_context: dict[str, Any] | None = None,
         activity_callback=None,
     ) -> str:
-        del session_id, source, route_context, activity_callback
+        del session_id, source, route_context, activity_callback, confirmed
         target = self._resolve_path(path)
         if not target.exists() or target.is_dir():
             return json.dumps(

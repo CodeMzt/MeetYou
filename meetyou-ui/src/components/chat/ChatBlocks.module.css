@@ -1,0 +1,104 @@
+.turnBlock {
+  background: rgba(128, 128, 128, 0.05);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 6px;
+  border: 1px solid rgba(128, 128, 128, 0.08);
+}
+
+.turnBlockHeader {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  cursor: pointer;
+  outline: none;
+}
+
+.turnBlockHeader:hover {
+  background: rgba(128, 128, 128, 0.06);
+}
+
+.turnBlockTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.turnBlockBody {
+  padding: 0 10px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.reasoningBody {
+  white-space: pre-wrap;
+}
+
+.activityList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.activityItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activityLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.activityPhase {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.activityToolTag {
+  font-size: 10px;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: rgba(0, 102, 204, 0.08);
+  color: var(--accent-color);
+}
+
+.activityText {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.pulse {
+  animation: pulser 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.cursorBlink {
+  display: inline-block;
+  width: 8px;
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+  color: var(--accent-color);
+}
+
+@keyframes pulser {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.95); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

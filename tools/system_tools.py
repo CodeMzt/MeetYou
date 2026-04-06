@@ -117,7 +117,15 @@ def _check_command_safety(cmd: str) -> tuple[str, str]:
     return "safe", ""
 
 
-async def exec_sys_cmd(cmd: str, session_id: str = "", source=None) -> str:
+def assess_command_safety(cmd: str) -> dict[str, str]:
+    status, reason = _check_command_safety(cmd)
+    return {
+        "status": status,
+        "reason": reason,
+    }
+
+
+async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: bool = False) -> str:
     """
     安全执行系统命令。
 
@@ -137,7 +145,7 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None) -> str:
         logger.warning(f"命令被拦截: {cmd} | {reason}")
         return f"[安全策略拦截] {reason}"
 
-    if status == "needs_confirm":
+    if status == "needs_confirm" and not confirmed:
         if _event_bus is None:
             logger.warning(f"危险命令无法确认（EventBus 未注入），默认拒绝: {cmd}")
             return f"[安全策略] 危险命令已拦截（{reason}）"
@@ -204,6 +212,24 @@ async def ask_human(
     )
     payload.update(dict(result or {}))
     return json.dumps(payload, ensure_ascii=False)
+
+
+async def request_user_confirmation(
+    prompt: str,
+    *,
+    session_id: str = "",
+    source=None,
+    timeout_seconds: int = 30,
+) -> bool:
+    if _event_bus is None:
+        return False
+    return await _event_bus.request_confirmation(
+        str(prompt or "").strip(),
+        timeout=float(timeout_seconds or 30),
+        session_id=session_id or "system:confirm",
+        source=source,
+        target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+    )
 
 
 async def get_current_system_time() -> str:

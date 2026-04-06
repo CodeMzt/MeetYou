@@ -388,7 +388,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(
                 [event.type for event in events],
-                ["reasoning_text", "answer_text", "usage", "done"],
+                ["reasoning_text", "answer_text", "reasoning_end", "usage", "done"],
             )
             self.assertEqual(
                 "".join(event.text or "" for event in events if event.type == "reasoning_text"),
@@ -404,6 +404,9 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(usage_payload["last_turn_usage"]["reasoning_tokens"], 4)
             self.assertEqual(usage_payload["session_totals"]["turn_count"], 1)
             self.assertGreater(usage_payload["context_breakdown"]["total"], 0)
+            debug_snapshot = brain.get_session_debug_snapshot("session-1")
+            self.assertEqual(debug_snapshot["request"]["transport_mode"], "reasoningadapter")
+            self.assertFalse(debug_snapshot["compression"]["triggered"])
         finally:
             await brain.close_brain()
 
@@ -722,6 +725,96 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
+    async def test_mode_switch_executes_follow_up_tools_in_same_round(self):
+        tools_manager = FakeToolsManager()
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(
+                        type="tool_calls",
+                        tool_calls=[
+                            ToolCallInfo(
+                                id="switch-1",
+                                name="switch_assistant_mode",
+                                arguments_str='{"mode":"research","reason":"Need citations and source tracking"}',
+                            ),
+                            ToolCallInfo(
+                                id="tool-1",
+                                name="research_topic",
+                                arguments_str='{"query":"official release notes"}',
+                            ),
+                        ],
+                    ),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 6,
+                            "completion_tokens": 1,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 7,
+                        },
+                    ),
+                ],
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 7,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 9,
+                        },
+                    ),
+                ],
+            ]
+        )
+        brain = Brain(
+            adapter,
+            tools_manager,
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-switch-same-round",
+                {
+                    "role": "user",
+                    "content": "Review local files, then verify official release notes with citations.",
+                    "metadata": {"preferred_mode": "normal"},
+                },
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-switch-same-round")
+            self.assertEqual(session.metadata["current_mode"], "research")
+            self.assertEqual(
+                [entry["mode"] for entry in session.metadata["route_history"]],
+                ["normal", "research"],
+            )
+            self.assertEqual(
+                [call["tool_name"] for call in tools_manager.calls],
+                ["search_memory", "research_topic"],
+            )
+            self.assertTrue(
+                any(
+                    message.get("tool_call_id") == "tool-1"
+                    and '"tool_name": "research_topic"' in str(message.get("content") or "")
+                    for message in session.chat_history
+                    if message.get("role") == "tool"
+                )
+            )
+            self.assertIn("[research]", [m["content"] for m in adapter.stream_calls[1]["messages"] if m.get("role") == "system"])
+        finally:
+            await brain.close_brain()
+
     async def test_preferred_mode_lock_hides_internal_switch_tool(self):
         adapter = QueuedStreamAdapter(
             rounds=[
@@ -1037,8 +1130,8 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 events.append(event)
 
             session = brain.get_or_create_session("session-transient")
-            self.assertEqual([event.type for event in events], ["reasoning_text", "answer_text", "usage", "done"])
-            self.assertEqual(len(session.chat_history), 2)
+            self.assertEqual([event.type for event in events], ["reasoning_text", "answer_text", "reasoning_end", "usage", "done"])
+            self.assertEqual(len(session.chat_history), 1)
             self.assertEqual(context_manager.saved, [])
         finally:
             await brain.close_brain()

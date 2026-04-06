@@ -1,0 +1,23 @@
+- [x] Capability Registry 已成为 mode、skill、tool、prompt、MCP server 与策略声明的单一事实来源
+- [x] 启动期一致性校验可拦截缺失工具、缺失 prompt、非法 bundle 引用和策略漂移
+- [x] Authorization Gateway 已统一处理工具可见性、风险分级、确认流、可信写路径与只读约束
+- [x] 研究模式或其他只读能力不能再通过旁路工具产生写入副作用
+- [x] Route Runtime 可以原子重建 mode、skill、prompt、tool 面和上下文计划
+- [x] 模式切换不再依赖“单独一轮只做切模”的硬性主路径
+- [x] Context Planner 已统一 memory recall、conversation summary、history compaction、session preload 与 live web 偏好
+- [x] Length Policy 已在主要 provider 适配器上统一生效，长任务输出行为稳定
+- [x] 历史裁剪已改为分层裁剪，且摘要不再作为普通 system message 回灌
+- [x] 记忆系统已拆分为 episode、durable memory、conversation summary 与 memory graph 的显式分层模型
+- [x] 显式记忆写入具备同步 durable upsert 或等效强一致语义
+- [x] session-aware recall 已真实生效，主执行链路与调试接口检索语义一致
+- [x] partial consolidation 不会导致显式或高价值记忆漏记
+- [x] 任务系统已使用独立的 ScheduleState、ExecutionState、DeliveryState 与 HeartbeatSignalState
+- [x] 自动任务成功但未即时投递时，执行结果与补发状态可独立追踪
+- [x] Heartbeat 与服务健康对同一退化场景的判断口径一致
+- [x] Heartbeat 仅使用稳定且已实现的 signal kind 与候选问题集合
+- [x] Prompt / SKILL 装配已脱离 assistant_modes 超大文件的硬编码主路径
+- [x] skill 已升级为 capability object，prompt-only enhancement 仅作为受控兼容语义存在
+- [x] 中层调试快照可展示 route、context plan、memory scope、task state 与 authorization decision，且不泄露敏感信息
+- [x] 示例配置、示例 memory 文件与调试接口 schema 已与新中层模型一致
+- [x] 仓库主路径已清理失效的 legacy 中层编排逻辑
+- [x] 单元测试、契约测试、状态机测试、集成测试与回归验证覆盖中层关键链路

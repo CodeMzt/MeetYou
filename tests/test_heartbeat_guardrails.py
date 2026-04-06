@@ -127,6 +127,10 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["last_idle_poke_at"], "")
         self.assertIn("system", payload)
         self.assertIn("scheduler_stalled", payload["system"])
+        self.assertIn("jobs", payload)
+        self.assertIn("scheduler", payload["jobs"])
+        self.assertIn("background_status_sources", payload)
+        self.assertIn("heart.job_runtime", payload["background_status_sources"])
 
     async def test_idle_poke_is_silenced_when_not_eligible(self):
         heart = self._make_heart()
@@ -304,7 +308,7 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("daily digest sync", normalized["message"])
         self.assertNotIn("Galaxy Chromebook", normalized["message"])
 
-    async def test_pending_consolidation_only_does_not_trigger_system_issue(self):
+    async def test_pending_consolidation_stale_triggers_system_issue(self):
         heart = self._make_heart()
         normalized = heart._normalize_heartbeat_result(
             {
@@ -324,9 +328,9 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertEqual(normalized["decision"], "ok")
-        self.assertEqual(normalized["signal_kind"], "none")
-        self.assertEqual(normalized["message"], "")
+        self.assertEqual(normalized["decision"], "notify")
+        self.assertEqual(normalized["signal_kind"], "system_issue")
+        self.assertIn("Pending memory consolidation", normalized["message"])
 
     async def test_ok_cycle_keeps_last_signal_cooldown_state(self):
         task_manager = _FakeTaskManager(

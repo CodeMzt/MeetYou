@@ -1,5 +1,7 @@
 {
   "metadata": {
+    "schema_version": "2",
+    "revision": 0,
     "embedding_model": "",
     "embedding_api_url": "",
     "updated_at": "2026-01-01T00:00:00Z"

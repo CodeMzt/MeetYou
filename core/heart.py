@@ -10,6 +10,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 try:
     import aiohttp
@@ -17,7 +18,17 @@ except ImportError:  # pragma: no cover - optional dependency
     aiohttp = None
 
 from core.background_agent import BackgroundAgentRunner
-from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
+from core.background_jobs import (
+    default_job_record,
+    delivery_payload,
+    failure_payload,
+    normalize_delivery,
+    normalize_failure,
+    normalize_job_record,
+)
+from core.background_status import build_system_issue_candidates, build_system_issue_snapshot
+from core.io_protocol import EventTarget, EventType, InboundEvent, OutboundEvent, SourceKind, TargetKind, make_source
+from core.runtime_context import bind_event_context, reset_event_context
 
 logger = logging.getLogger("meetyou.heart")
 
@@ -27,6 +38,7 @@ _IDLE_POKE_COOLDOWN_SECONDS = 3600
 _DEFAULT_SIGNAL_COOLDOWN_SECONDS = 1800
 _STALL_MIN_WINDOW = 300
 _PENDING_CONSOLIDATION_STALE_WINDOW = timedelta(hours=4)
+_UNSET = object()
 
 
 class _FallbackClientSession:
@@ -101,6 +113,21 @@ class Heart:
         self._last_heartbeat_signal_message = ""
         self._last_heartbeat_signal_fingerprint = ""
         self._last_idle_poke_at = ""
+        self._job_specs = {
+            "scheduler": {"kind": "scheduler", "max_retries": 0},
+            "housekeeping": {"kind": "housekeeping", "max_retries": 0},
+            "heartbeat": {"kind": "heartbeat", "max_retries": 0},
+            "background_agent": {"kind": "background_agent", "max_retries": 2},
+        }
+        self._jobs = {
+            name: default_job_record(
+                kind=spec["kind"],
+                name=name,
+                max_retries=spec["max_retries"],
+                status_source="heart.init",
+            )
+            for name, spec in self._job_specs.items()
+        }
 
     async def init_heart(self):
         await self.refresh_config()
@@ -158,6 +185,78 @@ class Heart:
     async def _set_status(self, status: str, detail: str = ""):
         if self._status_callback:
             await self._status_callback(status, detail)
+
+    def _job_record(self, name: str) -> dict[str, Any]:
+        spec = self._job_specs.get(name, {"kind": name, "max_retries": 0})
+        job = normalize_job_record(
+            self._jobs.get(name),
+            kind=spec["kind"],
+            name=name,
+            max_retries=spec["max_retries"],
+            status_source="heart.init",
+        )
+        self._jobs[name] = job
+        return job
+
+    def _bind_job_context(self, job_id: str):
+        return bind_event_context(
+            trace_id=uuid4().hex,
+            session_id=self._session_id,
+            source=self._source,
+            job_id=job_id,
+        )
+
+    def _update_job(
+        self,
+        name: str,
+        *,
+        status: Any = _UNSET,
+        runtime_source: Any = _UNSET,
+        started_at: Any = _UNSET,
+        finished_at: Any = _UNSET,
+        success_at: Any = _UNSET,
+        next_retry_at: Any = _UNSET,
+        last_result: dict[str, Any] | None | object = _UNSET,
+        last_failure: dict[str, Any] | None | object = _UNSET,
+        last_delivery: dict[str, Any] | None | object = _UNSET,
+        retry_count: Any = _UNSET,
+        increment_attempt: bool = False,
+        metadata: dict[str, Any] | None | object = _UNSET,
+    ) -> dict[str, Any]:
+        job = self._job_record(name)
+        if increment_attempt:
+            job["attempt_count"] = max(int(job.get("attempt_count", 0) or 0), 0) + 1
+        if status is not _UNSET:
+            normalized_status = str(status or "").strip().lower()
+            if normalized_status:
+                job["status"] = normalized_status
+        if runtime_source is not _UNSET:
+            normalized_source = str(runtime_source or "").strip()
+            job["last_runtime_source"] = normalized_source
+            job["status_source"] = normalized_source
+        if started_at is not _UNSET:
+            job["last_started_at"] = str(started_at or "").strip() or None
+        if finished_at is not _UNSET:
+            job["last_finished_at"] = str(finished_at or "").strip() or None
+        if success_at is not _UNSET:
+            job["last_success_at"] = str(success_at or "").strip() or None
+        if next_retry_at is not _UNSET:
+            job["next_retry_at"] = str(next_retry_at or "").strip() or None
+        if retry_count is not _UNSET:
+            try:
+                job["retry_count"] = max(int(retry_count or 0), 0)
+            except (TypeError, ValueError):
+                job["retry_count"] = 0
+        if last_result is not _UNSET:
+            job["last_result"] = dict(last_result) if isinstance(last_result, dict) else {}
+        if last_failure is not _UNSET:
+            job["last_failure"] = normalize_failure(last_failure)
+        if last_delivery is not _UNSET:
+            job["last_delivery"] = normalize_delivery(last_delivery)
+        if metadata is not _UNSET:
+            job["metadata"] = dict(metadata) if isinstance(metadata, dict) else {}
+        self._jobs[name] = job
+        return job
 
     def _pending_consolidation_snapshot(self) -> dict[str, Any]:
         pending = [
@@ -236,16 +335,7 @@ class Heart:
         return oldest <= datetime.now(timezone.utc) - _PENDING_CONSOLIDATION_STALE_WINDOW
 
     def _build_system_issue_candidates(self, payload: dict[str, Any]) -> list[str]:
-        issues: list[str] = []
-        if payload.get("scheduler_stalled"):
-            issues.append("scheduler_stalled")
-        if payload.get("housekeeping_stalled"):
-            issues.append("housekeeping_stalled")
-        if str(payload.get("last_housekeeping_error") or "").strip():
-            issues.append("housekeeping_error")
-        if payload.get("repeated_failure_tasks"):
-            issues.append("repeated_task_failures")
-        return issues
+        return build_system_issue_candidates(payload)
 
     @staticmethod
     def _normalize_signal_kind(value: Any) -> str:
@@ -280,6 +370,10 @@ class Heart:
                 return "调度器长时间没有活动，可能影响定时任务触发。"
             if payload.get("housekeeping_stalled"):
                 return "Housekeeping 长时间没有活动，可能影响后台整理。"
+            if payload.get("pending_consolidation_stale"):
+                return "待整理记忆已积压过久，可能影响后台状态判断。"
+            if str(payload.get("last_housekeeping_error") or "").strip():
+                return "后台整理出现错误，可能影响任务执行或提醒。"
             return "后台出现了可能影响任务执行的异常，建议检查。"
         if signal_kind == "idle_poke":
             return "当前没有紧急事项，用户已沉默较久，可用一句自然短句确认是否需要帮助。"
@@ -300,6 +394,11 @@ class Heart:
                 return (
                     "Background housekeeping looks stalled. "
                     "Mention it only if it may affect task execution or reminders."
+                )
+            if payload.get("pending_consolidation_stale"):
+                return (
+                    "Pending memory consolidation has been stale for too long. "
+                    "Mention it only if it may affect memory freshness or reminders."
                 )
             if str(payload.get("last_housekeeping_error") or "").strip():
                 return "Background housekeeping is erroring. Keep the follow-up short and action-oriented."
@@ -331,6 +430,8 @@ class Heart:
                 issues.append("scheduler_stalled")
             if payload.get("housekeeping_stalled"):
                 issues.append("housekeeping_stalled")
+            if payload.get("pending_consolidation_stale"):
+                issues.append("pending_consolidation_stale")
             if str(payload.get("last_housekeeping_error") or "").strip():
                 issues.append("housekeeping_error")
             if issues:
@@ -420,6 +521,22 @@ class Heart:
         pending_snapshot = self._pending_consolidation_snapshot()
         payload.update(pending_snapshot)
         payload.update(self._latest_user_activity())
+        job_snapshots = {name: self._job_record(name) for name in self._job_specs}
+        job_status_counts: dict[str, int] = {}
+        job_failures: list[dict[str, Any]] = []
+        for name, snapshot in job_snapshots.items():
+            status = str(snapshot.get("status") or "idle").strip().lower() or "idle"
+            job_status_counts[status] = int(job_status_counts.get(status, 0) or 0) + 1
+            last_failure = normalize_failure(snapshot.get("last_failure"))
+            if last_failure:
+                job_failures.append(
+                    {
+                        "job_name": name,
+                        "job_kind": snapshot.get("kind"),
+                        "status": status,
+                        "failure": last_failure,
+                    }
+                )
         scheduler_stalled = self._loop_stalled(self._last_scheduler_tick_at, self._scheduler_interval)
         housekeeping_stalled = self._loop_stalled(self._last_housekeeping_at, self._housekeeping_interval)
         pending_consolidation_stale = self._pending_consolidation_stale(pending_snapshot)
@@ -435,21 +552,22 @@ class Heart:
         payload["housekeeping_stalled"] = housekeeping_stalled
         payload["pending_consolidation_stale"] = pending_consolidation_stale
         payload["last_housekeeping_error"] = self._last_housekeeping_error
-        payload["system_issue_candidates"] = self._build_system_issue_candidates(
-            {
-                **payload,
-                "scheduler_stalled": scheduler_stalled,
-                "housekeeping_stalled": housekeeping_stalled,
-                "pending_consolidation_stale": pending_consolidation_stale,
-                "last_housekeeping_error": self._last_housekeeping_error,
-            }
-        )
-        payload["system"] = {
+        payload["jobs"] = job_snapshots
+        payload["job_status_counts"] = job_status_counts
+        payload["job_failures"] = job_failures
+        issue_payload = {
+            **payload,
             "scheduler_stalled": scheduler_stalled,
             "housekeeping_stalled": housekeeping_stalled,
             "pending_consolidation_stale": pending_consolidation_stale,
             "last_housekeeping_error": self._last_housekeeping_error,
-            "system_issue_candidates": list(payload.get("system_issue_candidates") or []),
+        }
+        payload["system_issue_candidates"] = self._build_system_issue_candidates(issue_payload)
+        payload["system"] = {
+            **build_system_issue_snapshot(issue_payload),
+            "jobs": job_snapshots,
+            "job_status_counts": job_status_counts,
+            "job_failures": job_failures,
         }
         payload["last_idle_poke_at"] = self._last_idle_poke_at
         payload["idle_poke_eligible"] = bool(
@@ -457,6 +575,17 @@ class Heart:
             and idle_window_ready
             and idle_cooldown_ready
             and not payload["system_issue_candidates"]
+        )
+        payload["background_status_sources"] = list(
+            dict.fromkeys(
+                list(payload.get("background_status_sources") or [])
+                + [
+                    "task_manager.build_background_status",
+                    "heart.job_runtime",
+                    "memory.pending_consolidation",
+                    "session.latest_user_activity",
+                ]
+            )
         )
         payload.update(
             {
@@ -482,18 +611,59 @@ class Heart:
         while True:
             if shutdown.is_set() or self._http_session is None:
                 break
+            started_at = _utcnow_iso()
+            token = self._bind_job_context("housekeeping")
             try:
-                await self._memory.run_housekeeping(
-                    self._http_session,
-                    self._api_url,
-                    self._api_key,
-                    self._model,
-                )
-                self._last_housekeeping_at = _utcnow_iso()
-                self._last_housekeeping_error = ""
-            except Exception as exc:
-                self._last_housekeeping_error = str(exc)
-                logger.error("Memory housekeeping failed: %s", exc)
+                try:
+                    self._update_job(
+                        "housekeeping",
+                        status="running",
+                        runtime_source="heart.housekeeping",
+                        started_at=started_at,
+                        increment_attempt=True,
+                    )
+                    await self._memory.run_housekeeping(
+                        self._http_session,
+                        self._api_url,
+                        self._api_key,
+                        self._model,
+                    )
+                    self._last_housekeeping_at = _utcnow_iso()
+                    self._last_housekeeping_error = ""
+                    self._update_job(
+                        "housekeeping",
+                        status="succeeded",
+                        runtime_source="heart.housekeeping",
+                        finished_at=self._last_housekeeping_at,
+                        success_at=self._last_housekeeping_at,
+                        next_retry_at=None,
+                        retry_count=0,
+                        last_failure=None,
+                        last_result={"status": "ok", "at": self._last_housekeeping_at},
+                        last_delivery=delivery_payload(state="not_applicable"),
+                    )
+                except Exception as exc:
+                    self._last_housekeeping_error = str(exc)
+                    logger.error("Memory housekeeping failed: %s", exc)
+                    failed_at = _utcnow_iso()
+                    self._update_job(
+                        "housekeeping",
+                        status="failed",
+                        runtime_source="heart.housekeeping",
+                        finished_at=failed_at,
+                        next_retry_at=None,
+                        retry_count=int(self._job_record("housekeeping").get("retry_count", 0) or 0) + 1,
+                        last_failure=failure_payload(
+                            category="retryable",
+                            code="housekeeping_failed",
+                            message=str(exc),
+                            at=failed_at,
+                        ),
+                        last_result={"status": "error", "message": str(exc), "at": failed_at},
+                        last_delivery=delivery_payload(state="not_applicable"),
+                    )
+            finally:
+                reset_event_context(token)
 
             try:
                 await asyncio.wait_for(shutdown.wait(), timeout=max(self._housekeeping_interval, 1))
@@ -506,32 +676,77 @@ class Heart:
         while True:
             if shutdown.is_set() or self._http_session is None:
                 break
+            started_at = _utcnow_iso()
+            token = self._bind_job_context("scheduler")
             try:
-                claimed = await self._task_manager.claim_due_tasks(limit=8, lease_seconds=120)
-                self._last_scheduler_tick_at = _utcnow_iso()
-                self._last_scheduler_claim_count = len(claimed)
-                for record in claimed:
-                    control_kind = "scheduled_task" if record.get("auto_run") else "scheduled_reminder"
-                    claim_token = str(record.get("active_claim_token") or "").strip()
-                    await self._event_bus.inbound_queue.put(
-                        InboundEvent(
-                            session_id=f"system:task:{record.get('task_key', '')}",
-                            type=EventType.CONTROL.value,
-                            role="system",
-                            content={
-                                "task_key": record.get("task_key", ""),
-                                "claim_token": claim_token,
-                            },
-                            source=self._source,
-                            target=EventTarget(kind=TargetKind.INTERNAL.value),
-                            metadata={
-                                "control_kind": control_kind,
-                                "claim_token": claim_token,
-                            },
-                        )
+                try:
+                    self._update_job(
+                        "scheduler",
+                        status="running",
+                        runtime_source="heart.scheduler",
+                        started_at=started_at,
+                        increment_attempt=True,
                     )
-            except Exception as exc:
-                logger.error("Scheduler tick failed: %s", exc)
+                    claimed = await self._task_manager.claim_due_tasks(limit=8, lease_seconds=120)
+                    self._last_scheduler_tick_at = _utcnow_iso()
+                    self._last_scheduler_claim_count = len(claimed)
+                    for record in claimed:
+                        control_kind = "scheduled_task" if record.get("auto_run") else "scheduled_reminder"
+                        claim_token = str(record.get("active_claim_token") or "").strip()
+                        await self._event_bus.inbound_queue.put(
+                            InboundEvent(
+                                session_id=f"system:task:{record.get('task_key', '')}",
+                                type=EventType.CONTROL.value,
+                                role="system",
+                                content={
+                                    "task_key": record.get("task_key", ""),
+                                    "claim_token": claim_token,
+                                },
+                                source=self._source,
+                                target=EventTarget(kind=TargetKind.INTERNAL.value),
+                                metadata={
+                                    "control_kind": control_kind,
+                                    "claim_token": claim_token,
+                                },
+                            )
+                        )
+                    self._update_job(
+                        "scheduler",
+                        status="succeeded",
+                        runtime_source="heart.scheduler",
+                        finished_at=self._last_scheduler_tick_at,
+                        success_at=self._last_scheduler_tick_at,
+                        next_retry_at=None,
+                        retry_count=0,
+                        last_failure=None,
+                        last_result={
+                            "status": "ok",
+                            "claimed_count": len(claimed),
+                            "at": self._last_scheduler_tick_at,
+                        },
+                        last_delivery=delivery_payload(state="not_applicable"),
+                    )
+                except Exception as exc:
+                    logger.error("Scheduler tick failed: %s", exc)
+                    failed_at = _utcnow_iso()
+                    self._update_job(
+                        "scheduler",
+                        status="failed",
+                        runtime_source="heart.scheduler",
+                        finished_at=failed_at,
+                        next_retry_at=None,
+                        retry_count=int(self._job_record("scheduler").get("retry_count", 0) or 0) + 1,
+                        last_failure=failure_payload(
+                            category="retryable",
+                            code="scheduler_tick_failed",
+                            message=str(exc),
+                            at=failed_at,
+                        ),
+                        last_result={"status": "error", "message": str(exc), "at": failed_at},
+                        last_delivery=delivery_payload(state="not_applicable"),
+                    )
+            finally:
+                reset_event_context(token)
 
             try:
                 await asyncio.wait_for(shutdown.wait(), timeout=max(self._scheduler_interval, 1))
@@ -583,70 +798,162 @@ class Heart:
                     continue
 
             if self._api_url and self._model:
+                started_at = _utcnow_iso()
+                token = self._bind_job_context("heartbeat")
                 try:
-                    await self._set_status("heartbeat", "Running heartbeat")
-                    tools = self._tools_manager.get_heartbeat_tools()
-                    background_status = await self.get_background_status()
-                    result = await self._agent_runner.run(
-                        session=self._http_session,
-                        api_url=self._api_url,
-                        api_key=self._api_key,
-                        model=self._model,
-                        messages=[
-                            {"role": "system", "content": self._prompt},
-                            {"role": "user", "content": json.dumps(background_status, ensure_ascii=False)},
-                        ],
-                        tools=tools,
-                        session_id=self._session_id,
-                        source=self._source,
-                        route_context=self._heartbeat_route_context(tools),
-                    )
-
-                    payload = self._extract_json_payload(result.get("content") or "")
-                    if payload is None:
-                        raise ValueError(f"Heartbeat returned non-JSON content: {result.get('content')}")
-
-                    normalized = self._normalize_heartbeat_result(payload, background_status)
-                    decision = normalized["decision"]
-                    signal_kind = normalized["signal_kind"]
-                    message = normalized["message"]
-                    signal_fingerprint = normalized["signal_fingerprint"]
-                    self._last_heartbeat_at = _utcnow_iso()
-                    self._last_heartbeat_decision = decision
-                    self._last_heartbeat_summary = message
-                    self._last_heartbeat_error = ""
-
-                    if decision in {"notify", "escalate"} and message:
-                        emitted_at = _utcnow_iso()
-                        self._last_heartbeat_signal_kind = signal_kind
-                        self._last_heartbeat_signal_message = message
-                        self._last_heartbeat_signal_fingerprint = signal_fingerprint
-                        self._last_heartbeat_signal_at = emitted_at
-                        if signal_kind == "idle_poke":
-                            self._last_idle_poke_at = emitted_at
-                        await self._event_bus.inbound_queue.put(
-                            InboundEvent(
-                                session_id=self._session_id,
-                                type=EventType.SIGNAL.value,
-                                role="system",
-                                content=message,
-                                source=self._source,
-                                target=EventTarget(kind=TargetKind.INTERNAL.value),
-                                metadata={
-                                    "heartbeat_decision": decision,
-                                    "heartbeat_signal_kind": signal_kind,
-                                    "transient": True,
-                                    "disable_tools": True,
-                                },
-                            )
+                    try:
+                        await self._set_status("heartbeat", "Running heartbeat")
+                        self._update_job(
+                            "heartbeat",
+                            status="running",
+                            runtime_source="heart.heartbeat",
+                            started_at=started_at,
+                            increment_attempt=True,
                         )
-                except Exception as exc:
-                    logger.error("Heartbeat request failed: %s", exc)
-                    self._last_heartbeat_at = _utcnow_iso()
-                    self._last_heartbeat_error = str(exc)
-                    await self._set_status("error", str(exc))
+                        tools = self._tools_manager.get_heartbeat_tools()
+                        background_status = await self.get_background_status()
+                        self._update_job(
+                            "background_agent",
+                            status="running",
+                            runtime_source="heart.background_agent",
+                            started_at=started_at,
+                            increment_attempt=True,
+                        )
+                        agent_token = bind_event_context(job_id="background_agent")
+                        try:
+                            result = await self._agent_runner.run(
+                                session=self._http_session,
+                                api_url=self._api_url,
+                                api_key=self._api_key,
+                                model=self._model,
+                                messages=[
+                                    {"role": "system", "content": self._prompt},
+                                    {"role": "user", "content": json.dumps(background_status, ensure_ascii=False)},
+                                ],
+                                tools=tools,
+                                session_id=self._session_id,
+                                source=self._source,
+                                route_context=self._heartbeat_route_context(tools),
+                            )
+                        finally:
+                            reset_event_context(agent_token)
+                        agent_finished_at = _utcnow_iso()
+                        agent_error = result.get("error") if isinstance(result.get("error"), dict) else None
+                        if agent_error:
+                            self._update_job(
+                                "background_agent",
+                                status="failed",
+                                runtime_source="heart.background_agent",
+                                finished_at=agent_finished_at,
+                                next_retry_at=None,
+                                retry_count=int(self._job_record("background_agent").get("retry_count", 0) or 0) + 1,
+                                last_failure=agent_error,
+                                last_result={"status": result.get("status"), "content": result.get("content"), "at": agent_finished_at},
+                                last_delivery=delivery_payload(state="not_applicable"),
+                            )
+                        else:
+                            self._update_job(
+                                "background_agent",
+                                status="succeeded",
+                                runtime_source="heart.background_agent",
+                                finished_at=agent_finished_at,
+                                success_at=agent_finished_at,
+                                next_retry_at=None,
+                                retry_count=0,
+                                last_failure=None,
+                                last_result={"status": result.get("status"), "content": result.get("content"), "at": agent_finished_at},
+                                last_delivery=delivery_payload(state="not_applicable"),
+                            )
+
+                        payload = self._extract_json_payload(result.get("content") or "")
+                        if payload is None:
+                            raise ValueError(f"Heartbeat returned non-JSON content: {result.get('content')}")
+
+                        normalized = self._normalize_heartbeat_result(payload, background_status)
+                        decision = normalized["decision"]
+                        signal_kind = normalized["signal_kind"]
+                        message = normalized["message"]
+                        signal_fingerprint = normalized["signal_fingerprint"]
+                        self._last_heartbeat_at = _utcnow_iso()
+                        self._last_heartbeat_decision = decision
+                        self._last_heartbeat_summary = message
+                        self._last_heartbeat_error = ""
+                        heartbeat_delivery = delivery_payload(state="not_applicable")
+
+                        if decision in {"notify", "escalate"} and message:
+                            emitted_at = _utcnow_iso()
+                            self._last_heartbeat_signal_kind = signal_kind
+                            self._last_heartbeat_signal_message = message
+                            self._last_heartbeat_signal_fingerprint = signal_fingerprint
+                            self._last_heartbeat_signal_at = emitted_at
+                            if signal_kind == "idle_poke":
+                                self._last_idle_poke_at = emitted_at
+                            await self._event_bus.inbound_queue.put(
+                                InboundEvent(
+                                    session_id=self._session_id,
+                                    type=EventType.SIGNAL.value,
+                                    role="system",
+                                    content=message,
+                                    source=self._source,
+                                    target=EventTarget(kind=TargetKind.INTERNAL.value),
+                                    metadata={
+                                        "heartbeat_decision": decision,
+                                        "heartbeat_signal_kind": signal_kind,
+                                        "transient": True,
+                                        "disable_tools": True,
+                                    },
+                                )
+                            )
+                            heartbeat_delivery = delivery_payload(
+                                state="delivered",
+                                delivered=True,
+                                channel="internal_signal",
+                                message=message,
+                                at=emitted_at,
+                                details={"signal_kind": signal_kind, "decision": decision},
+                            )
+                        self._update_job(
+                            "heartbeat",
+                            status="succeeded",
+                            runtime_source="heart.heartbeat",
+                            finished_at=self._last_heartbeat_at,
+                            success_at=self._last_heartbeat_at,
+                            next_retry_at=None,
+                            retry_count=0,
+                            last_failure=None,
+                            last_result={
+                                "status": decision,
+                                "signal_kind": signal_kind,
+                                "message": message,
+                                "at": self._last_heartbeat_at,
+                            },
+                            last_delivery=heartbeat_delivery,
+                        )
+                    except Exception as exc:
+                        logger.error("Heartbeat request failed: %s", exc)
+                        self._last_heartbeat_at = _utcnow_iso()
+                        self._last_heartbeat_error = str(exc)
+                        self._update_job(
+                            "heartbeat",
+                            status="failed",
+                            runtime_source="heart.heartbeat",
+                            finished_at=self._last_heartbeat_at,
+                            next_retry_at=None,
+                            retry_count=int(self._job_record("heartbeat").get("retry_count", 0) or 0) + 1,
+                            last_failure=failure_payload(
+                                category="retryable",
+                                code="heartbeat_failed",
+                                message=str(exc),
+                                at=self._last_heartbeat_at,
+                            ),
+                            last_result={"status": "error", "message": str(exc), "at": self._last_heartbeat_at},
+                            last_delivery=delivery_payload(state="not_applicable"),
+                        )
+                        await self._set_status("error", str(exc))
+                    finally:
+                        await self._set_status("idle", "")
                 finally:
-                    await self._set_status("idle", "")
+                    reset_event_context(token)
             else:
                 logger.warning("Heartbeat config incomplete (api_url or model missing), skipping heartbeat model call")
 

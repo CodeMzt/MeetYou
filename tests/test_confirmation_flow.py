@@ -46,9 +46,9 @@ class _GatewayConfirmEventBus:
 class GatewayConfirmResponseTests(unittest.TestCase):
     def test_websocket_confirm_response_resolves_immediately(self):
         bus = _GatewayConfirmEventBus()
-        gateway = FastAPIGateway(bus, SessionManager())
+        gateway = FastAPIGateway(bus, SessionManager(), access_token="ws-token")
         with TestClient(gateway.app) as client:
-            with client.websocket_connect("/ws?session_id=web:test&source_id=desktop") as websocket:
+            with client.websocket_connect("/ws?session_id=web:test&source_id=desktop&access_token=ws-token") as websocket:
                 connection = websocket.receive_json()
                 self.assertEqual(connection["kind"], "connection")
 
@@ -60,6 +60,7 @@ class GatewayConfirmResponseTests(unittest.TestCase):
                 ack = websocket.receive_json()
 
         self.assertEqual(ack["kind"], "ack")
+        self.assertEqual(ack["ack"]["session_id"], "web:test")
         self.assertEqual(bus.calls, [(True, "req-123", "web:test")])
         self.assertTrue(bus.inbound_queue.empty())
 

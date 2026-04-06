@@ -1,0 +1,72 @@
+.scrollContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.emptyState {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 28px 0;
+}
+
+.emptyCopy {
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+  user-select: text;
+}
+
+.user {
+  align-self: flex-end;
+}
+
+.assistant {
+  align-self: flex-start;
+}
+
+.messageInner {
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.55;
+  box-shadow: 0 2px 8px var(--shadow-color);
+  word-wrap: break-word;
+}
+
+.user .messageInner {
+  background: var(--bubble-user);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.assistant .messageInner {
+  background: var(--bubble-assistant);
+  border-bottom-left-radius: 4px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+}
+
+.systemMessage {
+  align-self: stretch;
+  max-width: 100%;
+}
+
+.systemInner {
+  background: rgba(255, 59, 48, 0.06);
+  border: 1px solid rgba(255, 59, 48, 0.2);
+  color: var(--text-primary);
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.55;
+  box-shadow: 0 2px 8px var(--shadow-color);
+}
