@@ -1,0 +1,90 @@
+.container {
+  padding: 10px 14px;
+  border-top: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  align-items: stretch;
+  flex-shrink: 0;
+  background: rgba(128, 128, 128, 0.03);
+}
+
+.composerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.selectWrap {
+  min-width: 126px;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.chatInput {
+  flex: 1;
+  border: 1px solid var(--glass-border);
+  background: rgba(128, 128, 128, 0.05);
+  border-radius: 18px;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.chatInput:focus {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+}
+
+.sendBtn {
+  background: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease;
+  outline: none;
+}
+
+.sendBtn:hover:not(:disabled) {
+  transform: scale(1.05);
+  background: #0077ed;
+}
+
+.sendBtn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.sendBtn:disabled {
+  background: var(--text-secondary);
+  cursor: not-allowed;
+  transform: none;
+}

@@ -1,0 +1,28 @@
+.content {
+  /* text rendering logic */
+}
+
+.placeholder {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #ff3b30;
+}
+
+.cursorBlink {
+  display: inline-block;
+  width: 8px;
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+  color: var(--accent-color);
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

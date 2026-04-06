@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from core.config import ConfigManager
+from core.exceptions import ConfigError
 
 
 class ConfigManagerTests(unittest.TestCase):
@@ -25,6 +26,7 @@ class ConfigManagerTests(unittest.TestCase):
             json.dumps(
                 {
                     "api_provider": "openai",
+                    "model": "gpt-4o",
                     "gateway_port": 8000,
                 },
                 ensure_ascii=False,
@@ -61,6 +63,31 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertNotEqual(snapshot["api_key"]["value"], "test-secret")
         self.assertEqual(config.get("api_key"), "test-secret")
 
+    def test_load_config_strips_removed_legacy_keys(self):
+        (self.temp_root / "user" / "config.json").write_text(
+            json.dumps(
+                {
+                    "api_provider": "openai",
+                    "model": "gpt-4o",
+                    "enable_gateway": True,
+                    "source_profiles": {"legacy": {}},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        snapshot = json.loads((self.temp_root / "user" / "config.json").read_text(encoding="utf-8"))
+        self.assertNotIn("enable_gateway", snapshot)
+        self.assertNotIn("source_profiles", snapshot)
+        self.assertFalse(config.is_manageable_key("enable_gateway"))
+        self.assertFalse(config.is_manageable_key("source_profiles"))
+
     def test_apply_updates_persists_json_and_env(self):
         config = ConfigManager(
             config_file_path=str(self.temp_root / "user" / "config.json"),
@@ -81,8 +108,40 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(config.get("api_key"), "new-secret")
 
         config_data = json.loads((self.temp_root / "user" / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(config_data["_meta"]["schema_version"], "2")
+        self.assertEqual(config_data["_meta"]["revision"], 1)
         self.assertEqual(config_data["api_provider"], "anthropic")
         self.assertIn("MEETYOU_API_KEY='new-secret'", (self.temp_root / ".env").read_text(encoding="utf-8"))
+        self.assertTrue((self.temp_root / "user" / "config.json.bak").exists())
+        self.assertTrue((self.temp_root / ".env.bak").exists())
+
+    def test_apply_updates_rejects_invalid_values_without_polluting_files(self):
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+        before_config = (self.temp_root / "user" / "config.json").read_text(encoding="utf-8")
+        before_env = (self.temp_root / ".env").read_text(encoding="utf-8")
+
+        with self.assertRaisesRegex(ConfigError, "gateway_port"):
+            config.apply_updates({"gateway_port": 70000})
+
+        self.assertEqual((self.temp_root / "user" / "config.json").read_text(encoding="utf-8"), before_config)
+        self.assertEqual((self.temp_root / ".env").read_text(encoding="utf-8"), before_env)
+
+    def test_rollback_transaction_restores_previous_state(self):
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+        snapshot = config.begin_transaction()
+
+        config.apply_updates({"api_provider": "anthropic", "api_key": "rolled-secret"})
+        config.rollback_transaction(snapshot)
+        config.reload()
+
+        self.assertEqual(config.get("api_provider"), "openai")
+        self.assertEqual(config.get("api_key"), "test-secret")
 
 
 if __name__ == "__main__":

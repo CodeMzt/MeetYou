@@ -24,7 +24,7 @@ class Launcher:
         self.config = ConfigManager()
         host = self.config.get("gateway_host") or "127.0.0.1"
         port = int(self.config.get("gateway_port") or 8000)
-        self.gateway_base_url = f"http://{host}:{port}"
+        self.service_base_url = f"http://{host}:{port}"
 
     @staticmethod
     def _escape_ps(value: str) -> str:
@@ -47,47 +47,47 @@ class Launcher:
             f"& '{python_path}' '{main_path}' {subcommand}"
         )
 
-    def gateway_running(self) -> bool:
+    def service_running(self) -> bool:
         try:
-            with urlopen(f"{self.gateway_base_url}/health", timeout=1.5) as response:
+            with urlopen(f"{self.service_base_url}/health", timeout=1.5) as response:
                 return response.status == 200
         except URLError:
             return False
         except Exception:
             return False
 
-    def wait_for_gateway(self, timeout_seconds: float = 20.0) -> bool:
+    def wait_for_service(self, timeout_seconds: float = 20.0) -> bool:
         time.sleep(1.0)
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
-            if self.gateway_running():
+            if self.service_running():
                 return True
             time.sleep(0.5)
-        return self.gateway_running()
+        return self.service_running()
 
-    def start_gateway(self):
-        if self.gateway_running():
-            print(f"gateway 已在运行: {self.gateway_base_url}")
+    def start_service(self):
+        if self.service_running():
+            print(f"service 已在运行: {self.service_base_url}")
             return
-        self._spawn_powershell(self._build_python_command("gateway"))
-        if self.wait_for_gateway(timeout_seconds=45.0):
-            print(f"gateway 已启动: {self.gateway_base_url}")
+        self._spawn_powershell(self._build_python_command("service"))
+        if self.wait_for_service(timeout_seconds=45.0):
+            print(f"service 已启动: {self.service_base_url}")
         else:
-            print("gateway 已拉起新窗口，但健康检查尚未通过，请查看 gateway 窗口日志。")
+            print("service 已拉起新窗口，但健康检查尚未通过，请查看 service 窗口日志。")
 
-    def ensure_gateway(self):
-        if self.gateway_running():
+    def ensure_service(self):
+        if self.service_running():
             return
-        print("gateway 未运行，正在自动拉起...")
-        self.start_gateway()
+        print("service 未运行，正在自动拉起...")
+        self.start_service()
 
     def start_cil(self):
-        self.ensure_gateway()
+        self.ensure_service()
         self._spawn_powershell(self._build_python_command("cil"))
         print("CIL 已在新窗口启动。")
 
     def start_ui(self):
-        self.ensure_gateway()
+        self.ensure_service()
         ui_root = self._escape_ps(str(self.project_root / "meetyou-ui"))
         command = f"Set-Location -LiteralPath '{ui_root}'; npm.cmd run dev"
         self._spawn_powershell(command)
@@ -97,7 +97,7 @@ class Launcher:
         print(
             "\n可用命令:\n"
             "  help\n"
-            "  start gateway\n"
+            "  start service\n"
             "  start cil\n"
             "  start ui\n"
             "  status\n"
@@ -105,9 +105,9 @@ class Launcher:
         )
 
     def print_status(self):
-        gateway_status = "running" if self.gateway_running() else "stopped"
+        service_status = "running" if self.service_running() else "stopped"
         print(
-            f"gateway: {gateway_status} ({self.gateway_base_url})\n"
+            f"service: {service_status} ({self.service_base_url})\n"
             "CIL/UI 由独立窗口运行，launcher 不跟踪其 PID。"
         )
 
@@ -131,8 +131,8 @@ class Launcher:
             if command == "status":
                 self.print_status()
                 continue
-            if command == "start gateway":
-                self.start_gateway()
+            if command == "start service":
+                self.start_service()
                 continue
             if command == "start cil":
                 self.start_cil()

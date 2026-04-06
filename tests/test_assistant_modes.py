@@ -268,6 +268,8 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("list_skills", route.tool_bundle)
         self.assertIn("load_skill", route.tool_bundle)
         self.assertIn("create_skill", route.tool_bundle)
+        self.assertTrue(route.authorization_policy["read_only"])
+        self.assertIn("mode:research", route.authorization_policy["policy_sources"])
 
     def test_skill_management_tools_are_available_in_all_modes(self):
         manager = AssistantModeManager(_FakeConfig())
@@ -295,6 +297,11 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("research_grounding", route.active_skills or [])
         self.assertIn("track_source_updates", route.tool_bundle)
         self.assertIn("Injected semantic router selected research.", route.route_reason)
+        self.assertEqual(route.confidence, "high")
+        self.assertTrue(route.prefer_live_web)
+        self.assertFalse(route.should_preload_context)
+        self.assertEqual(route.adapter_name, "injected_test_router")
+        self.assertIn("injected_semantic", route.signals or [])
 
     def test_preferred_mode_override_applies_for_single_request(self):
         manager = AssistantModeManager(_FakeConfig())
@@ -379,12 +386,91 @@ class AssistantModeManagerTests(unittest.TestCase):
             )
             self.assertIn("breaking changes", prompt_text)
 
+            capability = manager.get_skill_capability("release_note_triage")
+            self.assertIsNotNone(capability)
+            self.assertIn("research_topic", capability["tools"])
+
+            bundle = manager.get_tool_bundle("research", loaded_skills=["release_note_triage"])
+            self.assertIn("research_topic", bundle["tools"])
+            self.assertIn("compile_report", bundle["tools"])
+
+    def test_validates_capability_registry_and_loaded_skill_capabilities(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            skill_dir = Path(tmp_dir) / "SKILL"
+            _populate_skill_dir(skill_dir)
+            manager = AssistantModeManager(
+                _FakeConfig(
+                    {
+                        "assistant_modes": json.dumps(
+                            {
+                                "skill_prompt_dir": str(skill_dir)
+                            }
+                        )
+                    }
+                )
+            )
+
+            manager.create_skill(
+                skill_id="workspace_triage",
+                title="Workspace Triage",
+                summary="Inspect a workspace and summarize next actions.",
+                content="Inspect the workspace and produce next actions.",
+                recommended_tools=["analyze_workspace", "compile_report"],
+                applicable_modes=["documents"],
+                scenarios=["workspace triage"],
+            )
+
+            problems = manager.validate_capability_registry(
+                tool_names=[
+                    "ask_human",
+                    "get_current_system_time",
+                    "search_knowledge",
+                    "search_memory",
+                    "search_web",
+                    "read_web_page",
+                    "remember_knowledge",
+                    "manage_memories",
+                    "list_skills",
+                    "load_skill",
+                    "create_skill",
+                    "get_sys_vitals",
+                    "research_topic",
+                    "inspect_page",
+                    "track_source_updates",
+                    "exec_sys_cmd",
+                    "analyze_workspace",
+                    "read_local_documents",
+                    "write_local_document",
+                    "rewrite_local_document",
+                    "compile_report",
+                    "manage_schedule",
+                    "draft_message",
+                    "meeting_brief",
+                    "sync_notes",
+                    "build_study_plan",
+                    "extract_learning_points",
+                    "quiz_me",
+                    "generate_flashcards",
+                    "track_mastery",
+                    "manage_tasks",
+                    "manage_scheduled_tasks",
+                ],
+                mcp_servers=["filesystem_tools"],
+            )
+
+            self.assertEqual(problems, [])
+            bundle = manager.get_tool_bundle("documents", loaded_skills=["workspace_triage"])
+            self.assertIn("analyze_workspace", bundle["tools"])
+            self.assertIn("compile_report", bundle["tools"])
+
     def test_trusted_write_roots_and_primary_sources(self):
         with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as other_dir:
+            repo_root = Path(__file__).resolve().parent.parent
             manager = AssistantModeManager(
                 _FakeConfig(
                     {
                         "trusted_write_roots": json.dumps([tmp_dir]),
+                        "source_catalog_path": str(repo_root / "user" / "source_catalog.json"),
                     }
                 )
             )
@@ -394,7 +480,7 @@ class AssistantModeManagerTests(unittest.TestCase):
 
             self.assertTrue(manager.is_trusted_write_path(str(trusted_file)))
             self.assertFalse(manager.is_trusted_write_path(str(other_file)))
-            self.assertTrue(manager.is_primary_source("https://docs.python.org/3/library/pathlib.html", "tech_updates"))
+            self.assertTrue(manager.is_primary_source("https://github.com/python/cpython/releases", "tech_updates"))
 
 
 if __name__ == "__main__":

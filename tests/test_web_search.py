@@ -6,6 +6,7 @@ import unittest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.tool_runtime.models import ToolCallResult
 from tools.web_search import WebSearchTools
 
 
@@ -181,22 +182,28 @@ class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
         tools = WebSearchTools(manager)
 
         result = await tools.search_web("example query")
-        self.assertIn("unavailable", result)
-        self.assertIn("Invalid API key", result)
+        self.assertIsInstance(result, ToolCallResult)
+        self.assertFalse(result.ok)
+        self.assertIn("unavailable", result.error.message)
+        self.assertEqual(result.error.details["backend_error"], "Tavily API error: Invalid API key")
 
     async def test_search_web_reports_unavailable_without_tavily(self):
         manager = _FakeMCPManager(tool_map={})
         tools = WebSearchTools(manager)
 
         result = await tools.search_web("who won")
-        self.assertIn("Tavily", result)
+        self.assertIsInstance(result, ToolCallResult)
+        self.assertFalse(result.ok)
+        self.assertIn("Tavily", result.error.message)
 
     async def test_search_web_rejects_direct_url_queries(self):
         manager = _FakeMCPManager(tool_map={"tavily-search": "tavily_web"})
         tools = WebSearchTools(manager)
 
         result = await tools.search_web("https://example.com")
-        self.assertIn("read_web_page", result)
+        self.assertIsInstance(result, ToolCallResult)
+        self.assertFalse(result.ok)
+        self.assertIn("read_web_page", result.error.message)
 
 
 if __name__ == "__main__":

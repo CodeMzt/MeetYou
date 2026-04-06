@@ -4,7 +4,7 @@ import unittest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from adapters.openai_adapter import OpenAIAdapter
+from adapters.openai_adapter import OpenAIAdapter, ProviderRequestError
 
 
 class FakeStreamContent:
@@ -200,6 +200,78 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
             [event.type for event in events],
             ["text", "usage", "done"],
         )
+
+    async def test_compatible_host_retries_without_optional_fields_after_invalid_field_400(self):
+        adapter = OpenAIAdapter()
+        session = FakeSession(
+            [
+                FakeResponse(
+                    status=400,
+                    json_data={
+                        "error": {
+                            "message": "Unsupported parameter: reasoning_effort",
+                            "type": "invalid_request_error",
+                            "param": "reasoning_effort",
+                        }
+                    },
+                ),
+                FakeResponse(
+                    lines=[
+                        'data: {"choices":[{"delta":{"content":"hello"}}]}',
+                        "data: [DONE]",
+                    ]
+                ),
+            ]
+        )
+
+        events = []
+        async for event in adapter.stream_chat(
+            session,
+            "https://api.deepseek.com/chat/completions",
+            "key",
+            "deepseek-reasoner",
+            [{"role": "user", "content": "Hello"}],
+            thinking=True,
+            thinking_effort="medium",
+        ):
+            events.append(event)
+
+        self.assertEqual(len(session.calls), 2)
+        self.assertEqual(session.calls[0]["json"]["reasoning_effort"], "medium")
+        self.assertNotIn("reasoning_effort", session.calls[1]["json"])
+        self.assertEqual([event.type for event in events], ["text", "done"])
+
+    async def test_compatible_host_400_raises_structured_provider_error(self):
+        adapter = OpenAIAdapter()
+        session = FakeSession(
+            [
+                FakeResponse(
+                    status=400,
+                    json_data={
+                        "error": {
+                            "message": "Maximum context length exceeded.",
+                            "type": "invalid_request_error",
+                        }
+                    },
+                )
+            ]
+        )
+
+        with self.assertRaises(ProviderRequestError) as ctx:
+            async for _ in adapter.stream_chat(
+                session,
+                "https://api.deepseek.com/chat/completions",
+                "key",
+                "deepseek-reasoner",
+                [{"role": "user", "content": "Hello"}],
+            ):
+                pass
+
+        payload = ctx.exception.runtime_error_payload
+        self.assertEqual(payload["code"], "provider_context_limit_exceeded")
+        self.assertEqual(payload["category"], "validation")
+        self.assertEqual(payload["details"]["provider_mode"], "openai_compatible_chat")
+        self.assertEqual(payload["details"]["status_code"], 400)
 
 
 if __name__ == "__main__":

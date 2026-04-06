@@ -143,16 +143,22 @@
       "type": "function",
       "function": {
         "name": "manage_tasks",
-        "description": "Create, list, update, or complete user TODO items.",
+        "description": "Create, list, inspect, update, complete, delete, or restore user TODO items.",
         "parameters": {
           "type": "object",
           "properties": {
             "action": {
               "type": "string",
-              "enum": ["create", "list", "update", "complete"]
+              "enum": ["create", "list", "detail", "update", "complete", "delete", "restore"]
             },
             "task_key": {
               "type": "string"
+            },
+            "task_keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "summary": {
               "type": "string"
@@ -185,16 +191,22 @@
       "type": "function",
       "function": {
         "name": "manage_scheduled_tasks",
-        "description": "Create, list, update, or complete assistant-owned scheduled tasks.",
+        "description": "Create, list, inspect, update, complete, cancel, disable, delete, or restore assistant-owned scheduled tasks.",
         "parameters": {
           "type": "object",
           "properties": {
             "action": {
               "type": "string",
-              "enum": ["create", "list", "update", "complete"]
+              "enum": ["create", "list", "detail", "update", "complete", "delete", "cancel", "disable", "restore"]
             },
             "task_key": {
               "type": "string"
+            },
+            "task_keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "summary": {
               "type": "string"
@@ -380,6 +392,41 @@
             }
           },
           "required": ["content"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "manage_memories",
+        "description": "List, inspect, edit, invalidate, forget, or delete memory objects.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": ["list", "detail", "edit", "delete", "invalidate", "forget"]
+            },
+            "memory_id": {
+              "type": "string"
+            },
+            "memory_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "query": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            }
+          },
+          "required": ["action"]
         }
       }
     },

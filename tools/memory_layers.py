@@ -8,8 +8,11 @@ from typing import Any
 
 import numpy as np
 
+from core.persistence import atomic_write_json, load_json_with_recovery
+
 logger = logging.getLogger("meetyou.memory")
 
+_MEMORY_SCHEMA_VERSION = "2"
 IDEMPOTENCY_WINDOW = timedelta(minutes=30)
 PENDING_TRIGGER_COUNT = 20
 PENDING_TRIGGER_AGE = timedelta(minutes=30)
@@ -55,15 +58,19 @@ class MemoryStoreLayer:
 
     def empty_store(self) -> dict[str, Any]:
         now = dt_to_iso(utcnow())
+        summary_layer = {"global": "", "by_session": {}}
         return {
             "metadata": {
+                "schema_version": _MEMORY_SCHEMA_VERSION,
+                "revision": 0,
                 "embedding_model": "",
                 "embedding_api_url": "",
                 "updated_at": now,
             },
             "records": [],
             "edges": [],
-            "working_summaries": {"global": "", "by_session": {}},
+            "working_summaries": summary_layer,
+            "conversation_summaries": deepcopy(summary_layer),
         }
 
     def is_valid_store(self, data: Any) -> bool:
@@ -76,21 +83,29 @@ class MemoryStoreLayer:
         if not isinstance(data.get("edges"), list):
             return False
         working = data.get("working_summaries")
-        if not isinstance(working, dict):
+        conversation = data.get("conversation_summaries")
+        summary_layer = conversation if isinstance(conversation, dict) else working
+        if not isinstance(summary_layer, dict):
             return False
-        if not isinstance(working.get("global", ""), str):
+        if not isinstance(summary_layer.get("global", ""), str):
             return False
-        return isinstance(working.get("by_session", {}), dict)
+        return isinstance(summary_layer.get("by_session", {}), dict)
 
     def normalize_store(self) -> None:
         metadata = self._owner._store.setdefault("metadata", {})
+        self.ensure_repository_metadata()
         metadata["embedding_model"] = metadata.get("embedding_model") or self._owner._embedding_model
         metadata["embedding_api_url"] = metadata.get("embedding_api_url") or self._owner._embedding_api_url
         metadata["updated_at"] = metadata.get("updated_at") or dt_to_iso(utcnow())
-        working = self._owner._store.setdefault("working_summaries", {})
+        conversation = self._owner._store.get("conversation_summaries")
+        working = conversation if isinstance(conversation, dict) else self._owner._store.get("working_summaries")
+        if not isinstance(working, dict):
+            working = {"global": "", "by_session": {}}
         working["global"] = str(working.get("global", "") or "")
         by_session = working.get("by_session")
         working["by_session"] = by_session if isinstance(by_session, dict) else {}
+        self._owner._store["working_summaries"] = working
+        self._owner._store["conversation_summaries"] = working
 
         normalized_records: list[dict[str, Any]] = []
         removed_ids: set[str] = set()
@@ -123,13 +138,33 @@ class MemoryStoreLayer:
             normalized_edges.append(edge)
         self._owner._store["edges"] = normalized_edges
 
+    def ensure_repository_metadata(self) -> None:
+        metadata = self._owner._store.setdefault("metadata", {})
+        metadata["schema_version"] = str(metadata.get("schema_version") or _MEMORY_SCHEMA_VERSION)
+        try:
+            metadata["revision"] = max(int(metadata.get("revision", 0) or 0), 0)
+        except (TypeError, ValueError):
+            metadata["revision"] = 0
+        metadata["updated_at"] = str(metadata.get("updated_at") or dt_to_iso(utcnow()))
+
     def touch_updated(self) -> None:
+        self.ensure_repository_metadata()
         self._owner._store["metadata"]["updated_at"] = dt_to_iso(utcnow())
+
+    def load_store(self) -> dict[str, Any]:
+        store = load_json_with_recovery(
+            self._owner._memory_file_path,
+            validator=self.is_valid_store,
+            default_factory=self.empty_store,
+        )
+        self._owner._store = store
+        self.normalize_store()
+        return self._owner._store
 
     async def save(self) -> None:
         self.touch_updated()
-        with open(self._owner._memory_file_path, "w", encoding="utf-8") as handle:
-            json.dump(self._owner._store, handle, ensure_ascii=False, indent=2)
+        self._owner._store["metadata"]["revision"] = int(self._owner._store["metadata"].get("revision", 0) or 0) + 1
+        atomic_write_json(self._owner._memory_file_path, self._owner._store)
 
     def record_by_id(self, record_id: str) -> dict[str, Any] | None:
         for record in self._owner._store.get("records", []):
@@ -341,7 +376,7 @@ class MemoryViewLayer:
         return payload
 
     def _working_summary_view(self, session_id: str = "") -> dict[str, Any]:
-        working = self._owner._store.get("working_summaries", {})
+        working = self._owner._store.get("conversation_summaries") or self._owner._store.get("working_summaries", {})
         by_session = working.get("by_session", {})
         session_summary = ""
         if session_id and isinstance(by_session, dict):
@@ -394,16 +429,32 @@ class MemoryViewLayer:
         records = self._viewable_records(source_id=source_id, include_invalidated=include_invalidated)
         record_ids = {str(record.get("id") or "") for record in records}
         edges = self._viewable_edges(record_ids)
+        summary_view = self._working_summary_view(session_id)
+        episode_records = [record for record in records if record.get("type") == "episode"]
+        profile_records = [record for record in records if record.get("type") == "profile"]
+        fact_records = [record for record in records if record.get("type") == "fact"]
         return {
             "metadata": deepcopy(self._owner._store.get("metadata", {})),
             "scope": {
                 "source_id": str(source_id or ""),
                 "session_id": str(session_id or ""),
             },
-            "working_summaries": self._working_summary_view(session_id),
+            "working_summaries": summary_view,
             "records": records,
             "edges": edges,
             "stats": self._memory_stats(records, edges),
+            "layers": {
+                "episodes": episode_records,
+                "durable_memory": {
+                    "profile": profile_records,
+                    "facts": fact_records,
+                },
+                "conversation_summary": summary_view,
+                "memory_graph": {
+                    "node_count": len(records),
+                    "edge_count": len(edges),
+                },
+            },
         }
 
     def get_memory_graph_view(
@@ -445,9 +496,10 @@ class MemoryRetrieverLayer:
     def __init__(self, owner):
         self._owner = owner
 
-    def eligible_records(self, user_id: str) -> list[dict[str, Any]]:
+    def eligible_records(self, user_id: str, session_id: str = "") -> list[dict[str, Any]]:
         current_model = self._owner._embedding_model
         results: list[dict[str, Any]] = []
+        normalized_session_id = str(session_id or "").strip()
         for record in self._owner._store.get("records", []):
             if record.get("type") not in {"episode", "fact", "profile"}:
                 continue
@@ -457,6 +509,9 @@ class MemoryRetrieverLayer:
                 continue
             if record.get("embedding_model") != current_model:
                 continue
+            if record.get("type") == "episode" and normalized_session_id:
+                if str(record.get("scope", {}).get("session_id") or "").strip() != normalized_session_id:
+                    continue
             results.append(record)
         return results
 
@@ -513,9 +568,9 @@ class MemoryRetrieverLayer:
         return best
 
     async def search_records(self, query_text: str, session_id: str = "", source=None) -> list[dict[str, Any]]:
-        del session_id
         user_id = self._owner._resolve_user_id(source)
-        eligible = self.eligible_records(user_id)
+        normalized_session_id = str(session_id or "").strip()
+        eligible = self.eligible_records(user_id, session_id=normalized_session_id)
         now = utcnow()
         query_embedding = await self._owner._get_embedding(query_text)
         scored: list[dict[str, Any]] = []
@@ -570,7 +625,21 @@ class MemoryRetrieverLayer:
             recency = self._owner._store_layer.recency_score(record, now)
             effective_strength = self._owner._store_layer.effective_strength(record, now)
             graph = self.graph_score(record_id, anchor_ids)
-            score = 0.5 * semantic + 0.2 * recency + 0.15 * float(record.get("importance", 0.0) or 0.0) + 0.1 * effective_strength + 0.05 * graph
+            session_bonus = 0.0
+            if (
+                normalized_session_id
+                and record.get("type") == "episode"
+                and str(record.get("scope", {}).get("session_id") or "").strip() == normalized_session_id
+            ):
+                session_bonus = 0.08
+            score = (
+                0.5 * semantic
+                + 0.2 * recency
+                + 0.15 * float(record.get("importance", 0.0) or 0.0)
+                + 0.1 * effective_strength
+                + 0.05 * graph
+                + session_bonus
+            )
             results.append(
                 {
                     "record": record,
@@ -579,6 +648,7 @@ class MemoryRetrieverLayer:
                     "recency": recency,
                     "effective_strength": effective_strength,
                     "graph": graph,
+                    "session_bonus": session_bonus,
                 }
             )
         results.sort(key=lambda item: item["score"], reverse=True)
@@ -594,6 +664,7 @@ class MemoryRetrieverLayer:
                 "recency": round(float(item.get("recency", 0.0) or 0.0), 4),
                 "effective_strength": round(float(item.get("effective_strength", 0.0) or 0.0), 4),
                 "graph": round(float(item.get("graph", 0.0) or 0.0), 4),
+                "session_bonus": round(float(item.get("session_bonus", 0.0) or 0.0), 4),
             }
         )
         return payload
@@ -608,6 +679,11 @@ class MemoryRetrieverLayer:
         results = await self.search_records(query_text, session_id=session_id, source=source)
         payload = {
             "query_text": str(query_text or ""),
+            "scope": {
+                "user_id": self._owner._resolve_user_id(source),
+                "session_id": str(session_id or ""),
+                "session_aware": bool(str(session_id or "").strip()),
+            },
             "profile": [],
             "facts": [],
             "recent_events": [],
@@ -1044,29 +1120,31 @@ class MemoryConsolidatorLayer:
         for record in batch:
             if not self._owner._is_explicit_memory(record):
                 continue
-            category = self._owner._remember_category(record) or "fact"
-            text = self.explicit_memory_text(record)
-            if not text:
-                continue
-            confidence = 0.88
-            if category in PROFILE_CATEGORIES:
-                payload = {
-                    "fact_key": self.fallback_key(category, text),
-                    "fact_value": text,
-                    "confidence": confidence,
-                    "source_record_ids": [record["id"]],
-                }
-                applied = await self.apply_profile_upsert(user_id, payload)
-            else:
-                payload = {
-                    "content": text,
-                    "fact_key": self.fallback_key(category, text),
-                    "confidence": confidence,
-                    "source_record_ids": [record["id"]],
-                }
-                applied = await self.apply_fact_upsert(user_id, payload)
+            applied = await self.apply_explicit_memory_record(user_id, record)
             changed = applied or changed
         return changed
+
+    async def apply_explicit_memory_record(self, user_id: str, record: dict[str, Any]) -> bool:
+        category = self._owner._remember_category(record) or "fact"
+        text = self.explicit_memory_text(record)
+        if not text:
+            return False
+        confidence = 0.88
+        if category in PROFILE_CATEGORIES:
+            payload = {
+                "fact_key": self.fallback_key(category, text),
+                "fact_value": text,
+                "confidence": confidence,
+                "source_record_ids": [record["id"]],
+            }
+            return await self.apply_profile_upsert(user_id, payload)
+        payload = {
+            "content": text,
+            "fact_key": self.fallback_key(category, text),
+            "confidence": confidence,
+            "source_record_ids": [record["id"]],
+        }
+        return await self.apply_fact_upsert(user_id, payload)
 
     def _merge_target_for_pair(self, left: dict[str, Any], right: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         left_score = (

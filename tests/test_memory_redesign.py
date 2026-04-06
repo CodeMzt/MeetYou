@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from core.context import ContextManager
+from tools.agent_memory import AgentMemoryTools
 from tools.memory import Memory
 from tools.memory_layers import dt_to_iso, utcnow
 
@@ -39,6 +40,20 @@ class FakeAdapter:
         if not self.responses:
             return {"content": '{"profile_upserts": [], "fact_upserts": [], "links": []}'}
         return {"content": self.responses.pop(0)}
+
+
+class SummaryAdapter:
+    def __init__(self, content: str = "condensed summary"):
+        self.content = content
+        self.last_messages = None
+
+    async def chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
+        self.last_messages = messages
+        return {"content": self.content}
+
+    def get_context_limit(self, model_name: str) -> int:
+        del model_name
+        return 128000
 
 
 class DummyMemory(Memory):
@@ -166,6 +181,92 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(await context_manager.load_context("s1"), "session summary")
         self.assertEqual(await context_manager.load_context("other"), "global summary")
+
+    async def test_context_plan_uses_summary_layer_and_length_policy(self):
+        adapter = SummaryAdapter()
+        context_manager = ContextManager(self.memory, adapter=adapter, event_bus=None)
+        await context_manager.update_context("session summary", session_id="s1")
+
+        plan = await context_manager.build_context_plan(
+            session_history_before_turn=[
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "old user"},
+                {"role": "assistant", "content": "old assistant"},
+                {"role": "tool", "content": "tool noise"},
+            ],
+            current_turn_messages=[{"role": "user", "content": "new request"}],
+            auto_memory_message={"role": "system", "content": "[自动检索到的相关长期记忆]\n{}"},
+            policy_messages=[{"role": "system", "content": "policy"}],
+            proprioception_message={"role": "system", "content": "cursor"},
+            conversation_summary="session summary",
+            route_context={"should_preload_context": True, "prefer_live_web": True},
+            requested_mode="auto",
+            model="gpt-5.4",
+            provider_name="openai",
+            api_url="https://api.openai.com/v1/responses",
+            context_limit_override=240,
+        )
+
+        self.assertEqual(plan["length_policy"]["provider_family"], "openai")
+        self.assertTrue(plan["layers"]["conversation_summary"])
+        self.assertTrue(any("[对话摘要层]" in message.get("content", "") for message in plan["messages"]))
+        self.assertLessEqual(plan["breakdown"]["total"], plan["length_policy"]["target_input_tokens"])
+
+    async def test_trim_history_persists_summary_without_writing_system_message_into_history(self):
+        adapter = SummaryAdapter("updated summary")
+        context_manager = ContextManager(self.memory, adapter=adapter, event_bus=None)
+        history = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "first turn " * 30},
+            {"role": "assistant", "content": "first answer " * 30},
+            {"role": "tool", "content": "tool output " * 40},
+            {"role": "assistant", "content": "second answer " * 30},
+        ]
+
+        result = await context_manager.trim_history(
+            history,
+            "gpt-5.4",
+            None,
+            "https://api.openai.com/v1/responses",
+            "key",
+            context_limit_override=240,
+            session_id="s1",
+            provider_name="openai",
+            preserve_message_count=1,
+        )
+
+        self.assertEqual(history[0]["content"], "system prompt")
+        self.assertEqual(sum(1 for message in history if message.get("role") == "system"), 1)
+        self.assertEqual(result["conversation_summary"], "updated summary")
+        self.assertTrue(result["compression"]["triggered"])
+        self.assertEqual(result["compression"]["level"], "history_summary")
+        self.assertEqual(await context_manager.load_context("s1"), "updated summary")
+
+    async def test_context_estimation_counts_provider_items_and_tool_calls(self):
+        context_manager = ContextManager(self.memory, adapter=SummaryAdapter(), event_bus=None)
+
+        plain_tokens = context_manager.estimate_message_tokens(
+            {"role": "assistant", "content": "hello"}
+        )
+        structured_tokens = context_manager.estimate_message_tokens(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "id": "call-1",
+                        "function": {"name": "lookup_profile", "arguments": '{"name":"Alex"}'},
+                    }
+                ],
+                "provider_items": [
+                    {"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque"},
+                    {"type": "function_call", "id": "fc_1", "call_id": "call-1"},
+                ],
+            }
+        )
+
+        self.assertGreater(structured_tokens, plain_tokens)
 
     async def test_housekeeping_consolidates_into_profile_and_fact(self):
         texts = [
@@ -305,6 +406,30 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await fresh_memory.close_memory()
 
+    async def test_memory_store_persists_schema_version_and_revision(self):
+        await self.memory.save_memory("payment callback needs fix", 0.8, session_id="s1", source=self.source)
+
+        payload = json.loads(self.memory_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["metadata"]["schema_version"], "2")
+        self.assertGreaterEqual(payload["metadata"]["revision"], 1)
+        self.assertTrue((self.memory_path.parent / f"{self.memory_path.name}.bak").exists())
+
+    async def test_memory_store_recovers_from_backup_when_primary_is_corrupted(self):
+        await self.memory.save_memory("payment callback needs fix", 0.8, session_id="s1", source=self.source)
+        await self.memory.close_memory()
+        self.memory_path.write_text('{"records": "broken"}', encoding="utf-8")
+
+        fresh_memory = DummyMemory()
+        await fresh_memory.init_memory(self.config)
+        try:
+            self.assertEqual(len(fresh_memory._store["records"]), 1)
+            repaired = json.loads(self.memory_path.read_text(encoding="utf-8"))
+            self.assertEqual(repaired["metadata"]["schema_version"], "2")
+            self.assertEqual(len(repaired["records"]), 1)
+        finally:
+            await fresh_memory.close_memory()
+
     async def test_embedding_model_switch_isolated_from_old_records(self):
         await self.memory.save_memory("payment callback needs fix", 0.8, session_id="s1", source=self.source)
         self.memory.refresh_config(DummyConfig(str(self.memory_path), model="new-embedding"))
@@ -341,6 +466,9 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["scope"]["source_id"], "user-1")
         self.assertTrue(any(record["type"] == "profile" for record in snapshot["records"]))
         self.assertTrue(any(record["type"] == "fact" for record in snapshot["records"]))
+        self.assertIn("layers", snapshot)
+        self.assertEqual(snapshot["layers"]["conversation_summary"]["session_summary"], "session summary")
+        self.assertTrue(snapshot["layers"]["durable_memory"]["profile"])
         self.assertTrue(all("embedding" not in record for record in snapshot["records"]))
         self.assertTrue(all("embedding" not in node for node in graph["nodes"]))
         self.assertTrue(all("source" in edge and "target" in edge for edge in graph["edges"]))
@@ -360,6 +488,7 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(payload["query_text"], "who am I")
+        self.assertTrue(payload["scope"]["session_aware"])
         self.assertTrue(payload["profile"])
         self.assertEqual(payload["profile"][0]["fact_value"], "阿明")
         self.assertIn("score", payload["profile"][0])
@@ -448,12 +577,43 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
             record for record in self.memory._store["records"]
             if record.get("type") == "profile" and explicit_record["id"] in record.get("source_record_ids", [])
         ]
-        payload = json.loads(adapter.last_messages[1]["content"])
-        episode_payload = next(item for item in payload["episodes"] if item["id"] == explicit_record["id"])
 
         self.assertTrue(profile_records)
-        self.assertTrue(episode_payload["hints"]["remember_requested"])
-        self.assertEqual(episode_payload["hints"]["remember_category"], "relationship")
+        self.assertIsNone(adapter.last_messages)
+        self.assertNotIn("pending_consolidation", explicit_record.get("tags", []))
+
+    async def test_explicit_memory_write_is_strongly_consistent(self):
+        tools = AgentMemoryTools(self.memory)
+
+        payload = json.loads(
+            await tools.remember_knowledge(
+                "I prefer black coffee.",
+                category="preference",
+                session_id="s1",
+                source=self.source,
+            )
+        )
+        recall = json.loads(
+            await self.memory.recall_memory_structured("what coffee do I prefer", session_id="s1", source=self.source)
+        )
+
+        self.assertTrue(payload["saved"])
+        self.assertTrue(recall["profile"])
+        self.assertIn("black coffee", recall["profile"][0]["fact_value"])
+
+    async def test_session_aware_recall_keeps_recent_events_in_same_session(self):
+        await self.memory.save_memory("payment callback still needs fix", 0.8, session_id="s1", source=self.source)
+        await self.memory.save_memory("user likes pour over coffee", 0.8, session_id="s2", source=self.source)
+
+        same_session = json.loads(
+            await self.memory.recall_memory_structured("coffee", session_id="s1", source=self.source, reinforce=False)
+        )
+        cross_session = json.loads(
+            await self.memory.recall_memory_structured("coffee", session_id="", source=self.source, reinforce=False)
+        )
+
+        self.assertFalse(any("coffee" in item["content"].lower() for item in same_session["recent_events"]))
+        self.assertTrue(any("coffee" in item["content"].lower() for item in cross_session["recent_events"]))
 
 
 if __name__ == "__main__":

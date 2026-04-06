@@ -15,6 +15,12 @@ class FakeWebSocket:
         self.payloads.append(payload)
 
 
+class FailingWebSocket:
+    async def send_json(self, payload):
+        del payload
+        raise RuntimeError("boom")
+
+
 class RuntimeWebSocketTests(unittest.IsolatedAsyncioTestCase):
     async def test_answer_stream_boundaries_use_message_events(self):
         ws_manager = WebSocketManager()
@@ -111,11 +117,37 @@ class RuntimeWebSocketTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual(websocket.payloads[0]["event"]["type"], "runtime_status")
-        self.assertEqual(websocket.payloads[0]["event"]["content"]["status"], "thinking")
-        self.assertEqual(websocket.payloads[1]["event"]["type"], "usage")
-        self.assertEqual(websocket.payloads[1]["event"]["content"]["last_turn_usage"]["total_tokens"], 21)
-        self.assertEqual(websocket.payloads[1]["event"]["metadata"]["turn_id"], "turn-1")
+        self.assertEqual(websocket.payloads[0]["kind"], "runtime")
+        self.assertEqual(websocket.payloads[0]["runtime"]["resource"], "state")
+        self.assertEqual(websocket.payloads[0]["runtime"]["state"]["status"], "thinking")
+        self.assertEqual(websocket.payloads[1]["kind"], "runtime")
+        self.assertEqual(websocket.payloads[1]["runtime"]["resource"], "usage")
+        self.assertEqual(websocket.payloads[1]["runtime"]["usage"]["last_turn_usage"]["total_tokens"], 21)
+        self.assertEqual(websocket.payloads[1]["runtime"]["metadata"]["turn_id"], "turn-1")
+
+    async def test_delivery_observer_receives_gateway_failures(self):
+        deliveries = []
+        ws_manager = WebSocketManager(delivery_observer=lambda **payload: deliveries.append(payload))
+        await ws_manager.connect("session-1", FailingWebSocket())
+
+        await ws_manager.send_event(
+            "session-1",
+            OutboundEvent(
+                session_id="session-1",
+                type=EventType.MESSAGE.value,
+                role="assistant",
+                content="hello",
+                source=make_source(SourceKind.SYSTEM.value, "brain"),
+                target=EventTarget(kind=TargetKind.WEB.value, id="browser-tab-a"),
+                metadata={"turn_id": "turn-1"},
+            ),
+        )
+
+        self.assertEqual(len(deliveries), 1)
+        self.assertFalse(deliveries[0]["success"])
+        self.assertEqual(deliveries[0]["session_id"], "session-1")
+        self.assertEqual(deliveries[0]["event_type"], "message")
+        self.assertEqual(deliveries[0]["reason"], "websocket_send_failed")
 
 
 if __name__ == "__main__":

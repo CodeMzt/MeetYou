@@ -127,9 +127,9 @@ copy .env.example .env
   "heartbeat_path": "prompt/heartbeat",
   "memory_file_path": "user/memory_graph.json",
   "source_catalog_path": "user/source_catalog.json",
+  "gateway_cors_origins": ["http://127.0.0.1:5173"],
   "gateway_host": "127.0.0.1",
   "gateway_port": 8000,
-  "enable_gateway": true,
   "enable_feishu_bot": false
 }
 ```
@@ -140,6 +140,7 @@ copy .env.example .env
 MEETYOU_API_KEY=
 MEETYOU_HEARTBEAT_API_KEY=
 MEETYOU_EMBEDDING_API_KEY=
+MEETYOU_GATEWAY_ACCESS_TOKEN=
 TAVILY_API_KEY=
 NOTION_TOKEN=
 MEETYOU_FEISHU_APP_ID=
@@ -157,6 +158,8 @@ MEETYOU_FEISHU_APP_SECRET=
 - `source_catalog_path`：研究来源目录
 - `enable_feishu_bot`：是否启用飞书
 - `gateway_host` / `gateway_port`：网关监听地址
+- `gateway_cors_origins`：额外允许的浏览器来源
+- `gateway_access_token` / `MEETYOU_GATEWAY_ACCESS_TOKEN`：Gateway / WebSocket 访问令牌
 
 ## 启动方式
 
@@ -174,16 +177,18 @@ python main.py launcher
 
 Launcher 当前支持：
 
-- `start gateway`
+- `start service`
 - `start cil`
 - `start ui`
 - `status`
 - `exit`
 
-### 2. 只启动网关后端
+迁移旧脚本时，请同步将 `start gateway` / `python main.py gateway` 替换为新的 service 入口，详见 [docs/runtime-migration.md](docs/runtime-migration.md)。
+
+### 2. 只启动服务运行时
 
 ```bash
-python main.py gateway
+python main.py service
 ```
 
 启动后默认监听：
@@ -194,7 +199,7 @@ http://127.0.0.1:8000
 
 ### 3. 启动终端客户端 CIL
 
-先确保 gateway 已启动：
+先确保 service 已启动：
 
 ```bash
 python main.py cil
@@ -209,13 +214,13 @@ python main.py cil
 
 ### 4. 启动桌面端 UI
 
-先确保 gateway 已启动，再在 `meetyou-ui/` 下运行：
+先确保 service 已启动，再在 `meetyou-ui/` 下运行：
 
 ```bash
 npm run dev
 ```
 
-如果你从 launcher 执行 `start ui`，会自动尝试拉起 gateway，再打开 Electron 开发窗口。
+如果你从 launcher 执行 `start ui`，会自动尝试拉起 service，再打开 Electron 开发窗口。
 
 ## 网关接口
 
@@ -327,6 +332,7 @@ npm run build
 ## 相关文档
 
 - [docs/interface.md](docs/interface.md)：网关协议
+- [docs/runtime-migration.md](docs/runtime-migration.md)：运行时破坏性迁移说明
 - [docs/playwright-mcp.md](docs/playwright-mcp.md)：Playwright MCP 说明
 
 ## License

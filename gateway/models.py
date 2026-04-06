@@ -4,7 +4,9 @@
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from service_runtime.models import RuntimeError, RuntimeHealth
 
 
 class ThinkingOptions(BaseModel):
@@ -34,8 +36,40 @@ class InputAcceptedResponse(BaseModel):
     event_id: str
 
 
-class HealthResponse(BaseModel):
-    status: str = "ok"
+class HealthResponse(RuntimeHealth):
+    pass
+
+
+class AckPayload(BaseModel):
+    action: str
+    accepted: bool = True
+    session_id: str = ""
+    event_id: str = ""
+    request_id: str = ""
+
+
+class AckResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_name: str = Field(default="meetyou.http.v1", alias="schema")
+    kind: str = "ack"
+    ack: AckPayload
+
+
+class ErrorResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_name: str = Field(default="meetyou.http.v1", alias="schema")
+    kind: str = "error"
+    error: RuntimeError
+
+
+class HealthEnvelopeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_name: str = Field(default="meetyou.http.v1", alias="schema")
+    kind: str = "health"
+    health: HealthResponse
 
 
 class WebSocketCommand(BaseModel):
@@ -58,6 +92,49 @@ class ConfigEntryResponse(BaseModel):
 
 class ConfigSnapshotResponse(BaseModel):
     items: dict[str, ConfigEntryResponse]
+
+
+class SchemaOptionResponse(BaseModel):
+    label: str
+    value: str
+
+
+class ConfigFieldSchemaResponse(BaseModel):
+    key: str
+    title: str
+    description: str
+    group: str
+    input: str
+    options: list[SchemaOptionResponse] = Field(default_factory=list)
+    placeholder: str = ""
+    advanced: bool = False
+
+
+class ConfigGroupDefinitionResponse(BaseModel):
+    key: str
+    title: str
+    description: str
+
+
+class UiProtocolSchemaResponse(BaseModel):
+    http_schema: str
+    ws_schema: str
+    ws_frame_kinds: list[str] = Field(default_factory=list)
+    ws_event_types: list[str] = Field(default_factory=list)
+    ws_runtime_resources: list[str] = Field(default_factory=list)
+    runtime_statuses: list[str] = Field(default_factory=list)
+    providers: list[SchemaOptionResponse] = Field(default_factory=list)
+    thinking_efforts: list[SchemaOptionResponse] = Field(default_factory=list)
+    config_groups: list[ConfigGroupDefinitionResponse] = Field(default_factory=list)
+    config_fields: list[ConfigFieldSchemaResponse] = Field(default_factory=list)
+
+
+class UiProtocolSchemaEnvelopeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_name: str = Field(default="meetyou.http.v1", alias="schema")
+    kind: str = "schema"
+    ui_schema: UiProtocolSchemaResponse
 
 
 class ConfigPatchRequest(BaseModel):
@@ -126,6 +203,24 @@ class RuntimeUsageResponse(BaseModel):
     session_totals: SessionUsageTotalsResponse
     usage_source: str = "estimated"
     updated_at: str = ""
+
+
+class RuntimeEnvelopePayload(BaseModel):
+    resource: str
+    session_id: str = ""
+    state: RuntimeStateResponse | None = None
+    usage: RuntimeUsageResponse | None = None
+    debug: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    event_id: str = ""
+
+
+class RuntimeEnvelopeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_name: str = Field(default="meetyou.http.v1", alias="schema")
+    kind: str = "runtime"
+    runtime: RuntimeEnvelopePayload
 
 
 class MemoryViewScopeResponse(BaseModel):

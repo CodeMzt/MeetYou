@@ -7,11 +7,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from core.capability_registry import CapabilityRegistry
+from core.prompt_assembler import PromptAssembler
+from core.route_runtime import RouteRuntime
 from core.semantic_router import SemanticRouterAgent
 from core.skill_registry import SkillRegistryManager
 from core.source_catalog import SourceCatalogManager
@@ -446,6 +448,7 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "search_web",
     "read_web_page",
     "remember_knowledge",
+    "manage_memories",
     "list_skills",
     "load_skill",
     "create_skill",
@@ -516,7 +519,7 @@ _MODE_PROMPT_FALLBACKS = {
         "- research: deep research, source tracking, evidence-heavy analysis, research-style reports, and the research_grounding skill layered on top of the shared basic tools\n"
         "- office: schedules, meeting briefs, drafts, notes sync, and coordination, with task_recognition available when task signals appear and the shared basic tools used for grounding\n"
         "- study: study plans, learning points, quizzes, flashcards, mastery tracking, and the study_coaching skill combined with the shared basic tools\n"
-        "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, ask_human, and get_current_system_time.\n"
+        "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, ask_human, and get_current_system_time.\n"
         "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled work.\n"
         "If signals are mixed, prefer the smallest mode that directly matches the user's next job."
     ),
@@ -524,7 +527,7 @@ _MODE_PROMPT_FALLBACKS = {
         "[Normal Mode]\n"
         "You are operating as a general daily assistant.\n"
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
-        "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, ask_human, and get_current_system_time.\n"
+        "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, ask_human, and get_current_system_time.\n"
         "When the user's message clearly contains user TODO or scheduled-task work, the task_recognition skill can activate manage_tasks or manage_scheduled_tasks.\n"
         "Stay in normal mode unless the next immediate step clearly requires file tools, deep research constraints, office coordination tools, or study-specific tools."
     ),
@@ -613,6 +616,7 @@ _DEFAULT_SKILL_REGISTRY = {
         "prompts": ["skill:research-grounding"],
         "tools": [],
         "mcp_servers": [],
+        "authorization": {"read_only": True},
     },
     "study_coaching": {
         "prompts": ["skill:study-coaching"],
@@ -645,6 +649,7 @@ _DEFAULT_MODE_DEFINITIONS = {
         "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["research"]["mcp_servers"],
         "skills": ["research_grounding"],
         "auto_skills": ["task_recognition"],
+        "authorization": {"read_only": True},
     },
     "office": {
         "prompts": ["mode:office"],
@@ -719,30 +724,7 @@ def _looks_like_chinese(text: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in text)
 
 
-@dataclass
-class RouteDecision:
-    requested_mode: str
-    current_mode: str
-    route_reason: str
-    source_profile: str
-    tool_bundle: list[str]
-    mcp_servers: list[str]
-    prompt_bundle: str
-    active_skills: list[str] | None = None
-    loaded_skills: list[str] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "requested_mode": self.requested_mode,
-            "current_mode": self.current_mode,
-            "route_reason": self.route_reason,
-            "source_profile": self.source_profile,
-            "tool_bundle": list(self.tool_bundle),
-            "mcp_servers": list(self.mcp_servers),
-            "prompt_bundle": self.prompt_bundle,
-            "active_skills": list(self.active_skills or []),
-            "loaded_skills": list(self.loaded_skills or []),
-        }
+RouteDecision = RouteRuntime
 
 
 class AssistantModeManager:
@@ -754,6 +736,8 @@ class AssistantModeManager:
         self._skill_registry = SkillRegistryManager(
             skill_dir=str(assistant_modes_config.get("skill_prompt_dir") or "prompt/SKILL")
         )
+        self._capability_registry = CapabilityRegistry(self._mode_registry(), self._skill_registry)
+        self._prompt_assembler = PromptAssembler(self._capability_registry)
 
     def _mode_registry(self) -> dict[str, Any]:
         return _deep_merge(
@@ -786,9 +770,7 @@ class AssistantModeManager:
         return self._source_catalog.get_catalog_status()
 
     def get_source_profiles(self) -> dict[str, Any]:
-        catalog_profiles = self._source_catalog.get_source_profiles()
-        legacy_profiles = _parse_json_config(self._config.get("source_profiles"))
-        return _deep_merge(catalog_profiles, legacy_profiles)
+        return self._source_catalog.get_source_profiles()
 
     def get_source_profile(self, profile_name: str) -> dict[str, Any]:
         profiles = self.get_source_profiles()
@@ -814,79 +796,24 @@ class AssistantModeManager:
         return self._source_catalog.resolve_auth_entries(source_config)
 
     def _get_mode_definition(self, mode: str) -> dict[str, Any]:
-        registry = self._mode_registry()
-        normalized_mode = _normalize_mode(mode)
-        definitions = registry.get("mode_definitions") or {}
-        payload = _deep_merge(_DEFAULT_MODE_DEFINITIONS.get(normalized_mode, {}), definitions.get(normalized_mode) or {})
-        bundles = registry.get("tool_bundles") or {}
-        bundle_payload = bundles.get(normalized_mode) or {}
-        if isinstance(bundle_payload, dict):
-            if "tools" in bundle_payload:
-                payload["tools"] = bundle_payload.get("tools", [])
-            if "mcp_servers" in bundle_payload:
-                payload["mcp_servers"] = bundle_payload.get("mcp_servers", [])
-        if not payload:
-            payload = {
-                "prompts": [f"mode:{normalized_mode}"],
-                "mode_skills": [f"mode:{normalized_mode}"],
-                "tools": [],
-                "mcp_servers": [],
-                "skills": [],
-                "auto_skills": [],
-            }
-        payload.setdefault("prompts", [f"mode:{normalized_mode}"])
-        payload.setdefault("mode_skills", [f"mode:{normalized_mode}"])
-        payload.setdefault("tools", [])
-        payload.setdefault("mcp_servers", [])
-        payload.setdefault("skills", [])
-        payload.setdefault("auto_skills", [])
-        return payload
+        return self._capability_registry.get_mode_capability(mode).to_dict()
 
     def _get_skill_definition(self, skill_name: str) -> dict[str, Any]:
-        registry = self._mode_registry()
-        skills = registry.get("skills") or {}
-        payload = _deep_merge(_DEFAULT_SKILL_REGISTRY.get(skill_name, {}), skills.get(skill_name) or {})
-        payload.setdefault("prompts", [])
-        payload.setdefault("tools", [])
-        payload.setdefault("mcp_servers", [])
-        payload.setdefault("activation_keywords", [])
-        return payload
+        capability = self._capability_registry.get_skill_capability(skill_name)
+        return capability.to_dict(include_content=True) if capability is not None else {}
 
     def _should_activate_skill(self, skill_name: str, *, content: str) -> bool:
         return self._semantic_router.should_activate_skill(skill_name, content)
 
     def _resolve_active_skills(self, mode: str, *, content: str = "") -> list[str]:
-        definition = self._get_mode_definition(mode)
-        active_skills = _unique_strings(definition.get("skills"))
-        for skill_name in _unique_strings(definition.get("auto_skills")):
-            if self._should_activate_skill(skill_name, content=content):
-                active_skills.append(skill_name)
-        return _unique_strings(active_skills)
+        return self._capability_registry.resolve_active_skills(
+            mode,
+            content=content,
+            activator=lambda skill_name, skill_content: self._should_activate_skill(skill_name, content=skill_content),
+        )
 
     def _resolve_prompt_text(self, prompt_name: str) -> str:
-        registry = self._mode_registry()
-        prompt_registry = registry.get("prompt_registry") or {}
-        entry = _deep_merge(_DEFAULT_PROMPT_REGISTRY.get(prompt_name, {}), prompt_registry.get(prompt_name) or {})
-        fallback = str(entry.get("fallback") or "").strip()
-        explicit_text = str(entry.get("text") or "").strip()
-        if explicit_text:
-            return explicit_text
-        path_value = str(entry.get("path") or "").strip()
-        if not path_value:
-            file_name = str(entry.get("file") or "").strip()
-            kind = str(entry.get("kind") or "mode").strip().lower()
-            base_dir = registry.get("skill_prompt_dir") if kind == "skill" else registry.get("prompt_dir")
-            if file_name and base_dir:
-                path_value = str(Path(str(base_dir)) / file_name)
-        if not path_value:
-            return fallback
-        try:
-            prompt_path = Path(path_value)
-            if not prompt_path.is_absolute():
-                prompt_path = Path(__file__).resolve().parent.parent / prompt_path
-            return prompt_path.read_text(encoding="utf-8").strip() or fallback
-        except FileNotFoundError:
-            return fallback
+        return self._capability_registry.get_prompt_text(prompt_name)
 
     def assemble_prompt_for_mode(
         self,
@@ -897,41 +824,33 @@ class AssistantModeManager:
         loaded_skills: list[str] | None = None,
     ) -> str:
         normalized_mode = _normalize_mode(mode, fallback=mode)
-        definition = self._get_mode_definition(normalized_mode)
-        resolved_skills = _unique_strings(active_skills or self._resolve_active_skills(normalized_mode, content=content))
-        prompt_names = list(_unique_strings(definition.get("prompts")))
-        prompt_sections: list[str] = []
-        for prompt_name in _unique_strings(prompt_names):
-            text = self._resolve_prompt_text(prompt_name)
-            if text and text not in prompt_sections:
-                prompt_sections.append(text)
-        for skill_id in _unique_strings(definition.get("mode_skills")):
-            loaded = self._skill_registry.load_skill(skill_id)
-            text = str((loaded or {}).get("content") or "").strip()
-            if text and text not in prompt_sections:
-                prompt_sections.append(text)
-        for skill_name in _unique_strings([*resolved_skills, *(loaded_skills or [])]):
-            loaded = self._skill_registry.load_skill(skill_name)
-            text = str((loaded or {}).get("content") or "").strip()
-            if text and text not in prompt_sections:
-                prompt_sections.append(text)
-        return "\n\n".join(prompt_sections).strip()
+        return self._prompt_assembler.assemble_for_mode(
+            normalized_mode,
+            content=content,
+            active_skills=active_skills,
+            loaded_skills=loaded_skills,
+        )
 
-    def get_tool_bundle(self, mode: str, *, content: str = "", active_skills: list[str] | None = None) -> dict[str, list[str]]:
-        registry = self._mode_registry()
-        definition = self._get_mode_definition(mode)
-        active_skills = _unique_strings(active_skills or self._resolve_active_skills(mode, content=content))
-        tools = _unique_strings(registry.get("basic_tools"))
-        tools.extend(_unique_strings(definition.get("tools")))
-        mcp_servers = _unique_strings(definition.get("mcp_servers"))
-        for skill_name in active_skills:
-            skill_definition = self._get_skill_definition(skill_name)
-            tools.extend(_unique_strings(skill_definition.get("tools")))
-            mcp_servers.extend(_unique_strings(skill_definition.get("mcp_servers")))
+    def get_tool_bundle(
+        self,
+        mode: str,
+        *,
+        content: str = "",
+        active_skills: list[str] | None = None,
+        loaded_skills: list[str] | None = None,
+    ) -> dict[str, Any]:
+        capability_set = self._capability_registry.build_capability_set(
+            _normalize_mode(mode),
+            content=content,
+            active_skills=active_skills,
+            loaded_skills=loaded_skills,
+            activator=lambda skill_name, skill_content: self._should_activate_skill(skill_name, content=skill_content),
+        )
         return {
-            "tools": _unique_strings(tools),
-            "mcp_servers": _unique_strings(mcp_servers),
-            "active_skills": active_skills,
+            "tools": list(capability_set.tools),
+            "mcp_servers": list(capability_set.mcp_servers),
+            "active_skills": list(capability_set.active_skills),
+            "authorization": dict(capability_set.authorization),
         }
 
     def build_route_for_mode(
@@ -944,23 +863,43 @@ class AssistantModeManager:
         active_skills: list[str] | None = None,
         source_profile: str = "",
         loaded_skills: list[str] | None = None,
+        confidence: str = "",
+        should_preload_context: bool = False,
+        prefer_live_web: bool = False,
+        signals: list[str] | None = None,
+        adapter_name: str = "",
+        used_keyword_fallback: bool = False,
     ) -> RouteDecision:
         normalized_mode = _normalize_mode(mode)
-        bundle = self.get_tool_bundle(normalized_mode, content=content, active_skills=active_skills)
+        capability_set = self._capability_registry.build_capability_set(
+            normalized_mode,
+            content=content,
+            active_skills=active_skills,
+            loaded_skills=loaded_skills,
+            activator=lambda skill_name, skill_content: self._should_activate_skill(skill_name, content=skill_content),
+        )
         route_reason = str(reason or "").strip() or f"Selected mode: {normalized_mode}"
-        active_skills = list(bundle.get("active_skills", []))
-        loaded_skill_ids = _unique_strings(loaded_skills)
-        prompt_bundle_parts = [normalized_mode, *active_skills, *loaded_skill_ids]
+        active_skill_ids = list(capability_set.active_skills)
+        loaded_skill_ids = list(capability_set.loaded_skills)
+        prompt_bundle_parts = [normalized_mode, *active_skill_ids, *loaded_skill_ids]
         return RouteDecision(
             requested_mode=_normalize_mode(requested_mode, fallback=ASSISTANT_MODE_AUTO),
             current_mode=normalized_mode,
             route_reason=route_reason,
             source_profile=source_profile or self._default_source_profile_for_mode(normalized_mode, content),
-            tool_bundle=bundle["tools"],
-            mcp_servers=bundle["mcp_servers"],
+            tool_bundle=list(capability_set.tools),
+            mcp_servers=list(capability_set.mcp_servers),
             prompt_bundle="+".join(prompt_bundle_parts) if prompt_bundle_parts else normalized_mode,
-            active_skills=active_skills,
+            active_skills=active_skill_ids,
             loaded_skills=loaded_skill_ids,
+            confidence=str(confidence or "").strip(),
+            should_preload_context=bool(should_preload_context),
+            prefer_live_web=bool(prefer_live_web),
+            signals=_unique_strings(signals),
+            adapter_name=str(adapter_name or "").strip(),
+            used_keyword_fallback=bool(used_keyword_fallback),
+            authorization_policy=dict(capability_set.authorization),
+            capability_set=capability_set.to_dict(),
         )
 
     def get_prompt_for_mode(
@@ -981,13 +920,7 @@ class AssistantModeManager:
         )
 
     def assemble_prompt_for_route(self, route_context: dict[str, Any] | None) -> str:
-        route_context = route_context or {}
-        return self.get_prompt_for_mode(
-            str(route_context.get("current_mode") or "").strip() or ASSISTANT_MODE_NORMAL,
-            content=str(route_context.get("content") or "").strip(),
-            active_skills=list(route_context.get("active_skills") or []),
-            loaded_skills=list(route_context.get("loaded_skills") or []),
-        )
+        return self._prompt_assembler.assemble_for_route(route_context)
 
     def get_auto_router_prompt(self) -> str:
         return self.get_prompt_for_mode("auto-router")
@@ -997,6 +930,29 @@ class AssistantModeManager:
 
     def load_skill(self, skill_id: str) -> dict[str, Any] | None:
         return self._skill_registry.load_skill(skill_id)
+
+    def get_skill_capability(self, skill_id: str) -> dict[str, Any] | None:
+        capability = self._capability_registry.get_skill_capability(skill_id)
+        return capability.to_dict(include_content=True) if capability is not None else None
+
+    def get_capability_registry(self) -> CapabilityRegistry:
+        return self._capability_registry
+
+    def get_prompt_assembler(self) -> PromptAssembler:
+        return self._prompt_assembler
+
+    def validate_capability_registry(
+        self,
+        *,
+        tool_names: list[str] | None = None,
+        mcp_servers: list[str] | None = None,
+    ) -> list[str]:
+        available_tool_names = set(_unique_strings(tool_names))
+        available_mcp_servers = set(_unique_strings(mcp_servers))
+        return self._capability_registry.validate(
+            tool_checker=(lambda tool_name: tool_name in available_tool_names) if available_tool_names else None,
+            mcp_checker=(lambda server_name: server_name in available_mcp_servers) if available_mcp_servers else None,
+        )
 
     def create_skill(
         self,
@@ -1221,6 +1177,12 @@ class AssistantModeManager:
             active_skills=active_skills,
             source_profile=source_profile,
             loaded_skills=loaded_skills,
+            confidence=semantic_decision.confidence,
+            should_preload_context=semantic_decision.should_preload_context,
+            prefer_live_web=semantic_decision.prefer_live_web,
+            signals=semantic_decision.signals,
+            adapter_name=semantic_decision.adapter_name,
+            used_keyword_fallback=semantic_decision.used_keyword_fallback,
         )
 
     def _default_source_profile_for_mode(self, mode: str, content: str) -> str:

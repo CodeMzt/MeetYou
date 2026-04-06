@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     import aiohttp
@@ -24,8 +25,10 @@ from core.assistant_modes import (
     RouteDecision,
 )
 from core.brain_session import BrainSession
-from core.runtime_context import get_event_context
+from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.status import ContextBreakdown, RuntimeStatus, UsageCounters, utcnow_iso
+from core.tool_runtime import ToolCallResult, ToolErrorCategory, ToolSourceType, normalize_tool_result
+from tools.object_operations import redacted_object_debug_entry
 
 logger = logging.getLogger("meetyou.brain")
 
@@ -155,6 +158,7 @@ class BrainOutputEvent:
     type: str
     text: str | None = None
     usage: dict | None = None
+    payload: dict | None = None
 
 
 @dataclass
@@ -180,21 +184,20 @@ class Brain:
         self._sessions: dict[str, BrainSession] = {}
         self._http_session: Any | None = None
         self._provider_name: str = ""
+        self._global_context: str = ""
 
     async def init_brain(self, sys_prompt: str):
         self._base_messages = [{"role": "system", "content": sys_prompt}]
-        context = await self._context_manager.load_context()
-        self._base_messages.append({"role": "system", "content": context})
+        self._global_context = await self._context_manager.load_context()
         self._http_session = aiohttp.ClientSession() if aiohttp is not None else _FallbackClientSession()
         logger.info("Brain initialized")
 
+    def _base_message_count(self) -> int:
+        return len(self._base_messages)
+
     async def _refresh_session_context(self, session: BrainSession):
         context = await self._context_manager.load_context(session.session_id)
-        context_message = {"role": "system", "content": context}
-        if len(session.chat_history) >= 2:
-            session.chat_history[1] = context_message
-        else:
-            session.chat_history.append(context_message)
+        session.metadata["conversation_summary"] = str(context or "").strip()
 
     async def close_brain(self):
         for session in self._sessions.values():
@@ -218,12 +221,10 @@ class Brain:
         self._mode_manager = mode_manager
 
     async def refresh_base_prompt(self, sys_prompt: str, persisted_context: str):
-        self._base_messages = [
-            {"role": "system", "content": sys_prompt},
-            {"role": "system", "content": persisted_context},
-        ]
+        self._base_messages = [{"role": "system", "content": sys_prompt}]
+        self._global_context = str(persisted_context or "").strip()
         for session in self._sessions.values():
-            preserved = [message for message in session.chat_history[2:]]
+            preserved = [message for message in session.chat_history[self._base_message_count() :]]
             session.chat_history = [dict(message) for message in self._base_messages] + preserved
         logger.info("Brain base prompt refreshed")
 
@@ -242,7 +243,7 @@ class Brain:
         session = self._sessions.get(session_id)
         if session is None:
             return
-        while len(session.chat_history) > 2:
+        while len(session.chat_history) > self._base_message_count():
             metadata = dict(session.chat_history[-1].get("metadata") or {})
             if not bool(metadata.get("transient")):
                 break
@@ -285,6 +286,41 @@ class Brain:
             return None
         return session.usage_snapshot.to_dict()
 
+    def get_session_debug_snapshot(self, session_id: str) -> dict[str, Any]:
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError(f"Session not found: {session_id}")
+        route_context = session.metadata.get("current_route") if isinstance(session.metadata.get("current_route"), dict) else {}
+        return {
+            "session_id": session_id,
+            "route": self._sanitize_route_context(route_context),
+            "route_history": [
+                dict(item)
+                for item in session.metadata.get("route_history", [])
+                if isinstance(item, dict)
+            ],
+            "context_plan": dict(session.metadata.get("last_context_plan") or {}),
+            "memory_scope": dict(session.metadata.get("last_memory_scope") or {}),
+            "authorization": {
+                "recent_decisions": [
+                    dict(item)
+                    for item in session.metadata.get("last_authorization_decisions", [])
+                    if isinstance(item, dict)
+                ],
+            },
+            "object_operations": [
+                redacted_object_debug_entry(item)
+                for item in session.metadata.get("last_object_operations", [])
+                if isinstance(item, dict)
+            ],
+            "runtime_state": session.runtime_state.to_dict(),
+            "usage": session.usage_snapshot.to_dict(),
+            "request": dict(session.metadata.get("last_request_debug") or {}),
+            "compression": dict(session.metadata.get("last_compression") or {}),
+            "last_failure": dict(session.metadata.get("last_failure") or {}),
+            "updated_at": session.runtime_state.updated_at,
+        }
+
     def set_session_runtime_state(
         self,
         session_id: str,
@@ -310,6 +346,132 @@ class Brain:
             stream_id=stream_id,
             turn_id=turn_id,
         ).to_dict()
+
+    @staticmethod
+    def _sanitize_runtime_error_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+        payload = dict(payload or {})
+        details = dict(payload.get("details") or {})
+        safe_details = {
+            key: value
+            for key, value in details.items()
+            if key not in {"headers", "request_body", "raw_request", "raw_response", "api_key", "authorization"}
+        }
+        return {
+            "code": str(payload.get("code") or "runtime_unhandled"),
+            "category": str(payload.get("category") or "runtime"),
+            "message": str(payload.get("message") or "Runtime error"),
+            "retryable": bool(payload.get("retryable", False)),
+            "details": safe_details,
+            "occurred_at": str(payload.get("occurred_at") or utcnow_iso()),
+        }
+
+    @staticmethod
+    def _api_target_snapshot(api_url: str) -> dict[str, str]:
+        parsed = urlparse(str(api_url or "").strip())
+        return {
+            "host": (parsed.hostname or "").lower(),
+            "path": parsed.path or "",
+        }
+
+    def _adapter_transport_mode(self, api_url: str) -> str:
+        adapter_name = type(self._adapter).__name__.lower()
+        host = self._api_target_snapshot(api_url).get("host", "")
+        if adapter_name == "openaiadapter":
+            return "official_openai_responses" if host == "api.openai.com" else "openai_compatible_chat"
+        return adapter_name or "unknown"
+
+    def _build_request_debug_snapshot(
+        self,
+        *,
+        provider_name: str,
+        model: str,
+        api_url: str,
+        tools: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        context_plan: dict[str, Any],
+        context_breakdown: dict[str, int],
+        context_limit_info: dict[str, Any],
+    ) -> dict[str, Any]:
+        length_policy = dict(context_plan.get("length_policy") or {})
+        layers = dict(context_plan.get("layers") or {})
+        request_tokens_estimated = int(
+            getattr(self._context_manager, "estimate_tokens")(messages)
+            if callable(getattr(self._context_manager, "estimate_tokens", None))
+            else sum(self._estimate_message_tokens(message) for message in messages)
+        )
+        context_limit_tokens = int(context_limit_info.get("context_limit_tokens", 0) or self._get_context_limit(model))
+        pressure_ratio = (
+            round(request_tokens_estimated / context_limit_tokens, 4)
+            if context_limit_tokens > 0
+            else 0.0
+        )
+        target = self._api_target_snapshot(api_url)
+        return {
+            "provider_name": str(provider_name or self._provider_name or ""),
+            "model": str(model or ""),
+            "api_target": target,
+            "transport_mode": self._adapter_transport_mode(api_url),
+            "message_count": len(messages),
+            "tool_count": len(tools or []),
+            "request_tokens_estimated": request_tokens_estimated,
+            "context_limit_tokens": context_limit_tokens,
+            "pressure_ratio": pressure_ratio,
+            "near_limit": bool(context_limit_tokens and pressure_ratio >= 0.85),
+            "length_policy": {
+                "provider_family": str(length_policy.get("provider_family") or ""),
+                "target_input_tokens": int(length_policy.get("target_input_tokens", 0) or 0),
+                "reserved_response_tokens": int(length_policy.get("reserved_response_tokens", 0) or 0),
+                "reserve_ratio": float(length_policy.get("reserve_ratio", 0) or 0),
+            },
+            "budget": {
+                "context_limit_tokens": context_limit_tokens,
+                "target_input_tokens": int(length_policy.get("target_input_tokens", 0) or 0),
+                "reserved_response_tokens": int(length_policy.get("reserved_response_tokens", 0) or 0),
+                "breakdown_total": int(context_breakdown.get("total", 0) or 0),
+            },
+            "layers": {
+                "conversation_summary": bool(layers.get("conversation_summary")),
+                "memory_recall": bool(layers.get("memory_recall")),
+                "session_preload": bool(layers.get("session_preload")),
+                "prefer_live_web": bool(layers.get("prefer_live_web")),
+                "history_message_count": int(layers.get("history_message_count", 0) or 0),
+            },
+        }
+
+    def _build_failure_payload_from_exception(
+        self,
+        exc: Exception,
+        *,
+        request_debug: dict[str, Any],
+        compression: dict[str, Any],
+    ) -> dict[str, Any]:
+        if isinstance(getattr(exc, "runtime_error_payload", None), dict):
+            payload = self._sanitize_runtime_error_payload(getattr(exc, "runtime_error_payload"))
+        else:
+            payload = self._sanitize_runtime_error_payload(
+                {
+                    "code": "conversation_request_failed",
+                    "category": "runtime",
+                    "message": str(exc) or type(exc).__name__,
+                    "retryable": False,
+                    "details": {"exception_type": type(exc).__name__},
+                }
+            )
+        details = dict(payload.get("details") or {})
+        details.setdefault("provider_name", str(request_debug.get("provider_name") or ""))
+        details.setdefault("model", str(request_debug.get("model") or ""))
+        details.setdefault("transport_mode", str(request_debug.get("transport_mode") or ""))
+        details.setdefault("request_tokens_estimated", int(request_debug.get("request_tokens_estimated", 0) or 0))
+        details.setdefault("context_limit_tokens", int(request_debug.get("context_limit_tokens", 0) or 0))
+        details.setdefault("compression_triggered", bool(compression.get("triggered", False)))
+        details.setdefault("compression_level", str(compression.get("level") or "none"))
+        payload["details"] = details
+        return self._sanitize_runtime_error_payload(payload)
+
+    def _record_session_failure(self, session: BrainSession, payload: dict[str, Any] | None) -> dict[str, Any]:
+        sanitized = self._sanitize_runtime_error_payload(payload)
+        session.metadata["last_failure"] = sanitized
+        return sanitized
 
     @staticmethod
     def _normalize_mode_name(value: Any, fallback: str = ASSISTANT_MODE_AUTO) -> str:
@@ -504,9 +666,9 @@ class Brain:
             "function": {
                 "name": _INTERNAL_MODE_SWITCH_TOOL_NAME,
                 "description": (
-                    "Switch to another assistant mode for the next round when the next immediate step fits "
-                    "another mode better. Call this by itself, wait for the tool result, then continue with "
-                    "tools from the new mode."
+                    "Switch to another assistant mode immediately when the next step fits another mode better. "
+                    "The route runtime is rebuilt in the same turn, so subsequent tool calls in the same round "
+                    "run under the new mode."
                 ),
                 "parameters": {
                     "type": "object",
@@ -514,7 +676,7 @@ class Brain:
                         "mode": {
                             "type": "string",
                             "enum": list(ASSISTANT_MODES),
-                            "description": "The target assistant mode to activate next.",
+                            "description": "The target assistant mode to activate immediately.",
                         },
                         "reason": {
                             "type": "string",
@@ -534,13 +696,13 @@ class Brain:
                 "[Mode Switching]",
                 "The user's preference is normal mode. Treat it as the default working style for ordinary conversation, lightweight planning, and basic web search or direct page reading.",
                 "Switch only when the next immediate step clearly needs file tools, deep research constraints, office coordination tools, or study-specific tools.",
-                "Call switch_assistant_mode by itself. After the tool result confirms the switch, continue in the next round.",
+                "Call switch_assistant_mode as soon as the next step needs another mode. After the switch, continue the same turn with tools from the rebuilt route runtime.",
             ]
         else:
             lines = [
                 "[Mode Switching]",
                 "If the next immediate step belongs to another mode, call switch_assistant_mode before using tools from that mode.",
-                "Call switch_assistant_mode by itself. After the tool result confirms the switch, continue in the next round.",
+                "Once the switch succeeds, continue the same turn under the rebuilt mode, prompt, and tool bundle.",
             ]
         if self._mode_manager is not None:
             glossary = str(self._mode_manager.get_auto_router_prompt() or "").strip()
@@ -614,7 +776,7 @@ class Brain:
 
         if requested_mode in ASSISTANT_SPECIALIZED_MODES:
             return _ModeSwitchResult(
-                message=f"Error: mode is locked for this turn; staying in {current_mode}.",
+                message=f"Mode is locked for this turn; staying in {current_mode}.",
                 route_context=dict(route_context),
                 switch_count=switch_count,
                 origin="switch_tool_locked",
@@ -624,7 +786,7 @@ class Brain:
 
         if not bool(router_config.get("allow_in_turn_switch", True)):
             return _ModeSwitchResult(
-                message=f"Error: in-turn mode switching is disabled; staying in {current_mode}.",
+                message=f"In-turn mode switching is disabled; staying in {current_mode}.",
                 route_context=dict(route_context),
                 switch_count=switch_count,
                 origin="switch_tool_disabled",
@@ -636,7 +798,7 @@ class Brain:
         target_mode = self._normalize_mode_name(raw_mode, fallback="")
         if target_mode not in ASSISTANT_MODES:
             return _ModeSwitchResult(
-                message=f'Error: invalid assistant mode "{raw_mode}".',
+                message=f'Invalid assistant mode "{raw_mode}".',
                 route_context=dict(route_context),
                 switch_count=switch_count,
                 origin="switch_tool_invalid",
@@ -657,7 +819,7 @@ class Brain:
         max_switches = int(router_config.get("max_switches_per_turn", 2) or 0)
         if switch_count >= max_switches:
             return _ModeSwitchResult(
-                message=f"Error: max_switches_per_turn={max_switches} reached; staying in {current_mode}.",
+                message=f"max_switches_per_turn={max_switches} reached; staying in {current_mode}.",
                 route_context=dict(route_context),
                 switch_count=switch_count,
                 origin="switch_tool_limit",
@@ -733,12 +895,24 @@ class Brain:
         source,
         tool_activity_callback,
         route_context: dict[str, Any],
-    ) -> str:
+    ) -> ToolCallResult:
         if bool(route_context.get("disable_tools")):
-            return f"Error: tool not allowed in the current route: {tool_name}"
+            action_risk = self._get_action_risk_for_tools([tool_name])
+            return ToolCallResult.failure(
+                tool_name=tool_name,
+                source=ToolSourceType.UNKNOWN,
+                action_risk=action_risk,
+                code="tool_not_allowed",
+                category=ToolErrorCategory.PERMISSION,
+                message="Tool call was denied by the current route policy.",
+                details={
+                    "tool_name": tool_name,
+                    "current_mode": route_context.get("current_mode"),
+                },
+            )
         caller = getattr(self._tools_manager, "call_tool")
         try:
-            return await caller(
+            raw_result = await caller(
                 tool_name,
                 tool_args,
                 session_id=session_id,
@@ -747,12 +921,207 @@ class Brain:
                 route_context=route_context,
             )
         except TypeError:
-            return await caller(
+            raw_result = await caller(
                 tool_name,
                 tool_args,
                 session_id=session_id,
                 source=source,
                 tool_activity_callback=tool_activity_callback,
+            )
+        return normalize_tool_result(
+            raw_result,
+            tool_name=tool_name,
+            source=ToolSourceType.UNKNOWN,
+            action_risk=self._get_action_risk_for_tools([tool_name]),
+        )
+
+    @staticmethod
+    def _tool_message_content(result: ToolCallResult) -> str:
+        return result.as_message_content()
+
+    @staticmethod
+    def _tool_result_payload(result: ToolCallResult) -> Any:
+        payload = result.content.data
+        if payload is not None:
+            return payload
+        if not result.content.text:
+            return None
+        try:
+            return json.loads(result.content.text)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    @staticmethod
+    def _sanitize_memory_scope(payload: dict[str, Any] | None, *, session_id: str) -> dict[str, Any]:
+        payload = payload or {}
+        return {
+            "session_id": session_id,
+            "prefetched": bool(payload),
+            "found": bool(payload.get("found", False)),
+            "profile_count": len(payload.get("profile", [])) if isinstance(payload.get("profile"), list) else 0,
+            "fact_count": len(payload.get("facts", [])) if isinstance(payload.get("facts"), list) else 0,
+            "recent_event_count": (
+                len(payload.get("recent_events", []))
+                if isinstance(payload.get("recent_events"), list)
+                else 0
+            ),
+        }
+
+    @staticmethod
+    def _sanitize_authorization_decision(payload: dict[str, Any] | None) -> dict[str, Any]:
+        payload = dict(payload or {})
+        details = dict(payload.get("details") or {})
+        redacted_details = {
+            key: value
+            for key, value in details.items()
+            if key not in {"command", "path", "trusted_write_roots"}
+        }
+        return {
+            "tool_name": str(payload.get("tool_name") or ""),
+            "allowed": bool(payload.get("allowed", False)),
+            "visibility": str(payload.get("visibility") or ""),
+            "action_risk": str(payload.get("action_risk") or ""),
+            "read_only": bool(payload.get("read_only", False)),
+            "requires_confirmation": bool(payload.get("requires_confirmation", False)),
+            "confirmation_kind": str(payload.get("confirmation_kind") or ""),
+            "write_boundary": str(payload.get("write_boundary") or ""),
+            "trusted_root": payload.get("trusted_root"),
+            "policy_sources": [
+                str(item).strip()
+                for item in payload.get("policy_sources", [])
+                if str(item).strip()
+            ],
+            "reason_code": str(payload.get("reason_code") or ""),
+            "reason_message": str(payload.get("reason_message") or ""),
+            "details": redacted_details,
+        }
+
+    def _record_authorization_result(self, session: BrainSession, result: ToolCallResult) -> None:
+        authorization = result.metadata.get("authorization") if isinstance(result.metadata, dict) else None
+        object_operation = self._tool_result_payload(result)
+        snapshot = {
+            "tool_name": result.tool_name,
+            "ok": bool(result.ok),
+            "action_risk": result.action_risk,
+            "authorization": self._sanitize_authorization_decision(authorization if isinstance(authorization, dict) else {}),
+            "error": result.error.model_dump(mode="json") if result.error is not None else None,
+            "object_operation": (
+                redacted_object_debug_entry(object_operation)
+                if isinstance(object_operation, dict) and object_operation.get("kind") == "object_operation"
+                else None
+            ),
+        }
+        history = [
+            dict(item)
+            for item in session.metadata.get("last_authorization_decisions", [])
+            if isinstance(item, dict)
+        ]
+        history.append(snapshot)
+        session.metadata["last_authorization_decisions"] = history[-12:]
+        if isinstance(object_operation, dict) and object_operation.get("kind") == "object_operation":
+            operations = [
+                dict(item)
+                for item in session.metadata.get("last_object_operations", [])
+                if isinstance(item, dict)
+            ]
+            operations.append(redacted_object_debug_entry(object_operation))
+            session.metadata["last_object_operations"] = operations[-12:]
+
+    @staticmethod
+    def _sanitize_route_context(route_context: dict[str, Any] | None) -> dict[str, Any]:
+        route_context = route_context or {}
+        authorization_policy = route_context.get("authorization_policy")
+        return {
+            "requested_mode": str(route_context.get("requested_mode") or ""),
+            "current_mode": str(route_context.get("current_mode") or ""),
+            "route_reason": str(route_context.get("route_reason") or ""),
+            "source_profile": str(route_context.get("source_profile") or ""),
+            "tool_bundle": [
+                str(item).strip()
+                for item in route_context.get("tool_bundle", [])
+                if str(item).strip()
+            ],
+            "mcp_servers": [
+                str(item).strip()
+                for item in route_context.get("mcp_servers", [])
+                if str(item).strip()
+            ],
+            "prompt_bundle": str(route_context.get("prompt_bundle") or ""),
+            "active_skills": [
+                str(item).strip()
+                for item in route_context.get("active_skills", [])
+                if str(item).strip()
+            ],
+            "loaded_skills": [
+                str(item).strip()
+                for item in route_context.get("loaded_skills", [])
+                if str(item).strip()
+            ],
+            "confidence": str(route_context.get("confidence") or ""),
+            "should_preload_context": bool(route_context.get("should_preload_context", False)),
+            "prefer_live_web": bool(route_context.get("prefer_live_web", False)),
+            "signals": [
+                str(item).strip()
+                for item in route_context.get("signals", [])
+                if str(item).strip()
+            ],
+            "adapter_name": str(route_context.get("adapter_name") or ""),
+            "used_keyword_fallback": bool(route_context.get("used_keyword_fallback", False)),
+            "authorization_policy": dict(authorization_policy or {}) if isinstance(authorization_policy, dict) else {},
+            "disable_tools": bool(route_context.get("disable_tools", False)),
+        }
+
+    async def _execute_visible_tool_calls(
+        self,
+        *,
+        visible_tool_calls: list[Any],
+        session: BrainSession,
+        session_id: str,
+        route_context: dict[str, Any],
+        tool_activity_callback,
+    ) -> None:
+        for tc in visible_tool_calls:
+            try:
+                args = tc.arguments
+            except Exception:
+                args = {}
+
+            tool_context = bind_event_context(tool_call_id=tc.id)
+            try:
+                try:
+                    context = get_event_context()
+                    result = await self._call_tool_with_route(
+                        tc.name,
+                        args,
+                        session_id=context.get("session_id", session_id),
+                        source=context.get("source"),
+                        tool_activity_callback=tool_activity_callback,
+                        route_context=route_context,
+                    )
+                except Exception as exc:
+                    result = ToolCallResult.failure(
+                        tool_name=tc.name,
+                        source=ToolSourceType.UNKNOWN,
+                        action_risk=self._get_action_risk_for_tools([tc.name]),
+                        code="tool_dispatch_failed",
+                        category=ToolErrorCategory.EXECUTION,
+                        message="Tool dispatch failed before producing a result.",
+                        details={
+                            "tool_name": tc.name,
+                            "exception_type": type(exc).__name__,
+                            "exception_message": str(exc),
+                        },
+                    )
+            finally:
+                reset_event_context(tool_context)
+
+            self._record_authorization_result(session, result)
+            session.chat_history.append(
+                {
+                    "role": "tool",
+                    "content": self._tool_message_content(result),
+                    "tool_call_id": tc.id,
+                }
             )
 
     def _get_action_risk_for_tools(self, tool_names: list[str]) -> str:
@@ -887,30 +1256,46 @@ class Brain:
                         )
                         if action == "complete" and task_key:
                             completed_task_keys.append(task_key)
+                    tool_context = bind_event_context(tool_call_id=tool_call.id)
                     try:
-                        tool_result = await self._call_tool_with_route(
-                            tool_call.name,
-                            tool_args,
-                            session_id=normalized_session_id,
-                            source=source,
-                            tool_activity_callback=tool_activity_callback,
-                            route_context=resolved_route_context,
-                        )
-                    except Exception as exc:
-                        logger.error("Background tool call failed: %s", exc)
-                        tool_result = f"Error: tool {tool_call.name} failed: {exc}"
+                        try:
+                            tool_result = await self._call_tool_with_route(
+                                tool_call.name,
+                                tool_args,
+                                session_id=normalized_session_id,
+                                source=source,
+                                tool_activity_callback=tool_activity_callback,
+                                route_context=resolved_route_context,
+                            )
+                        except Exception as exc:
+                            logger.error("Background tool call failed: %s", exc)
+                            tool_result = ToolCallResult.failure(
+                                tool_name=tool_call.name,
+                                source=ToolSourceType.UNKNOWN,
+                                action_risk=self._get_action_risk_for_tools([tool_call.name]),
+                                code="tool_dispatch_failed",
+                                category=ToolErrorCategory.EXECUTION,
+                                message="Tool dispatch failed before producing a result.",
+                                details={
+                                    "tool_name": tool_call.name,
+                                    "exception_type": type(exc).__name__,
+                                    "exception_message": str(exc),
+                                },
+                            )
+                    finally:
+                        reset_event_context(tool_context)
 
                     history.append(
                         {
                             "role": "tool",
-                            "content": tool_result if isinstance(tool_result, str) else str(tool_result),
+                            "content": self._tool_message_content(tool_result),
                             "tool_call_id": tool_call.id,
                         }
                     )
 
             return {
                 "status": "error",
-                "content": "Error: background task exceeded max tool rounds.",
+                "content": "Background task exceeded max tool rounds.",
                 "tool_names": last_tool_names,
                 "completed_task_keys": list(dict.fromkeys(completed_task_keys)),
                 "manage_task_actions": manage_task_actions,
@@ -929,11 +1314,12 @@ class Brain:
             )
 
     def _build_recent_context_summary(self, session: BrainSession) -> str:
-        if len(session.chat_history) <= 2:
+        base_count = self._base_message_count()
+        if len(session.chat_history) <= base_count:
             return ""
         recent = [
             message
-            for message in session.chat_history[2:]
+            for message in session.chat_history[base_count:]
             if not bool(dict(message.get("metadata") or {}).get("transient"))
         ]
         lines = []
@@ -976,7 +1362,15 @@ class Brain:
                 session_id=context.get("session_id", session_id),
                 source=context.get("source"),
             )
-            payload = json.loads(result)
+            normalized_result = normalize_tool_result(
+                result,
+                tool_name="search_memory",
+                source=ToolSourceType.UNKNOWN,
+                action_risk="read",
+            )
+            payload = self._tool_result_payload(normalized_result)
+            if normalized_result.error is not None or not isinstance(payload, dict):
+                return None
         except Exception as exc:
             logger.warning("Automatic memory prefetch failed: %s", exc)
             return None
@@ -991,6 +1385,9 @@ class Brain:
                 "以下内容与当前输入可能相关，仅作为参考；如果与用户当前输入冲突，以当前输入为准。\n"
                 + json.dumps(payload, ensure_ascii=False)
             ),
+            "metadata": {
+                "memory_scope": self._sanitize_memory_scope(payload, session_id=session_id),
+            },
         }
 
     async def _store_turn_episode(self, session_id: str, input_info: dict, *, transient_turn: bool) -> None:
@@ -1232,6 +1629,70 @@ class Brain:
             "total": total,
         }
 
+    def _conversation_summary_for_session(self, session: BrainSession) -> str:
+        text = str(session.metadata.get("conversation_summary") or "").strip()
+        if text:
+            return text
+        return str(self._global_context or "").strip()
+
+    async def _build_context_plan(
+        self,
+        *,
+        session: BrainSession,
+        turn_input_index: int,
+        current_turn_messages: list[dict],
+        auto_memory_message: dict | None,
+        policy_messages: list[dict],
+        proprioception_message: dict | None,
+        route_context: dict[str, Any],
+        requested_mode: str,
+        model: str,
+        provider_name: str,
+        api_url: str,
+        context_limit_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        builder = getattr(self._context_manager, "build_context_plan", None)
+        session_history_before_turn = session.chat_history[:turn_input_index]
+        context_limit_override = int((context_limit_info or {}).get("context_limit_tokens", 0) or 0)
+        if callable(builder):
+            try:
+                return await builder(
+                    session_history_before_turn=session_history_before_turn,
+                    current_turn_messages=current_turn_messages,
+                    auto_memory_message=auto_memory_message,
+                    policy_messages=policy_messages,
+                    proprioception_message=proprioception_message,
+                    conversation_summary=self._conversation_summary_for_session(session),
+                    route_context=route_context,
+                    requested_mode=requested_mode,
+                    model=model,
+                    provider_name=provider_name,
+                    api_url=api_url,
+                    context_limit_override=context_limit_override,
+                )
+            except TypeError:
+                pass
+
+        messages = (
+            session_history_before_turn
+            + ([auto_memory_message] if auto_memory_message else [])
+            + policy_messages
+            + current_turn_messages
+            + ([proprioception_message] if proprioception_message else [])
+        )
+        return {
+            "messages": messages,
+            "breakdown": self._build_context_breakdown(
+                session_history_before_turn=session_history_before_turn,
+                current_turn_messages=current_turn_messages,
+                auto_memory_message=auto_memory_message,
+                policy_messages=policy_messages,
+                proprioception_message=proprioception_message,
+            ),
+            "length_policy": {},
+            "layers": {},
+        }
+
     @staticmethod
     def _build_adapter_options(model_options: dict | None) -> dict:
         model_options = model_options or {}
@@ -1307,6 +1768,11 @@ class Brain:
         turn_input_index = len(session.chat_history)
         transient_turn = bool(dict(input_info.get("metadata") or {}).get("transient")) if isinstance(input_info, dict) else False
         auto_memory_message = await self._build_auto_memory_message(session_id, input_info)
+        session.metadata["last_memory_scope"] = dict((auto_memory_message or {}).get("metadata", {}).get("memory_scope") or {})
+        session.metadata["last_authorization_decisions"] = []
+        session.metadata["last_object_operations"] = []
+        session.metadata["last_failure"] = {}
+        session.metadata["last_request_debug"] = {}
         memory_trigger_message = self._build_memory_trigger_message(input_info)
         await self._store_turn_episode(session_id, input_info, transient_turn=transient_turn)
         session.chat_history.append(input_info)
@@ -1344,6 +1810,9 @@ class Brain:
                     api_url,
                     api_key,
                     context_limit_override=int(context_limit_info.get("context_limit_tokens", 0) or 0),
+                    session_id=session.session_id,
+                    provider_name=provider_name,
+                    preserve_message_count=self._base_message_count(),
                 ) or {}
             except TypeError:
                 trim_result = await self._context_manager.trim_history(
@@ -1353,6 +1822,21 @@ class Brain:
                     api_url,
                     api_key,
                 ) or {}
+        trimmed_summary = str(trim_result.get("conversation_summary") or "").strip()
+        if trimmed_summary:
+            session.metadata["conversation_summary"] = trimmed_summary
+        compression_snapshot = dict(trim_result.get("compression") or {})
+        if not compression_snapshot:
+            compression_snapshot = {
+                "triggered": False,
+                "level": "none",
+                "trimmed_messages": 0,
+                "before_tokens": int(trim_result.get("current_tokens", 0) or 0),
+                "after_tokens": int(trim_result.get("current_tokens", 0) or 0),
+                "usable_tokens": 0,
+                "summary_tokens": 0,
+            }
+        session.metadata["last_compression"] = compression_snapshot
         summary_usage = self._normalize_usage(trim_result.get("summary_usage"))
         if summary_usage:
             turn_usage.add(summary_usage)
@@ -1379,22 +1863,40 @@ class Brain:
                 ),
             }
             current_turn_messages = list(session.chat_history[turn_input_index:])
-            messages = (
-                session.chat_history[:turn_input_index]
-                + ([auto_memory_message] if auto_memory_message else [])
-                + policy_messages
-                + current_turn_messages
-                + [proprioception_message]
-            )
-            context_breakdown = self._build_context_breakdown(
-                session_history_before_turn=session.chat_history[:turn_input_index],
+            context_plan = await self._build_context_plan(
+                session=session,
+                turn_input_index=turn_input_index,
                 current_turn_messages=current_turn_messages,
                 auto_memory_message=auto_memory_message,
                 policy_messages=policy_messages,
                 proprioception_message=proprioception_message,
+                route_context=route_context,
+                requested_mode=requested_mode,
+                model=model,
+                provider_name=provider_name,
+                api_url=api_url,
+                context_limit_info=context_limit_info,
             )
+            messages = list(context_plan.get("messages") or [])
+            context_breakdown = dict(context_plan.get("breakdown") or {})
+            session.metadata["last_context_plan"] = {
+                "length_policy": dict(context_plan.get("length_policy") or {}),
+                "layers": dict(context_plan.get("layers") or {}),
+                "breakdown": dict(context_breakdown),
+            }
 
             tools = self._get_tools_for_route(route_context, requested_mode=requested_mode)
+            request_debug = self._build_request_debug_snapshot(
+                provider_name=provider_name,
+                model=model,
+                api_url=api_url,
+                tools=tools,
+                messages=messages,
+                context_plan=context_plan,
+                context_breakdown=context_breakdown,
+                context_limit_info=context_limit_info,
+            )
+            session.metadata["last_request_debug"] = request_debug
             assistant_content = ""
             reasoning_content = ""
             tool_calls = []
@@ -1415,35 +1917,65 @@ class Brain:
                 )
                 await phase_callback(RuntimeStatus.THINKING.value, "Calling model")
 
-            async for event in self._adapter.stream_chat(
-                self._http_session,
-                api_url,
-                api_key,
-                model,
-                messages,
-                tools,
-                **adapter_options,
-            ):
-                if event.type == "text" and event.text:
-                    assistant_content += event.text
-                    if not answer_started and phase_callback:
-                        await phase_callback(RuntimeStatus.ANSWERING.value, "Generating answer")
-                        answer_started = True
-                    yield BrainOutputEvent(type="answer_text", text=event.text)
-                elif event.type == "reasoning" and event.reasoning_text:
-                    reasoning_content += event.reasoning_text
-                    yield BrainOutputEvent(type="reasoning_text", text=event.reasoning_text)
-                elif event.type == "usage" and event.usage:
-                    normalized_usage = self._normalize_usage(event.usage)
-                    if normalized_usage:
-                        call_usage = normalized_usage
-                        provider_usage_seen = True
-                elif event.type == "provider_items" and event.provider_items:
-                    provider_items = event.provider_items
-                elif event.type == "tool_calls" and event.tool_calls:
-                    tool_calls = event.tool_calls
-                elif event.type == "error":
-                    logger.error("Streaming adapter error: %s", event.error)
+            try:
+                async for event in self._adapter.stream_chat(
+                    self._http_session,
+                    api_url,
+                    api_key,
+                    model,
+                    messages,
+                    tools,
+                    **adapter_options,
+                ):
+                    if event.type == "text" and event.text:
+                        assistant_content += event.text
+                        if not answer_started and phase_callback:
+                            await phase_callback(RuntimeStatus.ANSWERING.value, "Generating answer")
+                            answer_started = True
+                        yield BrainOutputEvent(type="answer_text", text=event.text)
+                    elif event.type == "reasoning" and event.reasoning_text:
+                        reasoning_content += event.reasoning_text
+                        yield BrainOutputEvent(type="reasoning_text", text=event.reasoning_text)
+                    elif event.type == "usage" and event.usage:
+                        normalized_usage = self._normalize_usage(event.usage)
+                        if normalized_usage:
+                            call_usage = normalized_usage
+                            provider_usage_seen = True
+                    elif event.type == "provider_items" and event.provider_items:
+                        provider_items = event.provider_items
+                    elif event.type == "tool_calls" and event.tool_calls:
+                        tool_calls = event.tool_calls
+                    elif event.type == "error":
+                        logger.error("Streaming adapter error: %s", event.error)
+                        self._record_session_failure(
+                            session,
+                            {
+                                "code": "streaming_adapter_error",
+                                "category": "dependency",
+                                "message": str(event.error or "Streaming adapter error"),
+                                "retryable": False,
+                                "details": {
+                                    "provider_name": request_debug.get("provider_name"),
+                                    "model": request_debug.get("model"),
+                                    "transport_mode": request_debug.get("transport_mode"),
+                                },
+                            },
+                        )
+            except Exception as exc:
+                failure_payload = self._build_failure_payload_from_exception(
+                    exc,
+                    request_debug=request_debug,
+                    compression=compression_snapshot,
+                )
+                self._record_session_failure(session, failure_payload)
+                try:
+                    setattr(exc, "runtime_error_payload", failure_payload)
+                except Exception:
+                    pass
+                raise
+
+            if reasoning_content:
+                yield BrainOutputEvent(type="reasoning_end")
 
             if assistant_content:
                 assistant_message = {"role": "assistant", "content": assistant_content}
@@ -1479,6 +2011,7 @@ class Brain:
             yield BrainOutputEvent(type="usage", usage=usage_payload)
 
             if not tool_calls:
+                session.metadata["last_failure"] = {}
                 if transient_turn and len(session.chat_history) > turn_input_index:
                     del session.chat_history[turn_input_index:]
                 elif not transient_turn:
@@ -1508,22 +2041,6 @@ class Brain:
             mode_switch_calls = [tc for tc in tool_calls if tc.name == _INTERNAL_MODE_SWITCH_TOOL_NAME]
             visible_tool_calls = [tc for tc in tool_calls if tc.name != _INTERNAL_MODE_SWITCH_TOOL_NAME]
             visible_tool_names = [tc.name for tc in visible_tool_calls]
-            if visible_tool_calls and not mode_switch_calls and phase_callback:
-                self.set_session_runtime_state(
-                    session_id,
-                    RuntimeStatus.TOOL_CALLING.value,
-                    detail=", ".join(visible_tool_names),
-                    active_tools=visible_tool_names,
-                    current_mode=route_context.get("current_mode", ""),
-                    route_reason=route_context.get("route_reason", ""),
-                    action_risk=self._get_action_risk_for_tools(visible_tool_names),
-                    source_profile=route_context.get("source_profile", ""),
-                )
-                await phase_callback(
-                    RuntimeStatus.TOOL_CALLING.value,
-                    ", ".join(visible_tool_names),
-                    active_tools=visible_tool_names,
-                )
 
             if mode_switch_calls:
                 primary_switch = mode_switch_calls[0]
@@ -1581,48 +2098,34 @@ class Brain:
                             "tool_call_id": extra_switch.id,
                         }
                     )
-                for skipped_tool in visible_tool_calls:
-                    session.chat_history.append(
-                        {
-                            "role": "tool",
-                            "content": (
-                                "Skipped: switch_assistant_mode must be handled in its own round. "
-                                "Call this tool again after the mode switch."
-                            ),
-                            "tool_call_id": skipped_tool.id,
-                        }
+            if visible_tool_calls:
+                if phase_callback:
+                    self.set_session_runtime_state(
+                        session_id,
+                        RuntimeStatus.TOOL_CALLING.value,
+                        detail=", ".join(visible_tool_names),
+                        active_tools=visible_tool_names,
+                        current_mode=route_context.get("current_mode", ""),
+                        route_reason=route_context.get("route_reason", ""),
+                        action_risk=self._get_action_risk_for_tools(visible_tool_names),
+                        source_profile=route_context.get("source_profile", ""),
                     )
-            else:
-                for tc in visible_tool_calls:
-                    try:
-                        args = tc.arguments
-                    except Exception:
-                        args = {}
-
-                    try:
-                        context = get_event_context()
-                        result = await self._call_tool_with_route(
-                            tc.name,
-                            args,
-                            session_id=context.get("session_id", session_id),
-                            source=context.get("source"),
-                            tool_activity_callback=tool_activity_callback,
-                            route_context=route_context,
-                        )
-                    except Exception as exc:
-                        result = f"Error: tool {tc.name} failed: {exc}"
-
-                    session.chat_history.append(
-                        {
-                            "role": "tool",
-                            "content": result if isinstance(result, str) else str(result),
-                            "tool_call_id": tc.id,
-                        }
+                    await phase_callback(
+                        RuntimeStatus.TOOL_CALLING.value,
+                        ", ".join(visible_tool_names),
+                        active_tools=visible_tool_names,
                     )
+                await self._execute_visible_tool_calls(
+                    visible_tool_calls=visible_tool_calls,
+                    session=session,
+                    session_id=session_id,
+                    route_context=route_context,
+                    tool_activity_callback=tool_activity_callback,
+                )
                 self._store_route_context(session, route_context)
                 self._sync_runtime_route_state(session_id, session, route_context)
 
-            if tool_activity_callback and not mode_switch_calls and any(
+            if tool_activity_callback and any(
                 tc.name in {
                     "research_topic",
                     "inspect_page",

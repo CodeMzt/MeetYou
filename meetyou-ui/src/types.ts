@@ -4,17 +4,7 @@ export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
 export type AssistantMode = 'normal' | 'auto' | 'documents' | 'research' | 'office' | 'study'
 
-export type RuntimeStatus =
-  | 'initializing'
-  | 'idle'
-  | 'thinking'
-  | 'tool_calling'
-  | 'answering'
-  | 'waiting_confirm'
-  | 'waiting_human_input'
-  | 'heartbeat'
-  | 'error'
-  | 'shutting_down'
+export type RuntimeStatus = string
 
 export type ThinkingOverride = 'default' | 'off' | 'low' | 'medium' | 'high'
 
@@ -86,6 +76,72 @@ export interface RuntimeUsageSnapshot {
   updated_at: string
 }
 
+export interface RuntimeRequestLengthPolicy {
+  provider_family: string
+  target_input_tokens: number
+  reserved_response_tokens: number
+  reserve_ratio: number
+}
+
+export interface RuntimeRequestBudget {
+  context_limit_tokens: number
+  target_input_tokens: number
+  reserved_response_tokens: number
+  breakdown_total: number
+}
+
+export interface RuntimeRequestSnapshot {
+  provider_name: string
+  model: string
+  api_target: {
+    host: string
+    path: string
+  }
+  transport_mode: string
+  message_count: number
+  tool_count: number
+  request_tokens_estimated: number
+  context_limit_tokens: number
+  pressure_ratio: number
+  near_limit: boolean
+  length_policy: RuntimeRequestLengthPolicy
+  budget: RuntimeRequestBudget
+  layers: {
+    conversation_summary: boolean
+    memory_recall: boolean
+    session_preload: boolean
+    prefer_live_web: boolean
+    history_message_count: number
+  }
+}
+
+export interface RuntimeCompressionSnapshot {
+  triggered: boolean
+  level: string
+  trimmed_messages: number
+  before_tokens: number
+  after_tokens: number
+  usable_tokens: number
+  summary_tokens: number
+}
+
+export interface RuntimeDebugSnapshot {
+  session_id: string
+  route: Record<string, unknown>
+  route_history: Record<string, unknown>[]
+  context_plan: Record<string, unknown>
+  memory_scope: Record<string, unknown>
+  authorization: Record<string, unknown>
+  object_operations: Record<string, unknown>[]
+  task_state: Record<string, unknown>
+  runtime_state: Record<string, unknown>
+  usage: Record<string, unknown>
+  request: RuntimeRequestSnapshot | null
+  compression: RuntimeCompressionSnapshot | null
+  last_failure: RuntimeErrorPayload | null
+  updated_at: string
+}
+
 export interface TurnActivity {
   id: string
   turnId: string
@@ -108,6 +164,7 @@ export interface ChatTurn {
   activities: TurnActivity[]
   isStreaming: boolean
   createdAt: number
+  trimmedActivityCount?: number
   error?: string
 }
 
@@ -115,6 +172,7 @@ export interface ConfirmRequestPayload {
   requestId: string
   content: string
   timeout?: number
+  defaultDecision?: boolean
 }
 
 export interface HumanInputRequestPayload {
@@ -123,6 +181,43 @@ export interface HumanInputRequestPayload {
   options: string[]
   placeholder?: string
   timeout?: number
+}
+
+export interface AckPayload {
+  action: string
+  accepted: boolean
+  session_id: string
+  event_id: string
+  request_id: string
+}
+
+export interface RuntimeErrorPayload {
+  code: string
+  category: string
+  message: string
+  retryable: boolean
+  details: Record<string, unknown>
+  occurred_at: string
+}
+
+export interface RuntimeHealthComponent {
+  name: string
+  status: string
+  detail: string
+  last_event: string
+  updated_at: string
+}
+
+export interface RuntimeHealthSnapshot {
+  service: string
+  version: string
+  status: string
+  live: boolean
+  ready: boolean
+  degraded: boolean
+  components: RuntimeHealthComponent[]
+  errors: RuntimeErrorPayload[]
+  updated_at: string
 }
 
 export interface ConfigEntry {
@@ -184,4 +279,81 @@ export interface ConfigPatchResult {
   reloaded_components: string[]
   restart_required_keys: string[]
   warnings: string[]
+}
+
+export interface UiProtocolSchema {
+  http_schema: string
+  ws_schema: string
+  ws_frame_kinds: string[]
+  ws_event_types: string[]
+  ws_runtime_resources: string[]
+  runtime_statuses: string[]
+  providers: ConfigFieldOption[]
+  thinking_efforts: ConfigFieldOption[]
+  config_groups: ConfigGroupDefinition[]
+  config_fields: ConfigFieldSchema[]
+}
+
+export interface UiProtocolSchemaEnvelope {
+  schema: string
+  kind: 'schema'
+  ui_schema: UiProtocolSchema
+}
+
+export interface RuntimeStateEnvelope {
+  schema: string
+  kind: 'runtime'
+  runtime: {
+    resource: 'state'
+    session_id: string
+    state: {
+      global_state: RuntimeStateSnapshot
+      heartbeat_state: RuntimeStateSnapshot
+      session_state: RuntimeStateSnapshot | null
+    }
+    metadata?: Record<string, unknown>
+    event_id?: string
+  }
+}
+
+export interface RuntimeUsageEnvelope {
+  schema: string
+  kind: 'runtime'
+  runtime: {
+    resource: 'usage'
+    session_id: string
+    usage: RuntimeUsageSnapshot
+    metadata?: Record<string, unknown>
+    event_id?: string
+  }
+}
+
+export interface RuntimeDebugEnvelope {
+  schema: string
+  kind: 'runtime'
+  runtime: {
+    resource: 'debug'
+    session_id: string
+    debug: RuntimeDebugSnapshot
+    metadata?: Record<string, unknown>
+    event_id?: string
+  }
+}
+
+export interface HealthEnvelope {
+  schema: string
+  kind: 'health'
+  health: RuntimeHealthSnapshot
+}
+
+export interface AckEnvelope {
+  schema: string
+  kind: 'ack'
+  ack: AckPayload
+}
+
+export interface ErrorEnvelope {
+  schema: string
+  kind: 'error'
+  error: RuntimeErrorPayload
 }

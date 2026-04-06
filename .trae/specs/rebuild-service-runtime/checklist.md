@@ -1,0 +1,45 @@
+- [x] 新运行时内核已替代超级协调器式主路径
+  - 已核对 `main.py`、`service_runtime/service.py`、`core/app.py` 的入口与装配关系；主入口已切换为 `ServiceRuntime`，服务运行时负责健康、网关、后台循环和遥测装配。
+- [x] 会话执行已按 session 分片，跨会话并发可用且互不阻塞
+  - 已核对 `core/session_actor.py`、`core/app.py`；`SessionActorRuntime` 按 `session_id` 建立独立 actor。
+  - 已验证 `tests/test_session_actor_runtime.py` 与 `tests/test_app_session_execution.py`。
+- [x] 后台 scheduler、heartbeat、housekeeping 与后台 agent 已统一为 job 模型
+  - 已核对 `core/heart.py`、`core/background_jobs.py`；四类后台循环统一维护 job 状态、失败、投递与统计。
+  - 已验证 `tests/test_task_scheduler.py`、`tests/test_scheduled_control_flow.py`、`tests/test_service_runtime.py`。
+- [x] 配置更新具备校验、事务提交与失败回滚能力
+  - 已核对 `core/config.py` 中类型校验、语义校验、`begin_transaction`、`rollback_transaction` 与持久化失败回滚逻辑。
+  - 已验证 `tests/test_config_manager.py`。
+- [x] 配置、记忆、任务等持久化写入具备原子性与一致性保障
+  - 已核对 `core/persistence.py`、`core/repositories.py`、配置/记忆/任务存储实现，均使用原子写、备份与恢复。
+  - 已验证 `tests/test_config_manager.py`、`tests/test_memory_redesign.py`、`tests/test_task_scheduler.py`。
+- [x] 工具调用与 MCP 调用已统一为结构化结果和结构化错误协议
+  - 已核对 `core/tool_runtime/models.py`、`core/tool_runtime/executor.py`、`core/tools_manager.py`。
+  - 已验证 `tests/test_tool_runtime.py`。
+- [x] 主路径中不再依赖 `"Error: ..."` 作为系统错误契约
+  - 已核对主路径错误模型与工具执行链路，统一输出结构化 `RuntimeError` / `ToolCallResult.error`。
+  - 已对 Python 代码执行全文检索，未发现主路径 `"Error: ..."` 契约残留。
+- [x] Gateway 与 WebSocket 已具备鉴权，敏感接口未授权访问会被拒绝
+  - 已核对 `gateway/api.py` 中 HTTP / WS 鉴权与拒绝逻辑。
+  - 已验证 `tests/test_gateway_config_api.py`、`tests/test_gateway_memory_api.py`、`tests/test_gateway_runtime_api.py`、`tests/test_confirmation_flow.py`、`tests/test_human_input_flow.py`。
+- [x] CORS、暴露面和危险写操作策略已按最小权限原则收紧
+  - 已核对 `gateway/api.py` 的 CORS 白名单与 loopback 限制、`tools/document_tools.py` 的可信写目录拦截、`tools/system_tools.py` 的危险命令策略、`core/tool_runtime/risk.py` 的风险分级。
+  - 已验证 `tests/test_confirmation_flow.py`、`tests/test_tool_runtime.py`、`tests/test_assistant_modes.py`。
+- [x] 前后端协议已实现单源化或等效一致性机制
+  - 已核对 `core/protocol_schema.py` 统一导出 HTTP / WS schema、事件类型、运行态资源和配置字段，并由 `/schema/ui` 暴露给前端。
+  - 已验证 `tests/test_gateway_config_api.py` 与 `meetyou-ui/src/protocolClient.test.ts`。
+- [x] 前端已正确处理 connection、event、ack、error、health 等协议事件
+  - 已核对 `meetyou-ui/src/protocolClient.ts`、`meetyou-ui/src/hooks/useMeetYou.ts`。
+  - 已验证 `meetyou-ui/src/protocolClient.test.ts` 与 UI 单测。
+- [x] 长会话场景下前端具备消息裁剪、增量更新或等效性能优化
+  - 已核对 `meetyou-ui/src/chatState.ts` 中 turn 裁剪、活动裁剪、增量追加与事件去重实现。
+  - 已验证 `meetyou-ui/src/chatState.test.ts`。
+- [x] 日志、健康检查与遥测可反映 live / ready / degraded 状态
+  - 已核对 `service_runtime/models.py`、`service_runtime/service.py`、`service_runtime/telemetry.py`、`core/logger.py`。
+  - 已验证 `tests/test_service_runtime.py`、`tests/test_gateway_runtime_api.py`。
+- [x] 失效配置项、legacy 分支与旧兼容逻辑已从主路径清理
+  - 已核对 `core/config.py`、`docs/runtime-migration.md`、`main.py`、`launcher.py`；`enable_gateway`、`source_profiles` 和旧 gateway 启动假设已迁移或清理。
+  - 已验证 `tests/test_config_manager.py`、`tests/test_memory_redesign.py`。
+- [x] 服务启动、鉴权、配置更新、任务调度、工具调用与 UI 接入均经过验证
+  - 已执行后端全量回归、前端协议测试与类型检查，覆盖服务运行时、Gateway / WS、配置更新、任务调度、工具执行与 UI 协议接入。
+- [x] 新增发现的优化点已在任务清单中吸收或明确记录为后续工作
+  - 本轮系统验证未发现失败项；已在任务清单中记录非阻塞观察项（Vite 弃用告警、Python `asyncio` `ResourceWarning`），作为后续工程优化信息。
