@@ -116,6 +116,7 @@ class LLMAdapter(ABC):
         model: str,
         messages: list[dict],
         tools: list[dict] | None = None,
+        cancel_event=None,
         **kwargs,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream chat response."""

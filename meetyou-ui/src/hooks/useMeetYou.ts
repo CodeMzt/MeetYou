@@ -523,6 +523,24 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     [chatState.runtimeSnapshot?.turn_id],
   )
 
+  const sendControlCommand = useCallback(
+    (
+      action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback',
+      params: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string } = {},
+    ) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            action,
+            ...params,
+            metadata: { from: 'ui-control' },
+          }),
+        )
+      }
+    },
+    [],
+  )
+
   const turnActivities = useMemo(() => {
     if (chatState.runtimeSnapshot?.turn_id) {
       const currentTurn = chatState.messages.find((message) => message.turnId === chatState.runtimeSnapshot?.turn_id)
@@ -551,6 +569,7 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     sendMessage,
     sendConfirmResponse,
     sendHumanInputResponse,
+    sendControlCommand,
     refreshRuntime,
     refreshUsage,
     refreshDebug,

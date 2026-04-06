@@ -46,6 +46,8 @@ class AckPayload(BaseModel):
     session_id: str = ""
     event_id: str = ""
     request_id: str = ""
+    status: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class AckResponse(BaseModel):
@@ -78,6 +80,23 @@ class WebSocketCommand(BaseModel):
     accepted: bool | None = None
     answer_text: str | None = None
     selected_option: str | None = None
+    guidance: str | None = None
+    checkpoint_id: str | None = None
+    turn_id: str | None = None
+    stream_id: str | None = None
+    client_request_id: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class ControlRequest(BaseModel):
+    action: str
+    session_id: str | None = None
+    source_id: str = "web-client"
+    client_request_id: str | None = None
+    guidance: str | None = None
+    checkpoint_id: str | None = None
+    turn_id: str | None = None
+    stream_id: str | None = None
     metadata: dict = Field(default_factory=dict)
 
 
@@ -159,6 +178,8 @@ class RuntimeStateSnapshotResponse(BaseModel):
     source_profile: str = ""
     stream_id: str = ""
     turn_id: str = ""
+    finish_reason: str = ""
+    reply_control: dict[str, Any] = Field(default_factory=dict)
     updated_at: str = ""
 
 

@@ -125,6 +125,8 @@ class RuntimeStateSnapshot:
     source_profile: str = ""
     stream_id: str = ""
     turn_id: str = ""
+    finish_reason: str = ""
+    reply_control: dict = field(default_factory=dict)
     updated_at: str = field(default_factory=utcnow_iso)
 
     def update(
@@ -139,6 +141,8 @@ class RuntimeStateSnapshot:
         source_profile: str | None = None,
         stream_id: str | None = None,
         turn_id: str | None = None,
+        finish_reason: str | None = None,
+        reply_control: dict | None = None,
     ) -> "RuntimeStateSnapshot":
         self.status = status.value if isinstance(status, RuntimeStatus) else str(status)
         self.detail = detail
@@ -156,6 +160,10 @@ class RuntimeStateSnapshot:
             self.stream_id = stream_id
         if turn_id is not None:
             self.turn_id = turn_id
+        if finish_reason is not None:
+            self.finish_reason = str(finish_reason)
+        if reply_control is not None:
+            self.reply_control = dict(reply_control)
         self.updated_at = utcnow_iso()
         return self
 
@@ -171,6 +179,8 @@ class RuntimeStateSnapshot:
             "source_profile": self.source_profile,
             "stream_id": self.stream_id,
             "turn_id": self.turn_id,
+            "finish_reason": self.finish_reason,
+            "reply_control": dict(self.reply_control),
             "updated_at": self.updated_at,
         }
 

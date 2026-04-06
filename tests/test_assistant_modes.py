@@ -296,6 +296,39 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("summarize_text", route.capability_sources.get("tools", {}))
         self.assertIn("Skills ->", route.route_reason)
 
+    def test_prompt_adds_skill_first_policy_before_business_tools(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        prompt_text = manager.assemble_prompt_for_route(
+            {
+                "current_mode": "normal",
+                "content": "Please turn these rough notes into a clean outline and action list.",
+                "active_skills": [],
+                "loaded_skills": [],
+            }
+        )
+
+        self.assertIn("[Skill-First Policy]", prompt_text)
+        self.assertIn("list_skills", prompt_text)
+        self.assertIn("load_skill", prompt_text)
+        self.assertIn("Before using non-skill business tools", prompt_text)
+
+    def test_prompt_treats_active_skills_as_primary_procedure(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        prompt_text = manager.assemble_prompt_for_route(
+            {
+                "current_mode": "office",
+                "content": "Summarize the meeting and produce follow-up actions.",
+                "active_skills": ["knowledge_synthesis"],
+                "loaded_skills": ["office_coordination"],
+            }
+        )
+
+        self.assertIn("[Skill-First Policy]", prompt_text)
+        self.assertIn("knowledge_synthesis, office_coordination", prompt_text)
+        self.assertIn("primary operating procedure", prompt_text)
+
     def test_capability_diagnostics_reports_mcp_fallback_states(self):
         manager = AssistantModeManager(_FakeConfig())
 

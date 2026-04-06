@@ -6,8 +6,6 @@ import styles from './Titlebar.module.css'
 interface TitlebarProps {
   connectionState: ConnectionState
   isPinned: boolean
-  usagePanelOpen: boolean
-  usagePillText: string
   onTogglePin: () => void
   onToggleUsagePanel: () => void
 }
@@ -15,8 +13,6 @@ interface TitlebarProps {
 export default function Titlebar({
   connectionState,
   isPinned,
-  usagePanelOpen,
-  usagePillText,
   onTogglePin,
   onToggleUsagePanel,
 }: TitlebarProps) {
@@ -41,12 +37,11 @@ export default function Titlebar({
 
       <div className={styles.tools}>
         <button
-          className={`${styles.usagePill} ${usagePanelOpen ? styles.active : ''}`}
+          className={styles.iconBtn}
           onClick={onToggleUsagePanel}
           title="查看 token / context 统计"
         >
-          <Gauge size={13} />
-          <span>{usagePillText}</span>
+          <Gauge size={15} />
         </button>
         <button
           className={`${styles.iconBtn} ${isPinned ? styles.active : ''}`}
