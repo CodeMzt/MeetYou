@@ -5,6 +5,7 @@ Application wiring and lifecycle management.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import traceback
@@ -23,7 +24,7 @@ from core.brain import Brain, BrainOutputEvent
 from core.config import ConfigManager
 from core.context import ContextManager
 from core.event_bus import EventBus
-from core.exceptions import ExceptionRouter, MeetYouError
+from core.exceptions import ConfigError, ExceptionRouter, MeetYouError
 from core.heart import Heart
 from core.io_protocol import (
     EventTarget,
@@ -37,6 +38,7 @@ from core.io_protocol import (
 )
 from core.logger import setup_logger
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
+from core.session_actor import SessionActorRuntime
 from core.session_manager import SessionManager
 from core.speaker import Speaker
 from core.status import RuntimeStatus, StatusManager, utcnow_iso
@@ -46,12 +48,22 @@ from platform_layer.detector import detect_platform
 from sensors.feishu_input_adapter import FeishuInputAdapter
 from sensors.feishu_output_adapter import FeishuOutputAdapter
 from sensors.proprioceptor import Proprioceptor
+from service_runtime.models import RuntimeError
 from tools import system_tools
 from tools.mcp import MCPManager
 from tools.memory import Memory
 from tools.task_manager import TaskManager
 
 logger = logging.getLogger("meetyou.app")
+
+
+@dataclass(slots=True)
+class SessionExecutionRequest:
+    session_id: str
+    event: InboundEvent
+    input_info: dict[str, Any]
+    target: EventTarget
+    is_boot: bool
 
 
 def _normalize_task_summary(task_record: dict[str, Any]) -> str:
@@ -124,7 +136,6 @@ _MODE_IMMEDIATE_KEYS = {
     "assistant_modes",
     "mode_router",
     "trusted_write_roots",
-    "source_profiles",
     "source_catalog_path",
     "research_contact_email",
     "document_parsers",
@@ -149,7 +160,7 @@ _RESTART_REQUIRED_KEYS = {
 
 
 class App:
-    def __init__(self):
+    def __init__(self, health_getter=None, telemetry_recorder=None):
         setup_logger(enable_console=True, component="gateway")
 
         self.event_bus = EventBus()
@@ -208,10 +219,15 @@ class App:
         self.feishu_input: FeishuInputAdapter | None = None
         self.feishu_output: FeishuOutputAdapter | None = None
         self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
+        self._health_getter = health_getter
+        self._telemetry_recorder = telemetry_recorder
+        if self._telemetry_recorder is not None:
+            self.tools_manager.set_execution_observer(self._telemetry_recorder.observe_tool_result)
 
         self._brain_source = make_source(SourceKind.SYSTEM.value, "brain")
         self._runtime_source = make_source(SourceKind.SYSTEM.value, "runtime")
         self._usage_source = make_source(SourceKind.SYSTEM.value, "usage")
+        self._session_execution_runtime = SessionActorRuntime(self._process_session_execution)
 
         self.exception_router.on_system_error(self._log_error)
         self.exception_router.on_user_error(self._display_error)
@@ -220,7 +236,7 @@ class App:
         self.event_bus.subscribe(self.event_bus.HUMAN_INPUT_REQUEST, self._handle_human_input_request)
         self.event_bus.subscribe(self.event_bus.HUMAN_INPUT_RESPONSE, self._handle_human_input_response)
 
-        logger.info("Gateway runtime dependencies initialized")
+        logger.info("Service runtime dependencies initialized")
 
     def _get_main_provider(self) -> str:
         return self.config.get("api_provider") or "openai"
@@ -530,7 +546,11 @@ class App:
         return True
 
     async def _emit_pending_task_updates(self, session_id: str, target: EventTarget, source) -> None:
-        pending = await self.task_manager.collect_pending_delivery_messages(source=source)
+        peek_pending = getattr(self.task_manager, "peek_pending_delivery_messages", None)
+        if callable(peek_pending):
+            pending = await peek_pending(source=source)
+        else:
+            pending = await self.task_manager.collect_pending_delivery_messages(source=source)
         if not pending:
             return
         lines = ["以下是之前未送达的后台更新补发："]
@@ -544,6 +564,16 @@ class App:
             self._runtime_source,
             target=target,
         )
+        acknowledge_pending = getattr(self.task_manager, "acknowledge_pending_delivery_messages", None)
+        if callable(acknowledge_pending):
+            await acknowledge_pending(
+                source=source,
+                event_ids=[
+                    str(item.get("event_id") or "").strip()
+                    for item in pending
+                    if str(item.get("event_id") or "").strip()
+                ],
+            )
 
     def _recent_user_delivery(self) -> tuple[str, EventTarget] | None:
         list_recent = getattr(self.session_manager, "list_recent_bindings", None)
@@ -633,7 +663,7 @@ class App:
             return True
         return bool(checker(task_key, normalized_claim_token))
 
-    async def _handle_scheduled_reminder(self, task_key: str, claim_token: str = ""):
+    async def _handle_scheduled_reminder(self, task_key: str, claim_token: str = "", trace_id: str = ""):
         if not self._control_claim_valid(task_key, claim_token):
             return
         task_record = self.task_manager.get_task_by_key(task_key)
@@ -645,15 +675,27 @@ class App:
         )
         should_notify = str(task_record.get("notify_policy") or "on_due") != "silent"
         delivered = True
-        if should_notify:
-            delivered = await self._emit_task_update(task_record, message)
-        await self.task_manager.complete_due_notification(
-            task_key,
-            summary=message,
-            delivered=(delivered or not should_notify),
+        token = bind_event_context(
+            trace_id=trace_id,
+            session_id=self._task_delivery(task_record)[0] or f"system:task:{task_key}",
+            source=self._task_source(task_record),
+            target=self._task_delivery(task_record)[1],
+            job_id=task_key,
         )
+        try:
+            if should_notify:
+                delivered = await self._emit_task_update(task_record, message)
+            await self.task_manager.complete_due_notification(
+                task_key,
+                summary=message,
+                delivered=(delivered or not should_notify),
+                runtime_source="app.scheduled_reminder",
+                delivery_channel="task_update",
+            )
+        finally:
+            reset_event_context(token)
 
-    async def _handle_scheduled_task(self, task_key: str, claim_token: str = ""):
+    async def _handle_scheduled_task(self, task_key: str, claim_token: str = "", trace_id: str = ""):
         if not self._control_claim_valid(task_key, claim_token):
             return
         task_record = self.task_manager.get_task_by_key(task_key)
@@ -681,9 +723,11 @@ class App:
         task_source = self._task_source(task_record)
         task_session_id, task_target = self._task_delivery(task_record)
         token = bind_event_context(
+            trace_id=trace_id,
             session_id=task_session_id or f"system:task:{task_key}",
             source=task_source,
             target=task_target,
+            job_id=task_key,
         )
         try:
             result = await self.brain.run_background_turn(
@@ -711,6 +755,7 @@ class App:
         }
         completed_by_brain = task_key in completed_task_keys
         succeeded = result.get("status") == "ok" and not content.lower().startswith("error:")
+        error_payload = result.get("error") if isinstance(result.get("error"), dict) else {}
         user_message = (
             f"Scheduled task completed: {summary}\n{content}"
             if succeeded and completed_by_brain
@@ -727,6 +772,13 @@ class App:
             succeeded=succeeded,
             summary=user_message,
             delivered=(delivered or not should_notify),
+            completed=completed_by_brain,
+            failure_category=str(error_payload.get("category") or "retryable"),
+            failure_retryable=error_payload.get("retryable"),
+            failure_code=str(error_payload.get("code") or "scheduled_task_run_failed"),
+            failure_details=error_payload.get("details") if isinstance(error_payload.get("details"), dict) else {},
+            runtime_source="app.scheduled_task",
+            delivery_channel="task_update",
         )
 
     async def _handle_control_event(self, event):
@@ -736,10 +788,10 @@ class App:
         task_key = str(payload.get("task_key") or "").strip()
         claim_token = str(payload.get("claim_token") or metadata.get("claim_token") or "").strip()
         if control_kind == "scheduled_task" and task_key:
-            await self._handle_scheduled_task(task_key, claim_token=claim_token)
+            await self._handle_scheduled_task(task_key, claim_token=claim_token, trace_id=getattr(event, "event_id", ""))
             return True
         if control_kind == "scheduled_reminder" and task_key:
-            await self._handle_scheduled_reminder(task_key, claim_token=claim_token)
+            await self._handle_scheduled_reminder(task_key, claim_token=claim_token, trace_id=getattr(event, "event_id", ""))
             return True
         return False
 
@@ -779,6 +831,86 @@ class App:
             "heartbeat_state": self.status_manager.get_heartbeat(),
             "session_state": self.brain.get_session_runtime_snapshot(session_id) if session_id else None,
         }
+
+    async def get_runtime_debug(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            raise ValueError("session_id is required")
+        session_debug = self.brain.get_session_debug_snapshot(session_id)
+        route_snapshot = dict(session_debug.get("route") or {})
+        event_bus = getattr(self, "event_bus", None)
+        tool_debug_getter = getattr(self.tools_manager, "get_route_debug_snapshot", None)
+        route_authorization = (
+            tool_debug_getter(route_snapshot)
+            if callable(tool_debug_getter)
+            else {"visible_tools": [], "candidate_tools": [], "authorization_preview": []}
+        )
+        background_status = await self.heart.get_background_status()
+        return {
+            "session_id": session_id,
+            "route": route_snapshot,
+            "route_history": [
+                dict(item)
+                for item in session_debug.get("route_history", [])
+                if isinstance(item, dict)
+            ],
+            "context_plan": dict(session_debug.get("context_plan") or {}),
+            "memory_scope": dict(session_debug.get("memory_scope") or {}),
+            "authorization": {
+                "route_preview": route_authorization,
+                "recent_decisions": [
+                    dict(item)
+                    for item in (session_debug.get("authorization") or {}).get("recent_decisions", [])
+                    if isinstance(item, dict)
+                ],
+                "confirmation": {
+                    "pending": bool(
+                        getattr(event_bus, "has_pending_confirmation", False)
+                        and getattr(event_bus, "pending_confirmation_session_id", "") == session_id
+                    ),
+                    "request_id": (
+                        getattr(event_bus, "pending_request_id", "")
+                        if getattr(event_bus, "pending_confirmation_session_id", "") == session_id
+                        else ""
+                    ),
+                },
+            },
+            "object_operations": [
+                dict(item)
+                for item in session_debug.get("object_operations", [])
+                if isinstance(item, dict)
+            ],
+            "task_state": {
+                "background": {
+                    "schedule": dict(background_status.get("schedule") or {}),
+                    "execution": dict(background_status.get("execution") or {}),
+                    "delivery": dict(background_status.get("delivery") or {}),
+                    "system": dict(background_status.get("system") or {}),
+                },
+                "sources": list(background_status.get("background_status_sources") or []),
+            },
+            "runtime_state": dict(session_debug.get("runtime_state") or {}),
+            "usage": dict(session_debug.get("usage") or {}),
+            "request": dict(session_debug.get("request") or {}),
+            "compression": dict(session_debug.get("compression") or {}),
+            "last_failure": dict(session_debug.get("last_failure") or {}),
+            "updated_at": str(session_debug.get("updated_at") or utcnow_iso()),
+        }
+
+    @staticmethod
+    def _runtime_error_payload_from_exception(exc: Exception) -> dict[str, Any]:
+        if isinstance(getattr(exc, "runtime_error_payload", None), dict):
+            payload = dict(getattr(exc, "runtime_error_payload"))
+            payload.setdefault("occurred_at", utcnow_iso())
+            return payload
+        return RuntimeError.from_exception(
+            exc,
+            code="conversation_request_failed",
+            category="runtime",
+            retryable=False,
+        ).model_dump(mode="json")
+
+    async def get_background_status(self) -> dict[str, Any]:
+        return await self.heart.get_background_status()
 
     async def get_runtime_usage(self, session_id: str) -> dict[str, Any]:
         if not session_id:
@@ -873,22 +1005,50 @@ class App:
         }
 
     async def apply_config_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
-        applied_keys, warnings = self.config.apply_updates(updates)
-        if not applied_keys:
-            return {
-                "applied_keys": [],
-                "reloaded_components": [],
-                "restart_required_keys": [],
-                "warnings": warnings,
-            }
+        snapshot = self.config.begin_transaction()
+        applied_keys: list[str] = []
+        warnings: list[str] = []
+        try:
+            applied_keys, warnings = self.config.apply_updates(updates)
+            if not applied_keys:
+                return {
+                    "applied_keys": [],
+                    "reloaded_components": [],
+                    "restart_required_keys": [],
+                    "warnings": warnings,
+                }
 
-        self.config.reload()
-        reloaded_components: set[str] = set()
+            self.config.reload()
+            reloaded_components = await self._reload_config_components(applied_keys, warnings)
+        except Exception as exc:
+            if not applied_keys:
+                raise
+            rollback_error: Exception | None = None
+            try:
+                self.config.rollback_transaction(snapshot)
+                self.config.reload()
+                await self._reload_config_components(applied_keys, [])
+            except Exception as restore_exc:
+                rollback_error = restore_exc
+            message = f"配置更新失败，已回滚: {exc}"
+            if rollback_error is not None:
+                raise ConfigError(f"{message}；回滚恢复失败: {rollback_error}") from exc
+            raise ConfigError(message) from exc
         restart_required = sorted(_RESTART_REQUIRED_KEYS.intersection(applied_keys))
+        if restart_required:
+            warnings.append(
+                "The following keys were written, but require a gateway restart to fully take effect: "
+                + ", ".join(restart_required)
+            )
+        return {
+            "applied_keys": applied_keys,
+            "reloaded_components": reloaded_components,
+            "restart_required_keys": restart_required,
+            "warnings": warnings,
+        }
 
-        if "enable_gateway" in applied_keys:
-            warnings.append("enable_gateway is ignored in the gateway-only runtime.")
-
+    async def _reload_config_components(self, applied_keys: list[str], warnings: list[str]) -> list[str]:
+        reloaded_components: set[str] = set()
         if _BRAIN_IMMEDIATE_KEYS.intersection(applied_keys):
             await self._refresh_brain_runtime()
             reloaded_components.add("brain")
@@ -904,19 +1064,7 @@ class App:
         if _MODE_IMMEDIATE_KEYS.intersection(applied_keys):
             await self._refresh_mode_runtime()
             reloaded_components.add("mode_manager")
-
-        if restart_required:
-            warnings.append(
-                "The following keys were written, but require a gateway restart to fully take effect: "
-                + ", ".join(restart_required)
-            )
-
-        return {
-            "applied_keys": applied_keys,
-            "reloaded_components": sorted(reloaded_components),
-            "restart_required_keys": restart_required,
-            "warnings": warnings,
-        }
+        return sorted(reloaded_components)
 
     @staticmethod
     def _build_boot_event(start_prompt: str, source) -> InboundEvent:
@@ -930,240 +1078,279 @@ class App:
             metadata={"transient": True, "boot_event": True},
         )
 
+    def _resolve_session_execution_request(self, event: InboundEvent) -> SessionExecutionRequest | None:
+        effective_session_id = event.session_id
+        if event.type == EventType.SIGNAL.value:
+            if self._is_heartbeat_signal(event):
+                delivery = self._recent_user_delivery()
+                if delivery is None:
+                    logger.info("Skipping heartbeat signal because no recent active session is available")
+                    return None
+                effective_session_id, target = delivery
+            else:
+                target = EventTarget(kind=TargetKind.CURRENT_SESSION.value)
+            input_info = self._build_signal_input(event)
+        else:
+            input_info = {
+                "role": event.role,
+                "content": event.content,
+                "metadata": dict(getattr(event, "metadata", {}) or {}),
+            }
+            target = (
+                EventTarget(kind=TargetKind.BROADCAST.value)
+                if effective_session_id == "system:boot"
+                else EventTarget(kind=TargetKind.CURRENT_SESSION.value)
+            )
+        return SessionExecutionRequest(
+            session_id=effective_session_id,
+            event=event,
+            input_info=input_info,
+            target=target,
+            is_boot=effective_session_id == "system:boot",
+        )
+
+    async def _process_session_execution(self, request: SessionExecutionRequest) -> None:
+        stream_id = ""
+        turn_id = uuid4().hex
+        token = bind_event_context(
+            trace_id=getattr(request.event, "event_id", ""),
+            session_id=request.session_id,
+            turn_id=turn_id,
+            source=request.event.source,
+            target=request.target,
+        )
+        reasoning_started = False
+        reasoning_ended = False
+
+        try:
+            api_key = self.config.get("api_key") or ""
+            api_url = self.config.get("api_url") or ""
+            model = self.config.get("model") or ""
+            model_options = self._build_model_options(getattr(request.event, "metadata", {}))
+
+            if request.event.type == EventType.MESSAGE.value and request.event.role == "user":
+                await self._emit_pending_task_updates(request.session_id, request.target, request.event.source)
+
+            stream_id = await self.speaker.emit_stream_start(
+                request.session_id,
+                self._brain_source,
+                target=request.target,
+                stream_channel="answer",
+            )
+
+            async def emit_tool_activity(phase: str, content: str, metadata: dict | None = None):
+                metadata = metadata or {}
+                await self.speaker.emit_status(
+                    request.session_id,
+                    content,
+                    make_source(SourceKind.SYSTEM.value, "search"),
+                    target=request.target,
+                    metadata={
+                        "activity_kind": metadata.get("activity_kind", "tool_chain"),
+                        "search_phase": phase,
+                        "activity_phase": phase,
+                        "turn_id": turn_id,
+                        **metadata,
+                    },
+                )
+
+            async def phase_callback(status: str, detail: str = "", active_tools: list[str] | None = None):
+                self.brain.set_session_runtime_state(
+                    request.session_id,
+                    status,
+                    detail=detail,
+                    active_tools=active_tools or [],
+                    stream_id=stream_id,
+                    turn_id=turn_id,
+                )
+                await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
+
+            self.brain.set_session_runtime_state(
+                request.session_id,
+                RuntimeStatus.THINKING.value,
+                detail="Starting turn",
+                active_tools=[],
+                stream_id=stream_id,
+                turn_id=turn_id,
+            )
+            await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
+
+            async for output in self.brain.input_brain(
+                request.session_id,
+                request.input_info,
+                api_key,
+                api_url,
+                model,
+                provider_name=self._get_main_provider(),
+                tool_activity_callback=emit_tool_activity,
+                model_options=model_options,
+                phase_callback=phase_callback,
+            ):
+                if not isinstance(output, BrainOutputEvent):
+                    continue
+
+                if output.type == "reasoning_text" and output.text:
+                    if not reasoning_started:
+                        await self._emit_reasoning_stream_event(
+                            request.session_id,
+                            stream_id,
+                            StreamEventType.START.value,
+                            "",
+                            request.target,
+                            turn_id,
+                        )
+                        reasoning_started = True
+                    await self._emit_reasoning_stream_event(
+                        request.session_id,
+                        stream_id,
+                        StreamEventType.CHUNK.value,
+                        output.text,
+                        request.target,
+                        turn_id,
+                    )
+                elif output.type == "reasoning_end":
+                    if reasoning_started and not reasoning_ended:
+                        await self._emit_reasoning_stream_event(
+                            request.session_id,
+                            stream_id,
+                            StreamEventType.END.value,
+                            "",
+                            request.target,
+                            turn_id,
+                        )
+                        reasoning_ended = True
+                elif output.type == "answer_text" and output.text:
+                    if reasoning_started and not reasoning_ended:
+                        await self._emit_reasoning_stream_event(
+                            request.session_id,
+                            stream_id,
+                            StreamEventType.END.value,
+                            "",
+                            request.target,
+                            turn_id,
+                        )
+                        reasoning_ended = True
+                    await self.speaker.emit_stream_chunk(
+                        request.session_id,
+                        output.text,
+                        self._brain_source,
+                        stream_id,
+                        target=request.target,
+                        stream_channel="answer",
+                    )
+                elif output.type == "usage" and output.usage:
+                    await self._emit_usage_event(request.session_id, output.usage, request.target, turn_id)
+
+            if reasoning_started and not reasoning_ended:
+                await self._emit_reasoning_stream_event(
+                    request.session_id,
+                    stream_id,
+                    StreamEventType.END.value,
+                    "",
+                    request.target,
+                    turn_id,
+                )
+
+            self.brain.set_session_runtime_state(
+                request.session_id,
+                RuntimeStatus.IDLE.value,
+                detail="",
+                active_tools=[],
+                stream_id=stream_id,
+                turn_id=turn_id,
+            )
+            await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
+            await self.speaker.emit_stream_end(
+                request.session_id,
+                self._brain_source,
+                stream_id,
+                target=request.target,
+                stream_channel="answer",
+            )
+        except Exception as exc:
+            logger.error("Brain processing error: %s\n%s", exc, traceback.format_exc())
+            if bool(dict(request.input_info.get("metadata") or {}).get("transient")):
+                self.brain.discard_trailing_transient_messages(request.session_id)
+            error_payload = self._runtime_error_payload_from_exception(exc)
+            if reasoning_started and not reasoning_ended:
+                await self._emit_reasoning_stream_event(
+                    request.session_id,
+                    stream_id,
+                    StreamEventType.END.value,
+                    "",
+                    request.target,
+                    turn_id,
+                )
+                reasoning_ended = True
+            self.brain.set_session_runtime_state(
+                request.session_id,
+                RuntimeStatus.ERROR.value,
+                detail=str(error_payload.get("message") or str(exc)),
+                active_tools=[],
+                stream_id=stream_id,
+                turn_id=turn_id,
+            )
+            await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
+            await self.speaker.emit_error(
+                request.session_id,
+                error_payload,
+                self._brain_source,
+                target=request.target,
+                stream_id=stream_id,
+                metadata={"turn_id": turn_id, "stream_channel": "answer"},
+            )
+        finally:
+            reset_event_context(token)
+            if request.is_boot:
+                await self.brain.close_session(request.session_id)
+
     async def brain_processor(self):
         shutdown = self.event_bus.shutdown_event
         queue = self.event_bus.inbound_queue
 
-        while True:
-            get_task = asyncio.create_task(queue.get())
-            shutdown_task = asyncio.create_task(shutdown.wait())
-            done, pending = await asyncio.wait(
-                [get_task, shutdown_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            if shutdown_task in done:
-                break
-
-            event = get_task.result()
-            if event.type == EventType.CONFIRM_RESPONSE.value:
-                resolved = self.event_bus.resolve_confirmation(
-                    event.accepted,
-                    request_id=event.request_id,
-                    session_id=event.session_id,
+        try:
+            while True:
+                get_task = asyncio.create_task(queue.get())
+                shutdown_task = asyncio.create_task(shutdown.wait())
+                done, pending = await asyncio.wait(
+                    [get_task, shutdown_task],
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-                if not resolved:
-                    await self.speaker.emit_error(
-                        event.session_id,
-                        "Confirmation request expired or does not match the current session.",
-                        make_source(SourceKind.SYSTEM.value, "confirm"),
+                for task in pending:
+                    task.cancel()
+                if shutdown_task in done:
+                    break
+
+                event = get_task.result()
+                if event.type == EventType.CONFIRM_RESPONSE.value:
+                    resolved = self.event_bus.resolve_confirmation(
+                        event.accepted,
+                        request_id=event.request_id,
+                        session_id=event.session_id,
                     )
-                continue
-
-            if event.type == EventType.CONTROL.value:
-                try:
-                    handled = await self._handle_control_event(event)
-                    if not handled:
-                        logger.warning("Unhandled control event: %s", getattr(event, "metadata", {}))
-                except Exception as exc:
-                    logger.error("Control event processing failed: %s\n%s", exc, traceback.format_exc())
-                continue
-
-            effective_session_id = event.session_id
-            if event.type == EventType.SIGNAL.value:
-                if self._is_heartbeat_signal(event):
-                    delivery = self._recent_user_delivery()
-                    if delivery is None:
-                        logger.info("Skipping heartbeat signal because no recent active session is available")
-                        continue
-                    effective_session_id, target = delivery
-                else:
-                    target = EventTarget(kind=TargetKind.CURRENT_SESSION.value)
-                input_info = self._build_signal_input(event)
-            else:
-                input_info = {
-                    "role": event.role,
-                    "content": event.content,
-                    "metadata": dict(getattr(event, "metadata", {}) or {}),
-                }
-                target = (
-                    EventTarget(kind=TargetKind.BROADCAST.value)
-                    if effective_session_id == "system:boot"
-                    else EventTarget(kind=TargetKind.CURRENT_SESSION.value)
-                )
-
-            is_boot = effective_session_id == "system:boot"
-            token = bind_event_context(
-                session_id=effective_session_id,
-                source=event.source,
-                target=target,
-            )
-
-            stream_id = ""
-            turn_id = uuid4().hex
-            reasoning_started = False
-            reasoning_ended = False
-
-            try:
-                api_key = self.config.get("api_key") or ""
-                api_url = self.config.get("api_url") or ""
-                model = self.config.get("model") or ""
-                model_options = self._build_model_options(getattr(event, "metadata", {}))
-
-                if event.type == EventType.MESSAGE.value and event.role == "user":
-                    await self._emit_pending_task_updates(effective_session_id, target, event.source)
-
-                stream_id = await self.speaker.emit_stream_start(
-                    effective_session_id,
-                    self._brain_source,
-                    target=target,
-                    stream_channel="answer",
-                )
-
-                async def emit_tool_activity(phase: str, content: str, metadata: dict | None = None):
-                    metadata = metadata or {}
-                    await self.speaker.emit_status(
-                        effective_session_id,
-                        content,
-                        make_source(SourceKind.SYSTEM.value, "search"),
-                        target=target,
-                        metadata={
-                            "activity_kind": metadata.get("activity_kind", "tool_chain"),
-                            "search_phase": phase,
-                            "activity_phase": phase,
-                            "turn_id": turn_id,
-                            **metadata,
-                        },
-                    )
-
-                async def phase_callback(status: str, detail: str = "", active_tools: list[str] | None = None):
-                    self.brain.set_session_runtime_state(
-                        effective_session_id,
-                        status,
-                        detail=detail,
-                        active_tools=active_tools or [],
-                        stream_id=stream_id,
-                        turn_id=turn_id,
-                    )
-                    await self._emit_runtime_status_event(effective_session_id, target, turn_id)
-
-                self.brain.set_session_runtime_state(
-                    effective_session_id,
-                    RuntimeStatus.THINKING.value,
-                    detail="Starting turn",
-                    active_tools=[],
-                    stream_id=stream_id,
-                    turn_id=turn_id,
-                )
-                await self._emit_runtime_status_event(effective_session_id, target, turn_id)
-
-                async for output in self.brain.input_brain(
-                    effective_session_id,
-                    input_info,
-                    api_key,
-                    api_url,
-                    model,
-                    provider_name=self._get_main_provider(),
-                    tool_activity_callback=emit_tool_activity,
-                    model_options=model_options,
-                    phase_callback=phase_callback,
-                ):
-                    if not isinstance(output, BrainOutputEvent):
-                        continue
-
-                    if output.type == "reasoning_text" and output.text:
-                        if not reasoning_started:
-                            await self._emit_reasoning_stream_event(
-                                effective_session_id,
-                                stream_id,
-                                StreamEventType.START.value,
-                                "",
-                                target,
-                                turn_id,
-                            )
-                            reasoning_started = True
-                        await self._emit_reasoning_stream_event(
-                            effective_session_id,
-                            stream_id,
-                            StreamEventType.CHUNK.value,
-                            output.text,
-                            target,
-                            turn_id,
+                    if not resolved:
+                        await self.speaker.emit_error(
+                            event.session_id,
+                            "Confirmation request expired or does not match the current session.",
+                            make_source(SourceKind.SYSTEM.value, "confirm"),
                         )
-                    elif output.type == "answer_text" and output.text:
-                        if reasoning_started and not reasoning_ended:
-                            await self._emit_reasoning_stream_event(
-                                effective_session_id,
-                                stream_id,
-                                StreamEventType.END.value,
-                                "",
-                                target,
-                                turn_id,
-                            )
-                            reasoning_ended = True
-                        await self.speaker.emit_stream_chunk(
-                            effective_session_id,
-                            output.text,
-                            self._brain_source,
-                            stream_id,
-                            target=target,
-                            stream_channel="answer",
-                        )
-                    elif output.type == "usage" and output.usage:
-                        await self._emit_usage_event(effective_session_id, output.usage, target, turn_id)
+                    continue
 
-                if reasoning_started and not reasoning_ended:
-                    await self._emit_reasoning_stream_event(
-                        effective_session_id,
-                        stream_id,
-                        StreamEventType.END.value,
-                        "",
-                        target,
-                        turn_id,
-                    )
+                if event.type == EventType.CONTROL.value:
+                    try:
+                        handled = await self._handle_control_event(event)
+                        if not handled:
+                            logger.warning("Unhandled control event: %s", getattr(event, "metadata", {}))
+                    except Exception as exc:
+                        logger.error("Control event processing failed: %s\n%s", exc, traceback.format_exc())
+                    continue
 
-                self.brain.set_session_runtime_state(
-                    effective_session_id,
-                    RuntimeStatus.IDLE.value,
-                    detail="",
-                    active_tools=[],
-                    stream_id=stream_id,
-                    turn_id=turn_id,
-                )
-                await self._emit_runtime_status_event(effective_session_id, target, turn_id)
-                await self.speaker.emit_stream_end(
-                    effective_session_id,
-                    self._brain_source,
-                    stream_id,
-                    target=target,
-                    stream_channel="answer",
-                )
-            except Exception as exc:
-                logger.error("Brain processing error: %s\n%s", exc, traceback.format_exc())
-                if bool(dict(input_info.get("metadata") or {}).get("transient")):
-                    self.brain.discard_trailing_transient_messages(effective_session_id)
-                self.brain.set_session_runtime_state(
-                    effective_session_id,
-                    RuntimeStatus.ERROR.value,
-                    detail=str(exc),
-                    active_tools=[],
-                    stream_id=stream_id,
-                    turn_id=turn_id,
-                )
-                await self._emit_runtime_status_event(effective_session_id, target, turn_id)
-                await self.speaker.emit_error(
-                    effective_session_id,
-                    str(exc),
-                    self._brain_source,
-                    target=target,
-                    stream_id=stream_id,
-                    metadata={"turn_id": turn_id, "stream_channel": "answer"},
-                )
-            finally:
-                reset_event_context(token)
-                if is_boot:
-                    await self.brain.close_session(effective_session_id)
+                request = self._resolve_session_execution_request(event)
+                if request is None:
+                    continue
+                await self._session_execution_runtime.submit(request.session_id, request)
+        finally:
+            await self._session_execution_runtime.shutdown()
 
     async def setup(self):
         tools_schema_path = self.config.get("tools_schema_path") or "user/tools.json"
@@ -1171,17 +1358,16 @@ class App:
 
         self.status_manager.set_global(RuntimeStatus.INITIALIZING.value, "Starting up")
         await self.memory.init_memory(self.config)
-        await self.task_manager.sync_legacy_memory_tasks()
         await self.tools_manager.init_tools(tools_schema_path, mcp_servers)
         await self._refresh_brain_runtime()
         await self.heart.init_heart()
         system_tools.set_background_status_provider(self.heart.get_background_status)
 
-        if not self.config.get_bool("enable_gateway", True):
-            logger.warning("enable_gateway=false is ignored in the gateway-only runtime.")
-
         host = self.config.get("gateway_host") or "127.0.0.1"
         port = int(self.config.get("gateway_port") or 8000)
+        gateway_access_token = str(self.config.get("gateway_access_token") or "").strip()
+        if host not in {"127.0.0.1", "localhost", "::1"} and not gateway_access_token:
+            raise ConfigError("非本地 gateway_host 必须配置 gateway_access_token")
         self.gateway = FastAPIGateway(
             self.event_bus,
             self.session_manager,
@@ -1192,6 +1378,15 @@ class App:
             memory_graph_getter=self.get_memory_graph,
             runtime_state_getter=self.get_runtime_state,
             runtime_usage_getter=self.get_runtime_usage,
+            runtime_debug_getter=self.get_runtime_debug,
+            health_getter=self._health_getter,
+            ws_delivery_observer=(
+                self._telemetry_recorder.observe_gateway_delivery
+                if self._telemetry_recorder is not None
+                else None
+            ),
+            access_token=gateway_access_token,
+            cors_origins=self.config.get("gateway_cors_origins") or [],
         )
         self.speaker.register_adapter(TargetKind.WEB.value, self.gateway.output_adapter)
         await self.gateway.start(host=host, port=port)
@@ -1209,7 +1404,7 @@ class App:
             await self.feishu_input.run()
 
         self.status_manager.set_global(RuntimeStatus.IDLE.value, "")
-        logger.info("Gateway runtime initialized")
+        logger.info("Service runtime initialized")
 
         try:
             start_prompt = self.config.get_prompt("start")
@@ -1236,6 +1431,7 @@ class App:
         logger.info("Shutting down...")
         self.status_manager.set_global(RuntimeStatus.SHUTTING_DOWN.value, "Shutting down")
         self.event_bus.request_shutdown()
+        await self._session_execution_runtime.shutdown()
         if self.gateway is not None:
             await self.gateway.stop()
         if self.feishu_input is not None:

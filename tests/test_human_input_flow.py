@@ -325,9 +325,9 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
 class HumanInputGatewayTests(unittest.TestCase):
     def test_websocket_input_response_resolves_immediately(self):
         bus = _GatewayHumanInputEventBus()
-        gateway = FastAPIGateway(bus, SessionManager())
+        gateway = FastAPIGateway(bus, SessionManager(), access_token="ws-token")
         with TestClient(gateway.app) as client:
-            with client.websocket_connect("/ws?session_id=web:test&source_id=desktop") as websocket:
+            with client.websocket_connect("/ws?session_id=web:test&source_id=desktop&access_token=ws-token") as websocket:
                 connection = websocket.receive_json()
                 self.assertEqual(connection["kind"], "connection")
 
@@ -342,6 +342,7 @@ class HumanInputGatewayTests(unittest.TestCase):
                 ack = websocket.receive_json()
 
         self.assertEqual(ack["kind"], "ack")
+        self.assertEqual(ack["ack"]["session_id"], "web:test")
         self.assertEqual(bus.calls, [("B", "req-123", "web:test", "B")])
         self.assertTrue(bus.inbound_queue.empty())
 

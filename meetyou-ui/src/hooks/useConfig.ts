@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { buildConfigGroups, getConfigFieldSchema } from '../configSchema'
+import { parseUiProtocolSchemaEnvelope } from '../protocolClient'
 import type {
   ConfigEntry,
   ConfigFieldSchema,
   ConfigFormValue,
   ConfigPatchResult,
   ResolvedConfigField,
+  UiProtocolSchema,
 } from '../types'
 
 function toFormValue(entry: ConfigEntry | null, schema: ConfigFieldSchema): ConfigFormValue {
@@ -191,6 +193,7 @@ function sortFields(fields: ResolvedConfigField[]): ResolvedConfigField[] {
 
 export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
   const [config, setConfig] = useState<Record<string, ConfigEntry>>({})
+  const [uiSchema, setUiSchema] = useState<UiProtocolSchema | null>(null)
   const [formValues, setFormValues] = useState<Record<string, ConfigFormValue>>({})
   const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true)
@@ -202,21 +205,34 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
     async (preserveSaveResult = false) => {
       try {
         setLoading(true)
-        const response = await fetch(`${baseUrl}/config`)
-        if (!response.ok) {
+        const [schemaResponse, configResponse] = await Promise.all([
+          fetch(`${baseUrl}/schema/ui`),
+          fetch(`${baseUrl}/config`),
+        ])
+
+        if (!schemaResponse.ok) {
+          throw new Error('获取协议定义失败')
+        }
+        if (!configResponse.ok) {
           throw new Error('获取配置失败')
         }
 
-        const data = await response.json()
+        const schemaPayload = parseUiProtocolSchemaEnvelope(await schemaResponse.json())
+        if (!schemaPayload) {
+          throw new Error('解析协议定义失败')
+        }
+
+        const data = await configResponse.json()
         const nextConfig: Record<string, ConfigEntry> = data.items ?? {}
         const nextFormValues: Record<string, ConfigFormValue> = {}
 
         Object.keys(nextConfig).forEach((key) => {
           const entry = nextConfig[key]
-          const schema = getConfigFieldSchema(key, entry)
+          const schema = getConfigFieldSchema(key, entry, schemaPayload)
           nextFormValues[key] = toFormValue(entry, schema)
         })
 
+        setUiSchema(schemaPayload)
         setConfig(nextConfig)
         setFormValues(nextFormValues)
         setTouchedFields({})
@@ -241,7 +257,7 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
     const keys = Object.keys(config).sort((left, right) => left.localeCompare(right, 'en'))
     const fields = keys.map((key) => {
       const entry = config[key] ?? null
-      const schema = getConfigFieldSchema(key, entry)
+      const schema = getConfigFieldSchema(key, entry, uiSchema)
       const formValue = formValues[key] ?? toFormValue(entry, schema)
       const serializedValue = serializeFormValue(formValue, schema)
       const normalizedValue = normalizeEntryValue(entry, schema)
@@ -259,9 +275,9 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
     })
 
     return sortFields(fields)
-  }, [config, formValues, touchedFields])
+  }, [config, formValues, touchedFields, uiSchema])
 
-  const groupedFields = useMemo(() => buildConfigGroups(resolvedFields), [resolvedFields])
+  const groupedFields = useMemo(() => buildConfigGroups(resolvedFields, uiSchema), [resolvedFields, uiSchema])
 
   const dirtyKeys = useMemo(
     () => resolvedFields.filter((field) => field.dirty).map((field) => field.key),
@@ -294,14 +310,14 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
     const nextValues: Record<string, ConfigFormValue> = {}
     Object.keys(config).forEach((key) => {
       const entry = config[key]
-      const schema = getConfigFieldSchema(key, entry)
+      const schema = getConfigFieldSchema(key, entry, uiSchema)
       nextValues[key] = toFormValue(entry, schema)
     })
     setFormValues(nextValues)
     setTouchedFields({})
     setSaveResult(null)
     setError(null)
-  }, [config])
+  }, [config, uiSchema])
 
   const saveConfig = useCallback(async () => {
     const dirtyFields = resolvedFields.filter((field) => field.dirty)
@@ -348,6 +364,7 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
 
   return {
     config,
+    uiSchema,
     groupedFields,
     resolvedFields,
     loading,

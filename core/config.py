@@ -5,79 +5,66 @@
 并提供统一的读取、写入、快照与热更新辅助能力。
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
+import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+from adapters.base import create_adapter
 from core.exceptions import ConfigError
+from core.persistence import atomic_write_json, atomic_write_text, load_json_with_recovery
+from core.protocol_schema import CONFIG_FIELD_KEYS, SUPPORTED_PROVIDER_VALUES, THINKING_EFFORT_VALUES
+from core.repositories import ConfigRepository, ConfigTransactionSnapshot
+from tools.memory_layers import dt_to_iso, utcnow
 
 logger = logging.getLogger("meetyou.config")
 
 _CONFIG_FILE_PATH = "user/config.json"
 _ENV_FILE_PATH = ".env"
 _MCP_SERVER_CONFIG_PATH = "user/mcp_servers.json"
+_CONFIG_METADATA_KEY = "_meta"
+_CONFIG_SCHEMA_VERSION = "2"
+_REMOVED_CONFIG_KEYS = {"enable_gateway", "source_profiles"}
+_ENV_ASSIGNMENT_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+_BOOLEAN_TRUE_VALUES = {"1", "true", "yes", "on"}
+_BOOLEAN_FALSE_VALUES = {"0", "false", "no", "off"}
+_BOOLEAN_KEYS = {"enable_feishu_bot", "thinking_enabled"}
+_INTEGER_KEYS = {
+    "gateway_port",
+    "heartbeat_interval",
+    "housekeeping_interval",
+    "scheduler_interval",
+    "thinking_budget_tokens",
+}
+_POSITIVE_INTEGER_KEYS = {"heartbeat_interval", "housekeeping_interval", "scheduler_interval"}
+_JSON_OBJECT_KEYS = {"assistant_modes", "mode_router", "document_parsers", "office_integrations"}
+_LIST_KEYS = {"trusted_write_roots", "feishu_broadcast_chat_ids", "gateway_cors_origins"}
+_URL_KEYS = {"api_url", "embedding_api_url", "heartbeat_api_url", "mcp_registry_url"}
+_PROVIDER_KEYS = {"api_provider", "heartbeat_api_provider"}
+_THINKING_EFFORT_VALUES = set(THINKING_EFFORT_VALUES)
+_SUPPORTED_PROVIDERS = set(SUPPORTED_PROVIDER_VALUES)
 
 _ENV_KEY_MAP = {
     "api_key": "MEETYOU_API_KEY",
     "heartbeat_api_key": "MEETYOU_HEARTBEAT_API_KEY",
     "embedding_api_key": "MEETYOU_EMBEDDING_API_KEY",
+    "gateway_access_token": "MEETYOU_GATEWAY_ACCESS_TOKEN",
     "feishu_app_id": "MEETYOU_FEISHU_APP_ID",
     "feishu_app_secret": "MEETYOU_FEISHU_APP_SECRET",
     "notion_token": "NOTION_TOKEN",
     "tavily_api_key": "TAVILY_API_KEY",
 }
 
-_KNOWN_CONFIG_KEYS = {
-    "assistant_modes",
-    "api_provider",
-    "api_url",
-    "cmd_policy_path",
-    "document_parsers",
-    "embedding_api_url",
-    "embedding_model",
-    "enable_feishu_bot",
-    "enable_gateway",
-    "feishu_broadcast_chat_ids",
-    "feishu_default_chat_id",
-    "feishu_chat_registry_path",
-    "gateway_host",
-    "gateway_port",
-    "heartbeat_api_provider",
-    "heartbeat_api_url",
-    "housekeeping_interval",
-    "heartbeat_interval",
-    "heartbeat_path",
-    "heart_model",
-    "mcp_registry_url",
-    "memory_file_path",
-    "model",
-    "mode_router",
-    "office_integrations",
-    "research_contact_email",
-    "source_profiles",
-    "source_catalog_path",
-    "soul_path",
-    "start_path",
-    "scheduler_interval",
-    "thinking_budget_tokens",
-    "thinking_effort",
-    "thinking_enabled",
-    "trusted_write_roots",
-    "tools_schema_path",
-}
+_KNOWN_CONFIG_KEYS = set(CONFIG_FIELD_KEYS)
 
 
-class ConfigManager:
-    """
-    配置管理器。
-
-    - 非敏感配置从 config.json 加载
-    - 密钥配置优先从环境变量/`.env` 读取
-    - MCP 服务器配置单独加载
-    """
-
+class ConfigManager(ConfigRepository):
     def __init__(
         self,
         config_file_path: str = _CONFIG_FILE_PATH,
@@ -87,6 +74,7 @@ class ConfigManager:
         self._env_file_path = env_file_path
         self._mcp_server_config_path = _MCP_SERVER_CONFIG_PATH
         self._config: dict[str, Any] = {}
+        self._config_metadata: dict[str, Any] = self._default_config_metadata()
         self._mcp_server_config: dict[str, Any] = {}
         self.reload()
 
@@ -103,6 +91,13 @@ class ConfigManager:
         self._load_config()
         self._load_mcp_config()
 
+    def _default_config_metadata(self) -> dict[str, Any]:
+        return {
+            "schema_version": _CONFIG_SCHEMA_VERSION,
+            "revision": 0,
+            "updated_at": "",
+        }
+
     def _load_env(self):
         try:
             from dotenv import load_dotenv
@@ -113,13 +108,57 @@ class ConfigManager:
 
     def _load_config(self):
         try:
-            with open(self._config_file_path, "r", encoding="utf-8") as f:
-                self._config = json.load(f)
-            logger.info("配置文件已加载: %s", self._config_file_path)
+            payload = load_json_with_recovery(
+                self._config_file_path,
+                validator=lambda data: isinstance(data, dict),
+            )
         except FileNotFoundError:
             raise ConfigError(f"配置文件不存在: {self._config_file_path}")
-        except json.JSONDecodeError as e:
-            raise ConfigError(f"配置文件格式错误: {e}")
+        except ValueError as exc:
+            raise ConfigError(f"配置文件格式错误: {exc}")
+        if not isinstance(payload, dict):
+            raise ConfigError(f"配置文件格式错误: {self._config_file_path}")
+        metadata = payload.get(_CONFIG_METADATA_KEY)
+        payload, metadata = self._strip_removed_config_keys(payload, metadata)
+        self._config_metadata = self._normalize_config_metadata(metadata)
+        self._config = {
+            key: value
+            for key, value in payload.items()
+            if key != _CONFIG_METADATA_KEY
+        }
+        logger.info("配置文件已加载: %s", self._config_file_path)
+
+    def _strip_removed_config_keys(self, payload: dict[str, Any], metadata: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        removed_keys = sorted(key for key in _REMOVED_CONFIG_KEYS if key in payload)
+        if not removed_keys:
+            return payload, metadata if isinstance(metadata, dict) else {}
+        cleaned_payload = {key: value for key, value in payload.items() if key not in _REMOVED_CONFIG_KEYS}
+        cleaned_metadata = self._normalize_config_metadata(metadata)
+        cleaned_metadata["schema_version"] = _CONFIG_SCHEMA_VERSION
+        cleaned_metadata["revision"] = int(cleaned_metadata.get("revision", 0) or 0) + 1
+        cleaned_metadata["updated_at"] = dt_to_iso(utcnow())
+        self._persist_config_state(
+            {
+                key: value
+                for key, value in cleaned_payload.items()
+                if key != _CONFIG_METADATA_KEY
+            },
+            cleaned_metadata,
+        )
+        logger.warning("已从配置中移除失效配置项: %s", ", ".join(removed_keys))
+        return cleaned_payload, cleaned_metadata
+
+    def _normalize_config_metadata(self, metadata: Any) -> dict[str, Any]:
+        payload = metadata if isinstance(metadata, dict) else {}
+        try:
+            revision = int(payload.get("revision", 0) or 0)
+        except (TypeError, ValueError):
+            revision = 0
+        return {
+            "schema_version": str(payload.get("schema_version") or _CONFIG_SCHEMA_VERSION),
+            "revision": max(revision, 0),
+            "updated_at": str(payload.get("updated_at") or ""),
+        }
 
     def _load_mcp_config(self):
         try:
@@ -132,31 +171,6 @@ class ConfigManager:
             logger.warning("MCP 配置文件格式错误: %s", e)
             self._mcp_server_config = {}
 
-    def _write_config(self):
-        with open(self._config_file_path, "w", encoding="utf-8") as f:
-            json.dump(self._config, f, indent=4, ensure_ascii=False)
-
-    def _write_env_value(self, env_key: str, value: Any):
-        try:
-            from dotenv import set_key
-
-            env_path = Path(self._env_file_path)
-            if not env_path.exists():
-                env_path.touch()
-            serialized = "" if value is None else str(value)
-            set_key(self._env_file_path, env_key, serialized)
-            os.environ[env_key] = serialized
-        except Exception as e:
-            logger.error("写入 .env 失败 [%s]: %s", env_key, e)
-            raise
-
-    @staticmethod
-    def is_secret_key(key: str) -> bool:
-        return key in _ENV_KEY_MAP
-
-    def is_manageable_key(self, key: str) -> bool:
-        return key in _ENV_KEY_MAP or key in _KNOWN_CONFIG_KEYS or key in self._config
-
     @staticmethod
     def _mask_secret(value: str) -> str:
         if not value:
@@ -164,6 +178,81 @@ class ConfigManager:
         if len(value) <= 4:
             return "*" * len(value)
         return f"{value[:2]}{'*' * (len(value) - 4)}{value[-2:]}"
+
+    @staticmethod
+    def is_secret_key(key: str) -> bool:
+        return key in _ENV_KEY_MAP
+
+    def is_manageable_key(self, key: str) -> bool:
+        return key in _ENV_KEY_MAP or key in _KNOWN_CONFIG_KEYS or (
+            key in self._config and key != _CONFIG_METADATA_KEY
+        )
+
+    def _build_config_payload(self, config: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+        ordered: dict[str, Any] = {_CONFIG_METADATA_KEY: self._normalize_config_metadata(metadata)}
+        ordered.update(config)
+        return ordered
+
+    def _persist_config_state(self, config: dict[str, Any], metadata: dict[str, Any]) -> None:
+        atomic_write_json(
+            self._config_file_path,
+            self._build_config_payload(config, metadata),
+        )
+
+    def _read_env_text(self) -> str:
+        env_path = Path(self._env_file_path)
+        if not env_path.exists():
+            return ""
+        return env_path.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _serialize_env_value(value: Any) -> str:
+        text = "" if value is None else str(value)
+        return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    def _build_env_text(self, updates: dict[str, Any]) -> str:
+        lines = self._read_env_text().splitlines()
+        pending = {key: self._serialize_env_value(value) for key, value in updates.items()}
+        rendered: list[str] = []
+        for line in lines:
+            match = _ENV_ASSIGNMENT_RE.match(line)
+            if match is None:
+                rendered.append(line)
+                continue
+            env_key = match.group(1)
+            if env_key in pending:
+                rendered.append(f"{env_key}={pending.pop(env_key)}")
+            else:
+                rendered.append(line)
+        for env_key, serialized in pending.items():
+            rendered.append(f"{env_key}={serialized}")
+        if not rendered:
+            return ""
+        return "\n".join(rendered) + "\n"
+
+    def _persist_env_updates(self, updates: dict[str, Any]) -> None:
+        atomic_write_text(self._env_file_path, self._build_env_text(updates))
+        for env_key, value in updates.items():
+            os.environ[env_key] = "" if value is None else str(value)
+
+    def begin_transaction(self) -> ConfigTransactionSnapshot:
+        return ConfigTransactionSnapshot(
+            config=deepcopy(self._config),
+            metadata=deepcopy(self._config_metadata),
+            env_text=self._read_env_text(),
+            env_values={env_key: os.environ.get(env_key) for env_key in _ENV_KEY_MAP.values()},
+        )
+
+    def rollback_transaction(self, snapshot: ConfigTransactionSnapshot) -> None:
+        self._persist_config_state(snapshot.config, snapshot.metadata)
+        atomic_write_text(self._env_file_path, snapshot.env_text)
+        for env_key, value in snapshot.env_values.items():
+            if value is None:
+                os.environ.pop(env_key, None)
+            else:
+                os.environ[env_key] = value
+        self._config = deepcopy(snapshot.config)
+        self._config_metadata = deepcopy(snapshot.metadata)
 
     def get(self, key: str, default=None):
         if key in _ENV_KEY_MAP:
@@ -177,7 +266,7 @@ class ConfigManager:
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
-            return value.strip().lower() in ("1", "true", "yes", "on")
+            return value.strip().lower() in _BOOLEAN_TRUE_VALUES
         return bool(value)
 
     def get_prompt(self, prompt_name: str) -> str:
@@ -193,34 +282,175 @@ class ConfigManager:
     def update(self, key: str, value):
         self.apply_updates({key: value})
 
-    def apply_updates(self, updates: dict[str, Any]) -> tuple[list[str], list[str]]:
-        applied_keys: list[str] = []
-        warnings: list[str] = []
-        json_changed = False
+    def _normalize_boolean(self, key: str, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in _BOOLEAN_TRUE_VALUES:
+                return True
+            if lowered in _BOOLEAN_FALSE_VALUES:
+                return False
+        raise ConfigError(f"配置项 {key} 需要布尔值")
 
+    def _normalize_integer(self, key: str, value: Any) -> int:
+        if isinstance(value, bool):
+            raise ConfigError(f"配置项 {key} 需要整数")
+        if isinstance(value, int):
+            number = value
+        elif isinstance(value, float) and value.is_integer():
+            number = int(value)
+        elif isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
+            number = int(value.strip())
+        else:
+            raise ConfigError(f"配置项 {key} 需要整数")
+        if key == "gateway_port" and not 0 <= number <= 65535:
+            raise ConfigError("gateway_port 需在 0 到 65535 之间")
+        if key in _POSITIVE_INTEGER_KEYS and number < 1:
+            raise ConfigError(f"配置项 {key} 需要大于 0")
+        if key == "thinking_budget_tokens" and number < 0:
+            raise ConfigError("thinking_budget_tokens 不能小于 0")
+        return number
+
+    def _normalize_json_object(self, key: str, value: Any) -> dict[str, Any]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ConfigError(f"配置项 {key} 需要有效 JSON 对象: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ConfigError(f"配置项 {key} 需要 JSON 对象")
+        return value
+
+    def _normalize_list(self, key: str, value: Any) -> list[str]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ConfigError(f"配置项 {key} 需要字符串数组: {exc}") from exc
+        if not isinstance(value, list):
+            raise ConfigError(f"配置项 {key} 需要字符串数组")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                raise ConfigError(f"配置项 {key} 不能包含空字符串")
+            if text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    def _normalize_url(self, key: str, value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        parsed = urlparse(text)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ConfigError(f"配置项 {key} 需要有效 URL")
+        return text
+
+    def _normalize_provider(self, key: str, value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        if text not in _SUPPORTED_PROVIDERS:
+            raise ConfigError(f"配置项 {key} 不支持值: {text}")
+        create_adapter(text)
+        return text
+
+    def _normalize_text(self, value: Any) -> str:
+        return str(value or "").strip()
+
+    def _normalize_value(self, key: str, value: Any) -> Any:
+        if key in _ENV_KEY_MAP:
+            return self._normalize_text(value)
+        if key in _BOOLEAN_KEYS:
+            return self._normalize_boolean(key, value)
+        if key in _INTEGER_KEYS:
+            return self._normalize_integer(key, value)
+        if key in _JSON_OBJECT_KEYS:
+            return self._normalize_json_object(key, value)
+        if key in _LIST_KEYS:
+            return self._normalize_list(key, value)
+        if key in _URL_KEYS:
+            return self._normalize_url(key, value)
+        if key in _PROVIDER_KEYS:
+            return self._normalize_provider(key, value)
+        if key == "thinking_effort":
+            text = self._normalize_text(value).lower()
+            if text and text not in _THINKING_EFFORT_VALUES:
+                raise ConfigError(f"thinking_effort 仅支持: {', '.join(sorted(_THINKING_EFFORT_VALUES))}")
+            return text
+        if key == "research_contact_email":
+            text = self._normalize_text(value)
+            if text and ("@" not in text or text.startswith("@") or text.endswith("@")):
+                raise ConfigError("research_contact_email 需要有效邮箱地址")
+            return text
+        if key == "gateway_host":
+            text = self._normalize_text(value)
+            if text and any(char.isspace() for char in text):
+                raise ConfigError("gateway_host 不能包含空白字符")
+            return text
+        return value
+
+    def _validate_semantics(self, updates: dict[str, Any], merged_config: dict[str, Any]) -> None:
+        provider = str(merged_config.get("api_provider") or "").strip().lower()
+        if {"api_provider", "model"}.intersection(updates) and provider and not str(merged_config.get("model") or "").strip():
+            raise ConfigError("配置主模型时必须同时提供 model")
+        heartbeat_provider = str(merged_config.get("heartbeat_api_provider") or "").strip().lower()
+        if {"heartbeat_api_provider", "heart_model"}.intersection(updates) and heartbeat_provider and not str(merged_config.get("heart_model") or "").strip():
+            raise ConfigError("配置心跳模型提供商时必须同时提供 heart_model")
+        thinking_enabled = bool(merged_config.get("thinking_enabled"))
+        thinking_effort = str(merged_config.get("thinking_effort") or "").strip()
+        if {"thinking_enabled", "thinking_effort"}.intersection(updates) and not thinking_enabled and thinking_effort:
+            raise ConfigError("thinking_enabled=false 时不能设置 thinking_effort")
+        gateway_cors_origins = merged_config.get("gateway_cors_origins")
+        if isinstance(gateway_cors_origins, list) and "*" in gateway_cors_origins:
+            raise ConfigError("gateway_cors_origins 不能包含通配符 *")
+        trusted_write_roots = merged_config.get("trusted_write_roots")
+        if isinstance(trusted_write_roots, list):
+            for item in trusted_write_roots:
+                if not str(item or "").strip():
+                    raise ConfigError("trusted_write_roots 不能包含空路径")
+
+    def apply_updates(self, updates: dict[str, Any]) -> tuple[list[str], list[str]]:
+        if not isinstance(updates, dict):
+            raise ConfigError("配置更新载荷必须是对象")
+        if not updates:
+            return [], []
+        normalized_updates: dict[str, Any] = {}
+        secret_updates: dict[str, Any] = {}
+        next_config = deepcopy(self._config)
         for key, value in updates.items():
             if not self.is_manageable_key(key):
-                warnings.append(f"未知配置项，已跳过: {key}")
-                continue
-
+                raise ConfigError(f"未知配置项: {key}")
+            normalized_value = self._normalize_value(key, value)
+            normalized_updates[key] = normalized_value
             if self.is_secret_key(key):
-                env_key = _ENV_KEY_MAP[key]
-                self._write_env_value(env_key, value)
-                applied_keys.append(key)
-                continue
-
-            self._config[key] = value
-            applied_keys.append(key)
-            json_changed = True
-
-        if json_changed:
+                secret_updates[_ENV_KEY_MAP[key]] = normalized_value
+            else:
+                next_config[key] = normalized_value
+        self._validate_semantics(normalized_updates, next_config)
+        next_metadata = self._normalize_config_metadata(self._config_metadata)
+        next_metadata["schema_version"] = _CONFIG_SCHEMA_VERSION
+        next_metadata["revision"] = int(next_metadata.get("revision", 0) or 0) + 1
+        next_metadata["updated_at"] = dt_to_iso(utcnow())
+        snapshot = self.begin_transaction()
+        try:
+            self._persist_config_state(next_config, next_metadata)
+            self._persist_env_updates(secret_updates)
+        except Exception as exc:
             try:
-                self._write_config()
-            except Exception as e:
-                logger.error("配置持久化失败: %s", e)
-                raise
-
-        return applied_keys, warnings
+                self.rollback_transaction(snapshot)
+            except Exception as rollback_exc:
+                logger.error("配置写入失败且回滚失败: %s", rollback_exc)
+            logger.error("配置持久化失败: %s", exc)
+            raise ConfigError(f"配置持久化失败: {exc}") from exc
+        self._config = next_config
+        self._config_metadata = next_metadata
+        return sorted(normalized_updates.keys()), []
 
     def describe_key(self, key: str) -> dict[str, Any]:
         if not self.is_manageable_key(key):
@@ -256,5 +486,5 @@ class ConfigManager:
         keys = sorted(set(self._config) | _KNOWN_CONFIG_KEYS | set(_ENV_KEY_MAP))
         return {key: self.describe_key(key) for key in keys if self.is_manageable_key(key)}
 
-    def get_mcp_servers(self) -> dict:
+    def get_mcp_servers(self) -> dict[str, Any]:
         return self._mcp_server_config.get("mcpServers", {})

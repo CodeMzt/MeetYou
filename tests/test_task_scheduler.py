@@ -5,9 +5,11 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.tool_runtime.models import ToolCallResult
 from tools.task_manager import TaskManager
 
 
@@ -40,6 +42,104 @@ class _FakeMemory:
 
 
 class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_manage_tasks_supports_detail_delete_and_restore(self):
+        manager = TaskManager(_FakeMemory())
+        created = json.loads(
+            await manager.manage_tasks(
+                action="create",
+                summary="Fix payment callback retries",
+                source={"id": "desktop-user"},
+            )
+        )
+        task_key = created["tasks"][0]["task_key"]
+
+        detailed = json.loads(
+            await manager.manage_tasks(
+                action="detail",
+                task_key=task_key,
+                source={"id": "desktop-user"},
+            )
+        )
+        self.assertEqual(detailed["status"], "success")
+        self.assertEqual(detailed["objects"][0]["object_id"], task_key)
+
+        with patch("tools.task_manager.request_user_confirmation", AsyncMock(return_value=True)):
+            deleted = json.loads(
+                await manager.manage_tasks(
+                    action="delete",
+                    task_key=task_key,
+                    session_id="web:session:1",
+                    source={"id": "desktop-user"},
+                )
+            )
+        self.assertEqual(deleted["status"], "success")
+        self.assertEqual(deleted["objects"][0]["status"], "deleted")
+
+        with patch("tools.task_manager.request_user_confirmation", AsyncMock(return_value=True)):
+            restored = json.loads(
+                await manager.manage_tasks(
+                    action="restore",
+                    task_key=task_key,
+                    session_id="web:session:1",
+                    source={"id": "desktop-user"},
+                )
+            )
+        self.assertEqual(restored["status"], "success")
+        self.assertEqual(restored["objects"][0]["status"], "active")
+
+    async def test_manage_tasks_returns_ambiguous_candidates_for_non_unique_query(self):
+        manager = TaskManager(_FakeMemory())
+        await manager.manage_tasks(action="create", summary="整理日报", source={"id": "desktop-user"})
+        await manager.manage_tasks(action="create", summary="整理日报并归档", source={"id": "desktop-user"})
+
+        payload = json.loads(
+            await manager.manage_tasks(
+                action="detail",
+                query="日报",
+                source={"id": "desktop-user"},
+            )
+        )
+        self.assertEqual(payload["status"], "ambiguous")
+        self.assertEqual(len(payload["candidates"]), 2)
+
+    async def test_manage_scheduled_tasks_supports_disable_and_restore(self):
+        manager = TaskManager(_FakeMemory())
+        created = json.loads(
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="每天早上九点检查日报",
+                schedule_kind="recurring",
+                recurrence={"freq": "daily", "hour": 9, "minute": 0},
+                timezone="UTC",
+                source={"id": "desktop-user"},
+            )
+        )
+        task_key = created["tasks"][0]["task_key"]
+
+        with patch("tools.task_manager.request_user_confirmation", AsyncMock(return_value=True)):
+            disabled = json.loads(
+                await manager.manage_scheduled_tasks(
+                    action="disable",
+                    task_key=task_key,
+                    session_id="web:session:1",
+                    source={"id": "desktop-user"},
+                )
+            )
+        self.assertEqual(disabled["status"], "success")
+        self.assertEqual(disabled["objects"][0]["task_status"], "blocked")
+
+        with patch("tools.task_manager.request_user_confirmation", AsyncMock(return_value=True)):
+            restored = json.loads(
+                await manager.manage_scheduled_tasks(
+                    action="restore",
+                    task_key=task_key,
+                    session_id="web:session:1",
+                    source={"id": "desktop-user"},
+                )
+            )
+        self.assertEqual(restored["status"], "success")
+        self.assertEqual(restored["objects"][0]["task_status"], "open")
+
     async def test_recurring_task_parses_schedule_and_auto_run(self):
         manager = TaskManager(_FakeMemory())
 
@@ -86,7 +186,9 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
             timezone="UTC",
             source={"id": "desktop-user"},
         )
-        self.assertIn("weekly recurrence hour is required", failed)
+        self.assertIsInstance(failed, ToolCallResult)
+        self.assertFalse(failed.ok)
+        self.assertIn("weekly recurrence hour is required", failed.error.message)
 
     async def test_manage_tasks_rejects_schedule_fields_for_user_todo(self):
         manager = TaskManager(_FakeMemory())
@@ -97,7 +199,9 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
             due_at="2026-04-05T01:00:00Z",
             source={"id": "desktop-user"},
         )
-        self.assertIn("manage_tasks only manages user TODO items", failed)
+        self.assertIsInstance(failed, ToolCallResult)
+        self.assertFalse(failed.ok)
+        self.assertIn("manage_tasks only manages user TODO items", failed.error.message)
 
     async def test_user_todo_with_time_language_is_not_claimed_by_scheduler(self):
         manager = TaskManager(_FakeMemory())
@@ -140,6 +244,8 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["completion_state"], "awaiting_completion")
         self.assertEqual(task["orchestration"]["execution_status"], "succeeded")
         self.assertEqual(task["orchestration"]["completion_status"], "awaiting_completion")
+        self.assertEqual(task["state"]["execution"]["status"], "succeeded")
+        self.assertEqual(task["state"]["orchestration"]["completion_status"], "awaiting_completion")
         self.assertEqual(task["next_run_at"], due_at)
         self.assertEqual(await manager.claim_due_tasks(), [])
 
@@ -193,6 +299,46 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         retry_claim = await manager.claim_due_tasks(now=now + timedelta(seconds=62))
         self.assertEqual(len(retry_claim), 1)
         self.assertEqual(retry_claim[0]["task_key"], task_key)
+
+    async def test_job_runtime_tracks_failure_category_and_retry_state(self):
+        manager = TaskManager(_FakeMemory())
+        now = datetime(2026, 4, 2, 10, 0, tzinfo=timezone.utc)
+        due_at = (now - timedelta(minutes=5)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        created = json.loads(
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="定时同步审计报告",
+                schedule_kind="once",
+                due_at=due_at,
+                auto_run=True,
+                source={"id": "desktop-user"},
+                session_id="web:session:1",
+            )
+        )
+        task_key = created["tasks"][0]["task_key"]
+
+        await manager.claim_due_tasks(now=now)
+        await manager.complete_task_run(
+            task_key,
+            succeeded=False,
+            summary="审计同步失败，需要人工介入",
+            delivered=True,
+            failure_category="manual_intervention",
+            failure_retryable=False,
+            failure_code="audit_manual_intervention",
+            runtime_source="app.scheduled_task",
+            now=now + timedelta(seconds=1),
+        )
+
+        task = manager.get_task_by_key(task_key)
+        status = manager.build_background_status()
+
+        self.assertEqual(task["job"]["status"], "failed")
+        self.assertEqual(task["job"]["last_failure"]["category"], "manual_intervention")
+        self.assertFalse(task["job"]["last_failure"]["retryable"])
+        self.assertEqual(task["orchestration"]["failure_category"], "manual_intervention")
+        self.assertEqual(status["failure_summary"]["by_category"]["manual_intervention"], 1)
+        self.assertEqual(status["job_status_counts"]["failed"], 1)
 
     async def test_once_task_is_not_reclaimed_after_lease_expires_before_completion(self):
         manager = TaskManager(_FakeMemory())
@@ -252,6 +398,8 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["next_run_at"], "2026-04-02T09:00:00Z")
         self.assertTrue(state["awaiting_completion"])
         self.assertEqual(task["orchestration"]["delivery_status"], "pending_redelivery")
+        self.assertEqual(task["state"]["delivery"]["status"], "pending_redelivery")
+        self.assertEqual(task["state"]["delivery"]["pending"]["kind"], "task_due")
 
         pending = await manager.collect_pending_delivery_messages(source={"id": "desktop-user"})
         self.assertEqual(len(pending), 1)
@@ -261,6 +409,44 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pending[0]["source_event_id"], pending[0]["event_id"])
         self.assertTrue(pending[0]["cycle_key"])
         self.assertEqual(await manager.collect_pending_delivery_messages(source={"id": "desktop-user"}), [])
+
+    async def test_pending_delivery_peek_and_acknowledge_keeps_redelivery_until_sent(self):
+        manager = TaskManager(_FakeMemory())
+        created = json.loads(
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="提醒我回看日报",
+                schedule_kind="once",
+                due_at="2026-04-02T09:00:00Z",
+                source={"id": "desktop-user"},
+                session_id="web:session:1",
+            )
+        )
+        task_key = created["tasks"][0]["task_key"]
+        claim_time = datetime(2026, 4, 2, 9, 30, tzinfo=timezone.utc)
+        await manager.claim_due_tasks(now=claim_time)
+        await manager.complete_due_notification(
+            task_key,
+            summary="该回看日报了",
+            delivered=False,
+            runtime_source="app.scheduled_reminder",
+            now=claim_time,
+        )
+
+        pending = await manager.peek_pending_delivery_messages(source={"id": "desktop-user"})
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(await manager.peek_pending_delivery_messages(source={"id": "desktop-user"}), pending)
+        self.assertEqual(manager.get_task_by_key(task_key)["job"]["status"], "awaiting_delivery")
+
+        cleared = await manager.acknowledge_pending_delivery_messages(
+            source={"id": "desktop-user"},
+            event_ids=[pending[0]["event_id"]],
+        )
+
+        self.assertEqual(cleared, 1)
+        self.assertEqual(await manager.peek_pending_delivery_messages(source={"id": "desktop-user"}), [])
+        task = manager.get_task_by_key(task_key)
+        self.assertEqual(task["job"]["last_delivery"]["state"], "delivered")
 
     async def test_overdue_recurring_task_is_caught_up_and_current_cycle_is_not_duplicated(self):
         manager = TaskManager(_FakeMemory())
@@ -395,6 +581,77 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(claimed[0]["task_key"], task_key)
             self.assertEqual(claimed[0]["next_run_at"], "2026-04-02T09:00:00Z")
 
+    async def test_task_store_persists_schema_version_and_revision(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_path = Path(tmp_dir) / "memory_graph.json"
+            memory_path.write_text(
+                json.dumps(
+                    {
+                        "metadata": {"updated_at": "2026-04-02T10:00:00Z"},
+                        "records": [],
+                        "edges": [],
+                        "working_summaries": {"global": "", "by_session": {}},
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            manager = TaskManager(_FakeMemory(str(memory_path)))
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="每日巡检",
+                schedule_kind="once",
+                due_at="2026-04-03T09:00:00Z",
+                source={"id": "desktop-user"},
+            )
+
+            task_path = Path(tmp_dir) / "memory_tasks.json"
+            payload = json.loads(task_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(payload["metadata"]["schema_version"], "2")
+            self.assertGreaterEqual(payload["metadata"]["revision"], 1)
+            self.assertTrue((Path(tmp_dir) / "memory_tasks.json.bak").exists())
+
+    async def test_task_store_recovers_from_backup_when_primary_is_corrupted(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_path = Path(tmp_dir) / "memory_graph.json"
+            memory_path.write_text(
+                json.dumps(
+                    {
+                        "metadata": {"updated_at": "2026-04-02T10:00:00Z"},
+                        "records": [],
+                        "edges": [],
+                        "working_summaries": {"global": "", "by_session": {}},
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            manager = TaskManager(_FakeMemory(str(memory_path)))
+            created = json.loads(
+                await manager.manage_scheduled_tasks(
+                    action="create",
+                    summary="每日巡检",
+                    schedule_kind="once",
+                    due_at="2026-04-03T09:00:00Z",
+                    source={"id": "desktop-user"},
+                )
+            )
+            task_key = created["tasks"][0]["task_key"]
+            task_path = Path(tmp_dir) / "memory_tasks.json"
+            task_path.write_text('{"tasks": "broken"}', encoding="utf-8")
+
+            restarted = TaskManager(_FakeMemory(str(memory_path)))
+
+            self.assertEqual(restarted.get_task_by_key(task_key)["task_key"], task_key)
+            repaired = json.loads(task_path.read_text(encoding="utf-8"))
+            self.assertEqual(repaired["metadata"]["schema_version"], "2")
+            self.assertEqual(len(repaired["tasks"]), 1)
+
 
     async def test_background_status_exposes_nearest_urgent_due_and_repeated_failures(self):
         manager = TaskManager(_FakeMemory())
@@ -436,6 +693,9 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("schedule", status)
         self.assertIn("execution", status)
         self.assertIn("delivery", status)
+        self.assertEqual(status["schedule"]["nearest_due_task"]["state"]["schedule"]["status"], "scheduled")
+        self.assertEqual(status["execution"]["repeated_failure_tasks"][0]["state"]["execution"]["failure_category"], None)
+        self.assertEqual(status["execution"]["repeated_failure_tasks"][0]["state"]["delivery"]["status"], "pending")
         self.assertEqual(status["schedule"]["nearest_due_task"]["task_key"], urgent_task["task_key"])
         self.assertEqual(status["execution"]["repeated_failure_tasks"][0]["task_key"], urgent_task["task_key"])
         self.assertEqual(status["nearest_due_task"]["task_key"], urgent_task["task_key"])
@@ -518,160 +778,6 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(status["nearest_due_task"])
         self.assertEqual(status["awaiting_completion_count"], 1)
         self.assertEqual(manager.get_task_by_key(auto_run_task["task_key"])["auto_run"], True)
-
-    async def test_sync_legacy_memory_tasks_reads_disk_legacy_records_and_rebinds_task_store(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            memory_path = Path(tmp_dir) / "memory_graph.json"
-            task_path = Path(tmp_dir) / "memory_tasks.json"
-            legacy_task = {
-                "id": "task_legacy_follow_up",
-                "type": "task",
-                "scope": {"user_id": "desktop-user", "session_id": ""},
-                "content": "legacy follow-up",
-                "canonical_text": "legacy follow-up",
-                "embedding": [16.0, 1.0],
-                "embedding_model": "fake-embedding",
-                "strength": 0.72,
-                "importance": 0.7,
-                "confidence": 1.0,
-                "created_at": "2026-04-04T03:16:31Z",
-                "last_accessed_at": "2026-04-04T03:16:31Z",
-                "last_updated_at": "2026-04-04T03:16:31Z",
-                "access_count": 0,
-                "status": "active",
-                "tags": [],
-                "entity_keys": [],
-                "source_record_ids": [],
-                "task_key": "legacy-follow-up",
-                "project": "",
-                "task_status": "open",
-                "deadline": None,
-            }
-            fact_record = {
-                "id": "fact_payment_callback",
-                "type": "fact",
-                "scope": {"user_id": "desktop-user", "session_id": ""},
-                "content": "payment callback still needs retry handling",
-                "canonical_text": "payment callback still needs retry handling",
-                "embedding": [1.0, 2.0],
-                "embedding_model": "fake-embedding",
-                "strength": 0.8,
-                "importance": 0.7,
-                "confidence": 0.9,
-                "created_at": "2026-04-04T03:16:31Z",
-                "last_accessed_at": "2026-04-04T03:16:31Z",
-                "last_updated_at": "2026-04-04T03:16:31Z",
-                "access_count": 0,
-                "status": "active",
-                "tags": [],
-                "entity_keys": [],
-                "source_record_ids": [],
-            }
-            memory_path.write_text(
-                json.dumps(
-                    {
-                        "metadata": {"updated_at": "2026-04-04T03:16:31Z"},
-                        "records": [legacy_task, fact_record],
-                        "edges": [{"from_id": legacy_task["id"], "to_id": fact_record["id"], "derived_from": True}],
-                        "working_summaries": {"global": "", "by_session": {}},
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-
-            memory = _FakeMemory()
-            manager = TaskManager(memory)
-            memory._memory_file_path = str(memory_path)
-            memory._store = {
-                "records": [fact_record.copy()],
-                "edges": [],
-                "metadata": {"updated_at": "2026-04-04T03:16:31Z"},
-                "working_summaries": {"global": "", "by_session": {}},
-            }
-
-            migrated = await manager.sync_legacy_memory_tasks()
-
-            self.assertEqual(migrated, 1)
-            self.assertEqual(manager.get_task_by_key("legacy-follow-up")["content"], "legacy follow-up")
-            self.assertTrue(task_path.exists())
-            self.assertEqual(json.loads(task_path.read_text(encoding="utf-8"))["tasks"][0]["task_key"], "legacy-follow-up")
-
-            cleaned_graph = json.loads(memory_path.read_text(encoding="utf-8"))
-            self.assertEqual([record["type"] for record in cleaned_graph["records"]], ["fact"])
-            self.assertEqual(cleaned_graph["edges"], [])
-            self.assertEqual(memory.saved, 1)
-
-    async def test_sync_legacy_memory_tasks_cleans_duplicate_disk_records_without_reimporting(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            memory_path = Path(tmp_dir) / "memory_graph.json"
-            task_path = Path(tmp_dir) / "memory_tasks.json"
-            task_record = {
-                "id": "task_legacy_follow_up",
-                "type": "task",
-                "scope": {"user_id": "desktop-user", "session_id": ""},
-                "content": "legacy follow-up",
-                "canonical_text": "legacy follow-up",
-                "embedding": [16.0, 1.0],
-                "embedding_model": "fake-embedding",
-                "strength": 0.72,
-                "importance": 0.7,
-                "confidence": 1.0,
-                "created_at": "2026-04-04T03:16:31Z",
-                "last_accessed_at": "2026-04-04T03:16:31Z",
-                "last_updated_at": "2026-04-04T03:16:31Z",
-                "access_count": 0,
-                "status": "active",
-                "tags": [],
-                "entity_keys": [],
-                "source_record_ids": [],
-                "task_key": "legacy-follow-up",
-                "project": "",
-                "task_status": "open",
-                "deadline": None,
-            }
-            memory_path.write_text(
-                json.dumps(
-                    {
-                        "metadata": {"updated_at": "2026-04-04T03:16:31Z"},
-                        "records": [task_record],
-                        "edges": [],
-                        "working_summaries": {"global": "", "by_session": {}},
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-            task_path.write_text(
-                json.dumps(
-                    {
-                        "metadata": {"updated_at": "2026-04-04T03:16:31Z"},
-                        "tasks": [task_record],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-
-            memory = _FakeMemory(str(memory_path))
-            memory._store = {
-                "records": [],
-                "edges": [],
-                "metadata": {"updated_at": "2026-04-04T03:16:31Z"},
-                "working_summaries": {"global": "", "by_session": {}},
-            }
-            manager = TaskManager(memory)
-
-            migrated = await manager.sync_legacy_memory_tasks()
-
-            self.assertEqual(migrated, 0)
-            self.assertEqual(len(json.loads(task_path.read_text(encoding="utf-8"))["tasks"]), 1)
-            self.assertEqual(json.loads(memory_path.read_text(encoding="utf-8"))["records"], [])
-            self.assertEqual(memory.saved, 1)
-
 
 if __name__ == "__main__":
     unittest.main()
