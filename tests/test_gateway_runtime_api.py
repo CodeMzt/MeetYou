@@ -302,6 +302,51 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(payload["kind"], "error")
         self.assertEqual(payload["error"]["code"], "unauthorized")
 
+    def test_post_controls_accepts_reply_control_command(self):
+        response = self.client.post(
+            "/controls",
+            json={
+                "action": "stop",
+                "session_id": "web:session:1",
+                "source_id": "browser-tab-a",
+                "client_request_id": "ctrl-001",
+                "turn_id": "turn-1",
+            },
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["kind"], "ack")
+        self.assertEqual(payload["ack"]["action"], "stop")
+        self.assertEqual(payload["ack"]["status"], "accepted")
+
+        queued_event = self.event_bus.inbound_queue.get_nowait()
+        self.assertEqual(queued_event.type, "control")
+        self.assertEqual(queued_event.content["action"], "stop")
+        self.assertEqual(queued_event.metadata["control_kind"], "reply_control")
+        self.assertEqual(queued_event.metadata["client_request_id"], "ctrl-001")
+
+    def test_post_controls_deduplicates_same_client_request_id(self):
+        payload = {
+            "action": "rollback",
+            "session_id": "web:session:1",
+            "source_id": "browser-tab-a",
+            "client_request_id": "ctrl-rollback-001",
+            "checkpoint_id": "cp-1",
+        }
+
+        first = self.client.post("/controls", json=payload, headers=self._auth_headers())
+        second = self.client.post("/controls", json=payload, headers=self._auth_headers())
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json()["ack"]["event_id"], second.json()["ack"]["event_id"])
+
+        queued_event = self.event_bus.inbound_queue.get_nowait()
+        self.assertEqual(queued_event.content["action"], "rollback")
+        self.assertTrue(self.event_bus.inbound_queue.empty())
+
     def test_get_runtime_state(self):
         response = self.client.get(
             "/runtime/state",
@@ -368,6 +413,29 @@ class GatewayRuntimeApiTests(unittest.TestCase):
             self.assertEqual(payload["error"]["code"], "unauthorized")
             with self.assertRaises(WebSocketDisconnect):
                 websocket.receive_json()
+
+    def test_websocket_control_command_returns_ack_and_enqueues_event(self):
+        with self.client.websocket_connect(
+            "/ws?session_id=web:session:1&source_id=browser-tab-a&access_token=runtime-token"
+        ) as websocket:
+            websocket.receive_json()
+            websocket.send_json(
+                {
+                    "action": "append_guidance",
+                    "guidance": "请更简短",
+                    "turn_id": "turn-1",
+                    "client_request_id": "ctrl-ws-001",
+                }
+            )
+            payload = websocket.receive_json()
+            self.assertEqual(payload["kind"], "ack")
+            self.assertEqual(payload["ack"]["action"], "append_guidance")
+            self.assertEqual(payload["ack"]["status"], "accepted")
+
+        queued_event = self.event_bus.inbound_queue.get_nowait()
+        self.assertEqual(queued_event.type, "control")
+        self.assertEqual(queued_event.content["action"], "append_guidance")
+        self.assertEqual(queued_event.content["guidance"], "请更简短")
 
 
 if __name__ == "__main__":

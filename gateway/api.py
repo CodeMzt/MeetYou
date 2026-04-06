@@ -27,10 +27,11 @@ from core.protocol_schema import build_ui_protocol_schema
 from gateway.models import (
     AckPayload,
     AckResponse,
+    ConfigEntryResponse,
     ConfigPatchRequest,
     ConfigPatchResponse,
     ConfigSnapshotResponse,
-    ConfigEntryResponse,
+    ControlRequest,
     ErrorResponse,
     HealthEnvelopeResponse,
     HealthResponse,
@@ -405,6 +406,78 @@ class FastAPIGateway:
                 ),
             )
 
+        @self.app.post("/controls", response_model=AckResponse)
+        async def post_controls(http_request: Request, request: ControlRequest):
+            self._require_http_auth(http_request)
+            metadata = dict(request.metadata)
+            metadata["control_kind"] = "reply_control"
+            client_request_id = str(request.client_request_id or "").strip()
+            if client_request_id:
+                metadata["client_request_id"] = client_request_id
+            source = make_source(SourceKind.WEB.value, request.source_id, **request.metadata)
+            session_id = self._session_manager.get_or_create_session(source, request.session_id)
+            if client_request_id:
+                existing_event_id = self._session_manager.get_recent_inbound_event_id(
+                    session_id,
+                    source,
+                    client_request_id,
+                )
+                if existing_event_id:
+                    return AckResponse(
+                        schema_name=_HTTP_SCHEMA,
+                        ack=AckPayload(
+                            action=request.action,
+                            session_id=session_id,
+                            event_id=existing_event_id,
+                            request_id=client_request_id,
+                            status="accepted",
+                        ),
+                    )
+            event = InboundEvent(
+                session_id=session_id,
+                type=EventType.CONTROL.value,
+                role="system",
+                content={
+                    "action": request.action,
+                    "guidance": request.guidance,
+                    "checkpoint_id": request.checkpoint_id,
+                    "turn_id": request.turn_id,
+                    "stream_id": request.stream_id,
+                },
+                source=source,
+                target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+                metadata=metadata,
+            )
+            if client_request_id:
+                remembered_event_id = self._session_manager.remember_inbound_event_id(
+                    session_id,
+                    source,
+                    client_request_id,
+                    event.event_id,
+                )
+                if remembered_event_id != event.event_id:
+                    return AckResponse(
+                        schema_name=_HTTP_SCHEMA,
+                        ack=AckPayload(
+                            action=request.action,
+                            session_id=session_id,
+                            event_id=remembered_event_id,
+                            request_id=client_request_id,
+                            status="accepted",
+                        ),
+                    )
+            await self._event_bus.inbound_queue.put(event)
+            return AckResponse(
+                schema_name=_HTTP_SCHEMA,
+                ack=AckPayload(
+                    action=request.action,
+                    session_id=session_id,
+                    event_id=event.event_id,
+                    request_id=client_request_id,
+                    status="accepted",
+                ),
+            )
+
         @self.app.get("/config", response_model=ConfigSnapshotResponse)
         async def get_config(request: Request):
             self._require_http_auth(request)
@@ -643,6 +716,88 @@ class FastAPIGateway:
                                 "request_id": command.request_id,
                                 "session_id": session_id,
                                 "accepted": True,
+                            },
+                        })
+                        if not sent:
+                            break
+                        continue
+                    if command.action in {"stop", "append_guidance", "regenerate", "rollback", "list_checkpoints"}:
+                        client_request_id = str(command.client_request_id or "").strip()
+                        if client_request_id:
+                            existing_event_id = self._session_manager.get_recent_inbound_event_id(
+                                session_id,
+                                source,
+                                client_request_id,
+                            )
+                            if existing_event_id:
+                                sent = await self._safe_send_json(websocket, {
+                                    "schema": _WS_SCHEMA,
+                                    "kind": "ack",
+                                    "ack": {
+                                        "action": command.action,
+                                        "request_id": client_request_id,
+                                        "session_id": session_id,
+                                        "event_id": existing_event_id,
+                                        "accepted": True,
+                                        "status": "accepted",
+                                    },
+                                })
+                                if not sent:
+                                    break
+                                continue
+                        event = InboundEvent(
+                            session_id=session_id,
+                            type=EventType.CONTROL.value,
+                            role="system",
+                            content={
+                                "action": command.action,
+                                "guidance": command.guidance,
+                                "checkpoint_id": command.checkpoint_id,
+                                "turn_id": command.turn_id,
+                                "stream_id": command.stream_id,
+                            },
+                            source=source,
+                            target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+                            metadata={
+                                "control_kind": "reply_control",
+                                **dict(command.metadata or {}),
+                                **({"client_request_id": client_request_id} if client_request_id else {}),
+                            },
+                        )
+                        if client_request_id:
+                            remembered_event_id = self._session_manager.remember_inbound_event_id(
+                                session_id,
+                                source,
+                                client_request_id,
+                                event.event_id,
+                            )
+                            if remembered_event_id != event.event_id:
+                                sent = await self._safe_send_json(websocket, {
+                                    "schema": _WS_SCHEMA,
+                                    "kind": "ack",
+                                    "ack": {
+                                        "action": command.action,
+                                        "request_id": client_request_id,
+                                        "session_id": session_id,
+                                        "event_id": remembered_event_id,
+                                        "accepted": True,
+                                        "status": "accepted",
+                                    },
+                                })
+                                if not sent:
+                                    break
+                                continue
+                        await self._event_bus.inbound_queue.put(event)
+                        sent = await self._safe_send_json(websocket, {
+                            "schema": _WS_SCHEMA,
+                            "kind": "ack",
+                            "ack": {
+                                "action": command.action,
+                                "request_id": client_request_id,
+                                "session_id": session_id,
+                                "event_id": event.event_id,
+                                "accepted": True,
+                                "status": "accepted",
                             },
                         })
                         if not sent:

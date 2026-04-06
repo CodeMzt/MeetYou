@@ -161,6 +161,7 @@ class GeminiAdapter(LLMAdapter):
         model,
         messages,
         tools=None,
+        cancel_event=None,
         **kwargs,
     ) -> AsyncGenerator[StreamEvent, None]:
         api_url = self._build_url(url, model, stream=True, api_key=api_key)
@@ -180,6 +181,8 @@ class GeminiAdapter(LLMAdapter):
         async with session.post(api_url, headers=headers, json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.content:
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 raw = line.decode("utf-8").strip()
                 if not raw.startswith("data:"):
                     continue
@@ -209,9 +212,10 @@ class GeminiAdapter(LLMAdapter):
                                 )
                             )
 
-        if tool_calls:
-            yield StreamEvent(type="tool_calls", tool_calls=tool_calls)
-        yield StreamEvent(type="done")
+        if cancel_event is None or not cancel_event.is_set():
+            if tool_calls:
+                yield StreamEvent(type="tool_calls", tool_calls=tool_calls)
+            yield StreamEvent(type="done")
 
     async def chat(self, session, url, api_key, model, messages, tools=None, **kwargs) -> dict:
         api_url = self._build_url(url, model, stream=False, api_key=api_key)

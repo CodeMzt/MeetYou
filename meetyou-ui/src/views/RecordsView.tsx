@@ -79,14 +79,14 @@ export default function RecordsView({ snapshot }: { snapshot: MemorySnapshot | n
             </div>
             <div style={{ marginTop: 'auto', paddingTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11, background: 'rgba(128,128,128,0.1)', padding: '2px 6px', borderRadius: 4 }}>
-                Conf: {(record.confidence * 100).toFixed(0)}%
+                置信度: {(record.confidence * 100).toFixed(0)}%
               </span>
               <span style={{ fontSize: 11, background: 'rgba(128,128,128,0.1)', padding: '2px 6px', borderRadius: 4 }}>
-                Str: {(record.strength * 100).toFixed(0)}%
+                强度: {(record.strength * 100).toFixed(0)}%
               </span>
               {record.fact_value ? (
                 <span style={{ fontSize: 11, background: 'rgba(128,128,128,0.1)', padding: '2px 6px', borderRadius: 4 }}>
-                  Value: {record.fact_value}
+                  值: {record.fact_value}
                 </span>
               ) : null}
             </div>

@@ -193,13 +193,14 @@ class Speaker:
         stream_channel: str = "",
         event_type: str = EventType.MESSAGE.value,
         role: str = "assistant",
+        metadata: dict | None = None,
     ):
         """
         发送流结束事件。
         """
-        metadata = {"stream_event": StreamEventType.END.value}
+        payload = {"stream_event": StreamEventType.END.value, **dict(metadata or {})}
         if stream_channel:
-            metadata["stream_channel"] = stream_channel
+            payload["stream_channel"] = stream_channel
         await self.emit(
             OutboundEvent(
                 session_id=session_id,
@@ -209,7 +210,7 @@ class Speaker:
                 source=source,
                 target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
                 stream_id=stream_id,
-                metadata=metadata,
+                metadata=payload,
             )
         )
         self._session_manager.close_stream(stream_id)

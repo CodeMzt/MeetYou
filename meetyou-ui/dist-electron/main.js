@@ -6,7 +6,50 @@ process.env.VITE_PUBLIC = electron.app.isPackaged ? process.env.DIST : path.join
 let win;
 let dashboardWin = null;
 let settingsWin = null;
+let statsWin = null;
 const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
+let latestStats = { usageSnapshot: null, runtimeDebugSnapshot: null };
+function createStatsWindow() {
+  if (statsWin) {
+    if (statsWin.isMinimized()) statsWin.restore();
+    statsWin.focus();
+    return;
+  }
+  const primaryDisplay = electron.screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.workAreaSize;
+  const windowWidth = 420;
+  const windowHeight = 600;
+  statsWin = new electron.BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x: width / 2 - windowWidth / 2,
+    y: height / 2 - windowHeight / 2,
+    icon: path.join(process.env.VITE_PUBLIC || "", "electron-vite.svg"),
+    transparent: true,
+    frame: false,
+    resizable: true,
+    minWidth: 380,
+    minHeight: 500,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+  if (process.platform === "win32") {
+    statsWin.setBackgroundMaterial("mica");
+  } else if (process.platform === "darwin") {
+    statsWin.setVibrancy("popover");
+  }
+  if (VITE_DEV_SERVER_URL) {
+    statsWin.loadURL(`${VITE_DEV_SERVER_URL}#/stats`);
+  } else {
+    statsWin.loadFile(path.join(process.env.DIST || "", "index.html"), { hash: "stats" });
+  }
+  statsWin.on("closed", () => {
+    statsWin = null;
+  });
+}
 function createSettingsWindow() {
   if (settingsWin) {
     if (settingsWin.isMinimized()) settingsWin.restore();
@@ -15,14 +58,14 @@ function createSettingsWindow() {
   }
   const primaryDisplay = electron.screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
-  const windowWidth = 680;
-  const windowHeight = 760;
+  const windowWidth = 520;
+  const windowHeight = 660;
   settingsWin = new electron.BrowserWindow({
     width: windowWidth,
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
     y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
+    icon: path.join(process.env.VITE_PUBLIC || "", "electron-vite.svg"),
     transparent: true,
     frame: false,
     resizable: true,
@@ -42,7 +85,7 @@ function createSettingsWindow() {
   if (VITE_DEV_SERVER_URL) {
     settingsWin.loadURL(`${VITE_DEV_SERVER_URL}#/settings`);
   } else {
-    settingsWin.loadFile(path.join(process.env.DIST, "index.html"), { hash: "settings" });
+    settingsWin.loadFile(path.join(process.env.DIST || "", "index.html"), { hash: "settings" });
   }
   settingsWin.on("closed", () => {
     settingsWin = null;
@@ -56,14 +99,14 @@ function createDashboardWindow() {
   }
   const primaryDisplay = electron.screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
-  const windowWidth = 920;
-  const windowHeight = 720;
+  const windowWidth = 800;
+  const windowHeight = 640;
   dashboardWin = new electron.BrowserWindow({
     width: windowWidth,
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
     y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
+    icon: path.join(process.env.VITE_PUBLIC || "", "electron-vite.svg"),
     transparent: true,
     frame: false,
     resizable: true,
@@ -83,7 +126,7 @@ function createDashboardWindow() {
   if (VITE_DEV_SERVER_URL) {
     dashboardWin.loadURL(`${VITE_DEV_SERVER_URL}#/dashboard`);
   } else {
-    dashboardWin.loadFile(path.join(process.env.DIST, "index.html"), { hash: "dashboard" });
+    dashboardWin.loadFile(path.join(process.env.DIST || "", "index.html"), { hash: "dashboard" });
   }
   dashboardWin.on("closed", () => {
     dashboardWin = null;
@@ -99,7 +142,7 @@ function createWindow() {
     height: windowHeight,
     x: width - windowWidth - 20,
     y: height - windowHeight - 40,
-    icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
+    icon: path.join(process.env.VITE_PUBLIC || "", "electron-vite.svg"),
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -121,7 +164,7 @@ function createWindow() {
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
   } else {
-    win.loadFile(path.join(process.env.DIST, "index.html"));
+    win.loadFile(path.join(process.env.DIST || "", "index.html"));
   }
   electron.ipcMain.on("window-close", (e) => {
     const w = electron.BrowserWindow.fromWebContents(e.sender);
@@ -145,6 +188,18 @@ function createWindow() {
   });
   electron.ipcMain.on("open-settings", () => {
     createSettingsWindow();
+  });
+  electron.ipcMain.on("open-stats", () => {
+    createStatsWindow();
+  });
+  electron.ipcMain.on("update-stats", (e, data) => {
+    latestStats = data;
+    if (statsWin) {
+      statsWin.webContents.send("stats-updated", data);
+    }
+  });
+  electron.ipcMain.on("request-stats", (e) => {
+    e.sender.send("stats-updated", latestStats);
   });
 }
 electron.app.on("window-all-closed", () => {

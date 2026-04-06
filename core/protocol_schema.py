@@ -22,6 +22,7 @@ WS_EVENT_TYPES = (
     "message",
     "reasoning",
     "status",
+    "control",
     "confirm_request",
     "human_input_request",
     "runtime_status",

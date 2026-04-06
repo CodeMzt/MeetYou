@@ -227,6 +227,7 @@ class App:
         self._brain_source = make_source(SourceKind.SYSTEM.value, "brain")
         self._runtime_source = make_source(SourceKind.SYSTEM.value, "runtime")
         self._usage_source = make_source(SourceKind.SYSTEM.value, "usage")
+        self._control_source = make_source(SourceKind.SYSTEM.value, "reply_control")
         self._session_execution_runtime = SessionActorRuntime(self._process_session_execution)
 
         self.exception_router.on_system_error(self._log_error)
@@ -787,6 +788,9 @@ class App:
         payload = event.content if isinstance(event.content, dict) else {}
         task_key = str(payload.get("task_key") or "").strip()
         claim_token = str(payload.get("claim_token") or metadata.get("claim_token") or "").strip()
+        if control_kind == "reply_control":
+            await self._handle_reply_control_event(event)
+            return True
         if control_kind == "scheduled_task" and task_key:
             await self._handle_scheduled_task(task_key, claim_token=claim_token, trace_id=getattr(event, "event_id", ""))
             return True
@@ -879,6 +883,12 @@ class App:
                 for item in session_debug.get("object_operations", [])
                 if isinstance(item, dict)
             ],
+            "reply_control": dict(session_debug.get("reply_control") or {}),
+            "checkpoints": [
+                dict(item)
+                for item in session_debug.get("checkpoints", [])
+                if isinstance(item, dict)
+            ],
             "task_state": {
                 "background": {
                     "schedule": dict(background_status.get("schedule") or {}),
@@ -895,6 +905,116 @@ class App:
             "last_failure": dict(session_debug.get("last_failure") or {}),
             "updated_at": str(session_debug.get("updated_at") or utcnow_iso()),
         }
+
+    async def _emit_reply_control_event(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+        *,
+        target: EventTarget | None = None,
+        turn_id: str = "",
+    ) -> None:
+        await self.speaker.emit(
+            OutboundEvent(
+                session_id=session_id,
+                type=EventType.CONTROL.value,
+                role="system",
+                content=dict(payload or {}),
+                source=self._control_source,
+                target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+                metadata={"turn_id": turn_id},
+            )
+        )
+
+    async def _submit_reply_control_replay(
+        self,
+        *,
+        session_id: str,
+        input_info: dict[str, Any],
+        source,
+        target: EventTarget,
+        is_boot: bool = False,
+    ) -> None:
+        replay_event = InboundEvent(
+            session_id=session_id,
+            type=EventType.MESSAGE.value,
+            role=str(input_info.get("role") or "user"),
+            content=input_info.get("content") or "",
+            source=source,
+            target=target,
+            metadata=dict(input_info.get("metadata") or {}),
+        )
+        await self._session_execution_runtime.submit(
+            session_id,
+            SessionExecutionRequest(
+                session_id=session_id,
+                event=replay_event,
+                input_info=dict(input_info or {}),
+                target=target,
+                is_boot=is_boot,
+            ),
+        )
+
+    async def _handle_reply_control_event(self, event: InboundEvent) -> None:
+        payload = event.content if isinstance(event.content, dict) else {}
+        session_id = str(event.session_id or "").strip()
+        action = str(payload.get("action") or "").strip().lower()
+        guidance = str(payload.get("guidance") or "").strip()
+        checkpoint_id = str(payload.get("checkpoint_id") or "").strip()
+        turn_id = str(payload.get("turn_id") or "").strip()
+        stream_id = str(payload.get("stream_id") or "").strip()
+        target = self.session_manager.get_default_target(session_id)
+        snapshot = self.brain.get_session_runtime_snapshot(session_id) or {}
+        result = self.brain.request_reply_control(
+            session_id,
+            action=action,
+            request_id=getattr(event, "event_id", ""),
+            guidance=guidance,
+            checkpoint_id=checkpoint_id,
+            turn_id=turn_id,
+            stream_id=stream_id,
+        )
+        result.setdefault("request_id", getattr(event, "event_id", ""))
+        await self._emit_reply_control_event(
+            session_id,
+            result,
+            target=target,
+            turn_id=turn_id or str(snapshot.get("turn_id") or ""),
+        )
+        await self._emit_runtime_status_event(session_id, target, turn_id or str(snapshot.get("turn_id") or ""))
+        if result.get("status") == "accepted":
+            cancelled = await self._session_execution_runtime.cancel(session_id)
+            if not cancelled:
+                finalization = self.brain.finalize_reply_control(
+                    session_id,
+                    turn_id=turn_id or str(snapshot.get("turn_id") or ""),
+                    interrupted=True,
+                )
+                if isinstance(finalization.get("control_result"), dict):
+                    await self._emit_reply_control_event(
+                        session_id,
+                        dict(finalization.get("control_result") or {}),
+                        target=target,
+                        turn_id=turn_id or str(snapshot.get("turn_id") or ""),
+                    )
+                replay_input = finalization.get("replay_input")
+                if isinstance(replay_input, dict):
+                    await self._submit_reply_control_replay(
+                        session_id=session_id,
+                        input_info=replay_input,
+                        source=event.source,
+                        target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+                    )
+                await self._emit_runtime_status_event(session_id, target, turn_id or str(snapshot.get("turn_id") or ""))
+            return
+        replay_input = result.get("replay_input")
+        if isinstance(replay_input, dict):
+            await self._submit_reply_control_replay(
+                session_id=session_id,
+                input_info=replay_input,
+                source=event.source,
+                target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+            )
 
     @staticmethod
     def _runtime_error_payload_from_exception(exc: Exception) -> dict[str, Any]:
@@ -1121,6 +1241,7 @@ class App:
         )
         reasoning_started = False
         reasoning_ended = False
+        finish_reason = ""
 
         try:
             api_key = self.config.get("api_key") or ""
@@ -1172,6 +1293,7 @@ class App:
                 active_tools=[],
                 stream_id=stream_id,
                 turn_id=turn_id,
+                finish_reason="",
             )
             await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
 
@@ -1251,6 +1373,7 @@ class App:
                     turn_id,
                 )
 
+            finish_reason = "completed"
             self.brain.set_session_runtime_state(
                 request.session_id,
                 RuntimeStatus.IDLE.value,
@@ -1258,6 +1381,7 @@ class App:
                 active_tools=[],
                 stream_id=stream_id,
                 turn_id=turn_id,
+                finish_reason=finish_reason,
             )
             await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
             await self.speaker.emit_stream_end(
@@ -1266,7 +1390,60 @@ class App:
                 stream_id,
                 target=request.target,
                 stream_channel="answer",
+                metadata={"turn_id": turn_id, "finish_reason": finish_reason},
             )
+        except asyncio.CancelledError:
+            finalization = self.brain.finalize_reply_control(
+                request.session_id,
+                turn_id=turn_id,
+                interrupted=True,
+            )
+            finish_reason = str(finalization.get("finish_reason") or "stopped")
+            if reasoning_started and not reasoning_ended:
+                await self._emit_reasoning_stream_event(
+                    request.session_id,
+                    stream_id,
+                    StreamEventType.END.value,
+                    "",
+                    request.target,
+                    turn_id,
+                )
+                reasoning_ended = True
+            self.brain.set_session_runtime_state(
+                request.session_id,
+                RuntimeStatus.IDLE.value,
+                detail="",
+                active_tools=[],
+                stream_id=stream_id,
+                turn_id=turn_id,
+                finish_reason=finish_reason,
+            )
+            await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
+            await self.speaker.emit_stream_end(
+                request.session_id,
+                self._brain_source,
+                stream_id,
+                target=request.target,
+                stream_channel="answer",
+                metadata={"turn_id": turn_id, "finish_reason": finish_reason},
+            )
+            control_result = finalization.get("control_result")
+            if isinstance(control_result, dict):
+                await self._emit_reply_control_event(
+                    request.session_id,
+                    dict(control_result or {}),
+                    target=request.target,
+                    turn_id=turn_id,
+                )
+            replay_input = finalization.get("replay_input")
+            if isinstance(replay_input, dict):
+                await self._submit_reply_control_replay(
+                    session_id=request.session_id,
+                    input_info=replay_input,
+                    source=request.event.source,
+                    target=request.target,
+                    is_boot=request.is_boot,
+                )
         except Exception as exc:
             logger.error("Brain processing error: %s\n%s", exc, traceback.format_exc())
             if bool(dict(request.input_info.get("metadata") or {}).get("transient")):
@@ -1289,7 +1466,9 @@ class App:
                 active_tools=[],
                 stream_id=stream_id,
                 turn_id=turn_id,
+                finish_reason="failed",
             )
+            self.brain.mark_reply_turn_failed(request.session_id, turn_id=turn_id)
             await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
             await self.speaker.emit_error(
                 request.session_id,

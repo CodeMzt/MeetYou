@@ -7,10 +7,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
+from uuid import uuid4
 
 try:
     import aiohttp
@@ -26,7 +28,7 @@ from core.assistant_modes import (
 )
 from core.brain_session import BrainSession
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
-from core.status import ContextBreakdown, RuntimeStatus, UsageCounters, utcnow_iso
+from core.status import ContextBreakdown, RuntimeStatus, SessionUsageTotals, UsageCounters, utcnow_iso
 from core.tool_runtime import ToolCallResult, ToolErrorCategory, ToolSourceType, normalize_tool_result
 from tools.object_operations import redacted_object_debug_entry
 
@@ -314,6 +316,8 @@ class Brain:
                 if isinstance(item, dict)
             ],
             "runtime_state": session.runtime_state.to_dict(),
+            "reply_control": self.get_reply_control_snapshot(session_id),
+            "checkpoints": self.list_reply_checkpoints(session_id),
             "usage": session.usage_snapshot.to_dict(),
             "request": dict(session.metadata.get("last_request_debug") or {}),
             "compression": dict(session.metadata.get("last_compression") or {}),
@@ -333,6 +337,8 @@ class Brain:
         source_profile: str | None = None,
         stream_id: str | None = None,
         turn_id: str | None = None,
+        finish_reason: str | None = None,
+        reply_control: dict | None = None,
     ) -> dict:
         session = self.get_or_create_session(session_id)
         return session.runtime_state.update(
@@ -345,7 +351,399 @@ class Brain:
             source_profile=source_profile,
             stream_id=stream_id,
             turn_id=turn_id,
+            finish_reason=finish_reason,
+            reply_control=reply_control,
         ).to_dict()
+
+    @staticmethod
+    def _sanitize_control_text(text: Any) -> dict[str, Any]:
+        value = str(text or "").strip()
+        if not value:
+            return {"present": False, "length": 0, "preview": ""}
+        preview = value[:120]
+        if len(value) > 120:
+            preview += "…"
+        return {"present": True, "length": len(value), "preview": preview}
+
+    def _reply_control_state(self, session: BrainSession) -> dict[str, Any]:
+        state = session.metadata.get("reply_control")
+        if not isinstance(state, dict):
+            state = {}
+            session.metadata["reply_control"] = state
+        state.setdefault("active_turn", None)
+        state.setdefault("pending_command", None)
+        state.setdefault("last_command", {})
+        state.setdefault("last_completed_command", {})
+        state.setdefault("last_finish_reason", "")
+        state.setdefault("latest_replay_input", None)
+        return state
+
+    def _reply_checkpoints(self, session: BrainSession) -> list[dict[str, Any]]:
+        checkpoints = session.metadata.get("reply_checkpoints")
+        if not isinstance(checkpoints, list):
+            checkpoints = []
+            session.metadata["reply_checkpoints"] = checkpoints
+        return checkpoints
+
+    def _reply_control_runtime_snapshot(self, session: BrainSession) -> dict[str, Any]:
+        state = self._reply_control_state(session)
+        active_turn = state.get("active_turn") if isinstance(state.get("active_turn"), dict) else None
+        pending_command = state.get("pending_command") if isinstance(state.get("pending_command"), dict) else None
+        return {
+            "active": active_turn is not None,
+            "state": str(active_turn.get("state") or "idle") if active_turn else "idle",
+            "turn_id": str(active_turn.get("turn_id") or "") if active_turn else "",
+            "stream_id": str(active_turn.get("stream_id") or "") if active_turn else "",
+            "pending_action": str(pending_command.get("action") or "") if pending_command else "",
+            "last_action": str((state.get("last_command") or {}).get("action") or ""),
+            "last_action_status": str((state.get("last_completed_command") or {}).get("status") or ""),
+            "checkpoint_count": len(self._reply_checkpoints(session)),
+            "replay_ready": bool(state.get("latest_replay_input")),
+        }
+
+    def _sync_reply_control_runtime_state(self, session_id: str, session: BrainSession) -> None:
+        session.runtime_state.update(
+            status=session.runtime_state.status,
+            detail=session.runtime_state.detail,
+            active_tools=list(session.runtime_state.active_tools),
+            current_mode=session.runtime_state.current_mode,
+            route_reason=session.runtime_state.route_reason,
+            action_risk=session.runtime_state.action_risk,
+            source_profile=session.runtime_state.source_profile,
+            stream_id=session.runtime_state.stream_id,
+            turn_id=session.runtime_state.turn_id,
+            finish_reason=str(self._reply_control_state(session).get("last_finish_reason") or ""),
+            reply_control=self._reply_control_runtime_snapshot(session),
+        )
+
+    def _sanitize_reply_checkpoint(self, checkpoint: dict[str, Any]) -> dict[str, Any]:
+        runtime = dict(checkpoint.get("runtime") or {})
+        usage = dict(checkpoint.get("usage_snapshot") or {})
+        return {
+            "checkpoint_id": str(checkpoint.get("checkpoint_id") or ""),
+            "kind": str(checkpoint.get("kind") or "turn_start"),
+            "created_at": str(checkpoint.get("created_at") or ""),
+            "turn_id": str(checkpoint.get("turn_id") or ""),
+            "history_length": int(checkpoint.get("history_length", 0) or 0),
+            "stream_id": str(runtime.get("stream_id") or ""),
+            "usage_ready": bool(usage.get("usage_ready", False)),
+            "input": dict(checkpoint.get("input_summary") or {}),
+        }
+
+    def list_reply_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
+        session = self.get_or_create_session(session_id)
+        return [self._sanitize_reply_checkpoint(item) for item in self._reply_checkpoints(session)]
+
+    def get_reply_control_snapshot(self, session_id: str) -> dict[str, Any]:
+        session = self.get_or_create_session(session_id)
+        state = self._reply_control_state(session)
+        active_turn = state.get("active_turn") if isinstance(state.get("active_turn"), dict) else None
+        pending_command = state.get("pending_command") if isinstance(state.get("pending_command"), dict) else None
+        latest_replay = state.get("latest_replay_input") if isinstance(state.get("latest_replay_input"), dict) else None
+        return {
+            "active_turn": {
+                "state": str(active_turn.get("state") or "idle"),
+                "turn_id": str(active_turn.get("turn_id") or ""),
+                "stream_id": str(active_turn.get("stream_id") or ""),
+                "checkpoint_id": str(active_turn.get("checkpoint_id") or ""),
+                "started_at": str(active_turn.get("started_at") or ""),
+                "input": dict(active_turn.get("input_summary") or {}),
+            } if active_turn else None,
+            "pending_command": {
+                "action": str(pending_command.get("action") or ""),
+                "request_id": str(pending_command.get("request_id") or ""),
+                "checkpoint_id": str(pending_command.get("checkpoint_id") or ""),
+                "created_at": str(pending_command.get("created_at") or ""),
+            } if pending_command else None,
+            "last_command": dict(state.get("last_command") or {}),
+            "last_completed_command": dict(state.get("last_completed_command") or {}),
+            "last_finish_reason": str(state.get("last_finish_reason") or ""),
+            "checkpoint_count": len(self._reply_checkpoints(session)),
+            "latest_replay_input": {
+                "turn_id": str(latest_replay.get("turn_id") or ""),
+                "checkpoint_id": str(latest_replay.get("checkpoint_id") or ""),
+                "created_at": str(latest_replay.get("created_at") or ""),
+                "input": dict(latest_replay.get("input_summary") or {}),
+            } if latest_replay else None,
+        }
+
+    def _create_reply_checkpoint(
+        self,
+        session: BrainSession,
+        *,
+        turn_id: str,
+        input_info: dict[str, Any],
+        history_length: int,
+    ) -> dict[str, Any]:
+        checkpoint = {
+            "checkpoint_id": uuid4().hex,
+            "kind": "turn_start",
+            "created_at": utcnow_iso(),
+            "turn_id": str(turn_id or ""),
+            "history_length": int(history_length),
+            "runtime": {
+                "stream_id": session.runtime_state.stream_id,
+                "turn_id": session.runtime_state.turn_id,
+            },
+            "usage_snapshot": session.usage_snapshot.to_dict(),
+            "input_summary": self._sanitize_control_text(input_info.get("content")),
+        }
+        checkpoints = self._reply_checkpoints(session)
+        checkpoints.append(checkpoint)
+        if len(checkpoints) > 12:
+            del checkpoints[:-12]
+        return checkpoint
+
+    def _restore_usage_snapshot(self, session: BrainSession, snapshot: dict[str, Any]) -> None:
+        session.usage_snapshot.session_id = session.session_id
+        session.usage_snapshot.usage_ready = bool(snapshot.get("usage_ready", False))
+        session.usage_snapshot.context_limit_tokens = int(snapshot.get("context_limit_tokens", 0) or 0)
+        session.usage_snapshot.context_limit_source = str(snapshot.get("context_limit_source") or "")
+        session.usage_snapshot.context_limit_model = str(snapshot.get("context_limit_model") or "")
+        session.usage_snapshot.context_limit_confidence = str(snapshot.get("context_limit_confidence") or "")
+        session.usage_snapshot.current_context_tokens_estimated = int(
+            snapshot.get("current_context_tokens_estimated", 0) or 0
+        )
+        session.usage_snapshot.context_breakdown = ContextBreakdown.from_mapping(snapshot.get("context_breakdown") or {})
+        totals = dict(snapshot.get("session_totals") or {})
+        session.usage_snapshot.last_turn_usage = UsageCounters(
+            prompt_tokens=int((snapshot.get("last_turn_usage") or {}).get("prompt_tokens", 0) or 0),
+            completion_tokens=int((snapshot.get("last_turn_usage") or {}).get("completion_tokens", 0) or 0),
+            reasoning_tokens=int((snapshot.get("last_turn_usage") or {}).get("reasoning_tokens", 0) or 0),
+            total_tokens=int((snapshot.get("last_turn_usage") or {}).get("total_tokens", 0) or 0),
+        )
+        session.usage_snapshot.session_totals = SessionUsageTotals(
+            prompt_tokens=int(totals.get("prompt_tokens", 0) or 0),
+            completion_tokens=int(totals.get("completion_tokens", 0) or 0),
+            reasoning_tokens=int(totals.get("reasoning_tokens", 0) or 0),
+            total_tokens=int(totals.get("total_tokens", 0) or 0),
+            turn_count=int(totals.get("turn_count", 0) or 0),
+        )
+        session.usage_snapshot.usage_source = str(snapshot.get("usage_source") or "estimated")
+        session.usage_snapshot.updated_at = str(snapshot.get("updated_at") or utcnow_iso())
+
+    def _restore_reply_checkpoint(self, session: BrainSession, checkpoint_id: str) -> dict[str, Any]:
+        checkpoints = self._reply_checkpoints(session)
+        checkpoint = next(
+            (item for item in reversed(checkpoints) if str(item.get("checkpoint_id") or "") == str(checkpoint_id or "")),
+            None,
+        )
+        if checkpoint is None:
+            raise ValueError("检查点不存在或已失效。")
+        history_length = int(checkpoint.get("history_length", 0) or 0)
+        if history_length < len(session.chat_history):
+            del session.chat_history[history_length:]
+        self._restore_usage_snapshot(session, dict(checkpoint.get("usage_snapshot") or {}))
+        state = self._reply_control_state(session)
+        state["active_turn"] = None
+        state["pending_command"] = None
+        checkpoints[:] = [
+            item
+            for item in checkpoints
+            if int(item.get("history_length", 0) or 0) <= history_length
+        ]
+        return checkpoint
+
+    @staticmethod
+    def _merged_guidance_input(input_info: dict[str, Any], guidance: str) -> dict[str, Any]:
+        merged = deepcopy(dict(input_info or {}))
+        base_content = str(merged.get("content") or "").strip()
+        guidance_text = str(guidance or "").strip()
+        merged["content"] = base_content if not guidance_text else f"{base_content}\n\n补充要求：{guidance_text}"
+        metadata = dict(merged.get("metadata") or {})
+        metadata["reply_control_replay"] = "append_guidance"
+        metadata["reply_control_guidance"] = True
+        merged["metadata"] = metadata
+        return merged
+
+    def request_reply_control(
+        self,
+        session_id: str,
+        *,
+        action: str,
+        request_id: str,
+        guidance: str = "",
+        checkpoint_id: str = "",
+        turn_id: str = "",
+        stream_id: str = "",
+    ) -> dict[str, Any]:
+        session = self.get_or_create_session(session_id)
+        state = self._reply_control_state(session)
+        active_turn = state.get("active_turn") if isinstance(state.get("active_turn"), dict) else None
+        normalized_action = str(action or "").strip().lower()
+        if active_turn is not None:
+            active_turn_id = str(active_turn.get("turn_id") or "")
+            active_stream_id = str(active_turn.get("stream_id") or "")
+            if turn_id and turn_id != active_turn_id:
+                return {"action": normalized_action, "status": "rejected", "reason": "turn_id 不匹配。"}
+            if stream_id and stream_id != active_stream_id:
+                return {"action": normalized_action, "status": "rejected", "reason": "stream_id 不匹配。"}
+        if normalized_action == "list_checkpoints":
+            result = {
+                "action": normalized_action,
+                "status": "completed",
+                "checkpoints": self.list_reply_checkpoints(session_id),
+            }
+            state["last_completed_command"] = {"action": normalized_action, "status": "completed", "request_id": request_id}
+            self._sync_reply_control_runtime_state(session_id, session)
+            return result
+        if normalized_action == "stop":
+            if active_turn is None:
+                return {"action": normalized_action, "status": "rejected", "reason": "当前没有进行中的回复。"}
+            active_turn["state"] = "canceling"
+            state["pending_command"] = {
+                "action": normalized_action,
+                "request_id": request_id,
+                "checkpoint_id": str(active_turn.get("checkpoint_id") or ""),
+                "created_at": utcnow_iso(),
+            }
+            state["last_command"] = {"action": normalized_action, "status": "accepted", "request_id": request_id}
+            self._sync_reply_control_runtime_state(session_id, session)
+            return {"action": normalized_action, "status": "accepted"}
+        if normalized_action == "append_guidance":
+            if active_turn is None:
+                return {"action": normalized_action, "status": "rejected", "reason": "当前没有可追加引导的进行中回复。"}
+            guidance_text = str(guidance or "").strip()
+            if not guidance_text:
+                return {"action": normalized_action, "status": "rejected", "reason": "guidance 不能为空。"}
+            active_turn["state"] = "replaying"
+            state["pending_command"] = {
+                "action": normalized_action,
+                "request_id": request_id,
+                "guidance": guidance_text,
+                "checkpoint_id": str(active_turn.get("checkpoint_id") or ""),
+                "created_at": utcnow_iso(),
+            }
+            state["last_command"] = {"action": normalized_action, "status": "accepted", "request_id": request_id}
+            self._sync_reply_control_runtime_state(session_id, session)
+            return {"action": normalized_action, "status": "accepted"}
+        if normalized_action == "regenerate":
+            if active_turn is not None:
+                active_turn["state"] = "replaying"
+                state["pending_command"] = {
+                    "action": normalized_action,
+                    "request_id": request_id,
+                    "checkpoint_id": str(active_turn.get("checkpoint_id") or ""),
+                    "created_at": utcnow_iso(),
+                }
+                state["last_command"] = {"action": normalized_action, "status": "accepted", "request_id": request_id}
+                self._sync_reply_control_runtime_state(session_id, session)
+                return {"action": normalized_action, "status": "accepted"}
+            latest_replay_input = state.get("latest_replay_input") if isinstance(state.get("latest_replay_input"), dict) else None
+            if latest_replay_input is None:
+                return {"action": normalized_action, "status": "rejected", "reason": "当前没有可重新回复的最近输入。"}
+            checkpoint_ref = str(latest_replay_input.get("checkpoint_id") or "")
+            if not checkpoint_ref:
+                return {"action": normalized_action, "status": "rejected", "reason": "最近输入缺少可恢复检查点。"}
+            try:
+                restored = self._restore_reply_checkpoint(session, checkpoint_ref)
+            except ValueError as exc:
+                return {"action": normalized_action, "status": "rejected", "reason": str(exc)}
+            replay_input = deepcopy(dict(latest_replay_input.get("input_info") or {}))
+            state["last_completed_command"] = {"action": normalized_action, "status": "completed", "request_id": request_id}
+            self._sync_reply_control_runtime_state(session_id, session)
+            return {
+                "action": normalized_action,
+                "status": "completed",
+                "replay_input": replay_input,
+                "checkpoint": self._sanitize_reply_checkpoint(restored),
+            }
+        if normalized_action == "rollback":
+            if not checkpoint_id:
+                return {"action": normalized_action, "status": "rejected", "reason": "checkpoint_id 为必填字段。"}
+            if not any(str(item.get("checkpoint_id") or "") == checkpoint_id for item in self._reply_checkpoints(session)):
+                return {"action": normalized_action, "status": "rejected", "reason": "检查点不存在或已失效。"}
+            if active_turn is not None:
+                active_turn["state"] = "rolled_back"
+                state["pending_command"] = {
+                    "action": normalized_action,
+                    "request_id": request_id,
+                    "checkpoint_id": checkpoint_id,
+                    "created_at": utcnow_iso(),
+                }
+                state["last_command"] = {"action": normalized_action, "status": "accepted", "request_id": request_id}
+                self._sync_reply_control_runtime_state(session_id, session)
+                return {"action": normalized_action, "status": "accepted"}
+            restored = self._restore_reply_checkpoint(session, checkpoint_id)
+            state["last_completed_command"] = {"action": normalized_action, "status": "completed", "request_id": request_id}
+            state["last_finish_reason"] = "rolled_back"
+            self._sync_reply_control_runtime_state(session_id, session)
+            return {
+                "action": normalized_action,
+                "status": "completed",
+                "checkpoint": self._sanitize_reply_checkpoint(restored),
+            }
+        return {"action": normalized_action, "status": "rejected", "reason": "不支持的控制动作。"}
+
+    def finalize_reply_control(self, session_id: str, *, turn_id: str, interrupted: bool) -> dict[str, Any]:
+        session = self.get_or_create_session(session_id)
+        state = self._reply_control_state(session)
+        active_turn = state.get("active_turn") if isinstance(state.get("active_turn"), dict) else None
+        pending_command = state.get("pending_command") if isinstance(state.get("pending_command"), dict) else None
+        if active_turn is None or str(active_turn.get("turn_id") or "") != str(turn_id or ""):
+            return {"finish_reason": str(state.get("last_finish_reason") or ""), "replay_input": None, "control_result": None}
+        replay_input = None
+        control_result = None
+        finish_reason = "completed"
+        if interrupted and pending_command:
+            action = str(pending_command.get("action") or "")
+            finish_reason = {
+                "stop": "stopped",
+                "append_guidance": "replayed",
+                "regenerate": "replayed",
+                "rollback": "rolled_back",
+            }.get(action, "stopped")
+            checkpoint_ref = str(pending_command.get("checkpoint_id") or active_turn.get("checkpoint_id") or "")
+            if action in {"append_guidance", "regenerate"}:
+                restored = self._restore_reply_checkpoint(session, checkpoint_ref)
+                latest_replay = state.get("latest_replay_input") if isinstance(state.get("latest_replay_input"), dict) else None
+                base_input = deepcopy(
+                    dict(
+                        active_turn.get("input_info")
+                        or (latest_replay.get("input_info") if isinstance(latest_replay, dict) else {})
+                        or {}
+                    )
+                )
+                if action == "append_guidance":
+                    replay_input = self._merged_guidance_input(base_input, str(pending_command.get("guidance") or ""))
+                else:
+                    replay_input = base_input
+                control_result = {
+                    "action": action,
+                    "status": "completed",
+                    "checkpoint": self._sanitize_reply_checkpoint(restored),
+                }
+            elif action == "rollback":
+                restored = self._restore_reply_checkpoint(session, str(pending_command.get("checkpoint_id") or ""))
+                control_result = {
+                    "action": action,
+                    "status": "completed",
+                    "checkpoint": self._sanitize_reply_checkpoint(restored),
+                }
+            else:
+                control_result = {"action": action, "status": "completed"}
+            state["last_completed_command"] = {
+                "action": action,
+                "status": "completed",
+                "request_id": str(pending_command.get("request_id") or ""),
+            }
+            state["pending_command"] = None
+        elif interrupted:
+            finish_reason = "stopped"
+        state["active_turn"] = None
+        state["last_finish_reason"] = finish_reason
+        self._sync_reply_control_runtime_state(session_id, session)
+        return {"finish_reason": finish_reason, "replay_input": replay_input, "control_result": control_result}
+
+    def mark_reply_turn_failed(self, session_id: str, *, turn_id: str) -> None:
+        session = self.get_or_create_session(session_id)
+        state = self._reply_control_state(session)
+        active_turn = state.get("active_turn") if isinstance(state.get("active_turn"), dict) else None
+        if active_turn is not None and str(active_turn.get("turn_id") or "") == str(turn_id or ""):
+            state["active_turn"] = None
+            state["pending_command"] = None
+            state["last_finish_reason"] = "failed"
+            self._sync_reply_control_runtime_state(session_id, session)
 
     @staticmethod
     def _sanitize_runtime_error_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -1754,6 +2152,7 @@ class Brain:
         tool_activity_callback=None,
         model_options: dict | None = None,
         phase_callback=None,
+        cancel_event=None,
     ):
         if self._http_session is None:
             raise RuntimeError("Brain HTTP session not initialized. Call init_brain() first.")
@@ -1775,6 +2174,24 @@ class Brain:
         session.metadata["last_request_debug"] = {}
         memory_trigger_message = self._build_memory_trigger_message(input_info)
         await self._store_turn_episode(session_id, input_info, transient_turn=transient_turn)
+        reply_control_state = self._reply_control_state(session)
+        checkpoint = self._create_reply_checkpoint(
+            session,
+            turn_id=str(session.runtime_state.turn_id or ""),
+            input_info=input_info,
+            history_length=turn_input_index,
+        )
+        reply_control_state["active_turn"] = {
+            "state": "active",
+            "turn_id": str(session.runtime_state.turn_id or ""),
+            "stream_id": str(session.runtime_state.stream_id or ""),
+            "checkpoint_id": str(checkpoint.get("checkpoint_id") or ""),
+            "started_at": utcnow_iso(),
+            "input_info": deepcopy(dict(input_info or {})),
+            "input_summary": self._sanitize_control_text(input_info.get("content")),
+        }
+        reply_control_state["pending_command"] = None
+        self._sync_reply_control_runtime_state(session_id, session)
         session.chat_history.append(input_info)
         session.touch()
         route_context, route_origin = self._initialize_route_for_turn(input_info, session, requested_mode)
@@ -1925,6 +2342,7 @@ class Brain:
                     model,
                     messages,
                     tools,
+                    cancel_event=cancel_event,
                     **adapter_options,
                 ):
                     if event.type == "text" and event.text:
@@ -2012,6 +2430,18 @@ class Brain:
 
             if not tool_calls:
                 session.metadata["last_failure"] = {}
+                latest_replay_input = {
+                    "turn_id": str((reply_control_state.get("active_turn") or {}).get("turn_id") or session.runtime_state.turn_id or ""),
+                    "checkpoint_id": str((reply_control_state.get("active_turn") or {}).get("checkpoint_id") or ""),
+                    "created_at": utcnow_iso(),
+                    "input_info": deepcopy(dict(input_info or {})),
+                    "input_summary": self._sanitize_control_text(input_info.get("content")),
+                }
+                reply_control_state["latest_replay_input"] = latest_replay_input
+                reply_control_state["active_turn"] = None
+                reply_control_state["pending_command"] = None
+                reply_control_state["last_finish_reason"] = "completed"
+                self._sync_reply_control_runtime_state(session_id, session)
                 if transient_turn and len(session.chat_history) > turn_input_index:
                     del session.chat_history[turn_input_index:]
                 elif not transient_turn:

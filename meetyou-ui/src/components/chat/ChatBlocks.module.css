@@ -1,45 +1,63 @@
-.turnBlock {
-  background: rgba(128, 128, 128, 0.05);
-  border-radius: 10px;
+.reasoningWrapper {
+  margin-top: 6px;
+  margin-bottom: 8px;
+  background: var(--bg-reasoning);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
   overflow: hidden;
-  margin-bottom: 6px;
-  border: 1px solid rgba(128, 128, 128, 0.08);
 }
 
-.turnBlockHeader {
+.reasoningHeader {
   width: 100%;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
-  cursor: pointer;
-  outline: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: transparent;
+  transition: background-color 0.2s;
 }
 
-.turnBlockHeader:hover {
-  background: rgba(128, 128, 128, 0.06);
+.reasoningHeader:hover {
+  background: rgba(128, 128, 128, 0.05);
 }
 
-.turnBlockTitle {
+.reasoningTitle {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
   font-weight: 500;
 }
 
-.turnBlockBody {
-  padding: 0 10px 10px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.6;
+.reasoningBodyContainer {
+  overflow: hidden;
 }
 
 .reasoningBody {
+  padding: 0 12px 12px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  font-style: italic;
   white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.turnBlock {
+  margin-top: 6px;
+  margin-bottom: 8px;
+}
+
+.turnBlockHeader {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.turnBlockBody {
+  padding: 8px;
 }
 
 .activityList {
@@ -82,23 +100,20 @@
 }
 
 .pulse {
-  animation: pulser 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .cursorBlink {
+  animation: blink 1s step-start infinite;
   display: inline-block;
-  width: 8px;
-  animation: blink 1s step-end infinite;
   margin-left: 2px;
-  color: var(--accent-color);
-}
-
-@keyframes pulser {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.95); }
 }
 
 @keyframes blink {
-  0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.95); }
 }
