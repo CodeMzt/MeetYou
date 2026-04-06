@@ -37,6 +37,8 @@ export interface RuntimeStateSnapshot {
   stream_id: string
   turn_id: string
   updated_at: string
+  finish_reason?: string
+  reply_control?: Record<string, unknown>
 }
 
 export interface UsageCounters {
@@ -140,6 +142,8 @@ export interface RuntimeDebugSnapshot {
   compression: RuntimeCompressionSnapshot | null
   last_failure: RuntimeErrorPayload | null
   updated_at: string
+  reply_control?: Record<string, unknown>
+  checkpoints?: Record<string, unknown>[]
 }
 
 export interface TurnActivity {

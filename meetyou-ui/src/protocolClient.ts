@@ -130,6 +130,8 @@ function toRuntimeStateSnapshot(value: unknown): RuntimeStateSnapshot | null {
     stream_id: toString(record.stream_id),
     turn_id: toString(record.turn_id),
     updated_at: toString(record.updated_at),
+    finish_reason: toString(record.finish_reason),
+    reply_control: toRecord(record.reply_control),
   }
 }
 
@@ -261,6 +263,10 @@ function toRuntimeDebugSnapshot(value: unknown): RuntimeDebugSnapshot | null {
     compression: toRuntimeCompressionSnapshot(record.compression),
     last_failure: toRuntimeErrorPayload(record.last_failure),
     updated_at: toString(record.updated_at),
+    reply_control: toRecord(record.reply_control),
+    checkpoints: Array.isArray(record.checkpoints)
+      ? record.checkpoints.map((item) => toRecord(item))
+      : [],
   }
 }
 

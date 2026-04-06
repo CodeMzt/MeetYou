@@ -1,11 +1,11 @@
-import React, { useMemo } from 'react'
-import { Send } from 'lucide-react'
-import GlassSelect from '../GlassSelect'
+import React, { useMemo, useState } from 'react'
+import { Send, Settings2, Sparkles, BrainCircuit, Square } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { AssistantMode, ThinkingOverride, ConfirmRequestPayload, HumanInputRequestPayload, RuntimeStateSnapshot, ConnectionState } from '../../types'
 import styles from './ChatInput.module.css'
 
 const THINKING_OPTIONS: Array<{ label: string; value: ThinkingOverride }> = [
-  { label: '跟随默认', value: 'default' },
+  { label: '自动', value: 'default' },
   { label: '关闭', value: 'off' },
   { label: '低', value: 'low' },
   { label: '中', value: 'medium' },
@@ -13,12 +13,10 @@ const THINKING_OPTIONS: Array<{ label: string; value: ThinkingOverride }> = [
 ]
 
 const MODE_OPTIONS: Array<{ label: string; value: AssistantMode }> = [
-  { label: 'Normal', value: 'normal' },
-  { label: 'Brain Decides', value: 'auto' },
-  { label: 'Documents', value: 'documents' },
-  { label: 'Research', value: 'research' },
-  { label: 'Office', value: 'office' },
-  { label: 'Study', value: 'study' },
+  { label: '普通', value: 'normal' },
+  { label: '自动', value: 'auto' },
+  { label: '研究', value: 'research' },
+  { label: '文档', value: 'documents' },
 ]
 
 interface ChatInputProps {
@@ -34,6 +32,7 @@ interface ChatInputProps {
   confirmRequest: ConfirmRequestPayload | null
   pendingHumanInput: HumanInputRequestPayload | null
   runtimeSnapshot: RuntimeStateSnapshot | null
+  sendControlCommand?: (action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback', params?: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string }) => void
 }
 
 export default function ChatInput({
@@ -48,97 +47,121 @@ export default function ChatInput({
   onSend,
   confirmRequest,
   pendingHumanInput,
-  runtimeSnapshot
+  runtimeSnapshot,
+  sendControlCommand
 }: ChatInputProps) {
+  const [showOptions, setShowOptions] = useState(false)
   const composerLocked = Boolean(confirmRequest || pendingHumanInput)
+  const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
 
   const inputPlaceholder = useMemo(() => {
     if (!connected) {
-      return connectionState === 'connecting' ? '正在连接后端服务…' : '等待后端服务启动…'
+      return connectionState === 'connecting' ? '正在连接后端...' : '等待后端连接...'
     }
-    if (confirmRequest) {
-      return '请先处理确认请求'
-    }
-    if (pendingHumanInput) {
-      return pendingHumanInput.placeholder || '请先回答当前问题'
-    }
-    if (runtimeSnapshot?.status === 'tool_calling') {
-      return '工具执行中，请稍候…'
-    }
-    return '输入消息，按 Enter 发送'
-  }, [confirmRequest, connected, connectionState, pendingHumanInput, runtimeSnapshot])
+    if (confirmRequest) return '请在上方确认操作...'
+    if (pendingHumanInput) return pendingHumanInput.placeholder || '请在上方补充输入...'
+    if (isBusy) return '可输入补充要求...'
+    if (runtimeSnapshot?.status === 'tool_calling') return '工具运行中...'
+    return '问点什么...'
+  }, [confirmRequest, connected, connectionState, pendingHumanInput, runtimeSnapshot, isBusy])
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (inputVal.trim() && connected && !composerLocked) {
-        onSend()
+        if (isBusy) {
+          sendControlCommand?.('append_guidance', { guidance: inputVal })
+          setInputVal('')
+        } else {
+          onSend()
+        }
       }
     }
   }
 
   return (
-    <div className={styles.container}>
-      <div className={styles.composerRow}>
-        <div className={styles.toolbar}>
-          <label className={styles.label} htmlFor="mode-override">
-            Mode
-          </label>
-          <GlassSelect
-            id="mode-override"
-            wrapperClassName={styles.selectWrap}
-            value={preferredMode}
-            onChange={(e) => setPreferredMode(e.target.value as AssistantMode)}
-            disabled={!connected || composerLocked}
-            title={
-              preferredMode === 'normal'
-                ? 'Normal keeps everyday conversation and lightweight web search in one mode, and may upgrade only when needed.'
-                : preferredMode === 'auto'
-                  ? 'Brain decides the mode and may switch it during the turn.'
-                  : 'The selected mode is locked for this turn.'
+    <div className={styles.dockContainer}>
+      <AnimatePresence>
+        {showOptions && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 5, scale: 0.95 }}
+            transition={{ duration: 0.15 }}
+            className={styles.optionsPopup}
+          >
+            <div className={styles.optionGroup}>
+              <div className={styles.optionLabel}><Sparkles size={12} /> 模式</div>
+              <div className={styles.segmentedControl}>
+                {MODE_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`${styles.segmentBtn} ${preferredMode === opt.value ? styles.active : ''}`}
+                    onClick={() => setPreferredMode(opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className={styles.optionDivider} />
+            <div className={styles.optionGroup}>
+              <div className={styles.optionLabel}><BrainCircuit size={12} /> 思考</div>
+              <div className={styles.segmentedControl}>
+                {THINKING_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`${styles.segmentBtn} ${thinkingOverride === opt.value ? styles.active : ''}`}
+                    onClick={() => setThinkingOverride(opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className={`${styles.inputWrapper} ${composerLocked ? styles.locked : ''}`}>
+        <button 
+          className={styles.settingsBtn} 
+          onClick={() => setShowOptions(!showOptions)}
+          disabled={composerLocked}
+        >
+          <Settings2 size={18} />
+        </button>
+
+        <textarea
+          className={styles.textarea}
+          placeholder={inputPlaceholder}
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={!connected || composerLocked}
+          rows={1}
+          autoFocus
+        />
+
+        <button
+          className={`${styles.sendBtn} ${inputVal.trim() && connected && !composerLocked ? styles.active : ''} ${isBusy && !inputVal.trim() ? styles.stopBtn : ''}`}
+          onClick={() => {
+            if (isBusy) {
+              if (!inputVal.trim()) {
+                sendControlCommand?.('stop')
+              } else {
+                sendControlCommand?.('append_guidance', { guidance: inputVal })
+                setInputVal('')
+              }
+            } else {
+              onSend()
             }
-          >
-            {MODE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </GlassSelect>
-          <label className={styles.label} htmlFor="thinking-override">
-            本次推理
-          </label>
-          <GlassSelect
-            id="thinking-override"
-            wrapperClassName={styles.selectWrap}
-            value={thinkingOverride}
-            onChange={(e) => setThinkingOverride(e.target.value as ThinkingOverride)}
-            disabled={!connected || composerLocked}
-          >
-            {THINKING_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </GlassSelect>
-        </div>
-        <div className={styles.inputRow}>
-          <input
-            className={styles.chatInput}
-            placeholder={inputPlaceholder}
-            value={inputVal}
-            onChange={(e) => setInputVal(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={!connected || composerLocked}
-            autoFocus
-          />
-          <button
-            className={styles.sendBtn}
-            onClick={onSend}
-            disabled={!inputVal.trim() || !connected || composerLocked}
-          >
-            <Send size={16} />
-          </button>
-        </div>
+          }}
+          disabled={!connected || composerLocked || (!isBusy && !inputVal.trim())}
+          title={isBusy && !inputVal.trim() ? "停止生成" : isBusy ? "追加引导" : "发送"}
+        >
+          {isBusy && !inputVal.trim() ? <Square size={14} fill="currentColor" /> : <Send size={16} />}
+        </button>
       </div>
     </div>
   )

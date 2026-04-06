@@ -21,6 +21,28 @@ class PromptAssembler:
     def __init__(self, capability_registry: CapabilityRegistry) -> None:
         self._capability_registry = capability_registry
 
+    def _build_skill_first_policy(self, capability_set) -> str:
+        policy_lines = ["[Skill-First Policy]"]
+        active_or_loaded = _unique_strings([*capability_set.active_skills, *capability_set.loaded_skills])
+        if active_or_loaded:
+            policy_lines.append(
+                f"Treat these skills as the primary operating procedure first: {', '.join(active_or_loaded)}."
+            )
+            policy_lines.append(
+                "Use business tools under those skills instead of bypassing them with ad-hoc tool calls."
+            )
+        else:
+            policy_lines.append(
+                "Before using non-skill business tools for a multi-step or specialized workflow, first check whether an existing skill fits."
+            )
+            policy_lines.append(
+                "Use list_skills to inspect relevant reusable skills, then use load_skill before continuing when a matching skill exists."
+            )
+        policy_lines.append(
+            "Use direct tools immediately only when the task is obviously simple, one-step, or no skill would improve the workflow."
+        )
+        return "\n".join(policy_lines)
+
     def assemble_for_mode(
         self,
         mode: str,
@@ -47,6 +69,7 @@ class PromptAssembler:
             skill_content = str((skill_capability.content if skill_capability is not None else "") or "").strip()
             if skill_content and skill_content not in prompt_sections:
                 prompt_sections.append(skill_content)
+        prompt_sections.append(self._build_skill_first_policy(capability_set))
         plan_lines: list[str] = ["[Capability Plan]"]
         if capability_set.scene_ids:
             plan_lines.append(f"Scenes: {', '.join(capability_set.scene_ids)}")

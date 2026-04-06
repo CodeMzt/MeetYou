@@ -1136,6 +1136,71 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
+    async def test_regenerate_restores_checkpoint_and_cleans_previous_reply_artifacts(self):
+        brain = Brain(
+            ToolCallingAdapter(),
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-regenerate",
+                {"role": "user", "content": "介绍一下 Alex"},
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-regenerate")
+            self.assertTrue(any(message.get("role") == "tool" for message in session.chat_history))
+            self.assertTrue(any(message.get("role") == "assistant" for message in session.chat_history[1:]))
+
+            result = brain.request_reply_control(
+                "session-regenerate",
+                action="regenerate",
+                request_id="req-regenerate-1",
+            )
+
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["replay_input"]["content"], "介绍一下 Alex")
+            self.assertEqual(len(session.chat_history), 1)
+            self.assertEqual(session.chat_history[0]["role"], "system")
+            self.assertFalse(any(message.get("role") == "tool" for message in session.chat_history))
+            self.assertEqual(
+                brain.get_reply_control_snapshot("session-regenerate")["last_completed_command"]["action"],
+                "regenerate",
+            )
+        finally:
+            await brain.close_brain()
+
+    async def test_rollback_rejects_unknown_checkpoint_with_explicit_status(self):
+        brain = Brain(
+            ReasoningAdapter(),
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            result = brain.request_reply_control(
+                "session-missing-checkpoint",
+                action="rollback",
+                request_id="req-rollback-1",
+                checkpoint_id="missing-checkpoint",
+            )
+
+            self.assertEqual(result["status"], "rejected")
+            self.assertEqual(result["reason"], "检查点不存在或已失效。")
+        finally:
+            await brain.close_brain()
+
 
 if __name__ == "__main__":
     unittest.main()

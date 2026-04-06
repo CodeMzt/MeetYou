@@ -81,7 +81,7 @@ class _FakeSpeaker:
             }
         )
 
-    async def emit_stream_end(self, session_id, source, stream_id, target=None, stream_channel="answer"):
+    async def emit_stream_end(self, session_id, source, stream_id, target=None, stream_channel="answer", metadata=None):
         self.stream_ends.append(
             {
                 "session_id": session_id,
@@ -89,6 +89,7 @@ class _FakeSpeaker:
                 "stream_id": stream_id,
                 "target": target,
                 "stream_channel": stream_channel,
+                "metadata": dict(metadata or {}),
             }
         )
 
@@ -114,6 +115,8 @@ class _FakeBrain:
         source_profile=None,
         stream_id=None,
         turn_id=None,
+        finish_reason=None,
+        reply_control=None,
     ):
         snapshot = {
             "session_id": session_id,
@@ -126,12 +129,36 @@ class _FakeBrain:
             "source_profile": source_profile or "",
             "stream_id": stream_id or "",
             "turn_id": turn_id or "",
+            "finish_reason": finish_reason or "",
+            "reply_control": dict(reply_control or {}),
         }
         self.runtime_snapshots[session_id] = snapshot
         return snapshot
 
     def get_session_runtime_snapshot(self, session_id: str):
         return self.runtime_snapshots.get(session_id)
+
+    def request_reply_control(
+        self,
+        session_id: str,
+        *,
+        action: str,
+        request_id: str,
+        guidance: str = "",
+        checkpoint_id: str = "",
+        turn_id: str = "",
+        stream_id: str = "",
+    ):
+        del session_id, request_id, guidance, checkpoint_id, turn_id, stream_id
+        return {"action": action, "status": "rejected", "reason": "unsupported in fake"}
+
+    def finalize_reply_control(self, session_id: str, *, turn_id: str, interrupted: bool):
+        del session_id, turn_id, interrupted
+        return {"finish_reason": "stopped", "replay_input": None, "control_result": None}
+
+    def mark_reply_turn_failed(self, session_id: str, *, turn_id: str):
+        del session_id, turn_id
+        return None
 
     def discard_trailing_transient_messages(self, session_id: str):
         return None
@@ -150,8 +177,9 @@ class _FakeBrain:
         tool_activity_callback=None,
         model_options: dict | None = None,
         phase_callback=None,
+        cancel_event=None,
     ):
-        del input_info, api_key, api_url, model, provider_name, tool_activity_callback, model_options
+        del input_info, api_key, api_url, model, provider_name, tool_activity_callback, model_options, cancel_event
         self.start_order.append(session_id)
         self.contexts[session_id] = get_event_context()
         if session_id == "session-1":
@@ -201,7 +229,182 @@ class _FakeBrain:
         yield BrainOutputEvent(type="done")
 
 
+class _ReplyControlBrain(_FakeBrain):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.replay_inputs = []
+
+    def request_reply_control(
+        self,
+        session_id: str,
+        *,
+        action: str,
+        request_id: str,
+        guidance: str = "",
+        checkpoint_id: str = "",
+        turn_id: str = "",
+        stream_id: str = "",
+    ):
+        del request_id, checkpoint_id, turn_id, stream_id
+        self.last_guidance = guidance
+        return {"action": action, "status": "accepted", "session_id": session_id}
+
+    def finalize_reply_control(self, session_id: str, *, turn_id: str, interrupted: bool):
+        del session_id, turn_id, interrupted
+        return {
+            "finish_reason": "replayed",
+            "replay_input": {
+                "role": "user",
+                "content": f"first\n\n补充要求：{self.last_guidance}",
+                "metadata": {"reply_control_replay": "append_guidance"},
+            },
+            "control_result": {"action": "append_guidance", "status": "completed"},
+        }
+
+    async def input_brain(
+        self,
+        session_id: str,
+        input_info: dict,
+        api_key: str,
+        api_url: str,
+        model: str,
+        provider_name: str = "",
+        tool_activity_callback=None,
+        model_options: dict | None = None,
+        phase_callback=None,
+        cancel_event=None,
+    ):
+        del api_key, api_url, model, provider_name, tool_activity_callback, model_options, cancel_event
+        if input_info.get("metadata", {}).get("reply_control_replay") == "append_guidance":
+            self.replay_inputs.append(input_info["content"])
+            if phase_callback is not None:
+                await phase_callback(RuntimeStatus.ANSWERING.value, "Generating answer", [])
+            yield BrainOutputEvent(type="answer_text", text="replayed-answer")
+            yield BrainOutputEvent(type="done")
+            return
+        self.started.set()
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+
+
+class _StopReplyControlBrain(_ReplyControlBrain):
+    def request_reply_control(
+        self,
+        session_id: str,
+        *,
+        action: str,
+        request_id: str,
+        guidance: str = "",
+        checkpoint_id: str = "",
+        turn_id: str = "",
+        stream_id: str = "",
+    ):
+        del request_id, guidance, checkpoint_id, turn_id, stream_id
+        return {"action": action, "status": "accepted", "session_id": session_id}
+
+    def finalize_reply_control(self, session_id: str, *, turn_id: str, interrupted: bool):
+        del session_id, turn_id, interrupted
+        return {
+            "finish_reason": "stopped",
+            "replay_input": None,
+            "control_result": {"action": "stop", "status": "completed"},
+        }
+
+
+class _ImmediateReplayControlBrain(_FakeBrain):
+    def __init__(self):
+        super().__init__()
+        self.replay_inputs = []
+        self.input_calls = 0
+
+    def request_reply_control(
+        self,
+        session_id: str,
+        *,
+        action: str,
+        request_id: str,
+        guidance: str = "",
+        checkpoint_id: str = "",
+        turn_id: str = "",
+        stream_id: str = "",
+    ):
+        del session_id, request_id, guidance, checkpoint_id, turn_id, stream_id
+        if action == "regenerate":
+            return {
+                "action": action,
+                "status": "completed",
+                "replay_input": {
+                    "role": "user",
+                    "content": "first",
+                    "metadata": {"reply_control_replay": "regenerate"},
+                },
+            }
+        if action == "rollback":
+            return {
+                "action": action,
+                "status": "completed",
+                "checkpoint": {"checkpoint_id": "cp-1"},
+            }
+        return {"action": action, "status": "rejected", "reason": "unsupported"}
+
+    async def input_brain(
+        self,
+        session_id: str,
+        input_info: dict,
+        api_key: str,
+        api_url: str,
+        model: str,
+        provider_name: str = "",
+        tool_activity_callback=None,
+        model_options: dict | None = None,
+        phase_callback=None,
+        cancel_event=None,
+    ):
+        del session_id, api_key, api_url, model, provider_name, tool_activity_callback, model_options, cancel_event
+        self.input_calls += 1
+        self.replay_inputs.append(input_info["content"])
+        if phase_callback is not None:
+            await phase_callback(RuntimeStatus.ANSWERING.value, "Generating answer", [])
+        yield BrainOutputEvent(type="answer_text", text="regenerated-answer")
+        yield BrainOutputEvent(type="done")
+
+
 class AppSessionExecutionTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _build_app(brain):
+        app = App.__new__(App)
+        app.event_bus = EventBus()
+        app.config = _FakeConfig()
+        app.brain = brain
+        app.speaker = _FakeSpeaker()
+        app.session_manager = type(
+            "_SessionManagerStub",
+            (),
+            {"get_default_target": staticmethod(lambda session_id: type("T", (), {"kind": "current_session", "id": "", "metadata": {}})())},
+        )()
+        app._brain_source = make_source(SourceKind.SYSTEM.value, "brain")
+        app._runtime_source = make_source(SourceKind.SYSTEM.value, "runtime")
+        app._usage_source = make_source(SourceKind.SYSTEM.value, "usage")
+        app._control_source = make_source(SourceKind.SYSTEM.value, "reply_control")
+        app._get_main_provider = lambda: "openai"
+        app._build_model_options = lambda metadata=None: {}
+        app._emit_pending_task_updates = _async_noop
+        app._is_heartbeat_signal = lambda event: False
+        app._recent_user_delivery = lambda: None
+        app._build_signal_input = lambda event: {
+            "role": event.role,
+            "content": event.content,
+            "metadata": dict(getattr(event, "metadata", {}) or {}),
+        }
+        app._session_execution_runtime = SessionActorRuntime(app._process_session_execution)
+        return app
+
     async def test_brain_processor_runs_sessions_in_parallel_and_binds_context(self):
         app = App.__new__(App)
         app.event_bus = EventBus()
@@ -274,9 +477,163 @@ class AppSessionExecutionTests(unittest.IsolatedAsyncioTestCase):
             ["session-1", "session-2"],
         )
 
+    async def test_reply_control_stop_cancels_current_turn_without_replay(self):
+        app = self._build_app(_StopReplyControlBrain())
+
+        processor_task = asyncio.create_task(App.brain_processor(app))
+        try:
+            await app.event_bus.inbound_queue.put(
+                InboundEvent(
+                    session_id="session-1",
+                    type="message",
+                    role="user",
+                    content="first",
+                    source=make_source(SourceKind.WEB.value, "tab-1"),
+                )
+            )
+            await asyncio.wait_for(app.brain.started.wait(), timeout=1.0)
+            await app.event_bus.inbound_queue.put(
+                InboundEvent(
+                    session_id="session-1",
+                    type="control",
+                    role="system",
+                    content={"action": "stop"},
+                    source=make_source(SourceKind.WEB.value, "tab-1"),
+                    metadata={"control_kind": "reply_control"},
+                )
+            )
+            await asyncio.wait_for(app._session_execution_runtime.join("session-1"), timeout=2.0)
+            app.event_bus.request_shutdown()
+            await asyncio.wait_for(processor_task, timeout=1.0)
+        finally:
+            if not processor_task.done():
+                app.event_bus.request_shutdown()
+                await asyncio.wait_for(processor_task, timeout=1.0)
+
+        self.assertTrue(app.brain.cancelled.is_set())
+        self.assertEqual(app.brain.replay_inputs, [])
+        self.assertEqual(app.brain.runtime_snapshots["session-1"]["status"], RuntimeStatus.IDLE.value)
+        self.assertEqual(app.brain.runtime_snapshots["session-1"]["finish_reason"], "stopped")
+        finish_reasons = [item["metadata"].get("finish_reason", "") for item in app.speaker.stream_ends]
+        self.assertIn("stopped", finish_reasons)
+        control_events = [event for event in app.speaker.events if event.type == "control"]
+        self.assertTrue(any(event.content.get("action") == "stop" and event.content.get("status") == "completed" for event in control_events))
+
+    async def test_reply_control_append_guidance_cancels_and_replays_current_turn(self):
+        app = self._build_app(_ReplyControlBrain())
+
+        processor_task = asyncio.create_task(App.brain_processor(app))
+        try:
+            await app.event_bus.inbound_queue.put(
+                InboundEvent(
+                    session_id="session-1",
+                    type="message",
+                    role="user",
+                    content="first",
+                    source=make_source(SourceKind.WEB.value, "tab-1"),
+                )
+            )
+            await asyncio.wait_for(app.brain.started.wait(), timeout=1.0)
+            await app.event_bus.inbound_queue.put(
+                InboundEvent(
+                    session_id="session-1",
+                    type="control",
+                    role="system",
+                    content={"action": "append_guidance", "guidance": "更简短"},
+                    source=make_source(SourceKind.WEB.value, "tab-1"),
+                    metadata={"control_kind": "reply_control"},
+                )
+            )
+            await asyncio.wait_for(app._session_execution_runtime.join("session-1"), timeout=2.0)
+            app.event_bus.request_shutdown()
+            await asyncio.wait_for(processor_task, timeout=1.0)
+        finally:
+            if not processor_task.done():
+                app.event_bus.request_shutdown()
+                await asyncio.wait_for(processor_task, timeout=1.0)
+
+        self.assertTrue(app.brain.cancelled.is_set())
+        self.assertEqual(app.brain.replay_inputs, ["first\n\n补充要求：更简短"])
+        finish_reasons = [item["metadata"].get("finish_reason", "") for item in app.speaker.stream_ends]
+        self.assertIn("replayed", finish_reasons)
+        control_events = [event for event in app.speaker.events if event.type == "control"]
+        self.assertTrue(any(event.content.get("status") == "completed" for event in control_events))
+
+    async def test_reply_control_regenerate_replays_latest_input_when_idle(self):
+        app = self._build_app(_ImmediateReplayControlBrain())
+
+        processor_task = asyncio.create_task(App.brain_processor(app))
+        try:
+            await app.event_bus.inbound_queue.put(
+                InboundEvent(
+                    session_id="session-1",
+                    type="control",
+                    role="system",
+                    content={"action": "regenerate"},
+                    source=make_source(SourceKind.WEB.value, "tab-1"),
+                    metadata={"control_kind": "reply_control"},
+                )
+            )
+            await asyncio.wait_for(_wait_until(lambda: app.brain.input_calls == 1), timeout=2.0)
+            await asyncio.wait_for(app._session_execution_runtime.join("session-1"), timeout=2.0)
+            app.event_bus.request_shutdown()
+            await asyncio.wait_for(processor_task, timeout=1.0)
+        finally:
+            if not processor_task.done():
+                app.event_bus.request_shutdown()
+                await asyncio.wait_for(processor_task, timeout=1.0)
+
+        self.assertEqual(app.brain.replay_inputs, ["first"])
+        self.assertEqual(app.brain.input_calls, 1)
+        self.assertTrue(any(item["content"] == "regenerated-answer" for item in app.speaker.stream_chunks))
+        control_events = [event for event in app.speaker.events if event.type == "control"]
+        self.assertTrue(any(event.content.get("action") == "regenerate" and event.content.get("status") == "completed" for event in control_events))
+
+    async def test_reply_control_rollback_completes_without_spawning_new_turn(self):
+        app = self._build_app(_ImmediateReplayControlBrain())
+
+        processor_task = asyncio.create_task(App.brain_processor(app))
+        try:
+            await app.event_bus.inbound_queue.put(
+                InboundEvent(
+                    session_id="session-1",
+                    type="control",
+                    role="system",
+                    content={"action": "rollback", "checkpoint_id": "cp-1"},
+                    source=make_source(SourceKind.WEB.value, "tab-1"),
+                    metadata={"control_kind": "reply_control"},
+                )
+            )
+            await asyncio.wait_for(
+                _wait_until(
+                    lambda: any(
+                        event.content.get("action") == "rollback"
+                        for event in app.speaker.events
+                        if event.type == "control"
+                    )
+                ),
+                timeout=1.0,
+            )
+            app.event_bus.request_shutdown()
+            await asyncio.wait_for(processor_task, timeout=1.0)
+        finally:
+            if not processor_task.done():
+                app.event_bus.request_shutdown()
+                await asyncio.wait_for(processor_task, timeout=1.0)
+
+        self.assertEqual(app.brain.input_calls, 0)
+        self.assertEqual(app.speaker.stream_starts, [])
+        control_events = [event for event in app.speaker.events if event.type == "control"]
+        self.assertTrue(any(event.content.get("action") == "rollback" and event.content.get("status") == "completed" for event in control_events))
+
 
 async def _async_noop(*args, **kwargs):
     return None
+
+
+async def _wait_until(predicate, interval: float = 0.01):
+    while not predicate():
+        await asyncio.sleep(interval)
 
 
 if __name__ == "__main__":
