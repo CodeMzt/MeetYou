@@ -133,6 +133,7 @@ class MCPManager:
         self.mcp_clients: dict[str, MCPClient] = {}
         self.mcp_tools: dict[str, list[dict]] = {}
         self.tool_map: dict[str, str] = {}
+        self.server_diagnostics: dict[str, dict] = {}
 
     async def init_mcp_servers(self, mcp_servers: dict):
         """Initialize all enabled MCP servers from config."""
@@ -140,10 +141,30 @@ class MCPManager:
         self.mcp_clients = {}
         self.mcp_tools = {}
         self.tool_map = {}
+        self.server_diagnostics = {}
 
         for name, info in mcp_servers.items():
+            auth_env = [str(item).strip() for item in info.get("auth_env", []) if str(item).strip()]
+            if not auth_env:
+                auth_env = [
+                    str(item).strip()
+                    for item in ((info.get("auth") or {}).get("env") or [])
+                    if str(item).strip()
+                ]
+            missing_auth = [env_name for env_name in auth_env if not str(os.environ.get(env_name) or "").strip()]
+            diagnostic = {
+                "server_name": name,
+                "enabled": bool(info.get("enabled", True)),
+                "status": "declared",
+                "tool_count": 0,
+                "auth_env": auth_env,
+                "missing_auth": missing_auth,
+                "command": str(info.get("command") or "").strip(),
+            }
             if not info.get("enabled", True):
                 logger.info("Skipping disabled MCP server [%s]", name)
+                diagnostic["status"] = "not_enabled"
+                self.server_diagnostics[name] = diagnostic
                 continue
 
             command = info.get("command")
@@ -152,6 +173,15 @@ class MCPManager:
 
             if not command:
                 logger.error("Skipping MCP server [%s]: missing command", name)
+                diagnostic["status"] = "unavailable"
+                diagnostic["error"] = "missing_command"
+                self.server_diagnostics[name] = diagnostic
+                continue
+
+            if missing_auth:
+                logger.info("Skipping MCP server [%s]: missing auth env %s", name, ", ".join(missing_auth))
+                diagnostic["status"] = "requires_auth"
+                self.server_diagnostics[name] = diagnostic
                 continue
 
             client = MCPClient(command, args, env)
@@ -160,6 +190,9 @@ class MCPManager:
                 await client.load_mcp_tools()
             except Exception as exc:
                 logger.error("Failed to initialize MCP server [%s]: %s", name, exc)
+                diagnostic["status"] = "unavailable"
+                diagnostic["error"] = str(exc)
+                self.server_diagnostics[name] = diagnostic
                 try:
                     await client.shutdown_mcp_session()
                 except Exception as close_error:
@@ -173,8 +206,11 @@ class MCPManager:
             self.mcp_servers_list.append(name)
             self.mcp_clients[name] = client
             self.mcp_tools[name] = client.tools_schema or []
+            diagnostic["status"] = "enabled"
+            diagnostic["tool_count"] = len(self.mcp_tools[name])
             for func in self.mcp_tools[name]:
                 self.tool_map[func["function"]["name"]] = name
+            self.server_diagnostics[name] = diagnostic
 
             logger.info(
                 "MCP server [%s] initialized with %s tools",
@@ -203,3 +239,10 @@ class MCPManager:
                 logger.warning("MCP server [%s] close was cancelled: %s", name, exc)
             except Exception as exc:
                 logger.error("Failed to close MCP server [%s]: %s", name, exc)
+
+    def get_server_diagnostics(self) -> list[dict]:
+        return [dict(payload) for payload in self.server_diagnostics.values()]
+
+    def get_server_diagnostic(self, server_name: str) -> dict | None:
+        payload = self.server_diagnostics.get(str(server_name or "").strip())
+        return dict(payload) if isinstance(payload, dict) else None
