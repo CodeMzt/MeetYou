@@ -195,6 +195,7 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["url"], "https://api.deepseek.com/v1/chat/completions")
         self.assertIn("messages", call["json"])
         self.assertNotIn("input", call["json"])
+        self.assertEqual(call["json"]["stream_options"], {"include_usage": True})
         self.assertEqual(call["json"]["reasoning_effort"], "medium")
         self.assertEqual(
             [event.type for event in events],
@@ -238,7 +239,9 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(session.calls), 2)
         self.assertEqual(session.calls[0]["json"]["reasoning_effort"], "medium")
+        self.assertEqual(session.calls[0]["json"]["stream_options"], {"include_usage": True})
         self.assertNotIn("reasoning_effort", session.calls[1]["json"])
+        self.assertNotIn("stream_options", session.calls[1]["json"])
         self.assertEqual([event.type for event in events], ["text", "done"])
 
     async def test_compatible_host_400_raises_structured_provider_error(self):

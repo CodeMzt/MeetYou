@@ -491,7 +491,9 @@ _DEFAULT_ROUTER_CONFIG = {
     "sticky_current_mode": True,
     "allow_preferred_override": True,
     "allow_in_turn_switch": True,
-    "max_switches_per_turn": 2,
+    "max_switches_per_round": 0,
+    "max_switches_per_turn": 0,
+    "max_tool_calls_per_round": 0,
     "fallback_to_heuristic": True,
     "semantic_routing_enabled": True,
 }
