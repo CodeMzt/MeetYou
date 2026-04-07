@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { fetchWithAuth, readErrorMessage } from '../apiClient'
 import { buildConfigGroups, getConfigFieldSchema } from '../configSchema'
 import { parseUiProtocolSchemaEnvelope } from '../protocolClient'
 import type {
@@ -206,15 +207,17 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
       try {
         setLoading(true)
         const [schemaResponse, configResponse] = await Promise.all([
-          fetch(`${baseUrl}/schema/ui`),
-          fetch(`${baseUrl}/config`),
+          fetchWithAuth(`${baseUrl}/schema/ui`),
+          fetchWithAuth(`${baseUrl}/config`),
         ])
 
         if (!schemaResponse.ok) {
-          throw new Error('获取协议定义失败')
+          const failure = await readErrorMessage(schemaResponse, '获取协议定义失败')
+          throw new Error(failure.message)
         }
         if (!configResponse.ok) {
-          throw new Error('获取配置失败')
+          const failure = await readErrorMessage(configResponse, '获取配置失败')
+          throw new Error(failure.message)
         }
 
         const schemaPayload = parseUiProtocolSchemaEnvelope(await schemaResponse.json())
@@ -340,14 +343,15 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
       setSaving(true)
       setError(null)
 
-      const response = await fetch(`${baseUrl}/config`, {
+      const response = await fetchWithAuth(`${baseUrl}/config`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ updates }),
       })
 
       if (!response.ok) {
-        throw new Error('更新配置失败')
+        const failure = await readErrorMessage(response, '更新配置失败')
+        throw new Error(failure.message)
       }
 
       const result: ConfigPatchResult = await response.json()

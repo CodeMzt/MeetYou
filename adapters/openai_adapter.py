@@ -129,12 +129,6 @@ class OpenAIAdapter(LLMAdapter):
         return tools if tools else None
 
     @staticmethod
-    def _supports_stream_usage(url: str, model: str) -> bool:
-        url = str(url or "").lower()
-        model = str(model or "").lower()
-        return "openai.com" in url or model.startswith(("gpt-", "o"))
-
-    @staticmethod
     def _supports_chat_reasoning_effort(url: str, model: str) -> bool:
         host = (urlparse(str(url or "").strip()).hostname or "").lower()
         normalized_model = str(model or "").strip().lower()
@@ -824,8 +818,7 @@ class OpenAIAdapter(LLMAdapter):
         ft = self.format_tools(tools)
         if ft:
             payload["tools"] = ft
-        if self._supports_stream_usage(url, model):
-            payload["stream_options"] = {"include_usage": True}
+        payload["stream_options"] = {"include_usage": True}
         self._apply_chat_reasoning_options(payload, model, request_url=url, **kwargs)
 
         try:
