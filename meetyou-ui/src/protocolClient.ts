@@ -428,6 +428,14 @@ export function parseAckEnvelope(payload: unknown): AckPayload | null {
   return toAckPayload(record.ack)
 }
 
+export function parseErrorEnvelope(payload: unknown): RuntimeErrorPayload | null {
+  const record = toRecord(payload)
+  if (toString(record.kind) !== 'error') {
+    return null
+  }
+  return toRuntimeErrorPayload(record.error)
+}
+
 export function parseWsPayload(payload: unknown, now: number = Date.now()): ProtocolUpdate {
   const record = toRecord(payload)
   const kind = toString(record.kind)

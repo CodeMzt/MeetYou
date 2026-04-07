@@ -1,7 +1,9 @@
 import { startTransition, useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
+import { fetchWithAuth, getAccessToken } from '../apiClient'
 import { createSystemTurn, createUserTurn, reduceChatState, createInitialChatState } from '../chatState'
 import {
   parseAckEnvelope,
+  parseErrorEnvelope,
   parseHealthEnvelope,
   parseRuntimeDebugEnvelope,
   parseRuntimeStateEnvelope,
@@ -71,23 +73,6 @@ function buildTransportError(error: Error): RuntimeErrorPayload {
     details: {},
     occurred_at: '',
   }
-}
-
-function getAccessToken(): string {
-  try {
-    return localStorage.getItem('meetyou_access_token') || ''
-  } catch {
-    return ''
-  }
-}
-
-async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
-  const token = getAccessToken()
-  const headers = new Headers(init?.headers)
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
-  return fetch(url, { ...init, headers })
 }
 
 export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
@@ -444,17 +429,18 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
 
         if (!response.ok) {
           const rawError = await response.json().catch(() => null)
-          if (rawError?.kind === 'error' && rawError.error) {
-            dispatchTransport({ type: 'error', error: rawError.error })
+          const parsedError = parseErrorEnvelope(rawError)
+          if (parsedError) {
+            dispatchTransport({ type: 'error', error: parsedError })
             startTransition(() => {
               dispatchChat({
                 type: 'append_system_turn',
-                turn: createSystemTurn(rawError.error.message || `HTTP ${response.status}`, true),
+                turn: createSystemTurn(parsedError.message || `HTTP ${response.status}`, true),
               })
             })
             return
           }
-          throw new Error(`HTTP ${response.status}`)
+          throw new Error(response.status ? `消息发送失败（HTTP ${response.status}）` : '消息发送失败')
         }
 
         const ack = parseAckEnvelope(await response.json())

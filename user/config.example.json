@@ -40,7 +40,9 @@
     "sticky_current_mode": true,
     "allow_preferred_override": true,
     "allow_in_turn_switch": true,
-    "max_switches_per_turn": 2,
+    "max_switches_per_round": 0,
+    "max_switches_per_turn": 0,
+    "max_tool_calls_per_round": 0,
     "fallback_to_heuristic": true
   },
   "trusted_write_roots": [

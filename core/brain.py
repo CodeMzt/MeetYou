@@ -1001,6 +1001,16 @@ class Brain:
             return {}
         return dict(getter())
 
+    def _get_router_limit(self, key: str, *, default: int = 0) -> int | None:
+        raw_value = self._get_router_config().get(key, default)
+        try:
+            normalized = int(raw_value)
+        except (TypeError, ValueError):
+            normalized = default
+        if normalized <= 0:
+            return None
+        return normalized
+
     def _should_lock_requested_mode(self, requested_mode: str) -> bool:
         if requested_mode not in ASSISTANT_SPECIALIZED_MODES:
             return False
@@ -1214,8 +1224,8 @@ class Brain:
                 to_mode=current_mode,
             )
 
-        max_switches = int(router_config.get("max_switches_per_turn", 2) or 0)
-        if switch_count >= max_switches:
+        max_switches = self._get_router_limit("max_switches_per_turn")
+        if max_switches is not None and switch_count >= max_switches:
             return _ModeSwitchResult(
                 message=f"max_switches_per_turn={max_switches} reached; staying in {current_mode}.",
                 route_context=dict(route_context),
@@ -1888,6 +1898,7 @@ class Brain:
         assistant_content: str,
         reasoning_text: str,
         tool_calls: list,
+        provider_items: list[dict[str, Any]] | None = None,
     ) -> UsageCounters:
         assistant_message = {"role": "assistant", "content": assistant_content}
         if tool_calls:
@@ -1902,6 +1913,8 @@ class Brain:
                 }
                 for tc in tool_calls
             ]
+        if provider_items:
+            assistant_message["provider_items"] = list(provider_items)
         completion_tokens = self._estimate_message_tokens(assistant_message)
         reasoning_tokens = self._estimate_text_tokens(reasoning_text)
         prompt_tokens = int(context_breakdown.get("total", 0) or 0)
@@ -2258,7 +2271,6 @@ class Brain:
         if summary_usage:
             turn_usage.add(summary_usage)
             session.usage_snapshot.session_totals.add(summary_usage)
-            usage_source = "provider"
 
         adapter_options = self._build_adapter_options(model_options)
         turn_counted = False
@@ -2407,6 +2419,7 @@ class Brain:
                     assistant_content=assistant_content,
                     reasoning_text=reasoning_content,
                     tool_calls=tool_calls,
+                    provider_items=provider_items,
                 )
             elif provider_usage_seen:
                 usage_source = "provider"
@@ -2473,85 +2486,113 @@ class Brain:
             visible_tool_names = [tc.name for tc in visible_tool_calls]
 
             if mode_switch_calls:
-                primary_switch = mode_switch_calls[0]
-                try:
-                    switch_args = primary_switch.arguments
-                except Exception:
-                    switch_args = {}
-                switch_result = self._execute_mode_switch_tool(
-                    tool_args=switch_args,
-                    input_info=input_info,
-                    session=session,
-                    route_context=route_context,
-                    requested_mode=requested_mode,
-                    switch_count=switch_count,
+                max_switches_per_round = self._get_router_limit("max_switches_per_round")
+                executable_switch_calls = (
+                    mode_switch_calls[:max_switches_per_round]
+                    if max_switches_per_round is not None
+                    else mode_switch_calls
                 )
-                route_context = dict(switch_result.route_context)
-                if switch_result.applied:
-                    switch_count = switch_result.switch_count
-                    self._store_route_context(session, route_context)
-                    self._append_route_history_entry(
-                        session,
-                        route_history,
-                        round_index=round_index + 1,
+                ignored_switch_calls = mode_switch_calls[len(executable_switch_calls):]
+                for switch_call in executable_switch_calls:
+                    try:
+                        switch_args = switch_call.arguments
+                    except Exception:
+                        switch_args = {}
+                    switch_result = self._execute_mode_switch_tool(
+                        tool_args=switch_args,
+                        input_info=input_info,
+                        session=session,
                         route_context=route_context,
-                        origin=switch_result.origin,
+                        requested_mode=requested_mode,
                         switch_count=switch_count,
-                        from_mode=switch_result.from_mode,
-                        to_mode=switch_result.to_mode,
                     )
-                    self._sync_runtime_route_state(session_id, session, route_context)
-                else:
-                    self._append_route_history_entry(
-                        session,
-                        route_history,
-                        round_index=round_index + 1,
-                        route_context=route_context,
-                        origin=switch_result.origin,
-                        switch_count=switch_count,
-                        from_mode=switch_result.from_mode,
-                        to_mode=switch_result.to_mode,
-                        reason=switch_result.message,
-                    )
-                session.chat_history.append(
-                    {
-                        "role": "tool",
-                        "content": switch_result.message,
-                        "tool_call_id": primary_switch.id,
-                    }
-                )
-                for extra_switch in mode_switch_calls[1:]:
+                    route_context = dict(switch_result.route_context)
+                    if switch_result.applied:
+                        switch_count = switch_result.switch_count
+                        self._store_route_context(session, route_context)
+                        self._append_route_history_entry(
+                            session,
+                            route_history,
+                            round_index=round_index + 1,
+                            route_context=route_context,
+                            origin=switch_result.origin,
+                            switch_count=switch_count,
+                            from_mode=switch_result.from_mode,
+                            to_mode=switch_result.to_mode,
+                        )
+                        self._sync_runtime_route_state(session_id, session, route_context)
+                    else:
+                        self._append_route_history_entry(
+                            session,
+                            route_history,
+                            round_index=round_index + 1,
+                            route_context=route_context,
+                            origin=switch_result.origin,
+                            switch_count=switch_count,
+                            from_mode=switch_result.from_mode,
+                            to_mode=switch_result.to_mode,
+                            reason=switch_result.message,
+                        )
                     session.chat_history.append(
                         {
                             "role": "tool",
-                            "content": "Ignored: switch_assistant_mode can only be called once per round.",
+                            "content": switch_result.message,
+                            "tool_call_id": switch_call.id,
+                        }
+                    )
+                for extra_switch in ignored_switch_calls:
+                    session.chat_history.append(
+                        {
+                            "role": "tool",
+                            "content": (
+                                f"Ignored: max_switches_per_round={max_switches_per_round} reached."
+                                if max_switches_per_round is not None
+                                else "Ignored: switch_assistant_mode call was not executed."
+                            ),
                             "tool_call_id": extra_switch.id,
                         }
                     )
             if visible_tool_calls:
+                max_tool_calls_per_round = self._get_router_limit("max_tool_calls_per_round")
+                executable_visible_tool_calls = (
+                    visible_tool_calls[:max_tool_calls_per_round]
+                    if max_tool_calls_per_round is not None
+                    else visible_tool_calls
+                )
+                ignored_visible_tool_calls = visible_tool_calls[len(executable_visible_tool_calls):]
+                executed_tool_names = [tc.name for tc in executable_visible_tool_calls]
                 if phase_callback:
                     self.set_session_runtime_state(
                         session_id,
                         RuntimeStatus.TOOL_CALLING.value,
-                        detail=", ".join(visible_tool_names),
-                        active_tools=visible_tool_names,
+                        detail=", ".join(executed_tool_names),
+                        active_tools=executed_tool_names,
                         current_mode=route_context.get("current_mode", ""),
                         route_reason=route_context.get("route_reason", ""),
-                        action_risk=self._get_action_risk_for_tools(visible_tool_names),
+                        action_risk=self._get_action_risk_for_tools(executed_tool_names),
                         source_profile=route_context.get("source_profile", ""),
                     )
                     await phase_callback(
                         RuntimeStatus.TOOL_CALLING.value,
-                        ", ".join(visible_tool_names),
-                        active_tools=visible_tool_names,
+                        ", ".join(executed_tool_names),
+                        active_tools=executed_tool_names,
                     )
-                await self._execute_visible_tool_calls(
-                    visible_tool_calls=visible_tool_calls,
-                    session=session,
-                    session_id=session_id,
-                    route_context=route_context,
-                    tool_activity_callback=tool_activity_callback,
-                )
+                if executable_visible_tool_calls:
+                    await self._execute_visible_tool_calls(
+                        visible_tool_calls=executable_visible_tool_calls,
+                        session=session,
+                        session_id=session_id,
+                        route_context=route_context,
+                        tool_activity_callback=tool_activity_callback,
+                    )
+                for ignored_tool_call in ignored_visible_tool_calls:
+                    session.chat_history.append(
+                        {
+                            "role": "tool",
+                            "content": f"Ignored: max_tool_calls_per_round={max_tool_calls_per_round} reached.",
+                            "tool_call_id": ignored_tool_call.id,
+                        }
+                    )
                 self._store_route_context(session, route_context)
                 self._sync_runtime_route_state(session_id, session, route_context)
 
