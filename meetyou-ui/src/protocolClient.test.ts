@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseAckEnvelope,
+  parseErrorEnvelope,
   parseRuntimeDebugEnvelope,
   parseRuntimeStateEnvelope,
   parseRuntimeUsageEnvelope,
@@ -222,5 +223,24 @@ describe('protocolClient', () => {
     expect(runtimeUpdate.kind).toBe('runtime_state')
     expect(runtimeUpdate.kind === 'runtime_state' ? runtimeUpdate.snapshot.status : '').toBe('waiting_confirm')
     expect(ack?.request_id).toBe('req-1')
+  })
+
+  it('parses HTTP error envelope', () => {
+    const error = parseErrorEnvelope({
+      schema: 'meetyou.http.v1',
+      kind: 'error',
+      error: {
+        code: 'invalid_config_update',
+        category: 'validation',
+        message: '配置值无效',
+        retryable: false,
+        details: { key: 'mode_router' },
+        occurred_at: '2026-04-01T00:00:05Z',
+      },
+    })
+
+    expect(error?.code).toBe('invalid_config_update')
+    expect(error?.message).toBe('配置值无效')
+    expect(error?.details.key).toBe('mode_router')
   })
 })

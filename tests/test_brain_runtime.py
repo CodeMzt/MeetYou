@@ -40,6 +40,10 @@ class FakeContextManager:
         text = content if isinstance(content, str) else json.dumps(content or {}, ensure_ascii=False)
         if message.get("tool_calls"):
             text += json.dumps(message["tool_calls"], ensure_ascii=False)
+        if message.get("provider_items"):
+            text += json.dumps(message["provider_items"], ensure_ascii=False)
+        if message.get("tool_call_id"):
+            text += str(message.get("tool_call_id"))
         return max(1, len(text) // 4)
 
     def estimate_text_tokens(self, text: str) -> int:
@@ -110,7 +114,9 @@ class _FakeModeManager:
             "sticky_current_mode": True,
             "allow_preferred_override": True,
             "allow_in_turn_switch": True,
-            "max_switches_per_turn": 2,
+            "max_switches_per_round": 0,
+            "max_switches_per_turn": 0,
+            "max_tool_calls_per_round": 0,
             "fallback_to_heuristic": True,
         }
         self._router_config.update(router_config or {})
@@ -324,6 +330,24 @@ class ProviderItemsToolAdapter:
         )
 
 
+class SilentAnswerAdapter:
+    async def stream_chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
+        yield StreamEvent(type="text", text="done")
+
+
+class SummaryUsageContextManager(FakeContextManager):
+    async def trim_history(self, chat_history, model, session, api_url, api_key, reserve_ratio: float = 0.75):
+        return {
+            "summary_usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 2,
+                "reasoning_tokens": 0,
+                "total_tokens": 7,
+            },
+            "current_tokens": 0,
+        }
+
+
 class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_brain_injects_structured_time_context_into_turn(self):
         adapter = QueuedStreamAdapter(
@@ -494,6 +518,65 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(adapter.second_call_provider_items), 2)
             self.assertEqual(adapter.second_call_provider_items[0]["type"], "reasoning")
             self.assertEqual(adapter.second_call_provider_items[1]["call_id"], "call_1")
+        finally:
+            await brain.close_brain()
+
+    async def test_estimate_call_usage_counts_provider_items(self):
+        brain = Brain(
+            SilentAnswerAdapter(),
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            without_provider_items = brain._estimate_call_usage(
+                context_breakdown={"total": 10},
+                assistant_content="done",
+                reasoning_text="",
+                tool_calls=[],
+                provider_items=[],
+            )
+            with_provider_items = brain._estimate_call_usage(
+                context_breakdown={"total": 10},
+                assistant_content="done",
+                reasoning_text="",
+                tool_calls=[],
+                provider_items=[
+                    {"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque"},
+                    {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "lookup_profile"},
+                ],
+            )
+            self.assertGreater(with_provider_items.completion_tokens, without_provider_items.completion_tokens)
+        finally:
+            await brain.close_brain()
+
+    async def test_brain_keeps_estimated_usage_source_when_only_summary_has_provider_usage(self):
+        brain = Brain(
+            SilentAnswerAdapter(),
+            FakeToolsManager(),
+            SummaryUsageContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            events = []
+            async for event in brain.input_brain(
+                "session-summary-usage",
+                {"role": "user", "content": "ok"},
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                events.append(event)
+
+            usage_payload = next(event.usage for event in events if event.type == "usage")
+            self.assertEqual(usage_payload["usage_source"], "estimated")
+            self.assertGreater(usage_payload["last_turn_usage"]["total_tokens"], 7)
         finally:
             await brain.close_brain()
 
@@ -950,7 +1033,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             FakeContextManager(),
             event_bus=None,
             exception_router=None,
-            mode_manager=_FakeModeManager(),
+            mode_manager=_FakeModeManager({"max_switches_per_turn": 2}),
         )
         await brain.init_brain("system prompt")
 
@@ -976,6 +1059,238 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(
                 any(
                     "max_switches_per_turn=2 reached" in str(message.get("content") or "")
+                    for message in session.chat_history
+                    if message.get("role") == "tool"
+                )
+            )
+        finally:
+            await brain.close_brain()
+
+    async def test_multiple_mode_switch_calls_in_one_round_are_allowed_by_default(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(
+                        type="tool_calls",
+                        tool_calls=[
+                            ToolCallInfo(
+                                id="switch-1",
+                                name="switch_assistant_mode",
+                                arguments_str='{"mode":"research","reason":"Need web verification"}',
+                            ),
+                            ToolCallInfo(
+                                id="switch-2",
+                                name="switch_assistant_mode",
+                                arguments_str='{"mode":"study","reason":"Turn findings into notes"}',
+                            ),
+                        ],
+                    ),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 5,
+                            "completion_tokens": 1,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ],
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 6,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 8,
+                        },
+                    ),
+                ],
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-multi-switch-round",
+                {"role": "user", "content": "Research this quickly, then convert it into study notes."},
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-multi-switch-round")
+            self.assertEqual(session.metadata["current_mode"], "study")
+            self.assertEqual(
+                [entry["origin"] for entry in session.metadata["route_history"]],
+                ["heuristic", "switch_tool", "switch_tool"],
+            )
+            self.assertFalse(
+                any(
+                    "max_switches_per_round" in str(message.get("content") or "")
+                    for message in session.chat_history
+                    if message.get("role") == "tool"
+                )
+            )
+        finally:
+            await brain.close_brain()
+
+    async def test_max_switches_per_round_is_configurable(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(
+                        type="tool_calls",
+                        tool_calls=[
+                            ToolCallInfo(
+                                id="switch-1",
+                                name="switch_assistant_mode",
+                                arguments_str='{"mode":"research","reason":"Need web verification"}',
+                            ),
+                            ToolCallInfo(
+                                id="switch-2",
+                                name="switch_assistant_mode",
+                                arguments_str='{"mode":"study","reason":"Turn findings into notes"}',
+                            ),
+                        ],
+                    ),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 5,
+                            "completion_tokens": 1,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ],
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 6,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 8,
+                        },
+                    ),
+                ],
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager({"max_switches_per_round": 1}),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-switch-round-limit",
+                {"role": "user", "content": "Research this quickly, then convert it into study notes."},
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-switch-round-limit")
+            self.assertEqual(session.metadata["current_mode"], "research")
+            self.assertTrue(
+                any(
+                    "max_switches_per_round=1 reached" in str(message.get("content") or "")
+                    for message in session.chat_history
+                    if message.get("role") == "tool"
+                )
+            )
+        finally:
+            await brain.close_brain()
+
+    async def test_max_tool_calls_per_round_is_configurable(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(
+                        type="tool_calls",
+                        tool_calls=[
+                            ToolCallInfo(
+                                id="tool-1",
+                                name="research_topic",
+                                arguments_str='{"topic":"A"}',
+                            ),
+                            ToolCallInfo(
+                                id="tool-2",
+                                name="inspect_page",
+                                arguments_str='{"url":"https://example.com"}',
+                            ),
+                        ],
+                    ),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 5,
+                            "completion_tokens": 1,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ],
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 6,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 8,
+                        },
+                    ),
+                ],
+            ]
+        )
+        tools_manager = FakeToolsManager()
+        brain = Brain(
+            adapter,
+            tools_manager,
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager({"max_tool_calls_per_round": 1}),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-tool-round-limit",
+                {"role": "user", "content": "Please research this topic with web checks."},
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-tool-round-limit")
+            executed_tool_names = [call["tool_name"] for call in tools_manager.calls]
+            self.assertIn("research_topic", executed_tool_names)
+            self.assertNotIn("inspect_page", executed_tool_names)
+            self.assertTrue(
+                any(
+                    "max_tool_calls_per_round=1 reached" in str(message.get("content") or "")
                     for message in session.chat_history
                     if message.get("role") == "tool"
                 )
