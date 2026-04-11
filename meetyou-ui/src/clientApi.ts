@@ -1,0 +1,303 @@
+import { fetchWithAuth, readErrorMessage, resolveAccessToken } from './apiClient'
+import { parseRuntimeUsageEnvelope } from './protocolClient'
+import type {
+  ClientExecutionTarget,
+  ClientMessage,
+  ClientMessageCreatePayload,
+  ClientOperation,
+  ClientSession,
+  ClientThread,
+  RuntimeUsageSnapshot,
+  ClientWorkspace,
+  ClientProcedure,
+} from './types'
+
+function toClientWsBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/^http/i, 'ws')
+}
+
+async function readJsonOrThrow<T>(response: Response, fallback: string): Promise<T> {
+  if (response.ok) {
+    return (await response.json()) as T
+  }
+  const failure = await readErrorMessage(response, fallback)
+  throw new Error(failure.message)
+}
+
+export async function listClientWorkspaces(baseUrl: string): Promise<ClientWorkspace[]> {
+  const response = await fetchWithAuth(`${baseUrl}/client/workspaces`)
+  return readJsonOrThrow<ClientWorkspace[]>(response, '加载工作空间失败')
+}
+
+export async function createClientThread(
+  baseUrl: string,
+  payload: Pick<ClientThread, 'workspace_id' | 'title'> & { mode?: string; pinned_procedure_id?: string | null },
+): Promise<ClientThread> {
+  const response = await fetchWithAuth(`${baseUrl}/client/threads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<ClientThread>(response, '创建会话线程失败')
+}
+
+export async function createClientSession(
+  baseUrl: string,
+  payload: {
+    thread_id: string
+    workspace_id: string
+    client_id: string
+    client_type?: string
+    display_name?: string
+  },
+): Promise<ClientSession> {
+  const response = await fetchWithAuth(`${baseUrl}/client/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<ClientSession>(response, '创建客户端会话失败')
+}
+
+export async function sendClientMessage(baseUrl: string, payload: ClientMessageCreatePayload): Promise<ClientMessage> {
+  const response = await fetchWithAuth(`${baseUrl}/client/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<ClientMessage>(response, '发送消息失败')
+}
+
+export async function listThreadMessages(baseUrl: string, threadId: string): Promise<ClientMessage[]> {
+  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/messages`)
+  return readJsonOrThrow<ClientMessage[]>(response, '加载消息历史失败')
+}
+
+export async function createClientOperation(
+  baseUrl: string,
+  payload: {
+    thread_id: string
+    workspace_id: string
+    client_id?: string
+    session_id?: string
+    title: string
+    operation_type: string
+    execution_target?: string
+    target_agent_id?: string
+    capability_id?: string
+    arguments?: Record<string, unknown>
+  },
+): Promise<ClientOperation> {
+  const response = await fetchWithAuth(`${baseUrl}/client/operations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<ClientOperation>(response, '创建操作失败')
+}
+
+export async function listClientExecutionTargets(baseUrl: string, workspaceId: string): Promise<ClientExecutionTarget[]> {
+  const response = await fetchWithAuth(`${baseUrl}/client/workspaces/${encodeURIComponent(workspaceId)}/execution-targets`)
+  return readJsonOrThrow<ClientExecutionTarget[]>(response, '加载执行目标失败')
+}
+
+export async function listClientProcedures(baseUrl: string): Promise<ClientProcedure[]> {
+  const response = await fetchWithAuth(`${baseUrl}/client/procedures`)
+  return readJsonOrThrow<ClientProcedure[]>(response, '加载 Procedure 列表失败')
+}
+
+export async function decideClientApproval(
+  baseUrl: string,
+  approvalId: string,
+  payload: { decision: 'approve' | 'reject'; reason?: string; client_id?: string },
+): Promise<{
+  approval_id: string
+  operation_id: string
+  approval_type: string
+  risk_level: string
+  status: string
+  decision: string
+  reason: string
+  operation_status: string
+}> {
+  const response = await fetchWithAuth(`${baseUrl}/client/approvals/${encodeURIComponent(approvalId)}/decision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow(response, '提交审批结果失败')
+}
+
+export async function submitClientConfirmResponse(
+  baseUrl: string,
+  sessionId: string,
+  payload: {
+    accepted: boolean
+    request_id: string
+    reason?: string
+    client_id?: string
+  },
+): Promise<{
+  request_id: string
+  session_id: string
+  accepted: boolean
+  approval_id: string
+  approval_status: string
+  operation_id: string
+}> {
+  const response = await fetchWithAuth(
+    `${baseUrl}/client/sessions/${encodeURIComponent(sessionId)}/confirm-response`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  )
+  return readJsonOrThrow(response, '提交确认结果失败')
+}
+
+export async function submitClientHumanInputResponse(
+  baseUrl: string,
+  sessionId: string,
+  payload: {
+    request_id: string
+    answer_text: string
+    selected_option?: string
+    client_id?: string
+  },
+): Promise<{
+  request_id: string
+  session_id: string
+  answer_text: string
+  selected_option?: string
+}> {
+  const response = await fetchWithAuth(
+    `${baseUrl}/client/sessions/${encodeURIComponent(sessionId)}/human-input-response`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  )
+  return readJsonOrThrow(response, '提交补充输入结果失败')
+}
+
+export async function createClientAttachmentUploadTicket(
+  baseUrl: string,
+  payload: {
+    owner_type: string
+    owner_id: string
+    kind: string
+    mime_type: string
+    file_name?: string
+    size_bytes?: number
+    lifecycle_policy?: string
+    client_id?: string
+  },
+): Promise<{
+  attachment_id: string
+  ticket_id: string
+  upload_url: string
+  expires_at: string
+  object_key: string
+  status: string
+}> {
+  const response = await fetchWithAuth(`${baseUrl}/client/attachments/upload-ticket`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow(response, '创建附件上传票据失败')
+}
+
+export async function uploadClientAttachmentContent(
+  uploadUrl: string,
+  file: Blob,
+): Promise<{
+  attachment_id: string
+  ticket_id: string
+  status: string
+  size_bytes: number
+  sha256: string
+}> {
+  const response = await fetchWithAuth(uploadUrl, {
+    method: 'PUT',
+    body: file,
+  })
+  return readJsonOrThrow(response, '上传附件内容失败')
+}
+
+export async function completeClientAttachment(
+  baseUrl: string,
+  attachmentId: string,
+  payload: { ticket_id?: string; sha256?: string; size_bytes?: number },
+): Promise<{
+  attachment_id: string
+  owner_type: string
+  owner_id: string
+  kind: string
+  mime_type: string
+  object_key: string
+  size_bytes: number
+  sha256: string
+  status: string
+}> {
+  const response = await fetchWithAuth(`${baseUrl}/client/attachments/${encodeURIComponent(attachmentId)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow(response, '完成附件上传失败')
+}
+
+export async function createClientAttachmentDownloadTicket(
+  baseUrl: string,
+  attachmentId: string,
+  clientId?: string,
+): Promise<{
+  attachment_id: string
+  ticket_id: string
+  download_url: string
+  expires_at: string
+  mime_type: string
+  file_name: string
+  size_bytes: number
+}> {
+  const query = clientId ? `?client_id=${encodeURIComponent(clientId)}` : ''
+  const response = await fetchWithAuth(`${baseUrl}/client/attachments/${encodeURIComponent(attachmentId)}/download-ticket${query}`)
+  return readJsonOrThrow(response, '创建附件下载票据失败')
+}
+
+export async function downloadClientAttachmentContent(downloadUrl: string): Promise<Blob> {
+  const response = await fetchWithAuth(downloadUrl)
+  if (!response.ok) {
+    const failure = await readErrorMessage(response, '下载附件内容失败')
+    throw new Error(failure.message)
+  }
+  return response.blob()
+}
+
+export async function fetchRuntimeUsageSnapshot(
+  baseUrl: string,
+  sessionId: string,
+): Promise<RuntimeUsageSnapshot> {
+  const response = await fetchWithAuth(
+    `${baseUrl}/runtime/usage?session_id=${encodeURIComponent(sessionId)}`,
+  )
+  const payload = await readJsonOrThrow<unknown>(response, '加载 token / context 快照失败')
+  const snapshot = parseRuntimeUsageEnvelope(payload)
+  if (!snapshot) {
+    throw new Error('解析 token / context 快照失败')
+  }
+  return snapshot
+}
+
+export async function createClientWsUrl(baseUrl: string, threadId: string): Promise<string> {
+  const url = new URL(`${toClientWsBaseUrl(baseUrl)}/client/ws`)
+  url.searchParams.set('thread_id', threadId)
+  const token = await resolveAccessToken()
+  if (token) {
+    url.searchParams.set('access_token', token)
+  }
+  return url.toString()
+}

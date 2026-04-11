@@ -36,24 +36,35 @@ class ConfirmationFlowTests(unittest.IsolatedAsyncioTestCase):
 class _GatewayConfirmEventBus:
     def __init__(self):
         self.inbound_queue = asyncio.Queue()
-        self.calls: list[tuple[bool, str, str]] = []
+        self.calls: list[tuple[bool, str, str, str, str]] = []
 
-    def submit_confirmation_response(self, accepted: bool, request_id: str = "", session_id: str = "") -> bool:
-        self.calls.append((accepted, request_id, session_id))
+    def submit_confirmation_response(
+        self,
+        accepted: bool,
+        request_id: str = "",
+        session_id: str = "",
+        client_id: str = "",
+        approval_id: str = "",
+        reason: str = "",
+    ) -> bool:
+        del reason
+        self.calls.append((accepted, request_id, session_id, client_id, approval_id))
         return True
 
 
 class GatewayConfirmResponseTests(unittest.TestCase):
-    def test_websocket_confirm_response_resolves_immediately(self):
+    def test_client_websocket_confirm_response_resolves_immediately(self):
         bus = _GatewayConfirmEventBus()
         gateway = FastAPIGateway(bus, SessionManager(), access_token="ws-token")
         with TestClient(gateway.app) as client:
-            with client.websocket_connect("/ws?session_id=web:test&source_id=desktop&access_token=ws-token") as websocket:
+            with client.websocket_connect("/client/ws?thread_id=thr-test&access_token=ws-token") as websocket:
                 connection = websocket.receive_json()
                 self.assertEqual(connection["kind"], "connection")
 
                 websocket.send_json({
                     "action": "confirm_response",
+                    "session_id": "web:test",
+                    "client_id": "desktop",
                     "request_id": "req-123",
                     "accepted": True,
                 })
@@ -61,7 +72,7 @@ class GatewayConfirmResponseTests(unittest.TestCase):
 
         self.assertEqual(ack["kind"], "ack")
         self.assertEqual(ack["ack"]["session_id"], "web:test")
-        self.assertEqual(bus.calls, [(True, "req-123", "web:test")])
+        self.assertEqual(bus.calls, [(True, "req-123", "web:test", "desktop", "")])
         self.assertTrue(bus.inbound_queue.empty())
 
 

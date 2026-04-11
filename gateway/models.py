@@ -4,36 +4,10 @@
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from core.public_contract import normalize_execution_target, to_public_assistant_mode
 from service_runtime.models import RuntimeError, RuntimeHealth
-
-
-class ThinkingOptions(BaseModel):
-    enabled: bool | None = None
-    effort: str | None = None
-    budget_tokens: int | None = None
-
-
-class InputOptions(BaseModel):
-    thinking: ThinkingOptions | None = None
-
-
-class InputRequest(BaseModel):
-    content: str
-    session_id: str | None = None
-    source_id: str = "web-client"
-    client_message_id: str | None = None
-    role: str = "user"
-    preferred_mode: str | None = None
-    metadata: dict = Field(default_factory=dict)
-    options: InputOptions | None = None
-
-
-class InputAcceptedResponse(BaseModel):
-    accepted: bool = True
-    session_id: str
-    event_id: str
 
 
 class HealthResponse(RuntimeHealth):
@@ -72,32 +46,6 @@ class HealthEnvelopeResponse(BaseModel):
     schema_name: str = Field(default="meetyou.http.v1", alias="schema")
     kind: str = "health"
     health: HealthResponse
-
-
-class WebSocketCommand(BaseModel):
-    action: str
-    request_id: str | None = None
-    accepted: bool | None = None
-    answer_text: str | None = None
-    selected_option: str | None = None
-    guidance: str | None = None
-    checkpoint_id: str | None = None
-    turn_id: str | None = None
-    stream_id: str | None = None
-    client_request_id: str | None = None
-    metadata: dict = Field(default_factory=dict)
-
-
-class ControlRequest(BaseModel):
-    action: str
-    session_id: str | None = None
-    source_id: str = "web-client"
-    client_request_id: str | None = None
-    guidance: str | None = None
-    checkpoint_id: str | None = None
-    turn_id: str | None = None
-    stream_id: str | None = None
-    metadata: dict = Field(default_factory=dict)
 
 
 class ConfigEntryResponse(BaseModel):
@@ -284,6 +232,9 @@ class MemoryRecordResponse(BaseModel):
     source_record_ids: list[str] = Field(default_factory=list)
     fact_key: str | None = None
     fact_value: str | None = None
+    workspace_tags: list[str] = Field(default_factory=list)
+    origin_workspace_id: str = ""
+    source_label: str = ""
 
 
 class MemoryEdgeResponse(BaseModel):
@@ -331,6 +282,9 @@ class MemoryGraphNodeResponse(BaseModel):
     source_record_ids: list[str] = Field(default_factory=list)
     fact_key: str | None = None
     fact_value: str | None = None
+    workspace_tags: list[str] = Field(default_factory=list)
+    origin_workspace_id: str = ""
+    source_label: str = ""
 
 
 class MemoryGraphEdgeResponse(BaseModel):
@@ -351,3 +305,368 @@ class MemoryGraphResponse(BaseModel):
     nodes: list[MemoryGraphNodeResponse] = Field(default_factory=list)
     edges: list[MemoryGraphEdgeResponse] = Field(default_factory=list)
     stats: MemoryStatsResponse
+
+
+class ClientThreadCreateRequest(BaseModel):
+    workspace_id: str
+    title: str = ""
+    mode: str = "general"
+    pinned_procedure_id: str | None = None
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: Any) -> str:
+        return to_public_assistant_mode(value)
+
+
+class ClientProcedureResponse(BaseModel):
+    procedure_id: str
+    title: str = ""
+    description: str = ""
+    applicable_modes: list[str] = Field(default_factory=list)
+    recommended_capabilities: list[str] = Field(default_factory=list)
+    preferred_capability_ref: str = ""
+    preferred_agent_ids: list[str] = Field(default_factory=list)
+    preferred_agent_types: list[str] = Field(default_factory=list)
+    agent_routing_policy: str = "balanced"
+    default_execution_target: str = ""
+    risk_profile: str = ""
+    status: str = "active"
+
+    @field_validator("applicable_modes", mode="before")
+    @classmethod
+    def _normalize_applicable_modes(cls, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        result = []
+        seen = set()
+        for item in value:
+            normalized = to_public_assistant_mode(item)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
+
+    @field_validator("default_execution_target", mode="before")
+    @classmethod
+    def _normalize_default_execution_target(cls, value: Any) -> str:
+        return normalize_execution_target(value)
+
+
+class ClientThreadResponse(BaseModel):
+    thread_id: str
+    workspace_id: str
+    title: str = ""
+    status: str = "active"
+    summary: str = ""
+    pinned_procedure_id: str | None = None
+
+
+class ClientSessionCreateRequest(BaseModel):
+    thread_id: str
+    workspace_id: str
+    client_id: str
+    client_type: str = "electron"
+    display_name: str = ""
+
+
+class ClientSessionResponse(BaseModel):
+    session_id: str
+    thread_id: str
+    workspace_id: str
+    client_id: str
+    status: str = "active"
+
+
+class ClientMessageCreateRequest(BaseModel):
+    thread_id: str
+    workspace_id: str
+    client_id: str
+    content: str
+    session_id: str | None = None
+    client_type: str = "electron"
+    display_name: str = ""
+    role: str = "user"
+    client_message_id: str | None = None
+    preferred_mode: str | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("preferred_mode", mode="before")
+    @classmethod
+    def _normalize_preferred_mode(cls, value: Any) -> str | None:
+        if value is None or str(value).strip() == "":
+            return None
+        return to_public_assistant_mode(value)
+
+
+class ClientMessageResponse(BaseModel):
+    message_id: str
+    thread_id: str
+    session_id: str = ""
+    workspace_id: str
+    client_id: str = ""
+    role: str
+    content: str
+    status: str = "completed"
+    channel: str = "message"
+    created_at: str = ""
+
+
+class ClientWsCommand(BaseModel):
+    action: str
+    session_id: str | None = None
+    request_id: str | None = None
+    accepted: bool | None = None
+    answer_text: str | None = None
+    selected_option: str | None = None
+    guidance: str | None = None
+    checkpoint_id: str | None = None
+    turn_id: str | None = None
+    stream_id: str | None = None
+    client_request_id: str | None = None
+    client_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClientConfirmResponseRequest(BaseModel):
+    accepted: bool
+    request_id: str
+    reason: str = ""
+    client_id: str = ""
+
+
+class ClientConfirmResponseResult(BaseModel):
+    request_id: str
+    session_id: str
+    accepted: bool
+    approval_id: str = ""
+    approval_status: str = ""
+    operation_id: str = ""
+
+
+class ClientHumanInputResponseRequest(BaseModel):
+    request_id: str
+    answer_text: str = ""
+    selected_option: str | None = None
+    client_id: str = ""
+
+
+class ClientHumanInputResponseResult(BaseModel):
+    request_id: str
+    session_id: str
+    answer_text: str = ""
+    selected_option: str | None = None
+
+
+class ClientAttachmentUploadTicketRequest(BaseModel):
+    owner_type: str
+    owner_id: str
+    kind: str
+    mime_type: str
+    file_name: str = ""
+    size_bytes: int = 0
+    lifecycle_policy: str = "normal"
+    client_id: str = ""
+
+
+class ClientAttachmentUploadTicketResponse(BaseModel):
+    attachment_id: str
+    ticket_id: str
+    upload_url: str
+    expires_at: str
+    object_key: str
+    status: str
+
+
+class ClientAttachmentUploadResult(BaseModel):
+    attachment_id: str
+    ticket_id: str
+    status: str
+    size_bytes: int
+    sha256: str
+
+
+class ClientAttachmentCompleteRequest(BaseModel):
+    ticket_id: str = ""
+    sha256: str = ""
+    size_bytes: int | None = None
+
+
+class ClientAttachmentResponse(BaseModel):
+    attachment_id: str
+    owner_type: str
+    owner_id: str
+    kind: str
+    mime_type: str
+    object_key: str
+    size_bytes: int
+    sha256: str
+    status: str
+
+
+class ClientAttachmentDownloadTicketResponse(BaseModel):
+    attachment_id: str
+    ticket_id: str
+    download_url: str
+    expires_at: str
+    mime_type: str
+    file_name: str
+    size_bytes: int
+
+
+class ClientOperationCreateRequest(BaseModel):
+    thread_id: str
+    workspace_id: str
+    client_id: str = ""
+    session_id: str | None = None
+    title: str = ""
+    operation_type: str
+    execution_target: str = ""
+    target_agent_id: str | None = None
+    capability_id: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("execution_target", mode="before")
+    @classmethod
+    def _normalize_execution_target(cls, value: Any) -> str:
+        if value is None or str(value).strip() == "":
+            return ""
+        return normalize_execution_target(value)
+
+
+class ClientOperationResponse(BaseModel):
+    operation_id: str
+    thread_id: str
+    workspace_id: str
+    title: str = ""
+    operation_type: str
+    execution_target: str
+    target_agent_id: str = ""
+    capability_id: str = ""
+    status: str = "queued"
+    approval_id: str = ""
+    approval_status: str = ""
+    approval_required: bool = False
+    routing_reason: str = ""
+
+    @field_validator("execution_target", mode="before")
+    @classmethod
+    def _normalize_execution_target(cls, value: Any) -> str:
+        return normalize_execution_target(value)
+
+
+class ClientApprovalDecisionRequest(BaseModel):
+    decision: str
+    reason: str = ""
+    client_id: str = ""
+
+
+class ClientApprovalResponse(BaseModel):
+    approval_id: str
+    operation_id: str
+    approval_type: str
+    risk_level: str
+    status: str
+    decision: str = ""
+    reason: str = ""
+    operation_status: str = ""
+
+
+class ClientWorkspaceResponse(BaseModel):
+    workspace_id: str
+    title: str
+    status: str
+    base_mode: str
+    description: str = ""
+    prompt_overlay: str = ""
+    default_execution_target: str = "core_only"
+    capability_policy: str = "allow_all"
+    allowed_capability_ids: list[str] = Field(default_factory=list)
+    preferred_agent_ids: list[str] = Field(default_factory=list)
+    preferred_agent_types: list[str] = Field(default_factory=list)
+    agent_routing_policy: str = "balanced"
+    capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("base_mode", mode="before")
+    @classmethod
+    def _normalize_base_mode(cls, value: Any) -> str:
+        return to_public_assistant_mode(value)
+
+    @field_validator("default_execution_target", mode="before")
+    @classmethod
+    def _normalize_default_execution_target(cls, value: Any) -> str:
+        return normalize_execution_target(value)
+
+
+class ClientExecutionTargetResponse(BaseModel):
+    agent_id: str
+    display_name: str
+    agent_type: str
+    status: str
+    transport_profile: str
+    owner_client_id: str = ""
+    workspace_ids: list[str] = Field(default_factory=list)
+
+
+class OperatorWorkspaceCreateRequest(BaseModel):
+    workspace_id: str
+    title: str = ""
+    description: str = ""
+    base_mode: str = "general"
+    prompt_overlay: str = ""
+    default_execution_target: str = "core_only"
+    capability_policy: str = ""
+    allowed_capability_ids: list[str] = Field(default_factory=list)
+    preferred_agent_ids: list[str] = Field(default_factory=list)
+    preferred_agent_types: list[str] = Field(default_factory=list)
+    agent_routing_policy: str = ""
+    capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("base_mode", mode="before")
+    @classmethod
+    def _normalize_base_mode(cls, value: Any) -> str:
+        return to_public_assistant_mode(value)
+
+    @field_validator("default_execution_target", mode="before")
+    @classmethod
+    def _normalize_default_execution_target(cls, value: Any) -> str:
+        return normalize_execution_target(value)
+
+
+class OperatorWorkspaceResponse(BaseModel):
+    workspace_id: str
+    title: str
+    status: str
+    base_mode: str
+    description: str = ""
+    prompt_overlay: str = ""
+    default_execution_target: str = "core_only"
+    capability_policy: str = "allow_all"
+    allowed_capability_ids: list[str] = Field(default_factory=list)
+    preferred_agent_ids: list[str] = Field(default_factory=list)
+    preferred_agent_types: list[str] = Field(default_factory=list)
+    agent_routing_policy: str = "balanced"
+    capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("base_mode", mode="before")
+    @classmethod
+    def _normalize_base_mode(cls, value: Any) -> str:
+        return to_public_assistant_mode(value)
+
+    @field_validator("default_execution_target", mode="before")
+    @classmethod
+    def _normalize_default_execution_target(cls, value: Any) -> str:
+        return normalize_execution_target(value)
+
+
+class OperatorAgentResponse(BaseModel):
+    agent_id: str
+    agent_type: str
+    display_name: str
+    transport_profile: str
+    status: str
+    last_seen_at: str = ""
+    owner_client_id: str = ""
+    workspace_ids: list[str] = Field(default_factory=list)

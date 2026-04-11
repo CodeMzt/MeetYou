@@ -170,10 +170,19 @@ cython_debug/
 # VS Code settings
 .vscode/
 
+# Local AI/tooling workspace metadata
+.opencode/
+.trae/
+opencode.json
+
 # Other project specific temporary files
 memory_graph_view.html
 memory.json
+memory_tasks.json
+memory_tasks.json.bak
 .idea/
 *.db
 .npm-cache/
 技术信息日报_2026-04-03.md
+tmp_*.py
+meetyou-ui/dist-electron/

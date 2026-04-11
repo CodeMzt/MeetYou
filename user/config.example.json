@@ -17,6 +17,7 @@
   "start_path": "prompt/start",
   "heartbeat_path": "prompt/heartbeat",
   "memory_file_path": "user/memory_graph.json",
+  "task_file_path": "user/memory_tasks.json",
   "tools_schema_path": "user/tools.json",
   "assistant_modes": {
     "skill_prompt_dir": "prompt/SKILL",

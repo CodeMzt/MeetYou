@@ -33,6 +33,8 @@ class FeishuOutputAdapter:
         self._tenant_access_token_expire_at = 0.0
         self._token_lock = asyncio.Lock()
         self._stream_buffers: dict[str, list[str]] = {}
+        self._pending_confirm_requests: dict[str, str] = {}
+        self._pending_human_input_requests: dict[str, dict] = {}
 
     async def init(self):
         if self._session is None:
@@ -66,6 +68,109 @@ class FeishuOutputAdapter:
             text += tail
         if text:
             await self._send_text(chat_id, text)
+
+    def get_pending_confirm_request(self, chat_id: str) -> str | None:
+        return self._pending_confirm_requests.get(chat_id)
+
+    def resolve_human_input(self, chat_id: str, raw_text: str) -> dict | None:
+        payload = self._pending_human_input_requests.get(chat_id)
+        if payload is None:
+            return None
+        text = str(raw_text or "").strip()
+        options = [str(item).strip() for item in payload.get("options", []) if str(item).strip()]
+        selected_option = None
+        if text.isdigit():
+            index = int(text)
+            if 1 <= index <= len(options):
+                selected_option = options[index - 1]
+        if selected_option is None and text in options:
+            selected_option = text
+        return {
+            "request_id": payload.get("request_id", ""),
+            "answer_text": selected_option or text,
+            "selected_option": selected_option,
+        }
+
+    async def send_client_event(self, chat_id: str, payload: dict):
+        if payload.get("schema") != "meetyou.client.ws.v1":
+            return
+        kind = payload.get("kind")
+        if kind == "error":
+            error = payload.get("error", {}) or {}
+            await self._send_text(chat_id, f"[系统错误] {error.get('message', '')}")
+            return
+        if kind != "event":
+            return
+
+        event = payload.get("event", {}) or {}
+        event_type = str(event.get("type") or "")
+        stream_id = str(event.get("stream_id") or "")
+        stream_key = f"{chat_id}:{stream_id}" if stream_id else ""
+
+        if event_type == "confirm.requested":
+            request_id = str(event.get("request_id") or "")
+            self._pending_confirm_requests[chat_id] = request_id
+            await self._send_text(
+                chat_id,
+                f"{event.get('content', '')}\n确认编号: {request_id}\n请回复 y/yes/确认 或 n/no/拒绝。",
+            )
+            return
+
+        if event_type == "confirm.resolved":
+            self._pending_confirm_requests.pop(chat_id, None)
+            return
+
+        if event_type == "human_input.requested":
+            request_id = str(event.get("request_id") or "")
+            options = [str(item).strip() for item in event.get("options", []) if str(item).strip()]
+            self._pending_human_input_requests[chat_id] = {
+                "request_id": request_id,
+                "options": options,
+            }
+            option_lines = "\n".join(f"{index}. {option}" for index, option in enumerate(options, start=1))
+            suffix = f"\n{option_lines}" if option_lines else ""
+            await self._send_text(
+                chat_id,
+                f"{event.get('question', '')}{suffix}\n输入编号或直接回复内容。\n请求编号: {request_id}",
+            )
+            return
+
+        if event_type == "human_input.resolved":
+            self._pending_human_input_requests.pop(chat_id, None)
+            return
+
+        if event_type == "message.created":
+            return
+
+        if event_type == "reasoning.delta":
+            return
+
+        if event_type == "activity.status":
+            content = str(event.get("content") or "").strip()
+            if content:
+                await self._send_text(chat_id, f"[系统] {content}")
+            return
+
+        if event_type == "message.delta":
+            if str(event.get("channel") or "") != "answer":
+                return
+            self._append_stream_buffer(stream_key, str(event.get("delta") or ""))
+            return
+
+        if event_type == "message.completed":
+            message = event.get("message", {}) or {}
+            await self._flush_stream_buffer(chat_id, stream_key, str(message.get("content") or ""))
+            return
+
+        if event_type == "operation.updated":
+            status = str(event.get("status") or "")
+            detail = str(event.get("detail") or "")
+            operation_id = str(event.get("operation_id") or "")
+            text = f"[操作] {operation_id} {status}".strip()
+            if detail:
+                text = f"{text}: {detail}"
+            await self._send_text(chat_id, text)
+            return
 
     def _has_valid_token(self) -> bool:
         return bool(

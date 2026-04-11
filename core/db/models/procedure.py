@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import ForeignKey, JSON, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from core.db.base import Base, TimestampMixin
+
+
+class Procedure(TimestampMixin, Base):
+    __tablename__ = "procedures"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    procedure_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    principal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("principals.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    prompt_overlay: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    default_execution_target: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    risk_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="standard")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    applicable_modes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    recommended_capabilities: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    recommended_source_profiles: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)

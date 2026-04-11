@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseAckEnvelope,
+  parseClientWsPayload,
   parseErrorEnvelope,
   parseRuntimeDebugEnvelope,
   parseRuntimeStateEnvelope,
@@ -242,5 +243,219 @@ describe('protocolClient', () => {
     expect(error?.code).toBe('invalid_config_update')
     expect(error?.message).toBe('配置值无效')
     expect(error?.details.key).toBe('mode_router')
+  })
+
+  it('parses client websocket message events', () => {
+    const created = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'message.created',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        message: {
+          message_id: 'msg_1',
+          thread_id: 'thr_1',
+          session_id: 'sess_1',
+          workspace_id: 'personal',
+          client_id: 'desktop-app',
+          role: 'user',
+          content: 'hello',
+          status: 'completed',
+          channel: 'message',
+          created_at: '2026-04-08T00:00:00Z',
+        },
+      },
+    })
+    const delta = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'message.delta',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        stream_id: 'stream_1',
+        turn_id: 'turn_1',
+        delta: 'partial',
+      },
+    })
+    const completed = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'message.completed',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        stream_id: 'stream_1',
+        turn_id: 'turn_1',
+        message: {
+          message_id: 'msg_2',
+          thread_id: 'thr_1',
+          session_id: 'sess_1',
+          workspace_id: 'personal',
+          client_id: '',
+          role: 'assistant',
+          content: 'done',
+          status: 'completed',
+          channel: 'message',
+          created_at: '2026-04-08T00:00:02Z',
+        },
+      },
+    })
+
+    expect(created.kind).toBe('message_created')
+    expect(created.kind === 'message_created' ? created.message.message_id : '').toBe('msg_1')
+    expect(delta.kind).toBe('message_delta')
+    expect(delta.kind === 'message_delta' ? delta.delta : '').toBe('partial')
+    expect(completed.kind).toBe('message_completed')
+    expect(completed.kind === 'message_completed' ? completed.message.content : '').toBe('done')
+  })
+
+  it('parses client websocket interactive events', () => {
+    const confirm = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'confirm.requested',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        request_id: 'req_1',
+        content: '允许执行吗？',
+        timeout: 30,
+        default_decision: false,
+        approval_id: 'approval_1',
+        approval_status: 'pending',
+        approval_type: 'chat_confirmation',
+        risk_level: 'system',
+        operation_id: 'op_confirm_1',
+      },
+    })
+    const humanInput = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'human_input.requested',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        request_id: 'req_2',
+        question: '请选择模式',
+        options: ['A', 'B'],
+        placeholder: '输入',
+        timeout: 60,
+      },
+    })
+
+    expect(confirm.kind).toBe('confirm_requested')
+    expect(confirm.kind === 'confirm_requested' ? confirm.payload.requestId : '').toBe('req_1')
+    expect(confirm.kind === 'confirm_requested' ? confirm.payload.approvalId : '').toBe('approval_1')
+    expect(humanInput.kind).toBe('human_input_requested')
+    expect(humanInput.kind === 'human_input_requested' ? humanInput.payload.options : []).toEqual(['A', 'B'])
+  })
+
+  it('parses operation updated events', () => {
+    const event = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'operation.updated',
+        thread_id: 'thr_1',
+        operation_id: 'op_1',
+        call_id: 'call_1',
+        status: 'running',
+        phase: 'accepted',
+        detail: 'Dispatching',
+      },
+    })
+
+    expect(event.kind).toBe('operation_updated')
+    expect(event.kind === 'operation_updated' ? event.operationId : '').toBe('op_1')
+    expect(event.kind === 'operation_updated' ? event.status : '').toBe('running')
+  })
+
+  it('parses runtime and activity events from client websocket', () => {
+    const runtimeState = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'runtime.state',
+        snapshot: {
+          session_id: 'sess_1',
+          status: 'thinking',
+          detail: 'Working',
+          active_tools: ['search_web'],
+          current_mode: 'research',
+          route_reason: 'need_web',
+          action_risk: 'read',
+          source_profile: 'tech_updates',
+          stream_id: 'stream_1',
+          turn_id: 'turn_1',
+          updated_at: '2026-04-08T00:00:00Z',
+        },
+      },
+    })
+    const runtimeUsage = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'runtime.usage',
+        snapshot: {
+          session_id: 'sess_1',
+          usage_ready: true,
+          context_limit_tokens: 1000,
+          context_limit_source: 'config',
+          context_limit_model: 'gpt-5.4',
+          context_limit_confidence: 'high',
+          current_context_tokens_estimated: 250,
+          context_breakdown: {
+            system: 10,
+            history: 20,
+            tool_history: 5,
+            memory_context: 7,
+            policy: 3,
+            current_input: 4,
+            proprioception: 1,
+            total: 50,
+          },
+          last_turn_usage: { prompt_tokens: 1, completion_tokens: 2, reasoning_tokens: 3, total_tokens: 6 },
+          session_totals: { prompt_tokens: 1, completion_tokens: 2, reasoning_tokens: 3, total_tokens: 6, turn_count: 1 },
+          usage_source: 'estimated',
+          updated_at: '2026-04-08T00:00:01Z',
+        },
+      },
+    })
+    const activity = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'activity.status',
+        turn_id: 'turn_1',
+        stream_id: 'stream_1',
+        phase: 'searching',
+        content: 'Searching web',
+        activity_kind: 'tool_chain',
+        tool_names: ['search_web'],
+        event_id: 'evt_1',
+      },
+    })
+    const reasoning = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'reasoning.delta',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        stream_id: 'stream_1',
+        turn_id: 'turn_1',
+        phase: 'chunk',
+        delta: 'thinking...',
+      },
+    })
+
+    expect(runtimeState.kind).toBe('runtime_state')
+    expect(runtimeUsage.kind).toBe('runtime_usage')
+    expect(activity.kind).toBe('activity')
+    expect(activity.kind === 'activity' ? activity.activity.content : '').toBe('Searching web')
+    expect(reasoning.kind).toBe('message_delta')
+    expect(reasoning.kind === 'message_delta' ? reasoning.channel : '').toBe('reasoning')
   })
 })

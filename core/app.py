@@ -23,9 +23,12 @@ from core.assistant_modes import AssistantModeManager
 from core.brain import Brain, BrainOutputEvent
 from core.config import ConfigManager
 from core.context import ContextManager
+from core.db.bootstrap import bootstrap_core_domain
+from core.db.importers import import_config_state, import_memory_state, import_source_catalog_state, import_task_state
 from core.event_bus import EventBus
 from core.exceptions import ConfigError, ExceptionRouter, MeetYouError
 from core.heart import Heart
+from core.interaction_response_service import InteractionResponseService
 from core.io_protocol import (
     EventTarget,
     EventType,
@@ -41,6 +44,8 @@ from core.runtime_context import bind_event_context, get_event_context, reset_ev
 from core.session_actor import SessionActorRuntime
 from core.session_manager import SessionManager
 from core.speaker import Speaker
+from core.source_catalog import SOURCE_CATALOG_STATE_KEY
+from core.state_backends import RuntimeStateBlobBackend
 from core.status import RuntimeStatus, StatusManager, utcnow_iso
 from core.tools_manager import ToolsManager
 from gateway.api import FastAPIGateway
@@ -142,7 +147,9 @@ _MODE_IMMEDIATE_KEYS = {
     "office_integrations",
 }
 _RESTART_REQUIRED_KEYS = {
+    "agent_access_token",
     "cmd_policy_path",
+    "database_url",
     "enable_feishu_bot",
     "feishu_app_id",
     "feishu_app_secret",
@@ -154,6 +161,7 @@ _RESTART_REQUIRED_KEYS = {
     "mcp_registry_url",
     "memory_file_path",
     "notion_token",
+    "task_file_path",
     "tavily_api_key",
     "tools_schema_path",
 }
@@ -174,12 +182,16 @@ class App:
         self.heart_adapter = create_adapter(self._get_heart_provider())
 
         self.memory = Memory()
-        self.task_manager = TaskManager(self.memory)
+        self.task_manager = TaskManager(
+            self.memory,
+            task_file_path=self.config.get("task_file_path") or "user/memory_tasks.json",
+        )
         self.mcp_manager = MCPManager()
         system_tools.init_system_tools(
             self.platform,
             self.event_bus,
             self.config.get("cmd_policy_path") or "user/cmd_policy.json",
+            allow_local_fallback=False,
         )
 
         self.context_manager = ContextManager(self.memory, self.main_adapter, self.event_bus)
@@ -216,6 +228,10 @@ class App:
         self.heart.set_session_manager(self.session_manager)
         self.speaker = Speaker(self.session_manager)
         self.gateway: FastAPIGateway | None = None
+        self.core_domain = None
+        self.db_engine = None
+        self.db_session_factory = None
+        self.core_services = None
         self.feishu_input: FeishuInputAdapter | None = None
         self.feishu_output: FeishuOutputAdapter | None = None
         self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
@@ -229,6 +245,8 @@ class App:
         self._usage_source = make_source(SourceKind.SYSTEM.value, "usage")
         self._control_source = make_source(SourceKind.SYSTEM.value, "reply_control")
         self._session_execution_runtime = SessionActorRuntime(self._process_session_execution)
+        self._confirm_approval_requests: dict[str, dict[str, Any]] = {}
+        self._interaction_responses = InteractionResponseService(self.event_bus)
 
         self.exception_router.on_system_error(self._log_error)
         self.exception_router.on_user_error(self._display_error)
@@ -311,6 +329,7 @@ class App:
                 metadata=metadata,
             )
         )
+        await self._publish_client_runtime_state(session_id, snapshot, turn_id=metadata["turn_id"])
 
     async def _emit_usage_event(
         self,
@@ -330,6 +349,7 @@ class App:
                 metadata={"turn_id": turn_id},
             )
         )
+        await self._publish_client_runtime_usage(session_id, payload)
 
     async def _emit_reasoning_stream_event(
         self,
@@ -356,8 +376,16 @@ class App:
                 },
             )
         )
+        await self._publish_client_reasoning_event(
+            session_id,
+            stream_id=stream_id,
+            turn_id=turn_id,
+            phase=phase,
+            content=content,
+        )
 
     async def _handle_confirm_request(self, event):
+        approval_context = self._ensure_confirm_approval_context(event)
         snapshot = self.brain.get_session_runtime_snapshot(event.session_id) or {}
         self.brain.set_session_runtime_state(
             event.session_id,
@@ -373,6 +401,7 @@ class App:
             snapshot.get("turn_id", ""),
         )
         await self.speaker.emit(event)
+        await self._publish_client_confirm_request(event, approval_context=approval_context)
 
     async def _handle_confirm_response(self, payload):
         if not isinstance(payload, dict):
@@ -380,6 +409,20 @@ class App:
         session_id = payload.get("session_id", "")
         if not session_id:
             return
+        request_id = str(payload.get("request_id") or "").strip()
+        if request_id:
+            context = self._confirm_approval_requests.get(request_id)
+            if isinstance(context, dict):
+                client_id = str(payload.get("client_id") or "").strip()
+                if client_id:
+                    context["client_id"] = client_id
+                    self._confirm_approval_requests[request_id] = context
+        request_id = str(payload.get("request_id") or "").strip()
+        approval_context = self._apply_confirm_approval_decision(
+            request_id=request_id,
+            accepted=bool(payload.get("accepted")),
+            reason=str(payload.get("reason") or "").strip(),
+        )
         snapshot = self.brain.get_session_runtime_snapshot(session_id) or {}
         self.brain.set_session_runtime_state(
             session_id,
@@ -394,6 +437,142 @@ class App:
             EventTarget(kind=TargetKind.CURRENT_SESSION.value),
             snapshot.get("turn_id", ""),
         )
+        await self._publish_client_confirm_resolution(payload, approval_context=approval_context)
+        if request_id:
+            self._confirm_approval_requests.pop(request_id, None)
+
+    def _ensure_confirm_approval_context(self, event) -> dict[str, Any]:
+        request_id = str(getattr(event, "request_id", "") or "").strip()
+        if not request_id:
+            return {}
+        existing = self._confirm_approval_requests.get(request_id)
+        if existing:
+            return dict(existing)
+
+        core_services = getattr(self, "core_services", None)
+        if core_services is None:
+            return {}
+
+        session_id = str(getattr(event, "session_id", "") or "").strip()
+        if not session_id:
+            return {}
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return {}
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return {}
+        workspace_row = core_services.workspace.get_by_id(session_row.workspace_id)
+
+        event_metadata = dict(getattr(event, "metadata", {}) or {})
+        risk_level = str(
+            event_metadata.get("risk_level")
+            or event_metadata.get("action_risk")
+            or "system"
+        ).strip().lower() or "system"
+        operation = core_services.operation.create_operation(
+            thread_id=thread_row.id,
+            workspace_id=session_row.workspace_id,
+            operation_type="chat_confirmation",
+            execution_target="core_only",
+            title="Chat Confirmation",
+            requested_by_client_id=session_row.client_id,
+            requested_by_session_id=session_row.id,
+            status="waiting_approval",
+            metadata={
+                "confirm_request_id": request_id,
+                "confirm_session_id": session_id,
+                "confirm_prompt": str(getattr(event, "content", "") or ""),
+                "approval_required": True,
+                "source": "event_bus_confirm",
+            },
+        )
+        approval = core_services.approval.create_approval(
+            operation_id=operation.id,
+            approval_type="chat_confirmation",
+            risk_level=risk_level,
+        )
+        operation = core_services.operation.update_status(
+            operation_id=operation.id,
+            status="waiting_approval",
+            metadata={
+                "approval_id": approval.approval_id,
+                "approval_status": approval.status,
+                "approval_type": approval.approval_type,
+                "approval_risk_level": approval.risk_level,
+                "approval_required": True,
+            },
+        ) or operation
+
+        context = {
+            "request_id": request_id,
+            "session_id": session_id,
+            "thread_id": thread_row.thread_id,
+            "workspace_id": getattr(workspace_row, "workspace_id", ""),
+            "operation_id": operation.operation_id,
+            "operation_row_id": operation.id,
+            "operation_status": operation.status,
+            "approval_id": approval.approval_id,
+            "approval_status": approval.status,
+            "approval_type": approval.approval_type,
+            "risk_level": approval.risk_level,
+        }
+        self._confirm_approval_requests[request_id] = context
+        return dict(context)
+
+    def get_confirm_approval_context(self, request_id: str) -> dict[str, Any]:
+        normalized = str(request_id or "").strip()
+        if not normalized:
+            return {}
+        return dict(self._confirm_approval_requests.get(normalized) or {})
+
+    def _apply_confirm_approval_decision(self, *, request_id: str, accepted: bool, reason: str = "") -> dict[str, Any]:
+        normalized_request_id = str(request_id or "").strip()
+        if not normalized_request_id:
+            return {}
+        context = dict(self._confirm_approval_requests.get(normalized_request_id) or {})
+        if not context:
+            return {}
+
+        core_services = getattr(self, "core_services", None)
+        if core_services is None:
+            return context
+
+        approval_id = str(context.get("approval_id") or "").strip()
+        operation_row_id = context.get("operation_row_id")
+        approval = core_services.approval.get_by_approval_id(approval_id) if approval_id else None
+        if approval is not None and approval.status == "pending":
+            decided_by_client_id = None
+            decided_by_client_key = str(context.get("client_id") or "").strip()
+            if decided_by_client_key:
+                decided_by_client = core_services.client.get_by_client_id(decided_by_client_key)
+                decided_by_client_id = getattr(decided_by_client, "id", None)
+            approval = core_services.approval.decide_approval(
+                approval_id=approval.approval_id,
+                decision="approve" if accepted else "reject",
+                reason=reason,
+                decided_by_client_id=decided_by_client_id,
+            )
+
+        if operation_row_id is not None:
+            operation = core_services.operation.update_status(
+                operation_id=operation_row_id,
+                status="succeeded" if accepted else "rejected",
+                result_summary="确认已通过" if accepted else (reason or "确认已拒绝"),
+                metadata={
+                    "approval_id": approval_id,
+                    "approval_status": getattr(approval, "status", ""),
+                    "approval_required": True,
+                    "confirm_decision": "approve" if accepted else "reject",
+                },
+            )
+            if operation is not None:
+                context["operation_status"] = operation.status
+
+        if approval is not None:
+            context["approval_status"] = approval.status
+        self._confirm_approval_requests[normalized_request_id] = context
+        return context
 
     async def _handle_human_input_request(self, event):
         snapshot = self.brain.get_session_runtime_snapshot(event.session_id) or {}
@@ -411,6 +590,7 @@ class App:
             snapshot.get("turn_id", ""),
         )
         await self.speaker.emit(event)
+        await self._publish_client_human_input_request(event)
 
     async def _handle_human_input_response(self, payload):
         if not isinstance(payload, dict):
@@ -432,6 +612,7 @@ class App:
             EventTarget(kind=TargetKind.CURRENT_SESSION.value),
             snapshot.get("turn_id", ""),
         )
+        await self._publish_client_human_input_resolution(payload)
 
     async def _update_heartbeat_status(self, status: str, detail: str = ""):
         snapshot = self.status_manager.set_heartbeat(status, detail)
@@ -461,7 +642,7 @@ class App:
 
         for chat_id in list(dict.fromkeys(chat_ids)):
             source = make_source(SourceKind.FEISHU.value, chat_id)
-            self.session_manager.get_or_create_session(
+            self.session_manager.bind_runtime_session(
                 source,
                 session_id=f"feishu:chat:{chat_id}",
             )
@@ -493,12 +674,19 @@ class App:
         if callable(brain_setter):
             brain_setter(self.mode_manager)
 
-    def _scheduled_job_route_context(self) -> tuple[list[dict], dict[str, Any]]:
+    def _scheduled_job_route_context(self, task_record: dict[str, Any] | None = None) -> tuple[list[dict], dict[str, Any]]:
         tools = self.tools_manager.get_scheduled_job_tools()
+        task_record = task_record or {}
         return tools, {
             "current_mode": "scheduled_task",
             "route_reason": "Scheduler claimed an assistant-owned background task.",
             "source_profile": "scheduled_tasks",
+            "task_routing": {
+                "preferred_capability_ref": str(task_record.get("preferred_capability_ref") or "").strip(),
+                "preferred_agent_ids": list(task_record.get("preferred_agent_ids") or []),
+                "preferred_agent_types": list(task_record.get("preferred_agent_types") or []),
+                "agent_routing_policy": str(task_record.get("agent_routing_policy") or "balanced").strip() or "balanced",
+            },
             "tool_bundle": [
                 str(tool.get("function", {}).get("name", "")).strip()
                 for tool in tools
@@ -520,6 +708,138 @@ class App:
         source_kind = str(delivery.get("source_kind") or SourceKind.SYSTEM.value)
         source_id = str(delivery.get("source_id") or task_record.get("scope", {}).get("user_id") or "")
         return make_source(source_kind, source_id)
+
+    def _task_operation_context(self, task_record: dict[str, Any]) -> tuple[object | None, object | None, object | None]:
+        core_services = getattr(self, "core_services", None)
+        if core_services is None:
+            return None, None, None
+        session_id, _ = self._task_delivery(task_record)
+        if not session_id:
+            return None, None, None
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return None, None, None
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        workspace_row = core_services.workspace.get_by_id(session_row.workspace_id)
+        if thread_row is None or workspace_row is None:
+            return None, None, None
+        return session_row, thread_row, workspace_row
+
+    async def _publish_task_operation_update(
+        self,
+        operation,
+        *,
+        thread_id: str,
+        phase: str = "",
+        detail: str = "",
+        error: dict[str, Any] | None = None,
+    ) -> None:
+        gateway = getattr(self, "gateway", None)
+        if gateway is None or not thread_id:
+            return
+        metadata = dict(getattr(operation, "meta", {}) or {})
+        await gateway.publish_client_thread_event(
+            thread_id,
+            event_type="operation.updated",
+            payload={
+                "thread_id": thread_id,
+                "workspace_id": str(metadata.get("workspace_id") or ""),
+                "operation_id": operation.operation_id,
+                "title": operation.title,
+                "operation_type": operation.operation_type,
+                "execution_target": operation.execution_target,
+                "target_agent_id": str(metadata.get("target_agent_key") or ""),
+                "capability_id": str(metadata.get("preferred_capability_ref") or metadata.get("capability_id") or ""),
+                "status": operation.status,
+                "phase": phase,
+                "detail": detail,
+                "routing_reason": str(metadata.get("routing_reason") or ""),
+                **({"error": dict(error)} if isinstance(error, dict) else {}),
+            },
+        )
+
+    async def _create_scheduled_task_operation(self, task_record: dict[str, Any], *, operation_type: str, title: str):
+        core_services = getattr(self, "core_services", None)
+        if core_services is None:
+            return None, None
+        session_row, thread_row, workspace_row = self._task_operation_context(task_record)
+        if session_row is None or thread_row is None or workspace_row is None:
+            return None, None
+        operation = core_services.operation.create_operation(
+            thread_id=thread_row.id,
+            workspace_id=workspace_row.id,
+            operation_type=operation_type,
+            execution_target="core_only",
+            title=title,
+            requested_by_client_id=session_row.client_id,
+            requested_by_session_id=session_row.id,
+            status="running",
+            metadata={
+                "workspace_id": getattr(workspace_row, "workspace_id", ""),
+                "task_key": str(task_record.get("task_key") or ""),
+                "task_summary": _normalize_task_summary(task_record),
+                "preferred_capability_ref": str(task_record.get("preferred_capability_ref") or ""),
+                "preferred_agent_ids": list(task_record.get("preferred_agent_ids") or []),
+                "preferred_agent_types": list(task_record.get("preferred_agent_types") or []),
+                "agent_routing_policy": str(task_record.get("agent_routing_policy") or "balanced") or "balanced",
+                "source": "scheduled_task",
+            },
+        )
+        remember_operation = getattr(self.task_manager, "remember_task_operation", None)
+        if callable(remember_operation):
+            await remember_operation(
+                str(task_record.get("task_key") or ""),
+                operation_id=operation.operation_id,
+                status="running",
+            )
+        await self._publish_task_operation_update(
+            operation,
+            thread_id=thread_row.thread_id,
+            phase="running",
+            detail="Scheduled task execution started.",
+        )
+        return operation, thread_row.thread_id
+
+    async def _ensure_scheduled_task_operation(
+        self,
+        task_record: dict[str, Any],
+        *,
+        operation_id: str = "",
+        operation_type: str,
+        title: str,
+    ):
+        normalized_operation_id = str(operation_id or "").strip()
+        core_services = getattr(self, "core_services", None)
+        if normalized_operation_id and core_services is not None:
+            existing = core_services.operation.get_by_operation_id(normalized_operation_id)
+            if existing is not None:
+                existing = core_services.operation.update_status(
+                    operation_id=existing.id,
+                    status="running",
+                    metadata={"scheduler_precreated": True},
+                ) or existing
+                remember_operation = getattr(self.task_manager, "remember_task_operation", None)
+                if callable(remember_operation):
+                    await remember_operation(
+                        str(task_record.get("task_key") or ""),
+                        operation_id=existing.operation_id,
+                        status=existing.status,
+                    )
+                session_row, thread_row, _ = self._task_operation_context(task_record)
+                thread_key = getattr(thread_row, "thread_id", "") if thread_row is not None else ""
+                if thread_key:
+                    await self._publish_task_operation_update(
+                        existing,
+                        thread_id=thread_key,
+                        phase="running",
+                        detail="Scheduled task execution started.",
+                    )
+                return existing, thread_key
+        return await self._create_scheduled_task_operation(
+            task_record,
+            operation_type=operation_type,
+            title=title,
+        )
 
     def _can_deliver_task_update(self, session_id: str, target: EventTarget) -> bool:
         resolved_target = target
@@ -664,12 +984,18 @@ class App:
             return True
         return bool(checker(task_key, normalized_claim_token))
 
-    async def _handle_scheduled_reminder(self, task_key: str, claim_token: str = "", trace_id: str = ""):
+    async def _handle_scheduled_reminder(self, task_key: str, claim_token: str = "", trace_id: str = "", operation_id: str = ""):
         if not self._control_claim_valid(task_key, claim_token):
             return
         task_record = self.task_manager.get_task_by_key(task_key)
         if task_record is None:
             return
+        task_operation, operation_thread_id = await self._ensure_scheduled_task_operation(
+            task_record,
+            operation_id=operation_id,
+            operation_type="scheduled_reminder_run",
+            title=f"Scheduled Reminder: {_normalize_task_summary(task_record)}",
+        )
         message = (
             f"Scheduled reminder: {_normalize_task_summary(task_record)}"
             f"\nDue: {task_record.get('next_run_at') or task_record.get('due_at') or 'now'}"
@@ -686,6 +1012,32 @@ class App:
         try:
             if should_notify:
                 delivered = await self._emit_task_update(task_record, message)
+            if task_operation is not None:
+                core_services = getattr(self, "core_services", None)
+                if core_services is not None:
+                    task_operation = core_services.operation.update_status(
+                        operation_id=task_operation.id,
+                        status="succeeded",
+                        result_summary=message,
+                        metadata={
+                            "delivered": bool(delivered or not should_notify),
+                            "delivery_pending": bool(should_notify and not delivered),
+                        },
+                    ) or task_operation
+                    remember_operation = getattr(self.task_manager, "remember_task_operation", None)
+                    if callable(remember_operation):
+                        await remember_operation(
+                            task_key,
+                            operation_id=task_operation.operation_id,
+                            status=task_operation.status,
+                        )
+                    if operation_thread_id:
+                        await self._publish_task_operation_update(
+                            task_operation,
+                            thread_id=operation_thread_id,
+                            phase="completed",
+                            detail=message,
+                        )
             await self.task_manager.complete_due_notification(
                 task_key,
                 summary=message,
@@ -696,14 +1048,20 @@ class App:
         finally:
             reset_event_context(token)
 
-    async def _handle_scheduled_task(self, task_key: str, claim_token: str = "", trace_id: str = ""):
+    async def _handle_scheduled_task(self, task_key: str, claim_token: str = "", trace_id: str = "", operation_id: str = ""):
         if not self._control_claim_valid(task_key, claim_token):
             return
         task_record = self.task_manager.get_task_by_key(task_key)
         if task_record is None:
             return
+        task_operation, operation_thread_id = await self._ensure_scheduled_task_operation(
+            task_record,
+            operation_id=operation_id,
+            operation_type="scheduled_task_run",
+            title=f"Scheduled Task: {_normalize_task_summary(task_record)}",
+        )
 
-        tools, route_context = self._scheduled_job_route_context()
+        tools, route_context = self._scheduled_job_route_context(task_record)
         summary = _normalize_task_summary(task_record)
         system_prompt = (
             "[Scheduled Job Mode]\n"
@@ -720,6 +1078,12 @@ class App:
             "current_time": utcnow_iso(),
             "time_context": _task_time_context(task_record),
             "orchestration": task_record.get("orchestration") if isinstance(task_record.get("orchestration"), dict) else {},
+            "routing": {
+                "preferred_capability_ref": str(task_record.get("preferred_capability_ref") or "").strip(),
+                "preferred_agent_ids": list(task_record.get("preferred_agent_ids") or []),
+                "preferred_agent_types": list(task_record.get("preferred_agent_types") or []),
+                "agent_routing_policy": str(task_record.get("agent_routing_policy") or "balanced").strip() or "balanced",
+            },
         }
         task_source = self._task_source(task_record)
         task_session_id, task_target = self._task_delivery(task_record)
@@ -768,6 +1132,34 @@ class App:
         delivered = True
         if should_notify:
             delivered = await self._emit_task_update(task_record, user_message)
+        if task_operation is not None:
+            core_services = getattr(self, "core_services", None)
+            if core_services is not None:
+                task_operation = core_services.operation.update_status(
+                    operation_id=task_operation.id,
+                    status="succeeded" if succeeded else "failed",
+                    result_summary=user_message,
+                    metadata={
+                        "completed_by_brain": completed_by_brain,
+                        "delivered": bool(delivered or not should_notify),
+                        "last_error": error_payload if isinstance(error_payload, dict) else {},
+                    },
+                ) or task_operation
+                remember_operation = getattr(self.task_manager, "remember_task_operation", None)
+                if callable(remember_operation):
+                    await remember_operation(
+                        task_key,
+                        operation_id=task_operation.operation_id,
+                        status=task_operation.status,
+                    )
+                if operation_thread_id:
+                    await self._publish_task_operation_update(
+                        task_operation,
+                        thread_id=operation_thread_id,
+                        phase="completed" if succeeded else "failed",
+                        detail=user_message,
+                        error=error_payload if not succeeded and isinstance(error_payload, dict) else None,
+                    )
         await self.task_manager.complete_task_run(
             task_key,
             succeeded=succeeded,
@@ -788,14 +1180,25 @@ class App:
         payload = event.content if isinstance(event.content, dict) else {}
         task_key = str(payload.get("task_key") or "").strip()
         claim_token = str(payload.get("claim_token") or metadata.get("claim_token") or "").strip()
+        operation_id = str(payload.get("operation_id") or metadata.get("operation_id") or "").strip()
         if control_kind == "reply_control":
             await self._handle_reply_control_event(event)
             return True
         if control_kind == "scheduled_task" and task_key:
-            await self._handle_scheduled_task(task_key, claim_token=claim_token, trace_id=getattr(event, "event_id", ""))
+            await self._handle_scheduled_task(
+                task_key,
+                claim_token=claim_token,
+                trace_id=getattr(event, "event_id", ""),
+                operation_id=operation_id,
+            )
             return True
         if control_kind == "scheduled_reminder" and task_key:
-            await self._handle_scheduled_reminder(task_key, claim_token=claim_token, trace_id=getattr(event, "event_id", ""))
+            await self._handle_scheduled_reminder(
+                task_key,
+                claim_token=claim_token,
+                trace_id=getattr(event, "event_id", ""),
+                operation_id=operation_id,
+            )
             return True
         return False
 
@@ -829,6 +1232,47 @@ class App:
             include_invalidated=include_invalidated,
         )
 
+    async def _sync_config_state_to_db(self) -> None:
+        core_services = getattr(self, "core_services", None)
+        if core_services is None:
+            return
+        import_config_state(self.config, core_services)
+
+    async def _sync_memory_state_to_db(self) -> None:
+        core_services = getattr(self, "core_services", None)
+        core_domain = getattr(self, "core_domain", None)
+        if core_services is None or core_domain is None:
+            return
+        import_memory_state(
+            self.config.get("memory_file_path") or "user/memory_graph.json",
+            principal_id=core_domain.principal.id,
+            workspaces=core_domain.workspaces,
+            services=core_services,
+        )
+
+    async def _sync_task_state_to_db(self) -> None:
+        core_services = getattr(self, "core_services", None)
+        core_domain = getattr(self, "core_domain", None)
+        if core_services is None or core_domain is None:
+            return
+        import_task_state(
+            self.config.get("task_file_path") or "user/memory_tasks.json",
+            principal_id=core_domain.principal.id,
+            workspaces=core_domain.workspaces,
+            services=core_services,
+        )
+
+    async def _sync_source_catalog_state_to_db(self) -> None:
+        core_services = getattr(self, "core_services", None)
+        core_domain = getattr(self, "core_domain", None)
+        if core_services is None or core_domain is None:
+            return
+        import_source_catalog_state(
+            self.config.get("source_catalog_path") or "user/source_catalog.json",
+            principal_id=core_domain.principal.id,
+            services=core_services,
+        )
+
     def get_runtime_state(self, session_id: str = "") -> dict[str, Any]:
         return {
             "global_state": self.status_manager.get_global(),
@@ -836,12 +1280,22 @@ class App:
             "session_state": self.brain.get_session_runtime_snapshot(session_id) if session_id else None,
         }
 
+    def _session_exists(self, session_id: str) -> bool:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return False
+        core_services = getattr(self, "core_services", None)
+        if core_services is not None and getattr(core_services, "session", None) is not None:
+            session_row = core_services.session.get_by_session_id(normalized_session_id)
+            if session_row is not None:
+                return True
+        return self.session_manager.get_binding(normalized_session_id) is not None
+
     async def get_runtime_debug(self, session_id: str) -> dict[str, Any]:
         if not session_id:
             raise ValueError("session_id is required")
         session_debug = self.brain.get_session_debug_snapshot(session_id)
         route_snapshot = dict(session_debug.get("route") or {})
-        event_bus = getattr(self, "event_bus", None)
         tool_debug_getter = getattr(self.tools_manager, "get_route_debug_snapshot", None)
         route_authorization = (
             tool_debug_getter(route_snapshot)
@@ -849,6 +1303,14 @@ class App:
             else {"visible_tools": [], "candidate_tools": [], "authorization_preview": []}
         )
         background_status = await self.heart.get_background_status()
+        interaction_responses = getattr(self, "_interaction_responses", None)
+        if interaction_responses is None and getattr(self, "event_bus", None) is not None:
+            interaction_responses = InteractionResponseService(self.event_bus)
+        confirmation_status = (
+            interaction_responses.get_confirmation_status(session_id=session_id)
+            if interaction_responses is not None
+            else {"pending": False, "request_id": ""}
+        )
         return {
             "session_id": session_id,
             "route": route_snapshot,
@@ -867,15 +1329,8 @@ class App:
                     if isinstance(item, dict)
                 ],
                 "confirmation": {
-                    "pending": bool(
-                        getattr(event_bus, "has_pending_confirmation", False)
-                        and getattr(event_bus, "pending_confirmation_session_id", "") == session_id
-                    ),
-                    "request_id": (
-                        getattr(event_bus, "pending_request_id", "")
-                        if getattr(event_bus, "pending_confirmation_session_id", "") == session_id
-                        else ""
-                    ),
+                    "pending": bool(confirmation_status.get("pending", False)),
+                    "request_id": str(confirmation_status.get("request_id", "") or ""),
                 },
             },
             "object_operations": [
@@ -925,6 +1380,7 @@ class App:
                 metadata={"turn_id": turn_id},
             )
         )
+        await self._publish_client_control_event(session_id, dict(payload or {}), turn_id=turn_id)
 
     async def _submit_reply_control_replay(
         self,
@@ -1096,8 +1552,7 @@ class App:
             merged_snapshot.setdefault("updated_at", utcnow_iso())
             return merged_snapshot
 
-        binding = self.session_manager.get_binding(session_id)
-        if binding is None:
+        if not self._session_exists(session_id):
             raise ValueError(f"Session not found: {session_id}")
 
         return {
@@ -1139,6 +1594,7 @@ class App:
                 }
 
             self.config.reload()
+            await self._sync_config_state_to_db()
             reloaded_components = await self._reload_config_components(applied_keys, warnings)
         except Exception as exc:
             if not applied_keys:
@@ -1198,6 +1654,11 @@ class App:
             metadata={"transient": True, "boot_event": True},
         )
 
+    async def _inject_core_startup_boot_event(self) -> None:
+        start_prompt = self.config.get_prompt("start")
+        boot_source = make_source(SourceKind.SYSTEM.value, "boot")
+        await self.event_bus.inbound_queue.put(self._build_boot_event(start_prompt, boot_source))
+
     def _resolve_session_execution_request(self, event: InboundEvent) -> SessionExecutionRequest | None:
         effective_session_id = event.session_id
         if event.type == EventType.SIGNAL.value:
@@ -1232,12 +1693,16 @@ class App:
     async def _process_session_execution(self, request: SessionExecutionRequest) -> None:
         stream_id = ""
         turn_id = uuid4().hex
+        answer_chunks: list[str] = []
         token = bind_event_context(
             trace_id=getattr(request.event, "event_id", ""),
             session_id=request.session_id,
             turn_id=turn_id,
             source=request.event.source,
             target=request.target,
+            workspace_id=str((request.input_info.get("metadata") or {}).get("workspace_id") or ""),
+            thread_id=str((request.input_info.get("metadata") or {}).get("thread_id") or ""),
+            pinned_procedure_id=str((request.input_info.get("metadata") or {}).get("pinned_procedure_id") or ""),
         )
         reasoning_started = False
         reasoning_ended = False
@@ -1273,6 +1738,25 @@ class App:
                         "turn_id": turn_id,
                         **metadata,
                     },
+                )
+                await self._publish_client_activity_event(
+                    request.session_id,
+                    activity={
+                        "turn_id": turn_id,
+                        "stream_id": stream_id,
+                        "phase": phase,
+                        "content": content,
+                        "activity_kind": metadata.get("activity_kind", "tool_chain"),
+                        "tool_names": list(metadata.get("tool_names") or []),
+                        "metadata": {
+                            "activity_kind": metadata.get("activity_kind", "tool_chain"),
+                            "search_phase": phase,
+                            "activity_phase": phase,
+                            "turn_id": turn_id,
+                            **metadata,
+                        },
+                    },
+                    turn_id=turn_id,
                 )
 
             async def phase_callback(status: str, detail: str = "", active_tools: list[str] | None = None):
@@ -1342,6 +1826,13 @@ class App:
                         )
                         reasoning_ended = True
                 elif output.type == "answer_text" and output.text:
+                    answer_chunks.append(output.text)
+                    await self._publish_client_message_delta(
+                        request.session_id,
+                        stream_id=stream_id,
+                        turn_id=turn_id,
+                        delta=output.text,
+                    )
                     if reasoning_started and not reasoning_ended:
                         await self._emit_reasoning_stream_event(
                             request.session_id,
@@ -1391,6 +1882,12 @@ class App:
                 target=request.target,
                 stream_channel="answer",
                 metadata={"turn_id": turn_id, "finish_reason": finish_reason},
+            )
+            await self._persist_and_publish_assistant_message(
+                request.session_id,
+                content="".join(answer_chunks),
+                stream_id=stream_id,
+                turn_id=turn_id,
             )
         except asyncio.CancelledError:
             finalization = self.brain.finalize_reply_control(
@@ -1483,6 +1980,302 @@ class App:
             if request.is_boot:
                 await self.brain.close_session(request.session_id)
 
+    async def _publish_client_message_delta(self, session_id: str, *, stream_id: str, turn_id: str, delta: str) -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if not delta or gateway is None or core_services is None:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="message.delta",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "stream_id": stream_id,
+                "turn_id": turn_id,
+                "delta": delta,
+            },
+        )
+
+    async def _publish_client_runtime_state(self, session_id: str, snapshot: dict[str, Any], *, turn_id: str = "") -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if gateway is None or core_services is None:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="runtime.state",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "turn_id": turn_id or str(snapshot.get("turn_id") or ""),
+                "snapshot": dict(snapshot or {}),
+            },
+        )
+
+    async def _publish_client_runtime_usage(self, session_id: str, payload: dict[str, Any]) -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if gateway is None or core_services is None:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="runtime.usage",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "snapshot": dict(payload or {}),
+            },
+        )
+
+    async def _publish_client_reasoning_event(
+        self,
+        session_id: str,
+        *,
+        stream_id: str,
+        turn_id: str,
+        phase: str,
+        content: str,
+    ) -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if gateway is None or core_services is None:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="reasoning.delta",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "stream_id": stream_id,
+                "turn_id": turn_id,
+                "phase": phase,
+                "delta": content,
+            },
+        )
+
+    async def _publish_client_activity_event(self, session_id: str, *, activity: dict[str, Any], turn_id: str = "") -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if gateway is None or core_services is None:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        metadata = dict(activity.get("metadata") or {}) if isinstance(activity.get("metadata"), dict) else {}
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="activity.status",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "turn_id": turn_id or str(activity.get("turn_id") or ""),
+                "stream_id": str(activity.get("stream_id") or ""),
+                "phase": str(activity.get("phase") or "status"),
+                "content": str(activity.get("content") or ""),
+                "activity_kind": str(activity.get("activity_kind") or metadata.get("activity_kind") or "tool_chain"),
+                "tool_names": list(activity.get("tool_names") or metadata.get("tool_names") or []),
+                "metadata": metadata,
+                "event_id": str(activity.get("event_id") or ""),
+            },
+        )
+
+    async def _persist_and_publish_assistant_message(self, session_id: str, *, content: str, stream_id: str, turn_id: str) -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if not content or gateway is None or core_services is None:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        workspace_row = core_services.workspace.get_by_id(thread_row.workspace_id)
+        message = core_services.message.create_message(
+            thread_id=thread_row.id,
+            session_id=session_row.id,
+            role="assistant",
+            content=content,
+            status="completed",
+            meta={"turn_id": turn_id, "stream_id": stream_id},
+        )
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="message.completed",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "message": {
+                    "message_id": message.message_id,
+                    "thread_id": thread_row.thread_id,
+                    "session_id": session_id,
+                    "workspace_id": getattr(workspace_row, "workspace_id", ""),
+                    "client_id": "",
+                    "role": message.role,
+                    "content": message.content,
+                    "status": message.status,
+                    "channel": message.channel,
+                    "created_at": message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
+                },
+                "stream_id": stream_id,
+                "turn_id": turn_id,
+            },
+        )
+
+    async def _publish_client_confirm_request(self, event, *, approval_context: dict[str, Any] | None = None) -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if gateway is None or core_services is None:
+            return
+        session_row = core_services.session.get_by_session_id(event.session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="confirm.requested",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": event.session_id,
+                "request_id": event.request_id,
+                "content": str(event.content or ""),
+                "timeout": float(getattr(event, "timeout", 0.0) or 0.0),
+                "default_decision": bool(getattr(event, "default_decision", False)),
+                "approval_id": str((approval_context or {}).get("approval_id") or ""),
+                "approval_status": str((approval_context or {}).get("approval_status") or ""),
+                "approval_type": str((approval_context or {}).get("approval_type") or ""),
+                "risk_level": str((approval_context or {}).get("risk_level") or ""),
+                "operation_id": str((approval_context or {}).get("operation_id") or ""),
+            },
+        )
+
+    async def _publish_client_confirm_resolution(self, payload: dict[str, Any], *, approval_context: dict[str, Any] | None = None) -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        session_id = str((payload or {}).get("session_id") or "")
+        if gateway is None or core_services is None or not session_id:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="confirm.resolved",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "request_id": str((payload or {}).get("request_id") or ""),
+                "accepted": bool((payload or {}).get("accepted")),
+                "approval_id": str((approval_context or {}).get("approval_id") or ""),
+                "approval_status": str((approval_context or {}).get("approval_status") or ""),
+                "operation_id": str((approval_context or {}).get("operation_id") or ""),
+            },
+        )
+
+    async def _publish_client_human_input_request(self, event) -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if gateway is None or core_services is None:
+            return
+        session_row = core_services.session.get_by_session_id(event.session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="human_input.requested",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": event.session_id,
+                "request_id": event.request_id,
+                "question": str(getattr(event, "question", "") or event.content or ""),
+                "options": list(getattr(event, "options", []) or []),
+                "placeholder": str(getattr(event, "placeholder", "") or ""),
+                "timeout": float(getattr(event, "timeout", 0.0) or 0.0),
+            },
+        )
+
+    async def _publish_client_human_input_resolution(self, payload: dict[str, Any]) -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        session_id = str((payload or {}).get("session_id") or "")
+        if gateway is None or core_services is None or not session_id:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="human_input.resolved",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "request_id": str((payload or {}).get("request_id") or ""),
+                "answer_text": str((payload or {}).get("answer_text") or ""),
+                "selected_option": (payload or {}).get("selected_option"),
+            },
+        )
+
+    async def _publish_client_control_event(self, session_id: str, payload: dict[str, Any], *, turn_id: str = "") -> None:
+        gateway = getattr(self, "gateway", None)
+        core_services = getattr(self, "core_services", None)
+        if gateway is None or core_services is None or not session_id:
+            return
+        session_row = core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if thread_row is None:
+            return
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="control.updated",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "control": dict(payload or {}),
+            },
+        )
+
     async def brain_processor(self):
         shutdown = self.event_bus.shutdown_event
         queue = self.event_bus.inbound_queue
@@ -1534,9 +2327,64 @@ class App:
     async def setup(self):
         tools_schema_path = self.config.get("tools_schema_path") or "user/tools.json"
         mcp_servers = self.config.get_mcp_servers()
+        mcp_config_diagnostic = self.config.get_mcp_server_config_diagnostic()
 
         self.status_manager.set_global(RuntimeStatus.INITIALIZING.value, "Starting up")
+        self.core_domain = bootstrap_core_domain(self.config)
+        self.db_engine = self.core_domain.engine
+        self.db_session_factory = self.core_domain.session_factory
+        self.core_services = self.core_domain.services
+        self.heart.set_core_services(self.core_services)
+        state_blob_service = self.core_services.state_blob
         await self.memory.init_memory(self.config)
+        self.memory.set_store_backend(
+            RuntimeStateBlobBackend(
+                state_blob_service,
+                principal_id=self.core_domain.principal.id,
+                state_key="memory_graph",
+                default_factory=self.memory._store_layer.empty_store,
+            ),
+            migrate_current=True,
+        )
+        self.task_manager.set_store_backend(
+            RuntimeStateBlobBackend(
+                state_blob_service,
+                principal_id=self.core_domain.principal.id,
+                state_key="task_store",
+                default_factory=self.task_manager._empty_store,
+            ),
+            migrate_current=True,
+        )
+        self.tools_manager.set_state_backends(
+            office_backend=RuntimeStateBlobBackend(
+                state_blob_service,
+                principal_id=self.core_domain.principal.id,
+                state_key="office_state",
+                default_factory=dict,
+            ),
+            study_backend=RuntimeStateBlobBackend(
+                state_blob_service,
+                principal_id=self.core_domain.principal.id,
+                state_key="study_progress",
+                default_factory=dict,
+            ),
+        )
+        self.mode_manager.set_source_catalog_backend(
+            RuntimeStateBlobBackend(
+                state_blob_service,
+                principal_id=self.core_domain.principal.id,
+                state_key=SOURCE_CATALOG_STATE_KEY,
+                default_factory=dict,
+            ),
+            migrate_current=True,
+        )
+        system_tools.set_agent_dispatcher(self.core_domain.agent_dispatch)
+        self.tools_manager.set_agent_dispatcher(self.core_domain.agent_dispatch)
+        await self._sync_config_state_to_db()
+        logger.info(
+            "Core MCP 边界: %s",
+            mcp_config_diagnostic.get("message") or "未提供 Core MCP 配置诊断。",
+        )
         await self.tools_manager.init_tools(tools_schema_path, mcp_servers)
         await self._refresh_brain_runtime()
         await self.heart.init_heart()
@@ -1545,6 +2393,7 @@ class App:
         host = self.config.get("gateway_host") or "127.0.0.1"
         port = int(self.config.get("gateway_port") or 8000)
         gateway_access_token = str(self.config.get("gateway_access_token") or "").strip()
+        agent_access_token = str(self.config.get("agent_access_token") or "").strip()
         if host not in {"127.0.0.1", "localhost", "::1"} and not gateway_access_token:
             raise ConfigError("非本地 gateway_host 必须配置 gateway_access_token")
         self.gateway = FastAPIGateway(
@@ -1564,34 +2413,36 @@ class App:
                 if self._telemetry_recorder is not None
                 else None
             ),
+            core_domain=self.core_domain,
+            agent_access_token=agent_access_token,
             access_token=gateway_access_token,
             cors_origins=self.config.get("gateway_cors_origins") or [],
         )
+        self.core_domain.agent_dispatch.set_transport(self.gateway.dispatch_agent_call)
         self.speaker.register_adapter(TargetKind.WEB.value, self.gateway.output_adapter)
         await self.gateway.start(host=host, port=port)
 
         if self.config.get_bool("enable_feishu_bot"):
+            self.feishu_output = FeishuOutputAdapter(self.config)
+            await self.feishu_output.init()
             self.feishu_input = FeishuInputAdapter(
                 self.event_bus,
                 self.session_manager,
                 self.config,
+                output_adapter=self.feishu_output,
             )
-            self.feishu_output = FeishuOutputAdapter(self.config)
-            await self.feishu_output.init()
-            self.speaker.register_adapter(TargetKind.FEISHU.value, self.feishu_output)
             self._register_feishu_broadcast_targets()
             await self.feishu_input.run()
+            logger.info("Feishu Bot 已通过 Client API + client/ws 正式主链接入。")
 
         self.status_manager.set_global(RuntimeStatus.IDLE.value, "")
         logger.info("Service runtime initialized")
 
         try:
-            start_prompt = self.config.get_prompt("start")
-            boot_source = make_source(SourceKind.SYSTEM.value, "boot")
-            await self.event_bus.inbound_queue.put(self._build_boot_event(start_prompt, boot_source))
-            logger.info("Boot wake-up event injected")
+            await self._inject_core_startup_boot_event()
+            logger.info("Core startup boot wake-up event injected")
         except Exception as exc:
-            logger.warning("Failed to inject boot wake-up event (non-fatal): %s", exc)
+            logger.warning("Failed to inject core startup boot wake-up event (non-fatal): %s", exc)
 
     async def run(self):
         await self.setup()
@@ -1621,4 +2472,6 @@ class App:
         await self.brain.close_brain()
         await self.heart.close_heart()
         await self.memory.close_memory()
+        if self.db_engine is not None:
+            self.db_engine.dispose()
         logger.info("All resources released")

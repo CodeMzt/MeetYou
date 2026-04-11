@@ -30,7 +30,9 @@ class ToolsManager:
         self._mode_manager = mode_manager
         self._agent_memory_tools = AgentMemoryTools(memory)
         self._web_search_tools = WebSearchTools(mcp_manager)
-        self._document_tools = DocumentTools(mode_manager) if mode_manager is not None else None
+        self._document_tools = (
+            DocumentTools(mode_manager, allow_local_fallback=False) if mode_manager is not None else None
+        )
         self._lightweight_tools = LightweightTools()
         self._scenario_tools = ScenarioTools(
             memory,
@@ -117,6 +119,16 @@ class ToolsManager:
             mcp_manager,
             authorization_gateway=self._authorization_gateway,
         )
+
+    def set_agent_dispatcher(self, dispatcher) -> None:
+        if self._document_tools is not None:
+            self._document_tools.set_agent_dispatcher(dispatcher)
+
+    def set_state_backends(self, *, office_backend=None, study_backend=None) -> None:
+        if self._office_tools is not None and office_backend is not None:
+            self._office_tools.set_state_backend(office_backend)
+        if self._study_tools is not None and study_backend is not None:
+            self._study_tools.set_state_backend(study_backend)
 
     def set_execution_observer(self, observer) -> None:
         self._executor.set_execution_observer(observer)

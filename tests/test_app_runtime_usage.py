@@ -47,6 +47,14 @@ class _FakeSessionManager:
         return object() if self._has_binding else None
 
 
+class _FakeSessionService:
+    def __init__(self, existing_session_ids=None):
+        self._existing_session_ids = set(existing_session_ids or [])
+
+    def get_by_session_id(self, session_id: str):
+        return object() if session_id in self._existing_session_ids else None
+
+
 class _FakeModeManager:
     async def resolve_context_limit(self, *, provider_name: str, api_url: str, model_name: str, adapter):
         del provider_name, api_url, model_name, adapter
@@ -113,10 +121,11 @@ class _FakeConfig:
 
 
 class AppRuntimeUsageTests(unittest.IsolatedAsyncioTestCase):
-    def _make_app(self, *, snapshot=None, debug_snapshot=None, has_binding=True):
+    def _make_app(self, *, snapshot=None, debug_snapshot=None, has_binding=True, existing_session_ids=None):
         app = App.__new__(App)
         app.brain = _FakeBrain(snapshot=snapshot, debug_snapshot=debug_snapshot)
         app.session_manager = _FakeSessionManager(has_binding=has_binding)
+        app.core_services = SimpleNamespace(session=_FakeSessionService(existing_session_ids=existing_session_ids or []))
         app.mode_manager = _FakeModeManager()
         app.main_adapter = _FakeAdapter()
         app.tools_manager = _FakeToolsManager()
@@ -191,11 +200,63 @@ class AppRuntimeUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["session_totals"]["turn_count"], 0)
         self.assertEqual(payload["current_context_tokens_estimated"], 0)
 
+    async def test_merges_unready_snapshot_with_resolved_context_limit(self):
+        app = self._make_app(
+            snapshot={
+                "session_id": "desktop-1",
+                "usage_ready": False,
+                "current_context_tokens_estimated": 512,
+                "context_breakdown": {
+                    "system": 64,
+                    "history": 320,
+                    "tool_history": 32,
+                    "memory_context": 48,
+                    "policy": 16,
+                    "current_input": 24,
+                    "proprioception": 8,
+                    "total": 512,
+                },
+                "last_turn_usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "total_tokens": 0,
+                },
+                "session_totals": {
+                    "prompt_tokens": 90,
+                    "completion_tokens": 10,
+                    "reasoning_tokens": 5,
+                    "total_tokens": 105,
+                    "turn_count": 3,
+                },
+                "usage_source": "estimated",
+                "updated_at": "2026-04-09T00:00:00Z",
+            }
+        )
+
+        payload = await App.get_runtime_usage(app, "desktop-1")
+
+        self.assertFalse(payload["usage_ready"])
+        self.assertEqual(payload["context_limit_tokens"], 128000)
+        self.assertEqual(payload["context_limit_model"], "deepseek-reasoner")
+        self.assertEqual(payload["current_context_tokens_estimated"], 512)
+        self.assertEqual(payload["session_totals"]["turn_count"], 3)
+        self.assertEqual(payload["context_breakdown"]["history"], 320)
+
     async def test_unknown_session_still_raises(self):
-        app = self._make_app(snapshot=None, has_binding=False)
+        app = self._make_app(snapshot=None, has_binding=False, existing_session_ids=[])
 
         with self.assertRaisesRegex(ValueError, "Session not found"):
             await App.get_runtime_usage(app, "missing-session")
+
+    async def test_database_session_without_runtime_binding_returns_estimated_usage(self):
+        app = self._make_app(snapshot=None, has_binding=False, existing_session_ids=["sess_db_only"])
+
+        payload = await App.get_runtime_usage(app, "sess_db_only")
+
+        self.assertEqual(payload["session_id"], "sess_db_only")
+        self.assertFalse(payload["usage_ready"])
+        self.assertEqual(payload["context_limit_tokens"], 128000)
 
     async def test_runtime_debug_snapshot_merges_route_and_background(self):
         app = self._make_app()

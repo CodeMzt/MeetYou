@@ -1,7 +1,7 @@
 """
 Linux 平台适配器（插头）— 基础实现。
 
-UI 感知标记为不支持，其余使用 psutil 跨平台能力。
+UI 感知标记为不支持，其余使用 psutil 提供运行宿主机感知。
 """
 
 import logging
@@ -44,9 +44,3 @@ class LinuxPlatformAdapter(PlatformAdapter):
             vitals["battery_percent"] = batt.percent
             vitals["is_plugged"] = batt.power_plugged
         return vitals
-
-    def decode_command_output(self, raw_bytes: bytes) -> str:
-        return raw_bytes.decode("utf-8", errors="replace")
-
-    def get_default_shell(self) -> str:
-        return "bash"

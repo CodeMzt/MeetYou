@@ -1,42 +1,40 @@
 # MeetYou
 
-MeetYou 是一个以 LLM 为核心的多入口智能体项目，当前已经整理为“网关后端 + 多种客户端/适配器”的运行形态。它围绕统一事件协议组织 `Brain`、`Heart`、`Memory`、`Tools`、`Speaker` 等模块，支持：
+MeetYou 是一个以 LLM 为核心的个人智能体系统，当前目标形态是“私人服务器本体 + 多客户端（部分客户端内含本地后端）+ workspace 驱动的边缘节点治理”。它围绕统一事件协议组织 `Brain`、`Heart`、`Memory`、`Tools`、`Speaker` 等模块，支持：
 
-- `FastAPI` 网关
+- `FastAPI` 服务端本体
 - `CIL` 终端客户端
-- `Electron + React` 桌面悬浮窗
+- `Electron + React` 桌面客户端
 - 可选 `Feishu Bot`
 - 记忆图谱、运行态快照、配置热更新、工具链调用与确认机制
 
 ## 当前形态
 
-项目目前的主入口是网关运行时，默认使用：
+项目当前默认形态是：
 
 ```text
-User / CIL / Desktop UI / Feishu
-        ->
-   HTTP / WebSocket / Adapter
-        ->
-      EventBus
-        ->
-       Brain
-        ->
-      Tools / Memory / MCP / Heart
-        ->
-      Speaker
-        ->
-WebSocket / CLI / Feishu Output
+PC Client(UI + Local Backend) ----\
+Feishu Client ---------------------> Core Service
+Mobile Client(UI + Local Backend)-/      |
+                                         |
+                                  Memory / Tools / MCP / Heart
+                                         |
+                                  workspace / operation / approval
+                                         |
+                           Edge / Bridge Nodes via workspace
 ```
 
 核心能力包括：
 
-- 统一输入输出协议，便于同时接入 UI、CLI 和 Bot
+- 统一输入输出协议，便于同时接入 UI、CLI、Bot 与未来移动端
 - 多模型适配，当前代码中已接入 OpenAI、Anthropic、Gemini、Ollama
 - 长时记忆与记忆图谱查询接口
 - 会话级运行状态、推理摘要、token/context 使用量透出
 - Assistant Modes 路由机制，支持不同场景下的工具束与策略切换
 - 配置中心与热更新接口
-- 定时任务、后台心跳、系统感知能力
+- 定时任务、后台心跳、运行宿主机感知能力
+- 客户端本地后端 / 边缘节点承接本地文件、Shell、本地 MCP 与设备能力
+- Core 仅保留运行所需的平台识别、时间、系统生命体征与少量上下文感知
 
 ## 目录结构
 
@@ -47,7 +45,7 @@ cil/             基于 gateway 的终端客户端
 adapters/        大模型与外部服务适配器
 sensors/         输入/输出适配层与系统感知
 tools/           工具集合，含 memory、mcp、documents、web_search 等
-platform_layer/  平台能力抽象
+platform_layer/  Core 运行宿主机感知抽象，不承载终端 shell / 文件能力
 prompt/          系统提示词、模式提示词、技能提示词（统一位于 prompt/SKILL）
 meetyou-ui/      Electron + React 桌面端
 docs/            协议与补充文档
@@ -66,6 +64,7 @@ user/            本地配置、工具 schema、记忆数据、MCP 配置等
 
 - 当前仓库包含 `uiautomation`、PowerShell launcher、`.cmd` 脚本，以及 Electron Windows 窗口特性，整体体验明显偏向 Windows。
 - 后端代码保留了 `platform_layer/linux.py`、`platform_layer/macos.py`，但如果要在非 Windows 环境完整跑通，需要自行验证系统工具链与依赖。
+- `platform_layer/` 现在只服务于 Core 运行宿主机感知；本地文件、Shell、本地 MCP 生命周期等终端能力必须通过客户端内本地后端承接。
 
 ## 安装
 
@@ -96,10 +95,12 @@ npm install
 - `user/config.example.json` -> `user/config.json`
 - `user/tools.example.json` -> `user/tools.json`
 - `user/mcp_servers.example.json` -> `user/mcp_servers.json`
+- `user/core_mcp_servers.example.json` -> `user/core_mcp_servers.json`
 - `user/cmd_policy.example.json` -> `user/cmd_policy.json`
 - `user/source_catalog.example.json` -> `user/source_catalog.json`
 - `user/memory_graph.example.json` -> `user/memory_graph.json`
 - `user/feishu_chat_ids.example.json` -> `user/feishu_chat_ids.json`
+- `user/desktop_agent.example.json` -> `user/desktop_agent.json`
 
 可以先复制环境变量模板：
 
@@ -160,6 +161,13 @@ MEETYOU_FEISHU_APP_SECRET=
 - `gateway_host` / `gateway_port`：网关监听地址
 - `gateway_cors_origins`：额外允许的浏览器来源
 - `gateway_access_token` / `MEETYOU_GATEWAY_ACCESS_TOKEN`：Gateway / WebSocket 访问令牌
+
+### MCP 配置边界
+
+- `user/core_mcp_servers.json`：仅供 Core 侧安全级、非终端依赖的服务端 MCP 使用
+- `user/mcp_servers.json`：仅供 PC 客户端本地后端使用，由 `desktop_agent/` 托管
+- 缺少 `core_mcp_servers.json` 只表示 Core 没有启用服务端 MCP，不代表 Desktop Agent 本地 MCP 配置缺失
+- `user/desktop_agent.json` 中的 `mcp_servers_path` 用来指向客户端本地 MCP 配置文件
 
 ## 启动方式
 
@@ -222,61 +230,51 @@ npm run dev
 
 如果你从 launcher 执行 `start ui`，会自动尝试拉起 service，再打开 Electron 开发窗口。
 
-## 网关接口
+## 服务端接口
 
-当前主要接口如下：
+当前正式主接口按 surface 划分：
 
 - `GET /health`：健康检查
-- `POST /inputs`：提交输入
-- `GET /config`：读取受管配置快照
-- `GET /config/{key}`：读取单项配置
-- `PATCH /config`：更新配置并触发部分热刷新
-- `GET /memory`：读取记忆快照
-- `GET /memory/graph`：读取图结构记忆数据
-- `GET /runtime/state`：读取运行状态
-- `GET /runtime/usage`：读取 token/context 使用情况
-- `GET /ws`：订阅会话流式输出
+- `POST /client/messages`：客户端提交聊天消息
+- `GET /client/ws`：订阅 thread 级实时事件
+- `GET /client/workspaces`：列出客户端可用 workspace
+- `GET /client/workspaces/{workspace_id}/execution-targets`：列出该 workspace 下可用执行目标
+- `GET /operator/config`、`GET /operator/memory`：运维 / 观察面接口
+- `GET /runtime/state`、`GET /runtime/usage`、`GET /developer/runtime/debug`：运行态与开发诊断接口
+- `GET /ws`：旧主聊天路径，现仅返回兼容性错误并提示迁移到 `/client/ws`
+- `GET /config`、`GET /memory` 等根路径接口：迁移期兼容入口，不再是默认产品面
 
-详细协议见 [docs/interface.md](docs/interface.md)。
+正式目标架构见 [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)，workspace 模型见 [docs/workspace-capability-model.md](docs/workspace-capability-model.md)，API 面设计见 [docs/core-api-surfaces.md](docs/core-api-surfaces.md)，当前基线与缺口见 [docs/server-centric-migration-baseline.md](docs/server-centric-migration-baseline.md)。
 
-### `POST /inputs` 示例
+### `POST /client/messages` 示例
 
 ```json
 {
-  "content": "帮我总结今天的任务",
-  "session_id": "web-session-001",
-  "source_id": "desktop-app",
-  "role": "user",
-  "metadata": {},
-  "options": {
-    "thinking": {
-      "enabled": true,
-      "effort": "high",
-      "budget_tokens": 1024
-    }
-  }
+  "thread_id": "thread-personal-001",
+  "workspace_id": "personal",
+  "client_id": "desktop-app",
+  "content": "帮我总结今天的任务"
 }
 ```
 
 ### WebSocket 连接示例
 
 ```text
-ws://127.0.0.1:8000/ws?session_id=web-session-001&source_id=desktop-app
+ws://127.0.0.1:8000/client/ws?thread_id=thread-personal-001
 ```
 
-网关会通过统一 envelope 推送：
+客户端会先收到 `connection` 帧，随后按 thread 推送统一 envelope：
 
-- `message`
-- `reasoning`
-- `status`
-- `confirm_request`
-- `runtime_status`
-- `usage`
+- `event`
+- `runtime`
+- `ack`
 - `error`
 
-## 桌面端说明
+如果旧客户端仍连接根路径 `/ws`，服务端会返回 `legacy_websocket_path_removed` 错误并关闭连接。
 
-`meetyou-ui/` 是一个 Electron + React 桌面端，当前已经接入：
+## PC 客户端说明
+
+`meetyou-ui/` 是 PC 客户端前端；`desktop_agent/` 则是 PC 客户端内本地后端的当前实现雏形。两者共同构成 PC 客户端。
 
 - 聊天界面
 - 推理摘要展示
@@ -311,7 +309,9 @@ npm run build
 
 - `user/feishu_chat_ids.json`
 
-输出端会通过 `FeishuOutputAdapter` 发送消息，输入端通过 `FeishuInputAdapter` 统一映射为内部事件。
+- Feishu 输入会通过 `GatewayConversationClient` 进入 `POST /client/messages`
+- Feishu 输出、审批、补充输入和 operation 更新都通过 `GET /client/ws` 事件回推
+- `FeishuInputAdapter` 的旧 event bus 直连分支仅保留兼容用途，不再是正式主链
 
 ## 测试
 
@@ -331,7 +331,11 @@ npm run build
 
 ## 相关文档
 
-- [docs/interface.md](docs/interface.md)：网关协议
+- [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)：目标拓扑与职责分层
+- [docs/workspace-capability-model.md](docs/workspace-capability-model.md)：Workspace、Capability 与作用域模型
+- [docs/core-api-surfaces.md](docs/core-api-surfaces.md)：Client / Agent / Operator / Developer API 面
+- [docs/server-centric-migration-baseline.md](docs/server-centric-migration-baseline.md)：当前基线、缺口与后续收口顺序
+- [docs/manual-startup-acceptance.md](docs/manual-startup-acceptance.md)：人工启动验收与排障手册
 - [docs/runtime-migration.md](docs/runtime-migration.md)：运行时破坏性迁移说明
 - [docs/playwright-mcp.md](docs/playwright-mcp.md)：Playwright MCP 说明
 

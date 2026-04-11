@@ -8,7 +8,11 @@ from cil.client import CILClient
 from core.app import App
 from core.background_status import build_system_issue_snapshot
 from launcher import run_launcher
-from service_runtime.boundaries import RuntimeModuleSet, build_default_runtime_boundaries
+from service_runtime.boundaries import (
+    RuntimeModuleSet,
+    build_default_runtime_boundaries,
+    build_runtime_platform_boundaries,
+)
 from service_runtime.models import (
     RuntimeCommand,
     RuntimeError,
@@ -35,6 +39,7 @@ class ServiceRuntime:
         self.command = command
         self.boundaries: RuntimeModuleSet = build_default_runtime_boundaries()
         self.health = RuntimeHealth.from_component_names(self.boundaries.names())
+        self.health.replace_platform_boundary(build_runtime_platform_boundaries().to_dict())
         self.events: list[RuntimeEvent] = []
         self.telemetry = RuntimeTelemetryRecorder()
         self._app_factory = app_factory or App

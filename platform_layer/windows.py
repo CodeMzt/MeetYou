@@ -1,7 +1,7 @@
 """
 Windows 平台适配器（插头）。
 
-使用 uiautomation + win32process + psutil 实现完整的 Windows 平台能力。
+使用 uiautomation + win32process + psutil 实现运行宿主机所需的 Windows 感知能力。
 """
 
 import logging
@@ -83,12 +83,3 @@ class WindowsPlatformAdapter(PlatformAdapter):
             vitals["battery_percent"] = batt.percent
             vitals["is_plugged"] = batt.power_plugged
         return vitals
-
-    def decode_command_output(self, raw_bytes: bytes) -> str:
-        try:
-            return raw_bytes.decode("gbk")
-        except UnicodeDecodeError:
-            return raw_bytes.decode("utf-8", errors="replace")
-
-    def get_default_shell(self) -> str:
-        return "cmd"

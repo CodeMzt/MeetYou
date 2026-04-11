@@ -11,7 +11,7 @@ class PlatformAdapter(ABC):
     """
     平台适配器抽象基类。
 
-    所有平台特定操作（UI 感知、进程列表、系统指标、编码转换等）
+    Core 仅保留运行宿主机所需的平台感知能力（UI 感知、进程列表、系统指标）。
     必须通过此接口的具体实现来调用。
     """
 
@@ -47,25 +47,4 @@ class PlatformAdapter(ABC):
 
         Returns:
             dict: 包含 cpu_percent, ram_percent, battery_percent(可选), is_plugged(可选)
-        """
-
-    @abstractmethod
-    def decode_command_output(self, raw_bytes: bytes) -> str:
-        """
-        按平台默认编码解码命令行输出字节。
-
-        Args:
-            raw_bytes: 命令的原始字节输出
-
-        Returns:
-            str: 解码后的文本
-        """
-
-    @abstractmethod
-    def get_default_shell(self) -> str:
-        """
-        获取当前平台的默认 shell。
-
-        Returns:
-            str: 如 "cmd", "bash", "zsh"
         """

@@ -11,6 +11,26 @@
 - `source_catalog.example.json` -> `source_catalog.json`
 - `memory_graph.example.json` -> `memory_graph.json`
 - `feishu_chat_ids.example.json` -> `feishu_chat_ids.json`
+- `desktop_agent.example.json` -> `desktop_agent.json`
+- `core_mcp_servers.example.json` -> `core_mcp_servers.json`
+
+`desktop_agent.json` 常用字段：
+
+- `read_roots`: Agent 允许读取的根目录
+- `trusted_write_roots`: Agent 允许写入的可信根目录
+- `cmd_policy_path`: 本地命令策略文件路径
+- `mcp_servers_path`: Desktop Agent 本地 MCP 配置文件路径
+
+MCP 文件边界：
+
+- `core_mcp_servers.json`：仅用于服务端可安全运行、且不依赖终端在线的 Core 级 MCP
+- `mcp_servers.json`：仅用于桌面端本地 MCP，由 Desktop Agent 托管并依赖本机环境
+- 如果日志提示缺少 `core_mcp_servers.json`，只表示 Core 侧未配置服务端 MCP，不代表 Desktop Agent 的 `mcp_servers.json` 缺失
+
+运行时会自动在 `user/` 下生成任务存储文件：
+
+- `memory_tasks.json`
+- `memory_tasks.json.bak`
 
 建议首次初始化时至少准备：
 

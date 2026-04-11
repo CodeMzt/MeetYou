@@ -6,17 +6,26 @@ import styles from './UsagePanel.module.css'
 interface UsagePanelProps {
   usageSnapshot: RuntimeUsageSnapshot | null
   runtimeDebugSnapshot: RuntimeDebugSnapshot | null
+  variant?: 'full' | 'compact'
 }
 
-export default function UsagePanel({ usageSnapshot, runtimeDebugSnapshot }: UsagePanelProps) {
+export default function UsagePanel({
+  usageSnapshot,
+  runtimeDebugSnapshot,
+  variant = 'full',
+}: UsagePanelProps) {
+  const isCompact = variant === 'compact'
+
   if (!usageSnapshot) {
     return (
-      <div className={styles.panel}>
+      <div className={`${styles.panel} ${isCompact ? styles.compactPanel : ''}`.trim()}>
         <div className={styles.header}>
           <Gauge size={14} />
           <span>Token / Context</span>
         </div>
-        <div className={styles.empty}>暂无本会话的 token 或上下文统计。</div>
+        <div className={styles.empty}>
+          {isCompact ? '正在同步本会话 token / context 快照。' : '暂无本会话的 token 或上下文统计。'}
+        </div>
       </div>
     )
   }
@@ -29,6 +38,58 @@ export default function UsagePanel({ usageSnapshot, runtimeDebugSnapshot }: Usag
     ? null
     : 'Token 统计将在首轮模型交互后显示，上下文上限已初始化。'
   const pressurePercent = requestSnapshot ? `${Math.round(requestSnapshot.pressure_ratio * 100)}%` : ''
+  const pressureRatio = usageSnapshot.context_limit_tokens > 0
+    ? Math.min(100, Math.round((usageSnapshot.current_context_tokens_estimated / usageSnapshot.context_limit_tokens) * 100))
+    : 0
+
+  if (isCompact) {
+    return (
+      <div className={`${styles.panel} ${styles.compactPanel}`}>
+        <div className={styles.header}>
+          <Gauge size={14} />
+          <span>主窗口 Token / Context</span>
+        </div>
+
+        <div className={`${styles.grid} ${styles.compactGrid}`}>
+          <div className={styles.stat}>
+            <span className={styles.label}>当前上下文</span>
+            <strong>{formatTokenCount(usageSnapshot.current_context_tokens_estimated)}</strong>
+          </div>
+          <div className={styles.stat}>
+            <span className={styles.label}>上下文上限</span>
+            <strong>{formatTokenCount(usageSnapshot.context_limit_tokens)}</strong>
+          </div>
+          <div className={styles.stat}>
+            <span className={styles.label}>本轮总计</span>
+            <strong>{formatTokenCount(lastTurnUsage.total_tokens)}</strong>
+          </div>
+          <div className={styles.stat}>
+            <span className={styles.label}>会话轮次</span>
+            <strong>{sessionTotals.turn_count}</strong>
+          </div>
+        </div>
+
+        <div className={styles.progressMeta}>
+          <span>{pressureRatio}% 已占用</span>
+          <span>{usageSnapshot.context_limit_model || '未知模型'}</span>
+        </div>
+        <div className={styles.progressBar} aria-label="context usage progress">
+          <div className={styles.progressFill} style={{ width: `${pressureRatio}%` }} />
+        </div>
+
+        {usageHint && <div className={styles.empty}>{usageHint}</div>}
+
+        <div className={styles.inlineList}>
+          <span>系统 {formatTokenCount(contextBreakdown.system)}</span>
+          <span>历史 {formatTokenCount(contextBreakdown.history)}</span>
+          <span>工具 {formatTokenCount(contextBreakdown.tool_history)}</span>
+          <span>记忆 {formatTokenCount(contextBreakdown.memory_context)}</span>
+          <span>输入 {formatTokenCount(contextBreakdown.current_input)}</span>
+          <span>来源 {usageSnapshot.context_limit_source || '后备'}</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={styles.panel}>

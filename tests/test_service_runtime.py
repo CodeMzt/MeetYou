@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from core.logger import StructuredFormatter
 from core.runtime_context import bind_event_context, reset_event_context
 from core.tool_runtime.models import ToolCallResult, ToolErrorCategory, ToolSourceType
-from service_runtime.boundaries import build_default_runtime_boundaries
+from service_runtime.boundaries import build_default_runtime_boundaries, build_runtime_platform_boundaries
 from service_runtime.models import RuntimeCommand, RuntimeEventKind, RuntimeHealthStatus
 from service_runtime.service import ServiceRuntime
 
@@ -73,6 +73,27 @@ class ServiceRuntimeTests(unittest.TestCase):
             ("telemetry",),
         )
 
+    def test_runtime_platform_boundaries_separate_core_sensing_and_terminal_capabilities(self):
+        boundaries = build_runtime_platform_boundaries().to_dict()
+
+        retained = {item["name"]: item for item in boundaries["retained_in_core"]}
+        delegated = {item["name"]: item for item in boundaries["delegated_to_local_agents"]}
+
+        self.assertIn("runtime_host_detection", retained)
+        self.assertIn("runtime_host_observability", retained)
+        self.assertIn("runtime_host_proprioception", retained)
+        self.assertIn("terminal_shell_execution", delegated)
+        self.assertIn("terminal_file_and_workspace_io", delegated)
+        self.assertIn("terminal_local_mcp_runtime", delegated)
+        self.assertIn(
+            "tools/system_tools.py::exec_sys_cmd",
+            delegated["terminal_shell_execution"]["surfaces"],
+        )
+        self.assertIn(
+            "sensors/proprioceptor.py::Proprioceptor.run",
+            retained["runtime_host_proprioception"]["surfaces"],
+        )
+
     def test_service_runtime_exposes_ready_health_after_setup(self):
         runtime = ServiceRuntime(RuntimeCommand.service(), app_factory=_FakeApp)
 
@@ -82,6 +103,11 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertEqual(len(health_events), 1)
         self.assertTrue(health_events[0].payload["ready"])
         self.assertEqual(health_events[0].payload["status"], RuntimeHealthStatus.READY.value)
+        self.assertIn("platform_boundary", health_events[0].payload)
+        delegated_names = {
+            item["name"] for item in health_events[0].payload["platform_boundary"]["delegated_to_local_agents"]
+        }
+        self.assertIn("terminal_shell_execution", delegated_names)
         self.assertTrue(runtime._app.setup_called)
         self.assertTrue(runtime._app.shutdown_called)
 

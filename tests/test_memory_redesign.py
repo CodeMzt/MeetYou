@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from core.context import ContextManager
+from core.runtime_context import bind_event_context, reset_event_context
 from tools.agent_memory import AgentMemoryTools
 from tools.memory import Memory
 from tools.memory_layers import dt_to_iso, utcnow
@@ -615,6 +616,32 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any("coffee" in item["content"].lower() for item in same_session["recent_events"]))
         self.assertTrue(any("coffee" in item["content"].lower() for item in cross_session["recent_events"]))
 
+    async def test_workspace_tags_affect_memory_ranking_and_source_labels(self):
+        await self.memory.save_memory("payment callback issue in global scope", 0.8, session_id="s1", source=self.source)
+
+        study_token = bind_event_context(workspace_id="study")
+        try:
+            await self.memory.save_memory("payment callback issue in study workspace", 0.8, session_id="s1", source=self.source)
+        finally:
+            reset_event_context(study_token)
+
+        desktop_token = bind_event_context(workspace_id="desktop-main")
+        try:
+            await self.memory.save_memory("payment callback issue in desktop workspace", 0.8, session_id="s1", source=self.source)
+            results = await self.memory.search_records("payment callback issue", session_id="s1", source=self.source)
+            payload = json.loads(
+                await self.memory.recall_memory_structured("payment callback issue", session_id="s1", source=self.source, reinforce=False)
+            )
+            text = await self.memory.recall_memory("payment callback issue", session_id="s1", source=self.source, reinforce=False)
+        finally:
+            reset_event_context(desktop_token)
+
+        self.assertGreaterEqual(len(results), 2)
+        self.assertEqual(results[0]["workspace_match"], "current")
+        self.assertEqual(results[0]["source_label"], "当前工作区:desktop-main")
+        self.assertTrue(any(item["workspace_match"] == "global" for item in results))
+        self.assertTrue(any(item.get("source_label") == "当前工作区:desktop-main" for item in payload["recent_events"]))
+        self.assertIn("[来源: 当前工作区:desktop-main]", text)
 
 if __name__ == "__main__":
     unittest.main()

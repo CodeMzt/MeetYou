@@ -4,6 +4,7 @@ Source catalog loading, validation, and context-limit resolution.
 
 from __future__ import annotations
 
+import copy
 import fnmatch
 import json
 import logging
@@ -28,6 +29,7 @@ class _FallbackProbeSession:
         return None
 
 DEFAULT_SOURCE_CATALOG_PATH = "user/source_catalog.json"
+SOURCE_CATALOG_STATE_KEY = "source_catalog"
 VALID_CONNECTOR_TYPES = {
     "github_releases",
     "sec_edgar",
@@ -218,6 +220,7 @@ class SourceCatalogStatus:
     version: str = ""
     profile_count: int = 0
     source_count: int = 0
+    storage: str = "file"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -227,6 +230,7 @@ class SourceCatalogStatus:
             "version": self.version,
             "profile_count": self.profile_count,
             "source_count": self.source_count,
+            "storage": self.storage,
         }
 
 
@@ -247,12 +251,24 @@ class ContextLimitInfo:
 
 
 class SourceCatalogManager:
-    def __init__(self, config_manager):
+    def __init__(self, config_manager, *, store_backend=None):
         self._config = config_manager
+        self._store_backend = store_backend
 
     def get_catalog_path(self) -> str:
         raw = str(self._config.get("source_catalog_path") or DEFAULT_SOURCE_CATALOG_PATH).strip()
         return raw or DEFAULT_SOURCE_CATALOG_PATH
+
+    def set_store_backend(self, backend, *, migrate_current: bool = False) -> None:
+        self._store_backend = backend
+        if not migrate_current or backend is None:
+            return
+        loaded = self._load_catalog_from_backend()
+        if loaded[1].available:
+            return
+        catalog, status = self._load_catalog_from_file()
+        if status.available:
+            self._store_backend.save(catalog)
 
     def _fallback_catalog(self) -> dict[str, Any]:
         return {
@@ -262,28 +278,19 @@ class SourceCatalogManager:
             "sources": [],
         }
 
-    def _load_catalog(self) -> tuple[dict[str, Any], SourceCatalogStatus]:
-        path = Path(self.get_catalog_path())
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return self._fallback_catalog(), SourceCatalogStatus(
-                available=False,
-                path=str(path),
-                error="source_catalog_not_found",
-            )
-        except json.JSONDecodeError as exc:
-            return self._fallback_catalog(), SourceCatalogStatus(
-                available=False,
-                path=str(path),
-                error=f"source_catalog_invalid_json: {exc}",
-            )
-
+    def _normalize_catalog(
+        self,
+        payload: Any,
+        *,
+        path: str,
+        storage: str,
+    ) -> tuple[dict[str, Any], SourceCatalogStatus]:
         if not isinstance(payload, dict):
             return self._fallback_catalog(), SourceCatalogStatus(
                 available=False,
-                path=str(path),
+                path=path,
                 error="source_catalog_root_must_be_object",
+                storage=storage,
             )
 
         version = str(payload.get("version") or "")
@@ -293,8 +300,9 @@ class SourceCatalogManager:
         if not isinstance(profiles, dict) or not isinstance(context_limits, list) or not isinstance(sources, list):
             return self._fallback_catalog(), SourceCatalogStatus(
                 available=False,
-                path=str(path),
+                path=path,
                 error="source_catalog_missing_required_sections",
+                storage=storage,
             )
 
         normalized_sources: list[dict[str, Any]] = []
@@ -315,18 +323,78 @@ class SourceCatalogManager:
         }
         return normalized_catalog, SourceCatalogStatus(
             available=True,
-            path=str(path),
+            path=path,
             version=normalized_catalog["version"],
             profile_count=len(normalized_catalog["default_source_profiles"]),
             source_count=len(normalized_sources),
+            storage=storage,
         )
+
+    def _load_catalog_from_backend(self) -> tuple[dict[str, Any], SourceCatalogStatus]:
+        if self._store_backend is None:
+            return self._fallback_catalog(), SourceCatalogStatus(
+                available=False,
+                path=self.get_catalog_path(),
+                error="source_catalog_backend_unconfigured",
+                storage="database",
+            )
+        try:
+            payload = self._store_backend.load()
+        except Exception as exc:
+            return self._fallback_catalog(), SourceCatalogStatus(
+                available=False,
+                path=self.get_catalog_path(),
+                error=f"source_catalog_backend_load_failed: {exc}",
+                storage="database",
+            )
+        if not isinstance(payload, dict) or not payload:
+            return self._fallback_catalog(), SourceCatalogStatus(
+                available=False,
+                path=self.get_catalog_path(),
+                error="source_catalog_not_found",
+                storage="database",
+            )
+        return self._normalize_catalog(
+            payload,
+            path=self.get_catalog_path(),
+            storage="database",
+        )
+
+    def _load_catalog_from_file(self) -> tuple[dict[str, Any], SourceCatalogStatus]:
+        path = Path(self.get_catalog_path())
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return self._fallback_catalog(), SourceCatalogStatus(
+                available=False,
+                path=str(path),
+                error="source_catalog_not_found",
+            )
+        except json.JSONDecodeError as exc:
+            return self._fallback_catalog(), SourceCatalogStatus(
+                available=False,
+                path=str(path),
+                error=f"source_catalog_invalid_json: {exc}",
+            )
+        return self._normalize_catalog(payload, path=str(path), storage="file")
+
+    def _load_catalog(self) -> tuple[dict[str, Any], SourceCatalogStatus]:
+        if self._store_backend is not None:
+            catalog, status = self._load_catalog_from_backend()
+            if status.available:
+                return catalog, status
+        return self._load_catalog_from_file()
 
     def get_catalog_status(self) -> dict[str, Any]:
         _, status = self._load_catalog()
         return status.to_dict()
 
-    def get_source_profiles(self) -> dict[str, Any]:
+    def get_catalog_snapshot(self) -> dict[str, Any]:
         catalog, _ = self._load_catalog()
+        return copy.deepcopy(catalog)
+
+    def get_source_profiles(self) -> dict[str, Any]:
+        catalog = self.get_catalog_snapshot()
         return dict(catalog.get("default_source_profiles") or {})
 
     def get_source_profile(self, profile_name: str) -> dict[str, Any]:
@@ -350,7 +418,7 @@ class SourceCatalogManager:
         official_only: bool | None = None,
         only_enabled: bool = True,
     ) -> list[dict[str, Any]]:
-        catalog, _ = self._load_catalog()
+        catalog = self.get_catalog_snapshot()
         profile = self.get_source_profile(profile_name)
         preferred_ids = [str(item).strip() for item in profile.get("preferred_source_ids", []) if str(item).strip()]
         profile_ids = set(preferred_ids)
@@ -380,7 +448,7 @@ class SourceCatalogManager:
         return selected
 
     def get_source_by_id(self, source_id: str) -> dict[str, Any] | None:
-        catalog, _ = self._load_catalog()
+        catalog = self.get_catalog_snapshot()
         normalized = str(source_id or "").strip()
         for item in catalog.get("sources", []):
             if str(item.get("id") or "").strip() == normalized:
@@ -428,7 +496,7 @@ class SourceCatalogManager:
         api_url: str,
         model_name: str,
     ) -> dict[str, Any] | None:
-        catalog, _ = self._load_catalog()
+        catalog = self.get_catalog_snapshot()
         provider = str(provider_name or "").strip().lower()
         host = _normalize_domain(urlparse(str(api_url or "").strip()).netloc)
         model = str(model_name or "").strip()

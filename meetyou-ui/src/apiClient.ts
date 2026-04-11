@@ -1,5 +1,7 @@
 import { parseErrorEnvelope } from './protocolClient'
 
+let cachedAccessToken: string | null = null
+
 export function getAccessToken(): string {
   try {
     return localStorage.getItem('meetyou_access_token') || ''
@@ -8,8 +10,38 @@ export function getAccessToken(): string {
   }
 }
 
+export async function resolveAccessToken(): Promise<string> {
+  if (cachedAccessToken !== null) {
+    return cachedAccessToken
+  }
+
+  const localToken = getAccessToken().trim()
+  if (localToken) {
+    cachedAccessToken = localToken
+    return cachedAccessToken
+  }
+
+  try {
+    const token = String((await window.ipcRenderer?.invoke?.('get-gateway-access-token')) || '').trim()
+    if (token) {
+      cachedAccessToken = token
+      try {
+        localStorage.setItem('meetyou_access_token', token)
+      } catch {
+        // Ignore local storage failures in constrained contexts.
+      }
+      return cachedAccessToken
+    }
+  } catch {
+    // Ignore IPC resolution failures and fall back to empty token.
+  }
+
+  cachedAccessToken = ''
+  return cachedAccessToken
+}
+
 export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
-  const token = getAccessToken()
+  const token = await resolveAccessToken()
   const headers = new Headers(init?.headers)
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)

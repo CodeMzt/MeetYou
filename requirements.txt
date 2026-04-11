@@ -1,9 +1,14 @@
 aiohttp
+alembic
+boto3
+pgvector
+psycopg[binary]
 prompt_toolkit
 networkx
 numpy
 psutil
 pyvis
+SQLAlchemy>=2.0,<2.1
 uiautomation
 mcp
 pywin32

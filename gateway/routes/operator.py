@@ -1,0 +1,236 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Request
+
+from core.exceptions import ConfigError
+from core.protocol_schema import build_ui_protocol_schema
+
+from gateway.models import (
+    ConfigEntryResponse,
+    ConfigPatchRequest,
+    ConfigPatchResponse,
+    ConfigSnapshotResponse,
+    HealthEnvelopeResponse,
+    HealthResponse,
+    MemoryGraphResponse,
+    MemorySnapshotResponse,
+    OperatorAgentResponse,
+    OperatorWorkspaceCreateRequest,
+    OperatorWorkspaceResponse,
+    UiProtocolSchemaEnvelopeResponse,
+    UiProtocolSchemaResponse,
+)
+from service_runtime.models import RuntimeErrorCategory
+
+
+def _workspace_response(workspace) -> OperatorWorkspaceResponse:
+    governance = gateway_workspace_governance(workspace)
+    return OperatorWorkspaceResponse(
+        workspace_id=workspace.workspace_id,
+        title=workspace.title,
+        status=workspace.status,
+        base_mode=workspace.base_mode,
+        description=governance["description"],
+        prompt_overlay=governance["prompt_overlay"],
+        default_execution_target=governance["default_execution_target"],
+        capability_policy=governance["capability_policy"],
+        allowed_capability_ids=governance["allowed_capability_ids"],
+        preferred_agent_ids=governance["preferred_agent_ids"],
+        preferred_agent_types=governance["preferred_agent_types"],
+        agent_routing_policy=governance["agent_routing_policy"],
+        capability_routing_overrides=governance["capability_routing_overrides"],
+    )
+
+
+def gateway_workspace_governance(workspace) -> dict:
+    from core.services.workspace_service import WorkspaceService
+
+    return WorkspaceService.get_governance_view(workspace)
+
+
+def build_operator_router(gateway) -> APIRouter:
+    router = APIRouter(prefix="/operator", tags=["operator"])
+
+    @router.get("/schema/ui", response_model=UiProtocolSchemaEnvelopeResponse)
+    async def get_operator_ui_schema(request: Request):
+        gateway._require_http_auth(request)
+        return UiProtocolSchemaEnvelopeResponse(
+            schema_name="meetyou.http.v1",
+            ui_schema=UiProtocolSchemaResponse(**build_ui_protocol_schema()),
+        )
+
+    @router.get("/config", response_model=ConfigSnapshotResponse)
+    async def get_operator_config(request: Request):
+        gateway._require_http_auth(request)
+        if gateway._dependencies.core_domain is not None:
+            items = gateway._dependencies.core_domain.services.config_state.get_snapshot_view()
+        else:
+            items = await gateway._resolve(gateway._dependencies.config_snapshot_getter)
+        return ConfigSnapshotResponse(
+            items={
+                key: ConfigEntryResponse(**value)
+                for key, value in items.items()
+            }
+        )
+
+    @router.get("/config/{key}", response_model=ConfigEntryResponse)
+    async def get_operator_config_item(key: str, request: Request):
+        gateway._require_http_auth(request)
+        try:
+            if gateway._dependencies.core_domain is not None:
+                item = gateway._dependencies.core_domain.services.config_state.get_entry_view(key)
+                if item is None:
+                    raise KeyError(key)
+            else:
+                item = await gateway._resolve(gateway._dependencies.config_item_getter, key)
+        except Exception as exc:
+            gateway._raise_http_error(
+                status_code=404,
+                code="config_not_found",
+                category=RuntimeErrorCategory.DEPENDENCY.value,
+                message=str(exc),
+                details={"key": key},
+            )
+        return ConfigEntryResponse(**item)
+
+    @router.patch("/config", response_model=ConfigPatchResponse)
+    async def patch_operator_config(http_request: Request, request: ConfigPatchRequest):
+        gateway._require_http_auth(http_request)
+        try:
+            result = await gateway._resolve(gateway._dependencies.config_updater, request.updates)
+        except (ConfigError, ValueError) as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code="invalid_config_update",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        return ConfigPatchResponse(**result)
+
+    @router.get("/memory", response_model=MemorySnapshotResponse)
+    async def get_operator_memory(
+        request: Request,
+        source_id: str = "",
+        session_id: str = "",
+        include_invalidated: bool = False,
+    ):
+        gateway._require_http_auth(request)
+        if gateway._dependencies.core_domain is not None:
+            config = gateway._dependencies.core_domain.services.config_state.get_snapshot_view()
+            payload = gateway._dependencies.core_domain.services.memory_state.build_snapshot_view(
+                principal_id=gateway._dependencies.core_domain.principal.id,
+                source_id=source_id,
+                session_id=session_id,
+                include_invalidated=include_invalidated,
+                embedding_model=str(config.get("embedding_model", {}).get("value") or ""),
+                embedding_api_url=str(config.get("embedding_api_url", {}).get("value") or ""),
+            )
+        else:
+            payload = await gateway._resolve(
+                gateway._dependencies.memory_snapshot_getter,
+                source_id=source_id,
+                session_id=session_id,
+                include_invalidated=include_invalidated,
+            )
+        return MemorySnapshotResponse(**payload)
+
+    @router.get("/memory/graph", response_model=MemoryGraphResponse)
+    async def get_operator_memory_graph(
+        request: Request,
+        source_id: str = "",
+        session_id: str = "",
+        include_invalidated: bool = False,
+    ):
+        gateway._require_http_auth(request)
+        if gateway._dependencies.core_domain is not None:
+            config = gateway._dependencies.core_domain.services.config_state.get_snapshot_view()
+            payload = gateway._dependencies.core_domain.services.memory_state.build_graph_view(
+                principal_id=gateway._dependencies.core_domain.principal.id,
+                source_id=source_id,
+                session_id=session_id,
+                include_invalidated=include_invalidated,
+                embedding_model=str(config.get("embedding_model", {}).get("value") or ""),
+                embedding_api_url=str(config.get("embedding_api_url", {}).get("value") or ""),
+            )
+        else:
+            payload = await gateway._resolve(
+                gateway._dependencies.memory_graph_getter,
+                source_id=source_id,
+                session_id=session_id,
+                include_invalidated=include_invalidated,
+            )
+        return MemoryGraphResponse(**payload)
+
+    @router.get("/health", response_model=HealthEnvelopeResponse)
+    async def operator_health(request: Request):
+        gateway._require_http_auth(request)
+        payload = await gateway._resolve(gateway._dependencies.health_getter) if gateway._dependencies.health_getter is not None else {}
+        if isinstance(payload, HealthResponse):
+            health_payload = payload
+        elif hasattr(payload, "model_dump"):
+            health_payload = HealthResponse(**payload.model_dump())
+        else:
+            health_payload = HealthResponse(**payload)
+        return HealthEnvelopeResponse(schema_name="meetyou.http.v1", health=health_payload)
+
+    @router.get("/agents", response_model=list[OperatorAgentResponse])
+    async def list_agents(request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        rows = []
+        for agent in domain.services.agent.list_agents():
+            workspaces = domain.services.agent.list_workspaces(agent.agent_id)
+            owner_client = domain.services.client.get_by_id(agent.owner_client_id) if getattr(agent, "owner_client_id", None) else None
+            rows.append(
+                OperatorAgentResponse(
+                    agent_id=agent.agent_id,
+                    agent_type=agent.agent_type,
+                    display_name=agent.display_name,
+                    transport_profile=agent.transport_profile,
+                    status=agent.status,
+                    last_seen_at=agent.last_seen_at.isoformat() if agent.last_seen_at is not None else "",
+                    owner_client_id=getattr(owner_client, "client_id", ""),
+                    workspace_ids=[workspace.workspace_id for workspace in workspaces],
+                )
+            )
+        return rows
+
+    @router.get("/workspaces", response_model=list[OperatorWorkspaceResponse])
+    async def list_workspaces(request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        return [_workspace_response(workspace) for workspace in domain.services.workspace.list_workspaces()]
+
+    @router.post("/workspaces", response_model=OperatorWorkspaceResponse)
+    async def create_workspace(http_request: Request, payload: OperatorWorkspaceCreateRequest):
+        gateway._require_http_auth(http_request)
+        domain = gateway._require_core_domain()
+        workspace_key = str(payload.workspace_id or "").strip()
+        if not workspace_key:
+            gateway._raise_http_error(
+                status_code=400,
+                code="workspace_id_required",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="workspace_id 为必填字段",
+            )
+        title = str(payload.title or "").strip() or workspace_key.replace("-", " ").replace("_", " ").title()
+        workspace = domain.services.workspace.ensure_workspace(
+            workspace_id=workspace_key,
+            principal_id=domain.principal.id,
+            title=title,
+            description=str(payload.description or "").strip(),
+            base_mode=str(payload.base_mode or "general").strip() or "general",
+            prompt_overlay=str(payload.prompt_overlay or "").strip(),
+            default_execution_target=str(payload.default_execution_target or "core_only").strip() or "core_only",
+            metadata={
+                "capability_policy": str(payload.capability_policy or "").strip(),
+                "allowed_capability_ids": list(payload.allowed_capability_ids or []),
+                "preferred_agent_ids": list(payload.preferred_agent_ids or []),
+                "preferred_agent_types": list(payload.preferred_agent_types or []),
+                "agent_routing_policy": str(payload.agent_routing_policy or "").strip(),
+                "capability_routing_overrides": dict(payload.capability_routing_overrides or {}),
+            },
+        )
+        return _workspace_response(workspace)
+
+    return router

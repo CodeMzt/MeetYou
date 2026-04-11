@@ -2,7 +2,7 @@
 系统工具模块。
 
 提供命令执行（带安全策略）、时间获取、系统指标等功能。
-使用平台抽象层实现跨平台兼容。
+平台抽象层只用于运行宿主机感知；终端命令能力默认通过本地后端承接。
 """
 
 import asyncio
@@ -20,6 +20,8 @@ _platform_adapter = None
 _cmd_policy = None
 _event_bus = None
 _background_status_provider = None
+_agent_dispatcher = None
+_allow_local_fallback = True
 
 _DEFAULT_BLACKLIST_PATTERNS = [
     r"(^|[;&|])\s*(rm|del|erase|rd|rmdir|Remove-Item)\b",
@@ -40,7 +42,12 @@ _DEFAULT_BLACKLIST_PATTERNS = [
 ]
 
 
-def init_system_tools(platform_adapter, event_bus, cmd_policy_path: str = "user/cmd_policy.json"):
+def init_system_tools(
+    platform_adapter,
+    event_bus,
+    cmd_policy_path: str = "user/cmd_policy.json",
+    allow_local_fallback: bool = True,
+):
     """
     初始化系统工具模块。
 
@@ -49,9 +56,10 @@ def init_system_tools(platform_adapter, event_bus, cmd_policy_path: str = "user/
         event_bus: EventBus 实例（用于危险命令确认）
         cmd_policy_path: 命令安全策略文件路径
     """
-    global _platform_adapter, _cmd_policy, _event_bus
+    global _platform_adapter, _cmd_policy, _event_bus, _allow_local_fallback
     _platform_adapter = platform_adapter
     _event_bus = event_bus
+    _allow_local_fallback = bool(allow_local_fallback)
 
     try:
         with open(cmd_policy_path, "r", encoding="utf-8") as f:
@@ -68,6 +76,16 @@ def init_system_tools(platform_adapter, event_bus, cmd_policy_path: str = "user/
 def set_background_status_provider(provider):
     global _background_status_provider
     _background_status_provider = provider
+
+
+def set_agent_dispatcher(dispatcher):
+    global _agent_dispatcher
+    _agent_dispatcher = dispatcher
+
+
+def set_local_fallback_enabled(enabled: bool):
+    global _allow_local_fallback
+    _allow_local_fallback = bool(enabled)
 
 
 def _check_command_safety(cmd: str) -> tuple[str, str]:
@@ -125,6 +143,15 @@ def assess_command_safety(cmd: str) -> dict[str, str]:
     }
 
 
+def _decode_local_shell_output(raw_bytes: bytes) -> str:
+    for encoding in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
+        try:
+            return raw_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw_bytes.decode("utf-8", errors="replace")
+
+
 async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: bool = False) -> str:
     """
     安全执行系统命令。
@@ -164,6 +191,28 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: b
             return f"[用户已拒绝] 命令未执行: {cmd}"
         logger.info(f"用户确认执行危险命令: {cmd}")
 
+    if _agent_dispatcher is not None:
+        result = await _agent_dispatcher.dispatch_local_capability(
+            capability_suffix="shell.exec",
+            arguments={"command": cmd},
+            session_id=session_id,
+            title=f"Shell Command: {cmd[:48]}",
+            operation_type="tool.exec_sys_cmd",
+        )
+        return str(result.get("stdout") or result.get("summary") or "")
+
+    if not _allow_local_fallback:
+        error = RuntimeError("Core local fallback is disabled")
+        error.tool_error_code = "local_agent_required"
+        error.tool_error_message = "当前 Core 不再直接执行本地命令，请连接 Desktop Agent 后重试。"
+        error.tool_error_details = {
+            "capability_suffix": "shell.exec",
+            "session_id": str(session_id or ""),
+            "command": str(cmd or ""),
+        }
+        error.tool_error_retryable = False
+        raise error
+
     process = await asyncio.create_subprocess_shell(
         cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -171,15 +220,10 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: b
     )
     stdout, stderr = await process.communicate()
 
-    if _platform_adapter:
-        decode = _platform_adapter.decode_command_output
-    else:
-        decode = lambda b: b.decode("utf-8", errors="replace")
-
     if process.returncode == 0:
-        return decode(stdout).strip()
+        return _decode_local_shell_output(stdout).strip()
     else:
-        return f"命令执行失败，错误信息：{decode(stderr).strip()}"
+        return f"命令执行失败，错误信息：{_decode_local_shell_output(stderr).strip()}"
 
 
 async def ask_human(
@@ -245,7 +289,7 @@ async def get_current_system_time() -> str:
 
 
 async def get_sys_vitals() -> str:
-    """获取系统生命体征"""
+    """获取 Core 运行宿主机的系统生命体征"""
     if _platform_adapter is None:
         return "平台适配器未初始化"
 

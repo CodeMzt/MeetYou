@@ -6,6 +6,7 @@ import os
 import re
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -175,6 +176,27 @@ def _normalize_bool(value: Any, *, default: bool | None = None) -> bool | None:
     if default is not None:
         return default
     raise ValueError("auto_run must be a boolean.")
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        normalized = _normalize_text(item)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _normalize_routing_policy(value: Any, *, default: str = "balanced") -> str:
+    normalized = _normalize_text(value or default).lower() or default
+    if normalized not in {"balanced", "prefer_owner_client", "strict_preferred"}:
+        return default
+    return normalized
 
 
 def _cycle_key(schedule_kind: Any, cycle_start_at: Any, cycle_end_at: Any = None, *, fallback: Any = "") -> str:
@@ -675,13 +697,20 @@ def _delivery_target_payload(session_id: str, source, explicit_target: Any | Non
 
 
 class TaskManager(TaskRepository):
-    def __init__(self, memory):
+    def __init__(self, memory, task_file_path: str = "", store_backend=None):
         self._memory = memory
-        self._task_file_path = self._derive_task_file_path()
+        self._task_file_path_override = _normalize_text(task_file_path)
+        self._store = self._empty_store()
+        self._db_sync_callback = None
+        self._store_backend = store_backend
+        self._task_file_path = self._resolve_task_file_path()
+        self._migrate_legacy_store(self._task_file_path)
         self._store = self._load_store()
 
-    def _derive_task_file_path(self) -> str:
-        memory_path = _normalize_text(getattr(self._memory, "_memory_file_path", ""))
+    def _derive_task_file_path(self, memory_path: str | None = None) -> str:
+        if memory_path is None:
+            memory_path = getattr(self._memory, "_memory_file_path", "")
+        memory_path = _normalize_text(memory_path)
         if not memory_path:
             return ""
         base_dir = os.path.dirname(memory_path) or "."
@@ -692,6 +721,11 @@ class TaskManager(TaskRepository):
                 stem = stem[:-6]
             return os.path.join(base_dir, f"{stem}_tasks.json")
         return os.path.join(base_dir, "tasks.json")
+
+    def _resolve_task_file_path(self) -> str:
+        if self._task_file_path_override:
+            return self._task_file_path_override
+        return self._derive_task_file_path()
 
     def _empty_store(self) -> dict[str, Any]:
         return {
@@ -712,7 +746,108 @@ class TaskManager(TaskRepository):
             metadata["revision"] = 0
         metadata["updated_at"] = str(metadata.get("updated_at") or _utcnow_iso())
 
+    def _coerce_store(self, data: Any) -> dict[str, Any]:
+        store = self._empty_store()
+        if isinstance(data, dict):
+            store["metadata"] = data.get("metadata") if isinstance(data.get("metadata"), dict) else store["metadata"]
+            store["tasks"] = [item for item in data.get("tasks", []) if isinstance(item, dict)]
+        original_store = getattr(self, "_store", self._empty_store())
+        try:
+            self._store = store
+            self._normalize_store_metadata()
+            return self._store
+        finally:
+            self._store = original_store
+
+    def _load_store_snapshot(self, file_path: str) -> dict[str, Any] | None:
+        normalized_path = _normalize_text(file_path)
+        if not normalized_path:
+            return None
+        path = Path(normalized_path)
+        backup_path = path.with_name(f"{path.name}.bak")
+        if not path.exists() and not backup_path.exists():
+            return None
+        try:
+            data = load_json_with_recovery(
+                normalized_path,
+                validator=lambda payload: isinstance(payload, dict) and isinstance(payload.get("tasks"), list),
+            )
+        except Exception:
+            return None
+        return {
+            "path": normalized_path,
+            "store": self._coerce_store(data),
+        }
+
+    def _store_priority(self, store: dict[str, Any]) -> tuple[int, datetime, int]:
+        metadata = store.get("metadata") if isinstance(store.get("metadata"), dict) else {}
+        try:
+            revision = max(int(metadata.get("revision", 0) or 0), 0)
+        except (TypeError, ValueError):
+            revision = 0
+        updated_at = _iso_to_dt(metadata.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        tasks = store.get("tasks") if isinstance(store.get("tasks"), list) else []
+        return revision, updated_at, len(tasks)
+
+    def _delete_store_files(self, file_path: str) -> None:
+        normalized_path = _normalize_text(file_path)
+        if not normalized_path:
+            return
+        path = Path(normalized_path)
+        backup_path = path.with_name(f"{path.name}.bak")
+        for candidate in (path, backup_path):
+            try:
+                if candidate.exists():
+                    candidate.unlink()
+            except OSError:
+                continue
+
+    def _legacy_store_candidates(self, target_path: str) -> list[str]:
+        candidates: list[str] = []
+        for candidate in (self._derive_task_file_path(), self._task_file_path):
+            normalized = _normalize_text(candidate)
+            if not normalized or normalized == target_path or normalized in candidates:
+                continue
+            candidates.append(normalized)
+        return candidates
+
+    def _migrate_legacy_store(self, target_path: str) -> bool:
+        normalized_target = _normalize_text(target_path)
+        if not normalized_target:
+            return False
+
+        target_snapshot = self._load_store_snapshot(normalized_target)
+        legacy_snapshots = [
+            snapshot
+            for snapshot in (
+                self._load_store_snapshot(candidate)
+                for candidate in self._legacy_store_candidates(normalized_target)
+            )
+            if snapshot is not None
+        ]
+        if not legacy_snapshots:
+            return False
+
+        winning_snapshot = max(
+            ([target_snapshot] if target_snapshot is not None else []) + legacy_snapshots,
+            key=lambda snapshot: self._store_priority(snapshot["store"]),
+        )
+        rewritten_target = target_snapshot is None or winning_snapshot["path"] != normalized_target
+        if rewritten_target:
+            atomic_write_json(normalized_target, winning_snapshot["store"])
+        for snapshot in legacy_snapshots:
+            self._delete_store_files(snapshot["path"])
+        return rewritten_target
+
     def _load_store(self) -> dict[str, Any]:
+        if self._store_backend is not None:
+            try:
+                data = self._store_backend.load()
+            except Exception:
+                return self._empty_store()
+            store = self._coerce_store(data)
+            self._store = store
+            return store
         if not self._task_file_path:
             return self._empty_store()
         try:
@@ -723,18 +858,18 @@ class TaskManager(TaskRepository):
             )
         except Exception:
             return self._empty_store()
-        store = self._empty_store()
-        store["metadata"] = data.get("metadata") if isinstance(data.get("metadata"), dict) else store["metadata"]
-        store["tasks"] = [item for item in data.get("tasks", []) if isinstance(item, dict)]
+        store = self._coerce_store(data)
         self._store = store
-        self._normalize_store_metadata()
         return store
 
-    def _refresh_store_binding(self) -> None:
-        task_file_path = self._derive_task_file_path()
-        if task_file_path == self._task_file_path:
+    def refresh_storage_binding(self, *, task_file_path: str | None = None, migrate_legacy: bool = False) -> None:
+        if task_file_path is not None:
+            self._task_file_path_override = _normalize_text(task_file_path)
+        resolved_path = self._resolve_task_file_path()
+        migrated = self._migrate_legacy_store(resolved_path) if migrate_legacy else False
+        if resolved_path == self._task_file_path and not migrated:
             return
-        self._task_file_path = task_file_path
+        self._task_file_path = resolved_path
         self._store = self._load_store()
 
     def _touch_updated(self) -> None:
@@ -742,11 +877,27 @@ class TaskManager(TaskRepository):
         self._store["metadata"]["updated_at"] = _utcnow_iso()
 
     async def _save_store(self) -> None:
+        if self._store_backend is not None:
+            self._touch_updated()
+            self._store["metadata"]["revision"] = int(self._store["metadata"].get("revision", 0) or 0) + 1
+            self._store_backend.save(self._store)
+            return
         if not self._task_file_path:
             return
         self._touch_updated()
         self._store["metadata"]["revision"] = int(self._store["metadata"].get("revision", 0) or 0) + 1
         atomic_write_json(self._task_file_path, self._store)
+
+    def set_store_backend(self, backend, *, migrate_current: bool = False) -> None:
+        self._store_backend = backend
+        if not migrate_current:
+            self._store = self._load_store()
+            return
+        loaded = self._store_backend.load()
+        if isinstance(loaded, dict) and loaded.get("tasks"):
+            self._store = self._coerce_store(loaded)
+        else:
+            self._store_backend.save(self._store)
 
     def _iter_user_tasks(
         self,
@@ -1321,6 +1472,12 @@ class TaskManager(TaskRepository):
         record["active_claim_token"] = _normalize_text(record.get("active_claim_token")) or None
         record["run_history"] = copy.deepcopy(record.get("run_history")) if isinstance(record.get("run_history"), list) else []
         record["pending_delivery"] = copy.deepcopy(record.get("pending_delivery")) if isinstance(record.get("pending_delivery"), dict) else None
+        record["preferred_capability_ref"] = _normalize_text(record.get("preferred_capability_ref"))
+        record["preferred_agent_ids"] = _normalize_string_list(record.get("preferred_agent_ids"))
+        record["preferred_agent_types"] = _normalize_string_list(record.get("preferred_agent_types"))
+        record["agent_routing_policy"] = _normalize_routing_policy(record.get("agent_routing_policy"), default="balanced")
+        record["last_operation_id"] = _normalize_text(record.get("last_operation_id")) or None
+        record["last_operation_status"] = _normalize_text(record.get("last_operation_status")) or None
         record["job"] = normalize_job_record(
             record.get("job"),
             kind=self._task_job_kind(record),
@@ -1414,6 +1571,12 @@ class TaskManager(TaskRepository):
             "state": copy.deepcopy(orchestration),
             "auto_run": bool(record.get("auto_run", False)),
             "job_prompt": _normalize_text(record.get("job_prompt")),
+            "preferred_capability_ref": _normalize_text(record.get("preferred_capability_ref")),
+            "preferred_agent_ids": copy.deepcopy(record.get("preferred_agent_ids")) if isinstance(record.get("preferred_agent_ids"), list) else [],
+            "preferred_agent_types": copy.deepcopy(record.get("preferred_agent_types")) if isinstance(record.get("preferred_agent_types"), list) else [],
+            "agent_routing_policy": _normalize_text(record.get("agent_routing_policy")) or "balanced",
+            "last_operation_id": _normalize_text(record.get("last_operation_id")) or None,
+            "last_operation_status": _normalize_text(record.get("last_operation_status")) or None,
             "notify_policy": _normalize_text(record.get("notify_policy")),
             "delivery_target": copy.deepcopy(record.get("delivery_target")) if isinstance(record.get("delivery_target"), dict) else None,
             "scope": copy.deepcopy(record.get("scope")) if isinstance(record.get("scope"), dict) else {},
@@ -1447,6 +1610,30 @@ class TaskManager(TaskRepository):
     async def _persist(self, record: dict[str, Any] | None = None, *, relink: bool = False) -> None:
         del record, relink
         await self._save_store()
+        if self._db_sync_callback is not None:
+            await self._db_sync_callback()
+
+    async def remember_task_operation(
+        self,
+        task_key: str,
+        *,
+        operation_id: str,
+        status: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        record = self._find_task_by_key_any_user(task_key)
+        if record is None:
+            return None
+        current = now or _utcnow()
+        record["last_operation_id"] = _normalize_text(operation_id) or None
+        record["last_operation_status"] = _normalize_text(status) or None
+        record["last_updated_at"] = _dt_to_iso(current)
+        self._ensure_task_defaults(record)
+        await self._persist(record)
+        return copy.deepcopy(record)
+
+    def set_db_sync_callback(self, callback) -> None:
+        self._db_sync_callback = callback
 
     def _context_target(self) -> dict[str, Any]:
         target = get_event_context().get("target")
@@ -1560,6 +1747,10 @@ class TaskManager(TaskRepository):
         auto_run: Any = None,
         job_prompt: str | None = None,
         notify_policy: str | None = None,
+        preferred_capability_ref: str | None = None,
+        preferred_agent_ids: list[str] | None = None,
+        preferred_agent_types: list[str] | None = None,
+        agent_routing_policy: str | None = None,
         session_id: str = "",
         source=None,
     ) -> dict[str, Any]:
@@ -1619,6 +1810,10 @@ class TaskManager(TaskRepository):
             "last_run_at": None,
             "last_run_status": "",
             "last_run_summary": "",
+            "preferred_capability_ref": _normalize_text(preferred_capability_ref),
+            "preferred_agent_ids": _normalize_string_list(preferred_agent_ids),
+            "preferred_agent_types": _normalize_string_list(preferred_agent_types),
+            "agent_routing_policy": _normalize_routing_policy(agent_routing_policy, default="balanced"),
             "delivery_target": _delivery_target_payload(session_id, source, self._context_target()),
             "origin_session_id": _normalize_text(session_id),
             "run_lock_until": None,
@@ -1657,6 +1852,10 @@ class TaskManager(TaskRepository):
         auto_run: Any = None,
         job_prompt: str | None = None,
         notify_policy: str | None = None,
+        preferred_capability_ref: str | None = None,
+        preferred_agent_ids: list[str] | None = None,
+        preferred_agent_types: list[str] | None = None,
+        agent_routing_policy: str | None = None,
         completion_summary: str = "",
         session_id: str = "",
         source=None,
@@ -1741,6 +1940,19 @@ class TaskManager(TaskRepository):
                     record["active_claim_token"] = None
                     record["pending_delivery"] = None
                     record["orchestration"] = {}
+
+        if preferred_capability_ref is not None:
+            record["preferred_capability_ref"] = _normalize_text(preferred_capability_ref)
+            changed = True
+        if preferred_agent_ids is not None:
+            record["preferred_agent_ids"] = _normalize_string_list(preferred_agent_ids)
+            changed = True
+        if preferred_agent_types is not None:
+            record["preferred_agent_types"] = _normalize_string_list(preferred_agent_types)
+            changed = True
+        if agent_routing_policy is not None:
+            record["agent_routing_policy"] = _normalize_routing_policy(agent_routing_policy, default="balanced")
+            changed = True
 
         if not changed:
             raise ValueError("update requires at least one field to change.")
@@ -2334,6 +2546,12 @@ class TaskManager(TaskRepository):
         return {
             "task_key": _normalize_text(record.get("task_key")),
             "summary": _normalize_text(record.get("content")),
+            "preferred_capability_ref": _normalize_text(record.get("preferred_capability_ref")),
+            "preferred_agent_ids": copy.deepcopy(record.get("preferred_agent_ids")) if isinstance(record.get("preferred_agent_ids"), list) else [],
+            "preferred_agent_types": copy.deepcopy(record.get("preferred_agent_types")) if isinstance(record.get("preferred_agent_types"), list) else [],
+            "agent_routing_policy": _normalize_text(record.get("agent_routing_policy")) or "balanced",
+            "last_operation_id": _normalize_text(record.get("last_operation_id")) or None,
+            "last_operation_status": _normalize_text(record.get("last_operation_status")) or None,
             "schedule_kind": _normalize_text(record.get("schedule_kind")),
             "next_run_at": next_run_text or None,
             "due_at": due_at_text or None,
@@ -2974,6 +3192,10 @@ class TaskManager(TaskRepository):
         auto_run: Any = None,
         job_prompt: str | None = None,
         notify_policy: str | None = None,
+        preferred_capability_ref: str | None = None,
+        preferred_agent_ids: list[str] | None = None,
+        preferred_agent_types: list[str] | None = None,
+        agent_routing_policy: str | None = None,
         session_id: str = "",
         source=None,
     ) -> str | ToolCallResult:
@@ -3020,6 +3242,10 @@ class TaskManager(TaskRepository):
                     auto_run=auto_run,
                     job_prompt=job_prompt or "",
                     notify_policy=notify_policy,
+                    preferred_capability_ref=preferred_capability_ref,
+                    preferred_agent_ids=preferred_agent_ids,
+                    preferred_agent_types=preferred_agent_types,
+                    agent_routing_policy=agent_routing_policy,
                     session_id=current_session_id,
                     source=source,
                 )
@@ -3164,6 +3390,10 @@ class TaskManager(TaskRepository):
                     auto_run=auto_run,
                     job_prompt=job_prompt,
                     notify_policy=notify_policy,
+                    preferred_capability_ref=preferred_capability_ref,
+                    preferred_agent_ids=preferred_agent_ids,
+                    preferred_agent_types=preferred_agent_types,
+                    agent_routing_policy=agent_routing_policy,
                     completion_summary=completion_summary,
                     session_id=current_session_id,
                     source=source,

@@ -1,7 +1,8 @@
-import { RefreshCw, History } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { ChatTurn, RuntimeStateSnapshot } from '../../types'
 import { getRuntimeTitle } from '../../utils/statusFormatting'
 import ActivityBlock from './ActivityBlock'
+import AttachmentList from './AttachmentList'
 import ReasoningBlock from './ReasoningBlock'
 import MarkdownRenderer from './MarkdownRenderer'
 import styles from './TurnBody.module.css'
@@ -10,12 +11,11 @@ interface TurnBodyProps {
   turn: ChatTurn
   runtimeSnapshot: RuntimeStateSnapshot | null
   isLastAssistantTurn?: boolean
-  checkpointId?: string
   onRegenerate?: () => void
-  onRollback?: (checkpointId: string) => void
+  onDownloadAttachment?: (attachmentId: string) => void
 }
 
-export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, checkpointId, onRegenerate, onRollback }: TurnBodyProps) {
+export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, onRegenerate, onDownloadAttachment }: TurnBodyProps) {
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
 
   const placeholderText =
@@ -42,6 +42,7 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, c
       ) : placeholderText ? (
         <div className={styles.placeholder}>{placeholderText}</div>
       ) : null}
+      <AttachmentList attachments={turn.attachments || []} onDownloadAttachment={onDownloadAttachment} />
       
       {turn.isStreaming && turn.content && <span className={styles.cursorBlink}>▍</span>}
       {turn.error && <div className={styles.error}>{turn.error}</div>}
@@ -51,11 +52,6 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, c
           {isLastAssistantTurn && onRegenerate && (
             <button className={styles.actionBtn} onClick={onRegenerate} title="重新生成">
               <RefreshCw size={14} />
-            </button>
-          )}
-          {checkpointId && onRollback && (
-            <button className={styles.actionBtn} onClick={() => onRollback(checkpointId)} title="回退到此">
-              <History size={14} />
             </button>
           )}
         </div>

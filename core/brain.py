@@ -27,6 +27,7 @@ from core.assistant_modes import (
     RouteDecision,
 )
 from core.brain_session import BrainSession
+from core.public_contract import to_internal_assistant_mode
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.status import ContextBreakdown, RuntimeStatus, SessionUsageTotals, UsageCounters, utcnow_iso
 from core.tool_runtime import ToolCallResult, ToolErrorCategory, ToolSourceType, normalize_tool_result
@@ -873,7 +874,7 @@ class Brain:
 
     @staticmethod
     def _normalize_mode_name(value: Any, fallback: str = ASSISTANT_MODE_AUTO) -> str:
-        normalized = str(value or "").strip().lower()
+        normalized = to_internal_assistant_mode(value, fallback=fallback)
         if normalized in ASSISTANT_MODES or normalized == ASSISTANT_MODE_AUTO:
             return normalized
         return fallback
@@ -911,6 +912,47 @@ class Brain:
 
     def _apply_route_metadata_overrides(self, route_context: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
         route_dict = dict(route_context or {})
+        workspace_id = str(metadata.get("workspace_id") or "").strip()
+        workspace_title = str(metadata.get("workspace_title") or "").strip()
+        workspace_base_mode = str(metadata.get("workspace_base_mode") or "").strip()
+        workspace_prompt_overlay = str(metadata.get("workspace_prompt_overlay") or "").strip()
+        workspace_default_execution_target = str(metadata.get("workspace_default_execution_target") or "").strip()
+        if any([workspace_id, workspace_title, workspace_base_mode, workspace_prompt_overlay, workspace_default_execution_target]):
+            route_dict["workspace"] = {
+                "workspace_id": workspace_id,
+                "title": workspace_title,
+                "base_mode": workspace_base_mode,
+                "prompt_overlay": workspace_prompt_overlay,
+                "default_execution_target": workspace_default_execution_target,
+            }
+        procedure_payload = metadata.get("pinned_procedure")
+        procedure_id = str(metadata.get("pinned_procedure_id") or "").strip()
+        if isinstance(procedure_payload, dict) and procedure_id:
+            normalized_procedure = {
+                "procedure_id": procedure_id,
+                "title": str(procedure_payload.get("title") or "").strip(),
+                "description": str(procedure_payload.get("description") or "").strip(),
+                "prompt_overlay": str(procedure_payload.get("prompt_overlay") or "").strip(),
+                "applicable_modes": [str(item).strip() for item in procedure_payload.get("applicable_modes", []) if str(item).strip()],
+                "recommended_capabilities": [
+                    str(item).strip() for item in procedure_payload.get("recommended_capabilities", []) if str(item).strip()
+                ],
+                "recommended_source_profiles": [
+                    str(item).strip() for item in procedure_payload.get("recommended_source_profiles", []) if str(item).strip()
+                ],
+                "default_execution_target": str(procedure_payload.get("default_execution_target") or "").strip(),
+                "risk_profile": str(procedure_payload.get("risk_profile") or "").strip(),
+                "status": str(procedure_payload.get("status") or "").strip(),
+            }
+            route_dict["pinned_procedure"] = normalized_procedure
+            existing_reason = str(route_dict.get("route_reason") or "").strip()
+            procedure_reason = f"Pinned procedure: {procedure_id}"
+            if procedure_reason not in existing_reason:
+                route_dict["route_reason"] = (
+                    f"{existing_reason} {procedure_reason}".strip()
+                    if existing_reason
+                    else procedure_reason
+                )
         route_dict["disable_tools"] = bool(metadata.get("disable_tools"))
         if metadata.get("disable_tools"):
             route_dict["tool_bundle"] = []

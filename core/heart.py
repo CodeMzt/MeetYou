@@ -87,6 +87,7 @@ class Heart:
         self._status_callback = status_callback
         self._agent_runner = BackgroundAgentRunner(adapter, tools_manager)
         self._session_manager = None
+        self._core_services = None
 
         self._prompt = ""
         self._heartbeat_interval = 180
@@ -175,6 +176,60 @@ class Heart:
 
     def set_session_manager(self, session_manager):
         self._session_manager = session_manager
+
+    def set_core_services(self, core_services):
+        self._core_services = core_services
+
+    def _task_operation_context(self, task_record: dict[str, Any]) -> tuple[object | None, object | None, object | None]:
+        if self._core_services is None:
+            return None, None, None
+        delivery = task_record.get("delivery_target") if isinstance(task_record.get("delivery_target"), dict) else {}
+        session_id = str(delivery.get("session_id") or task_record.get("origin_session_id") or "").strip()
+        if not session_id:
+            return None, None, None
+        session_row = self._core_services.session.get_by_session_id(session_id)
+        if session_row is None:
+            return None, None, None
+        thread_row = self._core_services.thread.get_by_id(session_row.thread_id)
+        workspace_row = self._core_services.workspace.get_by_id(session_row.workspace_id)
+        if thread_row is None or workspace_row is None:
+            return None, None, None
+        return session_row, thread_row, workspace_row
+
+    async def _create_scheduled_operation(self, task_record: dict[str, Any], *, operation_type: str, title: str):
+        if self._core_services is None:
+            return None
+        session_row, thread_row, workspace_row = self._task_operation_context(task_record)
+        if session_row is None or thread_row is None or workspace_row is None:
+            return None
+        operation = self._core_services.operation.create_operation(
+            thread_id=thread_row.id,
+            workspace_id=workspace_row.id,
+            operation_type=operation_type,
+            execution_target="core_only",
+            title=title,
+            requested_by_client_id=session_row.client_id,
+            requested_by_session_id=session_row.id,
+            status="queued",
+            metadata={
+                "workspace_id": getattr(workspace_row, "workspace_id", ""),
+                "task_key": str(task_record.get("task_key") or ""),
+                "task_summary": str(task_record.get("content") or "").strip(),
+                "preferred_capability_ref": str(task_record.get("preferred_capability_ref") or ""),
+                "preferred_agent_ids": list(task_record.get("preferred_agent_ids") or []),
+                "preferred_agent_types": list(task_record.get("preferred_agent_types") or []),
+                "agent_routing_policy": str(task_record.get("agent_routing_policy") or "balanced") or "balanced",
+                "source": "heart_scheduler",
+            },
+        )
+        remember_operation = getattr(self._task_manager, "remember_task_operation", None)
+        if callable(remember_operation):
+            await remember_operation(
+                str(task_record.get("task_key") or ""),
+                operation_id=operation.operation_id,
+                status="queued",
+            )
+        return operation
 
     async def close_heart(self):
         if self._http_session:
@@ -693,6 +748,15 @@ class Heart:
                     for record in claimed:
                         control_kind = "scheduled_task" if record.get("auto_run") else "scheduled_reminder"
                         claim_token = str(record.get("active_claim_token") or "").strip()
+                        operation = await self._create_scheduled_operation(
+                            record,
+                            operation_type="scheduled_task_run" if record.get("auto_run") else "scheduled_reminder_run",
+                            title=(
+                                f"Scheduled Task: {str(record.get('content') or '').strip()}"
+                                if record.get("auto_run")
+                                else f"Scheduled Reminder: {str(record.get('content') or '').strip()}"
+                            ),
+                        )
                         await self._event_bus.inbound_queue.put(
                             InboundEvent(
                                 session_id=f"system:task:{record.get('task_key', '')}",
@@ -701,12 +765,14 @@ class Heart:
                                 content={
                                     "task_key": record.get("task_key", ""),
                                     "claim_token": claim_token,
+                                    "operation_id": getattr(operation, "operation_id", ""),
                                 },
                                 source=self._source,
                                 target=EventTarget(kind=TargetKind.INTERNAL.value),
                                 metadata={
                                     "control_kind": control_kind,
                                     "claim_token": claim_token,
+                                    "operation_id": getattr(operation, "operation_id", ""),
                                 },
                             )
                         )

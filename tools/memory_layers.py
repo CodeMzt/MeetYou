@@ -121,6 +121,7 @@ class MemoryStoreLayer:
             record.setdefault("source_record_ids", [])
             record.setdefault("status", "active")
             record.setdefault("access_count", 0)
+            self._owner._enrich_record_workspace_scope(record)
             if record_type not in {"episode", "fact", "profile"}:
                 removed_ids.add(str(record.get("id") or ""))
                 continue
@@ -152,11 +153,20 @@ class MemoryStoreLayer:
         self._owner._store["metadata"]["updated_at"] = dt_to_iso(utcnow())
 
     def load_store(self) -> dict[str, Any]:
+        if getattr(self._owner, "_store_backend", None) is not None:
+            try:
+                store = self._owner._store_backend.load()
+            except Exception:
+                store = self.empty_store()
+            return self.normalize_loaded_store(store)
         store = load_json_with_recovery(
             self._owner._memory_file_path,
             validator=self.is_valid_store,
             default_factory=self.empty_store,
         )
+        return self.normalize_loaded_store(store)
+
+    def normalize_loaded_store(self, store: Any) -> dict[str, Any]:
         self._owner._store = store
         self.normalize_store()
         return self._owner._store
@@ -164,6 +174,9 @@ class MemoryStoreLayer:
     async def save(self) -> None:
         self.touch_updated()
         self._owner._store["metadata"]["revision"] = int(self._owner._store["metadata"].get("revision", 0) or 0) + 1
+        if getattr(self._owner, "_store_backend", None) is not None:
+            self._owner._store_backend.save(self._owner._store)
+            return
         atomic_write_json(self._owner._memory_file_path, self._owner._store)
 
     def record_by_id(self, record_id: str) -> dict[str, Any] | None:
@@ -330,6 +343,9 @@ class MemoryViewLayer:
         self._owner = owner
 
     def _project_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        workspace_tags = self._owner._normalize_workspace_tags(record.get("workspace_tags"))
+        origin_workspace_id = self._owner._normalize_workspace_id(record.get("origin_workspace_id"))
+        match = self._owner._retriever_layer.workspace_match(record)
         payload = {
             "id": str(record.get("id") or ""),
             "type": str(record.get("type") or ""),
@@ -348,6 +364,10 @@ class MemoryViewLayer:
             "source_record_ids": list(record.get("source_record_ids", [])),
             "fact_key": record.get("fact_key"),
             "fact_value": record.get("fact_value"),
+            "workspace_tags": workspace_tags,
+            "origin_workspace_id": origin_workspace_id,
+            "workspace_match": match["kind"],
+            "source_label": match["label"],
         }
         return payload
 
@@ -567,6 +587,21 @@ class MemoryRetrieverLayer:
             best = max(best, score)
         return best
 
+    def workspace_match(self, record: dict[str, Any]) -> dict[str, Any]:
+        current_workspace_id = self._owner._current_workspace_id()
+        workspace_tags = self._owner._normalize_workspace_tags(record.get("workspace_tags"))
+        origin_workspace_id = self._owner._normalize_workspace_id(record.get("origin_workspace_id"))
+        scoped_workspaces = workspace_tags or ([origin_workspace_id] if origin_workspace_id else [])
+        if not current_workspace_id:
+            if scoped_workspaces:
+                return {"kind": "workspace", "label": f"工作区:{', '.join(scoped_workspaces)}", "bonus": 0.0}
+            return {"kind": "global", "label": "全局", "bonus": 0.0}
+        if current_workspace_id in scoped_workspaces:
+            return {"kind": "current", "label": f"当前工作区:{current_workspace_id}", "bonus": 0.18}
+        if scoped_workspaces:
+            return {"kind": "other", "label": f"其他工作区:{', '.join(scoped_workspaces)}", "bonus": -0.06}
+        return {"kind": "global", "label": "全局", "bonus": 0.04}
+
     async def search_records(self, query_text: str, session_id: str = "", source=None) -> list[dict[str, Any]]:
         user_id = self._owner._resolve_user_id(source)
         normalized_session_id = str(session_id or "").strip()
@@ -625,6 +660,7 @@ class MemoryRetrieverLayer:
             recency = self._owner._store_layer.recency_score(record, now)
             effective_strength = self._owner._store_layer.effective_strength(record, now)
             graph = self.graph_score(record_id, anchor_ids)
+            workspace_match = self.workspace_match(record)
             session_bonus = 0.0
             if (
                 normalized_session_id
@@ -638,6 +674,7 @@ class MemoryRetrieverLayer:
                 + 0.15 * float(record.get("importance", 0.0) or 0.0)
                 + 0.1 * effective_strength
                 + 0.05 * graph
+                + float(workspace_match["bonus"] or 0.0)
                 + session_bonus
             )
             results.append(
@@ -648,6 +685,9 @@ class MemoryRetrieverLayer:
                     "recency": recency,
                     "effective_strength": effective_strength,
                     "graph": graph,
+                    "workspace_bonus": float(workspace_match["bonus"] or 0.0),
+                    "workspace_match": workspace_match["kind"],
+                    "source_label": workspace_match["label"],
                     "session_bonus": session_bonus,
                 }
             )
@@ -664,6 +704,9 @@ class MemoryRetrieverLayer:
                 "recency": round(float(item.get("recency", 0.0) or 0.0), 4),
                 "effective_strength": round(float(item.get("effective_strength", 0.0) or 0.0), 4),
                 "graph": round(float(item.get("graph", 0.0) or 0.0), 4),
+                "workspace_bonus": round(float(item.get("workspace_bonus", 0.0) or 0.0), 4),
+                "workspace_match": str(item.get("workspace_match") or ""),
+                "source_label": str(item.get("source_label") or ""),
                 "session_bonus": round(float(item.get("session_bonus", 0.0) or 0.0), 4),
             }
         )
@@ -683,6 +726,7 @@ class MemoryRetrieverLayer:
                 "user_id": self._owner._resolve_user_id(source),
                 "session_id": str(session_id or ""),
                 "session_aware": bool(str(session_id or "").strip()),
+                "workspace_id": self._owner._current_workspace_id(),
             },
             "profile": [],
             "facts": [],

@@ -13,6 +13,7 @@ except ImportError:
     aiohttp = None
 import numpy as np
 
+from core.runtime_context import get_event_context
 from core.repositories import MemoryRepository
 from tools.memory_layers import MemoryConsolidatorLayer, MemoryRetrieverLayer, MemoryStoreLayer, MemoryViewLayer, dt_to_iso, utcnow
 
@@ -55,6 +56,8 @@ class MemoryRecord(TypedDict, total=False):
     source_record_ids: list[str]
     fact_key: str
     fact_value: str
+    workspace_tags: list[str]
+    origin_workspace_id: str
 
 
 class MemoryEdge(TypedDict, total=False):
@@ -77,11 +80,13 @@ class Memory(MemoryRepository):
         self._http_session: aiohttp.ClientSession | None = None
         self._housekeeping_adapter = None
         self._store: dict[str, Any] = {}
+        self._store_backend = None
         self._store_layer = MemoryStoreLayer(self)
         self._view_layer = MemoryViewLayer(self)
         self._retriever_layer = MemoryRetrieverLayer(self)
         self._consolidator_layer = MemoryConsolidatorLayer(self)
         self._store = self._store_layer.empty_store()
+        self._db_sync_callback = None
 
     def _tokens(self, text: str) -> list[str]:
         return TOKEN_RE.findall(str(text or ""))
@@ -174,8 +179,65 @@ class Memory(MemoryRepository):
     def _record_scope(self, user_id: str, session_id: str, record_type: str) -> MemoryScope:
         return {"user_id": user_id, "session_id": session_id if record_type == "episode" else ""}
 
+    @staticmethod
+    def _normalize_workspace_id(value: Any) -> str:
+        return str(value or "").strip()
+
+    def _normalize_workspace_tags(self, values: list[Any] | tuple[Any, ...] | None) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values or []:
+            workspace_id = self._normalize_workspace_id(value)
+            if not workspace_id or workspace_id in seen:
+                continue
+            seen.add(workspace_id)
+            normalized.append(workspace_id)
+        return normalized
+
+    def _current_workspace_id(self) -> str:
+        return self._normalize_workspace_id(get_event_context().get("workspace_id"))
+
+    def _enrich_record_workspace_scope(self, record: MemoryRecord) -> MemoryRecord:
+        inferred_tags: list[str] = []
+        existing_tags = record.get("workspace_tags")
+        if isinstance(existing_tags, list):
+            inferred_tags.extend(existing_tags)
+        existing_workspace_ids = record.get("workspace_ids")
+        if isinstance(existing_workspace_ids, list):
+            inferred_tags.extend(existing_workspace_ids)
+        origin_workspace_id = self._normalize_workspace_id(record.get("origin_workspace_id"))
+        if origin_workspace_id:
+            inferred_tags.append(origin_workspace_id)
+        active_workspace_id = self._current_workspace_id()
+        if active_workspace_id:
+            inferred_tags.append(active_workspace_id)
+            if not origin_workspace_id:
+                origin_workspace_id = active_workspace_id
+        record["workspace_tags"] = self._normalize_workspace_tags(inferred_tags)
+        if origin_workspace_id:
+            record["origin_workspace_id"] = origin_workspace_id
+        elif record.get("origin_workspace_id"):
+            record["origin_workspace_id"] = self._normalize_workspace_id(record.get("origin_workspace_id"))
+        return record
+
     async def save_memory_graph(self):
         await self._store_layer.save()
+        if self._db_sync_callback is not None:
+            await self._db_sync_callback()
+
+    def set_store_backend(self, backend, *, migrate_current: bool = False) -> None:
+        self._store_backend = backend
+        if not migrate_current:
+            self._store = self._store_layer.load_store()
+            return
+        loaded = self._store_backend.load()
+        if isinstance(loaded, dict) and (loaded.get("records") or loaded.get("edges")):
+            self._store = self._store_layer.normalize_loaded_store(loaded)
+            return
+        self._store_backend.save(self._store)
+
+    def set_db_sync_callback(self, callback) -> None:
+        self._db_sync_callback = callback
 
     def _remember_category(self, record: MemoryRecord) -> str:
         for tag in record.get("tags", []):
@@ -245,6 +307,7 @@ class Memory(MemoryRepository):
                 tag_text = str(tag or "").strip()
                 if tag_text and tag_text not in existing_tags:
                     existing_tags.append(tag_text)
+            self._enrich_record_workspace_scope(existing)
             if await self._apply_strong_consistent_memory_write(user_id, existing):
                 existing_tags = [tag for tag in existing_tags if tag != "pending_consolidation"]
                 existing["tags"] = existing_tags
@@ -281,6 +344,7 @@ class Memory(MemoryRepository):
             "entity_keys": [],
             "source_record_ids": [],
         }
+        self._enrich_record_workspace_scope(record)
         self._store["records"].append(record)
         self._store_layer.link_semantic_edges(record)
         if await self._apply_strong_consistent_memory_write(user_id, record):
@@ -340,19 +404,26 @@ class Memory(MemoryRepository):
     def _format_profile_entry(self, entry: dict[str, Any]) -> str:
         key = str(entry.get("fact_key") or "").strip()
         value = str(entry.get("fact_value") or "").strip()
+        suffix = self._format_source_suffix(entry)
         if key and value:
-            return f"- {key}: {value}"
-        return f"- {str(entry.get('content') or '').strip()}"
+            return f"- {key}: {value}{suffix}"
+        return f"- {str(entry.get('content') or '').strip()}{suffix}"
 
     def _format_fact_entry(self, entry: dict[str, Any]) -> str:
         key = str(entry.get("fact_key") or "").strip()
         value = str(entry.get("fact_value") or "").strip()
+        suffix = self._format_source_suffix(entry)
         if key and value:
-            return f"- {key}: {value}"
-        return f"- {str(entry.get('content') or '').strip()}"
+            return f"- {key}: {value}{suffix}"
+        return f"- {str(entry.get('content') or '').strip()}{suffix}"
 
     def _format_event_entry(self, entry: dict[str, Any]) -> str:
-        return f"- {str(entry.get('content') or '').strip()}"
+        return f"- {str(entry.get('content') or '').strip()}{self._format_source_suffix(entry)}"
+
+    @staticmethod
+    def _format_source_suffix(entry: dict[str, Any]) -> str:
+        source_label = str(entry.get("source_label") or "").strip()
+        return f" [来源: {source_label}]" if source_label else ""
 
     async def recall_memory(self, query_text: str, session_id: str = "", source=None, reinforce: bool = True) -> str:
         payload = await self._retriever_layer.build_recall_payload(

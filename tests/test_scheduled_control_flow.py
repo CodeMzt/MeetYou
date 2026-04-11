@@ -32,6 +32,7 @@ class _FakeTaskManager:
         self.completed_due = None
         self.completed_run = None
         self.checked_claims = []
+        self.remembered_operations = []
 
     def get_task_by_key(self, task_key: str):
         if task_key != self._record.get("task_key"):
@@ -100,6 +101,91 @@ class _FakeTaskManager:
         }
         return copy.deepcopy(self._record)
 
+    async def remember_task_operation(self, task_key: str, *, operation_id: str, status: str, now=None):
+        del now
+        self.remembered_operations.append({"task_key": task_key, "operation_id": operation_id, "status": status})
+        self._record["last_operation_id"] = operation_id
+        self._record["last_operation_status"] = status
+        return copy.deepcopy(self._record)
+
+
+class _FakeOperationRow:
+    def __init__(self, operation_id: str, operation_type: str, execution_target: str, title: str, metadata: dict):
+        self.id = operation_id
+        self.operation_id = operation_id
+        self.operation_type = operation_type
+        self.execution_target = execution_target
+        self.title = title
+        self.status = "running"
+        self.meta = dict(metadata)
+
+
+class _FakeOperationService:
+    def __init__(self):
+        self.rows = []
+
+    def create_operation(self, **kwargs):
+        row = _FakeOperationRow(
+            operation_id=f"op-test-{len(self.rows) + 1}",
+            operation_type=kwargs.get("operation_type", ""),
+            execution_target=kwargs.get("execution_target", ""),
+            title=kwargs.get("title", ""),
+            metadata=kwargs.get("metadata") or {},
+        )
+        self.rows.append(row)
+        return row
+
+    def update_status(self, *, operation_id, status: str, result_summary: str | None = None, metadata: dict | None = None):
+        for row in self.rows:
+            if row.id == operation_id or row.operation_id == operation_id:
+                row.status = status
+                if metadata:
+                    merged = dict(row.meta)
+                    merged.update(dict(metadata))
+                    row.meta = merged
+                if result_summary is not None:
+                    row.result_summary = result_summary
+                return row
+        return None
+
+    def get_by_operation_id(self, operation_id: str):
+        for row in self.rows:
+            if row.operation_id == operation_id:
+                return row
+        return None
+
+
+class _FakeSessionService:
+    def __init__(self):
+        self.row = type("SessionRow", (), {"id": "session-row-1", "client_id": "client-row-1", "thread_id": "thread-row-1", "workspace_id": "workspace-row-1"})()
+
+    def get_by_session_id(self, session_id: str):
+        return self.row if session_id == "web:session-1" else None
+
+
+class _FakeThreadService:
+    def __init__(self):
+        self.row = type("ThreadRow", (), {"id": "thread-row-1", "thread_id": "thread-1"})()
+
+    def get_by_id(self, row_id):
+        return self.row if row_id == "thread-row-1" else None
+
+
+class _FakeWorkspaceService:
+    def __init__(self):
+        self.row = type("WorkspaceRow", (), {"id": "workspace-row-1", "workspace_id": "desktop-main"})()
+
+    def get_by_id(self, row_id):
+        return self.row if row_id == "workspace-row-1" else None
+
+
+class _FakeGateway:
+    def __init__(self):
+        self.events = []
+
+    async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict):
+        self.events.append({"thread_id": thread_id, "event_type": event_type, "payload": dict(payload)})
+
 
 class _FakeBrain:
     def __init__(self, result):
@@ -136,7 +222,17 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         app.brain = _FakeBrain(background_result)
         app.tools_manager = _FakeToolsManager()
         app.session_manager = None
-        app.gateway = None
+        app.gateway = _FakeGateway()
+        app.core_services = type(
+            "CoreServices",
+            (),
+            {
+                "operation": _FakeOperationService(),
+                "session": _FakeSessionService(),
+                "thread": _FakeThreadService(),
+                "workspace": _FakeWorkspaceService(),
+            },
+        )()
         app._runtime_source = make_source(SourceKind.SYSTEM.value, "runtime")
         return app
 
@@ -147,6 +243,15 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
             "next_run_at": "2026-04-02T01:00:00Z",
             "due_at": "2026-04-02T01:00:00Z",
             "notify_policy": "on_due",
+            "delivery_target": {
+                "kind": "current_session",
+                "id": "",
+                "session_id": "web:session-1",
+                "source_kind": "web",
+                "source_id": "browser-1",
+            },
+            "origin_session_id": "web:session-1",
+            "scope": {"user_id": "user-1"},
         }
         app = self._make_app(task_record, {"status": "ok", "content": "unused"})
 
@@ -173,6 +278,10 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(app.task_manager.completed_due)
         self.assertFalse(app.task_manager.completed_due["delivered"])
         self.assertIn("Scheduled reminder:", app.task_manager.completed_due["summary"])
+        self.assertEqual(len(app.core_services.operation.rows), 1)
+        self.assertEqual(app.core_services.operation.rows[0].operation_type, "scheduled_reminder_run")
+        self.assertEqual(app.core_services.operation.rows[0].status, "succeeded")
+        self.assertEqual(app.task_manager.remembered_operations[-1]["status"], "succeeded")
 
     async def test_scheduled_task_control_uses_allowlisted_tools_and_reports_brain_completion(self):
         task_record = {
@@ -181,6 +290,10 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
             "schedule_kind": "recurring",
             "next_run_at": "2026-04-02T01:00:00Z",
             "auto_run": True,
+            "preferred_capability_ref": "manage_tasks",
+            "preferred_agent_ids": ["desktop-main-agent"],
+            "preferred_agent_types": ["desktop"],
+            "agent_routing_policy": "strict_preferred",
             "notify_policy": "on_completion",
             "delivery_target": {
                 "kind": "current_session",
@@ -228,6 +341,9 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["session_id"], "web:session-1")
         self.assertEqual(call["route_context"]["current_mode"], "scheduled_task")
         self.assertEqual(call["route_context"]["tool_bundle"], ["manage_scheduled_tasks", "get_current_system_time", "compile_report"])
+        self.assertEqual(call["route_context"]["task_routing"]["preferred_capability_ref"], "manage_tasks")
+        self.assertEqual(call["route_context"]["task_routing"]["preferred_agent_ids"], ["desktop-main-agent"])
+        self.assertEqual(call["route_context"]["task_routing"]["agent_routing_policy"], "strict_preferred")
         self.assertEqual(
             [tool["function"]["name"] for tool in call["tools"]],
             ["manage_scheduled_tasks", "get_current_system_time", "compile_report"],
@@ -238,6 +354,10 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("orchestration", payload)
         self.assertIsNotNone(app.task_manager.completed_run)
         self.assertTrue(app.task_manager.completed_run["succeeded"])
+        self.assertEqual(len(app.core_services.operation.rows), 1)
+        self.assertEqual(app.core_services.operation.rows[0].operation_type, "scheduled_task_run")
+        self.assertEqual(app.core_services.operation.rows[0].status, "succeeded")
+        self.assertEqual(app.task_manager.remembered_operations[-1]["status"], "succeeded")
         self.assertTrue(app.task_manager.completed_run["delivered"])
         self.assertIn("Scheduled task completed:", app.task_manager.completed_run["summary"])
         self.assertEqual(len(delivered_messages), 1)
@@ -354,6 +474,57 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(app.task_manager.completed_run["runtime_source"], "app.scheduled_task")
         self.assertEqual(len(delivered_messages), 1)
         self.assertIn("Digest sync failed.", delivered_messages[0]["message"])
+
+    async def test_scheduled_task_control_reuses_scheduler_precreated_operation(self):
+        task_record = {
+            "task_key": "daily-precreated",
+            "content": "Every day at 9 prepare report",
+            "schedule_kind": "recurring",
+            "next_run_at": "2026-04-02T01:00:00Z",
+            "auto_run": True,
+            "notify_policy": "on_completion",
+            "delivery_target": {
+                "kind": "current_session",
+                "id": "",
+                "session_id": "web:session-1",
+                "source_kind": "web",
+                "source_id": "browser-1",
+            },
+            "origin_session_id": "web:session-1",
+            "scope": {"user_id": "user-1"},
+        }
+        app = self._make_app(task_record, {"status": "ok", "content": "Report prepared.", "completed_task_keys": ["daily-precreated"]})
+        precreated = app.core_services.operation.create_operation(
+            thread_id="thread-row-1",
+            workspace_id="workspace-row-1",
+            operation_type="scheduled_task_run",
+            execution_target="core_only",
+            title="Scheduled Task: Every day at 9 prepare report",
+            metadata={"task_key": "daily-precreated", "workspace_id": "desktop-main"},
+        )
+
+        async def _emit_task_update(task_record, message):
+            del task_record, message
+            return True
+
+        app._emit_task_update = _emit_task_update
+
+        handled = await App._handle_control_event(
+            app,
+            InboundEvent(
+                session_id="system:task:daily-precreated",
+                type=EventType.CONTROL.value,
+                role="system",
+                content={"task_key": "daily-precreated", "operation_id": precreated.operation_id},
+                source=make_source(SourceKind.SYSTEM.value, "scheduler"),
+                target=EventTarget(kind=TargetKind.INTERNAL.value),
+                metadata={"control_kind": "scheduled_task", "operation_id": precreated.operation_id},
+            ),
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(len(app.core_services.operation.rows), 1)
+        self.assertEqual(app.core_services.operation.rows[0].status, "succeeded")
 
     async def test_scheduled_control_ignores_stale_claim_token(self):
         task_record = {
