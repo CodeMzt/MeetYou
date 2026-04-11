@@ -27,7 +27,7 @@ logger = logging.getLogger("meetyou.config")
 
 _CONFIG_FILE_PATH = "user/config.json"
 _ENV_FILE_PATH = ".env"
-_MCP_SERVER_CONFIG_PATH = "user/mcp_servers.json"
+_MCP_SERVER_CONFIG_PATH = "user/core_mcp_servers.json"
 _CONFIG_METADATA_KEY = "_meta"
 _CONFIG_SCHEMA_VERSION = "2"
 _REMOVED_CONFIG_KEYS = {"enable_gateway", "source_profiles"}
@@ -51,9 +51,13 @@ _THINKING_EFFORT_VALUES = set(THINKING_EFFORT_VALUES)
 _SUPPORTED_PROVIDERS = set(SUPPORTED_PROVIDER_VALUES)
 
 _ENV_KEY_MAP = {
+    "agent_access_token": "MEETYOU_AGENT_ACCESS_TOKEN",
     "api_key": "MEETYOU_API_KEY",
     "heartbeat_api_key": "MEETYOU_HEARTBEAT_API_KEY",
     "embedding_api_key": "MEETYOU_EMBEDDING_API_KEY",
+    "object_store_access_key": "MEETYOU_OBJECT_STORE_ACCESS_KEY",
+    "object_store_secret_key": "MEETYOU_OBJECT_STORE_SECRET_KEY",
+    "database_url": "MEETYOU_DATABASE_URL",
     "gateway_access_token": "MEETYOU_GATEWAY_ACCESS_TOKEN",
     "feishu_app_id": "MEETYOU_FEISHU_APP_ID",
     "feishu_app_secret": "MEETYOU_FEISHU_APP_SECRET",
@@ -76,6 +80,10 @@ class ConfigManager(ConfigRepository):
         self._config: dict[str, Any] = {}
         self._config_metadata: dict[str, Any] = self._default_config_metadata()
         self._mcp_server_config: dict[str, Any] = {}
+        self._mcp_server_config_diagnostic = self._build_mcp_server_config_diagnostic(
+            status="not_loaded",
+            message="Core MCP 配置尚未加载。",
+        )
         self.reload()
 
     @property
@@ -160,16 +168,63 @@ class ConfigManager(ConfigRepository):
             "updated_at": str(payload.get("updated_at") or ""),
         }
 
+    def _build_mcp_server_config_diagnostic(
+        self,
+        *,
+        status: str,
+        message: str,
+        server_count: int = 0,
+    ) -> dict[str, Any]:
+        return {
+            "scope": "core",
+            "path": self._mcp_server_config_path,
+            "status": status,
+            "server_count": max(int(server_count or 0), 0),
+            "message": str(message or "").strip(),
+        }
+
     def _load_mcp_config(self):
         try:
             with open(self._mcp_server_config_path, "r", encoding="utf-8") as f:
-                self._mcp_server_config = json.load(f)
+                payload = json.load(f)
         except FileNotFoundError:
-            logger.info("MCP 服务器配置文件不存在，跳过")
             self._mcp_server_config = {}
+            self._mcp_server_config_diagnostic = self._build_mcp_server_config_diagnostic(
+                status="missing",
+                message=(
+                    f"Core MCP 配置文件不存在: {self._mcp_server_config_path}。"
+                    "这只表示服务端 Core 级 MCP 未配置；客户端本地 MCP 仍由 Desktop Agent 的 user/mcp_servers.json 托管。"
+                ),
+            )
+            logger.info(self._mcp_server_config_diagnostic["message"])
+            return
         except json.JSONDecodeError as e:
-            logger.warning("MCP 配置文件格式错误: %s", e)
             self._mcp_server_config = {}
+            self._mcp_server_config_diagnostic = self._build_mcp_server_config_diagnostic(
+                status="invalid",
+                message=f"Core MCP 配置文件格式错误: {self._mcp_server_config_path} ({e})",
+            )
+            logger.warning(self._mcp_server_config_diagnostic["message"])
+            return
+        if not isinstance(payload, dict):
+            self._mcp_server_config = {}
+            self._mcp_server_config_diagnostic = self._build_mcp_server_config_diagnostic(
+                status="invalid",
+                message=f"Core MCP 配置文件格式错误: {self._mcp_server_config_path}",
+            )
+            logger.warning(self._mcp_server_config_diagnostic["message"])
+            return
+        self._mcp_server_config = payload
+        server_count = len(self.get_mcp_servers())
+        self._mcp_server_config_diagnostic = self._build_mcp_server_config_diagnostic(
+            status="loaded",
+            server_count=server_count,
+            message=(
+                f"已加载 Core MCP 配置: {self._mcp_server_config_path} "
+                f"({server_count} 个服务端 MCP)。"
+            ),
+        )
+        logger.info(self._mcp_server_config_diagnostic["message"])
 
     @staticmethod
     def _mask_secret(value: str) -> str:
@@ -487,4 +542,19 @@ class ConfigManager(ConfigRepository):
         return {key: self.describe_key(key) for key in keys if self.is_manageable_key(key)}
 
     def get_mcp_servers(self) -> dict[str, Any]:
-        return self._mcp_server_config.get("mcpServers", {})
+        servers = self._mcp_server_config.get("mcpServers", {})
+        if isinstance(servers, dict) and servers:
+            return servers
+        synthesized: dict[str, Any] = {}
+        tavily_api_key = os.environ.get("TAVILY_API_KEY", "").strip()
+        if tavily_api_key:
+            synthesized["tavily_web"] = {
+                "command": "npx",
+                "args": ["-y", "tavily-mcp@0.1.3"],
+                "env": {},
+                "enabled": True,
+            }
+        return synthesized
+
+    def get_mcp_server_config_diagnostic(self) -> dict[str, Any]:
+        return dict(self._mcp_server_config_diagnostic)

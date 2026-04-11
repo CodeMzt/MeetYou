@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
 
 process.env.DIST = path.join(__dirname, '../dist')
@@ -7,15 +8,30 @@ process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.
 let win: BrowserWindow | null
 let dashboardWin: BrowserWindow | null = null
 let settingsWin: BrowserWindow | null = null
-let statsWin: BrowserWindow | null = null
+let devtoolsWin: BrowserWindow | null = null
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
-let latestStats = { usageSnapshot: null, runtimeDebugSnapshot: null }
+let latestDevtools = { usageSnapshot: null, runtimeDebugSnapshot: null }
 
-function createStatsWindow() {
-  if (statsWin) {
-    if (statsWin.isMinimized()) statsWin.restore()
-    statsWin.focus()
+function getWorkspaceRoot() {
+  return path.resolve(app.getAppPath(), '..')
+}
+
+function readGatewayAccessToken(): string {
+  const envPath = path.join(getWorkspaceRoot(), '.env')
+  try {
+    const content = fs.readFileSync(envPath, 'utf-8')
+    const match = content.match(/^MEETYOU_GATEWAY_ACCESS_TOKEN\s*=\s*['"]?([^'"\r\n]+)['"]?\s*$/m)
+    return (match?.[1] || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+function createDevtoolsWindow() {
+  if (devtoolsWin) {
+    if (devtoolsWin.isMinimized()) devtoolsWin.restore()
+    devtoolsWin.focus()
     return
   }
 
@@ -25,7 +41,7 @@ function createStatsWindow() {
   const windowWidth = 420
   const windowHeight = 600
 
-  statsWin = new BrowserWindow({
+  devtoolsWin = new BrowserWindow({
     width: windowWidth,
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
@@ -44,19 +60,19 @@ function createStatsWindow() {
   })
 
   if (process.platform === 'win32') {
-    statsWin.setBackgroundMaterial('mica')
+    devtoolsWin.setBackgroundMaterial('mica')
   } else if (process.platform === 'darwin') {
-    statsWin.setVibrancy('popover')
+    devtoolsWin.setVibrancy('popover')
   }
 
   if (VITE_DEV_SERVER_URL) {
-    statsWin.loadURL(`${VITE_DEV_SERVER_URL}#/stats`)
+    devtoolsWin.loadURL(`${VITE_DEV_SERVER_URL}#/devtools`)
   } else {
-    statsWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: 'stats' })
+    devtoolsWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: 'devtools' })
   }
 
-  statsWin.on('closed', () => {
-    statsWin = null
+  devtoolsWin.on('closed', () => {
+    devtoolsWin = null
   })
 }
 
@@ -222,18 +238,32 @@ function createWindow() {
   ipcMain.on('open-settings', () => {
     createSettingsWindow()
   })
+  ipcMain.on('open-devtools', () => {
+    createDevtoolsWindow()
+  })
+  ipcMain.on('update-devtools', (e, data) => {
+    latestDevtools = data
+    if (devtoolsWin) {
+      devtoolsWin.webContents.send('devtools-updated', data)
+    }
+  })
+  ipcMain.on('request-devtools', (e) => {
+    e.sender.send('devtools-updated', latestDevtools)
+  })
   ipcMain.on('open-stats', () => {
-    createStatsWindow()
+    createDevtoolsWindow()
   })
   ipcMain.on('update-stats', (e, data) => {
-    latestStats = data
-    if (statsWin) {
-      statsWin.webContents.send('stats-updated', data)
+    latestDevtools = data
+    if (devtoolsWin) {
+      devtoolsWin.webContents.send('devtools-updated', data)
     }
   })
   ipcMain.on('request-stats', (e) => {
-    e.sender.send('stats-updated', latestStats)
+    e.sender.send('devtools-updated', latestDevtools)
   })
+  ipcMain.removeHandler('get-gateway-access-token')
+  ipcMain.handle('get-gateway-access-token', () => readGatewayAccessToken())
 }
 
 app.on('window-all-closed', () => {

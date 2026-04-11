@@ -207,8 +207,8 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
       try {
         setLoading(true)
         const [schemaResponse, configResponse] = await Promise.all([
-          fetchWithAuth(`${baseUrl}/schema/ui`),
-          fetchWithAuth(`${baseUrl}/config`),
+          fetchWithAuth(`${baseUrl}/operator/schema/ui`),
+          fetchWithAuth(`${baseUrl}/operator/config`),
         ])
 
         if (!schemaResponse.ok) {
@@ -343,7 +343,7 @@ export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
       setSaving(true)
       setError(null)
 
-      const response = await fetchWithAuth(`${baseUrl}/config`, {
+      const response = await fetchWithAuth(`${baseUrl}/operator/config`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ updates }),

@@ -329,6 +329,57 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("knowledge_synthesis, office_coordination", prompt_text)
         self.assertIn("primary operating procedure", prompt_text)
 
+    def test_prompt_includes_pinned_procedure_policy(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        prompt_text = manager.assemble_prompt_for_route(
+            {
+                "current_mode": "normal",
+                "content": "Please review this patch and call out regressions.",
+                "active_skills": [],
+                "loaded_skills": [],
+                "pinned_procedure": {
+                    "procedure_id": "code_review",
+                    "title": "Code Review",
+                    "description": "围绕代码变更、风险与验证给出结构化审查。",
+                    "prompt_overlay": "Focus on correctness, regressions, tests, and concrete follow-up actions.",
+                    "recommended_capabilities": ["search_memory", "summarize_text"],
+                    "recommended_source_profiles": ["workspace_local"],
+                    "default_execution_target": "assistant",
+                    "risk_profile": "read",
+                },
+            }
+        )
+
+        self.assertIn("[Pinned Procedure]", prompt_text)
+        self.assertIn("code_review", prompt_text)
+        self.assertIn("Focus on correctness, regressions, tests", prompt_text)
+
+    def test_prompt_includes_workspace_policy(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        prompt_text = manager.assemble_prompt_for_route(
+            {
+                "current_mode": "study",
+                "content": "Help me structure this material.",
+                "active_skills": [],
+                "loaded_skills": [],
+                "workspace": {
+                    "workspace_id": "study",
+                    "title": "Study",
+                    "base_mode": "study",
+                    "prompt_overlay": "Prefer teaching-oriented explanations and review questions.",
+                    "default_execution_target": "core_only",
+                },
+            }
+        )
+
+        self.assertIn("[Workspace Policy]", prompt_text)
+        self.assertIn("Current workspace: Study (study).", prompt_text)
+        self.assertIn("Default workspace mode: study", prompt_text)
+        self.assertIn("Default workspace execution target: core_only", prompt_text)
+        self.assertIn("Prefer teaching-oriented explanations", prompt_text)
+
     def test_capability_diagnostics_reports_mcp_fallback_states(self):
         manager = AssistantModeManager(_FakeConfig())
 

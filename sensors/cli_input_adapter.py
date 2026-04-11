@@ -4,6 +4,7 @@ CLI 输入适配器。
 
 import logging
 
+from core.interaction_response_service import InteractionResponseService
 from prompt_toolkit import Application
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
@@ -32,6 +33,7 @@ class CLIInputAdapter:
 
     def __init__(self, event_bus, session_manager):
         self._event_bus = event_bus
+        self._interaction_responses = InteractionResponseService(event_bus)
         self._session_manager = session_manager
         self.source = make_source(SourceKind.CLI.value, "local")
         self.session_id = self._session_manager.get_or_create_session(
@@ -92,22 +94,21 @@ class CLIInputAdapter:
         )
 
     def _consume_user_text(self, user_text: str):
-        if (
-            self._event_bus.has_pending_confirmation
-            and self._event_bus.pending_confirmation_session_id == self.session_id
-        ):
+        interaction_responses = getattr(self, "_interaction_responses", None) or InteractionResponseService(self._event_bus)
+        if interaction_responses.has_pending_confirmation(session_id=self.session_id):
             accepted = user_text.strip().lower() in _ACCEPTED_CONFIRM_TOKENS
-            self._event_bus.submit_confirmation_response(
+            interaction_responses.submit_confirmation_response(
                 accepted,
-                request_id=self._event_bus.pending_request_id or "",
+                request_id=interaction_responses.get_pending_confirmation_request_id(session_id=self.session_id),
                 session_id=self.session_id,
+                client_id="cil",
             )
             return
 
-        if self._event_bus.get_pending_human_input_request(session_id=self.session_id) is not None:
-            response = self._event_bus.normalize_human_input_text(user_text, session_id=self.session_id)
+        if interaction_responses.get_pending_human_input_request(session_id=self.session_id) is not None:
+            response = interaction_responses.normalize_human_input_text(user_text, session_id=self.session_id)
             if response is not None:
-                self._event_bus.submit_human_input_response(
+                interaction_responses.submit_human_input_response(
                     response.get("answer_text", ""),
                     request_id=response.get("request_id", ""),
                     session_id=response.get("session_id", self.session_id),

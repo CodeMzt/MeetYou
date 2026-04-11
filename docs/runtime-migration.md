@@ -20,4 +20,11 @@
 ## 兼容性说明
 
 - `gateway_host`、`gateway_port`、`gateway_access_token` 继续保留，它们描述的是服务内置网关适配层的监听与鉴权配置
-- `docs/interface.md` 描述的 HTTP / WebSocket 协议保持有效
+- 正式客户端入口仍是 `POST /client/messages` 与 `GET /client/ws`
+- 根路径兼容 surface 仅保留迁移错误或过渡性只读能力，后续会继续收缩
+
+## Core 启动职责
+
+- `core/app.py` 的 `App.setup()` 在 Core 完成依赖装配、网关启动并进入 idle 后，会主动向 `EventBus.inbound_queue` 注入一次 `system:boot` 启动消息
+- 这条启动消息使用 `start` prompt 构造，目标为 broadcast，并标记为 transient boot event，用于触发 Core 启动后的首轮唤醒
+- Launcher、service 入口与外部客户端只负责拉起 Core；boot 消息注入的责任明确归属 Core 启动阶段本身

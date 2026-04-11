@@ -1,8 +1,8 @@
-export type MessageRole = 'user' | 'assistant' | 'system'
+export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
-export type AssistantMode = 'normal' | 'auto' | 'documents' | 'research' | 'office' | 'study'
+export type AssistantMode = 'general' | 'research' | 'documents' | 'study' | 'automation'
 
 export type RuntimeStatus = string
 
@@ -24,6 +24,188 @@ export interface InputRequestPayload {
     }
   }
 }
+
+export interface ClientWorkspace {
+  workspace_id: string
+  title: string
+  status: string
+  base_mode: string
+  description: string
+  prompt_overlay: string
+  default_execution_target: string
+  capability_policy: string
+  allowed_capability_ids: string[]
+  preferred_agent_ids: string[]
+  preferred_agent_types: string[]
+  agent_routing_policy: string
+  capability_routing_overrides: Record<string, unknown>
+}
+
+export interface ClientProcedure {
+  procedure_id: string
+  title: string
+  description: string
+  applicable_modes: string[]
+  recommended_capabilities: string[]
+  preferred_capability_ref: string
+  preferred_agent_ids: string[]
+  preferred_agent_types: string[]
+  agent_routing_policy: string
+  default_execution_target: string
+  risk_profile: string
+  status: string
+}
+
+export interface ClientThread {
+  thread_id: string
+  workspace_id: string
+  title: string
+  status: string
+  summary: string
+  pinned_procedure_id?: string | null
+}
+
+export interface ClientSession {
+  session_id: string
+  thread_id: string
+  workspace_id: string
+  client_id: string
+  status: string
+}
+
+export interface ClientOperation {
+  operation_id: string
+  thread_id: string
+  workspace_id: string
+  title: string
+  operation_type: string
+  execution_target: string
+  target_agent_id: string
+  capability_id: string
+  status: string
+  approval_id?: string
+  approval_status?: string
+  approval_required?: boolean
+  routing_reason?: string
+}
+
+export type OperationStatusTone = 'pending' | 'running' | 'success' | 'failed'
+
+export interface OperationView extends ClientOperation {
+  call_id: string
+  phase: string
+  detail: string
+  result: Record<string, unknown>
+  error: Record<string, unknown>
+  attachments: AttachmentObjectView[]
+  tone: OperationStatusTone
+  summary: string
+  isBlocking: boolean
+}
+
+export interface OperatorAgent {
+  agent_id: string
+  agent_type: string
+  display_name: string
+  transport_profile: string
+  status: string
+  last_seen_at: string
+  owner_client_id?: string
+  workspace_ids: string[]
+}
+
+export interface ClientExecutionTarget {
+  agent_id: string
+  agent_type: string
+  display_name: string
+  transport_profile: string
+  status: string
+  owner_client_id: string
+  workspace_ids: string[]
+}
+
+export interface ClientMessage {
+  message_id: string
+  thread_id: string
+  session_id: string
+  workspace_id: string
+  client_id: string
+  role: MessageRole
+  content: string
+  status: string
+  channel: string
+  created_at: string
+}
+
+export interface ClientMessageCreatePayload {
+  thread_id: string
+  workspace_id: string
+  client_id: string
+  content: string
+  session_id?: string
+  client_type?: string
+  display_name?: string
+  role?: MessageRole
+  client_message_id?: string
+  preferred_mode?: AssistantMode
+  options?: InputRequestPayload['options']
+  metadata?: Record<string, unknown>
+}
+
+export type ClientWsConnectionState = 'connected'
+
+export type ClientWsEvent =
+  | { kind: 'ignore' }
+  | { kind: 'connection'; threadId: string; status: ClientWsConnectionState }
+  | { kind: 'pong' }
+  | { kind: 'ack'; ack: AckPayload }
+  | { kind: 'error'; error: RuntimeErrorPayload }
+  | { kind: 'runtime_state'; snapshot: RuntimeStateSnapshot }
+  | { kind: 'runtime_usage'; snapshot: RuntimeUsageSnapshot }
+  | { kind: 'activity'; activity: TurnActivity }
+  | { kind: 'confirm_requested'; sessionId: string; payload: ConfirmRequestPayload }
+  | { kind: 'confirm_resolved'; sessionId: string; requestId: string; accepted: boolean }
+  | { kind: 'human_input_requested'; sessionId: string; payload: HumanInputRequestPayload }
+  | { kind: 'human_input_resolved'; sessionId: string; requestId: string; answerText: string; selectedOption?: string }
+  | {
+      kind: 'operation_updated'
+      threadId: string
+      operationId: string
+      workspaceId: string
+      title: string
+      operationType: string
+      executionTarget: string
+      targetAgentId: string
+      capabilityId: string
+      callId: string
+      status: string
+      phase: string
+      detail: string
+      result: Record<string, unknown>
+      error: Record<string, unknown>
+      approvalId: string
+      approvalStatus: string
+      approvalRequired: boolean
+    }
+  | { kind: 'message_created'; threadId: string; sessionId: string; message: ClientMessage }
+  | {
+      kind: 'message_delta'
+      threadId: string
+      sessionId: string
+      streamId: string
+      turnId: string
+      delta: string
+      channel: 'answer' | 'reasoning'
+      phase: string
+    }
+  | {
+      kind: 'message_completed'
+      threadId: string
+      sessionId: string
+      streamId: string
+      turnId: string
+      message: ClientMessage
+    }
 
 export interface RuntimeStateSnapshot {
   session_id: string
@@ -158,6 +340,16 @@ export interface TurnActivity {
   createdAt: number
 }
 
+export interface AttachmentObjectView {
+  attachmentId: string
+  kind?: string
+  fileName: string
+  mimeType?: string
+  sizeBytes?: number
+  status?: string
+  downloadUrl?: string
+}
+
 export interface ChatTurn {
   id: string
   streamId: string
@@ -170,6 +362,11 @@ export interface ChatTurn {
   createdAt: number
   trimmedActivityCount?: number
   error?: string
+  confirmRequest?: ConfirmRequestPayload | null
+  confirmResponse?: { accepted: boolean } | null
+  humanInputRequest?: HumanInputRequestPayload | null
+  humanInputResponse?: { answerText: string; selectedOption?: string } | null
+  attachments?: AttachmentObjectView[]
 }
 
 export interface ConfirmRequestPayload {
@@ -177,6 +374,11 @@ export interface ConfirmRequestPayload {
   content: string
   timeout?: number
   defaultDecision?: boolean
+  approvalId?: string
+  approvalStatus?: string
+  approvalType?: string
+  riskLevel?: string
+  operationId?: string
 }
 
 export interface HumanInputRequestPayload {
@@ -187,12 +389,22 @@ export interface HumanInputRequestPayload {
   timeout?: number
 }
 
+export interface ApprovalDisplayModel {
+  requestId: string
+  title: string
+  content: string
+  timeoutSeconds?: number
+  defaultDecision?: boolean
+  isBlocking: boolean
+}
+
 export interface AckPayload {
   action: string
-  accepted: boolean
+  accepted?: boolean
   session_id: string
-  event_id: string
-  request_id: string
+  event_id?: string
+  request_id?: string
+  [key: string]: unknown
 }
 
 export interface RuntimeErrorPayload {

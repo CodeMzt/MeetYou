@@ -21,6 +21,82 @@ class PromptAssembler:
     def __init__(self, capability_registry: CapabilityRegistry) -> None:
         self._capability_registry = capability_registry
 
+    def _build_workspace_policy(self, workspace: dict[str, Any] | None) -> str:
+        if not isinstance(workspace, dict):
+            return ""
+        workspace_id = str(workspace.get("workspace_id") or "").strip()
+        title = str(workspace.get("title") or "").strip()
+        base_mode = str(workspace.get("base_mode") or "").strip()
+        prompt_overlay = str(workspace.get("prompt_overlay") or "").strip()
+        default_execution_target = str(workspace.get("default_execution_target") or "").strip()
+        if not any([workspace_id, title, base_mode, prompt_overlay, default_execution_target]):
+            return ""
+        lines = ["[Workspace Policy]"]
+        header = title or workspace_id
+        if workspace_id and title and workspace_id != title:
+            header = f"{title} ({workspace_id})"
+        elif workspace_id:
+            header = workspace_id
+        if header:
+            lines.append(f"Current workspace: {header}.")
+        if base_mode:
+            lines.append(f"Default workspace mode: {base_mode}")
+        if default_execution_target:
+            lines.append(f"Default workspace execution target: {default_execution_target}")
+        if prompt_overlay:
+            lines.append(prompt_overlay)
+        return "\n".join(lines)
+
+    def _build_pinned_procedure_policy(self, procedure: dict[str, Any] | None) -> str:
+        if not isinstance(procedure, dict):
+            return ""
+        procedure_id = str(procedure.get("procedure_id") or "").strip()
+        title = str(procedure.get("title") or "").strip()
+        description = str(procedure.get("description") or "").strip()
+        prompt_overlay = str(procedure.get("prompt_overlay") or "").strip()
+        applicable_modes = _unique_strings(procedure.get("applicable_modes"))
+        recommended_capabilities = _unique_strings(procedure.get("recommended_capabilities"))
+        recommended_source_profiles = _unique_strings(procedure.get("recommended_source_profiles"))
+        default_execution_target = str(procedure.get("default_execution_target") or "").strip()
+        risk_profile = str(procedure.get("risk_profile") or "").strip()
+        if not any(
+            [
+                procedure_id,
+                title,
+                description,
+                prompt_overlay,
+                applicable_modes,
+                recommended_capabilities,
+                recommended_source_profiles,
+                default_execution_target,
+                risk_profile,
+            ]
+        ):
+            return ""
+        lines = ["[Pinned Procedure]"]
+        header = title or procedure_id
+        if procedure_id and title and procedure_id != title:
+            header = f"{title} ({procedure_id})"
+        elif procedure_id:
+            header = procedure_id
+        if header:
+            lines.append(f"Follow this pinned procedure first: {header}.")
+        if description:
+            lines.append(description)
+        if prompt_overlay:
+            lines.append(prompt_overlay)
+        if applicable_modes:
+            lines.append(f"Applicable modes: {', '.join(applicable_modes)}")
+        if recommended_capabilities:
+            lines.append(f"Recommended capabilities: {', '.join(recommended_capabilities)}")
+        if recommended_source_profiles:
+            lines.append(f"Recommended source profiles: {', '.join(recommended_source_profiles)}")
+        if default_execution_target:
+            lines.append(f"Default execution target: {default_execution_target}")
+        if risk_profile:
+            lines.append(f"Risk profile: {risk_profile}")
+        return "\n".join(lines)
+
     def _build_skill_first_policy(self, capability_set) -> str:
         policy_lines = ["[Skill-First Policy]"]
         active_or_loaded = _unique_strings([*capability_set.active_skills, *capability_set.loaded_skills])
@@ -103,9 +179,13 @@ class PromptAssembler:
 
     def assemble_for_route(self, route_context: dict[str, Any] | None) -> str:
         route_context = route_context or {}
-        return self.assemble_for_mode(
+        prompt_text = self.assemble_for_mode(
             str(route_context.get("current_mode") or "").strip() or "normal",
             content=str(route_context.get("content") or "").strip(),
             active_skills=[str(item).strip() for item in route_context.get("active_skills", []) if str(item).strip()],
             loaded_skills=[str(item).strip() for item in route_context.get("loaded_skills", []) if str(item).strip()],
         )
+        workspace_policy = self._build_workspace_policy(route_context.get("workspace"))
+        procedure_policy = self._build_pinned_procedure_policy(route_context.get("pinned_procedure"))
+        sections = [section for section in [workspace_policy, procedure_policy, prompt_text] if section]
+        return "\n\n".join(sections).strip()

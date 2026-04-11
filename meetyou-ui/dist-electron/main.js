@@ -1,25 +1,39 @@
 "use strict";
 const electron = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
 process.env.DIST = path.join(__dirname, "../dist");
 process.env.VITE_PUBLIC = electron.app.isPackaged ? process.env.DIST : path.join(process.env.DIST, "../public");
 let win;
 let dashboardWin = null;
 let settingsWin = null;
-let statsWin = null;
+let devtoolsWin = null;
 const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
-let latestStats = { usageSnapshot: null, runtimeDebugSnapshot: null };
-function createStatsWindow() {
-  if (statsWin) {
-    if (statsWin.isMinimized()) statsWin.restore();
-    statsWin.focus();
+let latestDevtools = { usageSnapshot: null, runtimeDebugSnapshot: null };
+function getWorkspaceRoot() {
+  return path.resolve(electron.app.getAppPath(), "..");
+}
+function readGatewayAccessToken() {
+  const envPath = path.join(getWorkspaceRoot(), ".env");
+  try {
+    const content = fs.readFileSync(envPath, "utf-8");
+    const match = content.match(/^MEETYOU_GATEWAY_ACCESS_TOKEN\s*=\s*['"]?([^'"\r\n]+)['"]?\s*$/m);
+    return ((match == null ? void 0 : match[1]) || "").trim();
+  } catch {
+    return "";
+  }
+}
+function createDevtoolsWindow() {
+  if (devtoolsWin) {
+    if (devtoolsWin.isMinimized()) devtoolsWin.restore();
+    devtoolsWin.focus();
     return;
   }
   const primaryDisplay = electron.screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
   const windowWidth = 420;
   const windowHeight = 600;
-  statsWin = new electron.BrowserWindow({
+  devtoolsWin = new electron.BrowserWindow({
     width: windowWidth,
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
@@ -37,17 +51,17 @@ function createStatsWindow() {
     }
   });
   if (process.platform === "win32") {
-    statsWin.setBackgroundMaterial("mica");
+    devtoolsWin.setBackgroundMaterial("mica");
   } else if (process.platform === "darwin") {
-    statsWin.setVibrancy("popover");
+    devtoolsWin.setVibrancy("popover");
   }
   if (VITE_DEV_SERVER_URL) {
-    statsWin.loadURL(`${VITE_DEV_SERVER_URL}#/stats`);
+    devtoolsWin.loadURL(`${VITE_DEV_SERVER_URL}#/devtools`);
   } else {
-    statsWin.loadFile(path.join(process.env.DIST || "", "index.html"), { hash: "stats" });
+    devtoolsWin.loadFile(path.join(process.env.DIST || "", "index.html"), { hash: "devtools" });
   }
-  statsWin.on("closed", () => {
-    statsWin = null;
+  devtoolsWin.on("closed", () => {
+    devtoolsWin = null;
   });
 }
 function createSettingsWindow() {
@@ -189,18 +203,32 @@ function createWindow() {
   electron.ipcMain.on("open-settings", () => {
     createSettingsWindow();
   });
+  electron.ipcMain.on("open-devtools", () => {
+    createDevtoolsWindow();
+  });
+  electron.ipcMain.on("update-devtools", (e, data) => {
+    latestDevtools = data;
+    if (devtoolsWin) {
+      devtoolsWin.webContents.send("devtools-updated", data);
+    }
+  });
+  electron.ipcMain.on("request-devtools", (e) => {
+    e.sender.send("devtools-updated", latestDevtools);
+  });
   electron.ipcMain.on("open-stats", () => {
-    createStatsWindow();
+    createDevtoolsWindow();
   });
   electron.ipcMain.on("update-stats", (e, data) => {
-    latestStats = data;
-    if (statsWin) {
-      statsWin.webContents.send("stats-updated", data);
+    latestDevtools = data;
+    if (devtoolsWin) {
+      devtoolsWin.webContents.send("devtools-updated", data);
     }
   });
   electron.ipcMain.on("request-stats", (e) => {
-    e.sender.send("stats-updated", latestStats);
+    e.sender.send("devtools-updated", latestDevtools);
   });
+  electron.ipcMain.removeHandler("get-gateway-access-token");
+  electron.ipcMain.handle("get-gateway-access-token", () => readGatewayAccessToken());
 }
 electron.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

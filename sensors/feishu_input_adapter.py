@@ -7,13 +7,11 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from clients.gateway_client import GatewayConversationClient
 from adapters.feishu_ws_client import FeishuWSClient
+from core.interaction_response_service import InteractionResponseService
 from core.io_protocol import (
-    EventTarget,
-    EventType,
-    InboundEvent,
     SourceKind,
-    TargetKind,
     make_source,
 )
 
@@ -32,20 +30,54 @@ def _parse_confirm_response(text: str) -> bool | None:
 
 
 class FeishuInputAdapter:
-    def __init__(self, event_bus, session_manager, config):
+    def __init__(self, event_bus, session_manager, config, output_adapter=None):
         self._event_bus = event_bus
+        self._interaction_responses = InteractionResponseService(event_bus)
         self._session_manager = session_manager
         self._config = config
+        self._output_adapter = output_adapter
+        self._formal_client_chain_enabled = output_adapter is not None
         self._app_id = str(self._config.get("feishu_app_id") or "").strip()
         self._chat_registry_path = Path(
             self._config.get("feishu_chat_registry_path") or "user/feishu_chat_ids.json"
         )
         self._known_chat_ids = self._load_known_chat_ids()
+        self._gateway_clients: dict[str, GatewayConversationClient] = {}
+        host = str(self._config.get("gateway_host") or "127.0.0.1").strip() or "127.0.0.1"
+        if host in {"0.0.0.0", "::", "::0"}:
+            host = "127.0.0.1"
+        port = int(self._config.get("gateway_port") or 8000)
+        self._gateway_base_url = f"http://{host}:{port}"
+        self._gateway_access_token = str(self._config.get("gateway_access_token") or "").strip()
         self._client = FeishuWSClient(
             self._app_id,
             self._config.get("feishu_app_secret") or "",
             self.handle_event,
         )
+        if self._formal_client_chain_enabled:
+            logger.info("Feishu 输入已切到 Client API + client/ws 正式主链。")
+        else:
+            logger.warning("Feishu 输入仍处于兼容事件总线模式；正式运行请通过 Client API + client/ws 主链接入。")
+
+    def _use_formal_client_chain(self) -> bool:
+        return self._formal_client_chain_enabled
+
+    async def _get_gateway_client(self, chat_id: str) -> GatewayConversationClient:
+        client = self._gateway_clients.get(chat_id)
+        if client is None:
+            client = GatewayConversationClient(
+                base_url=self._gateway_base_url,
+                client_id=f"feishu-{chat_id}",
+                client_type="feishu",
+                display_name=f"Feishu {chat_id}",
+                workspace_id="personal",
+                access_token=self._gateway_access_token,
+                thread_title=f"Feishu Chat {chat_id}",
+                event_handler=lambda payload, cid=chat_id: self._output_adapter.send_client_event(cid, payload),
+            )
+            self._gateway_clients[chat_id] = client
+        await client.start()
+        return client
 
     def _is_self_message(self, sender: dict) -> bool:
         sender = sender or {}
@@ -164,10 +196,56 @@ class FeishuInputAdapter:
             message_id=message.get("message_id", ""),
             chat_type=message.get("chat_type", ""),
         )
-        session_id = self._session_manager.get_or_create_session(
+        if self._use_formal_client_chain():
+            client = await self._get_gateway_client(chat_id)
+            confirm_value = _parse_confirm_response(text)
+            pending_confirm = self._output_adapter.get_pending_confirm_request(chat_id)
+            if confirm_value is not None and pending_confirm:
+                try:
+                    await client.submit_confirm_response(
+                        request_id=pending_confirm,
+                        accepted=confirm_value,
+                    )
+                except Exception:
+                    await client.send_command(
+                        "confirm_response",
+                        request_id=pending_confirm,
+                        accepted=confirm_value,
+                        metadata={"source": "feishu", "chat_id": chat_id},
+                    )
+                return
+            pending_human_input = self._output_adapter.resolve_human_input(chat_id, text)
+            if pending_human_input is not None:
+                try:
+                    await client.submit_human_input_response(
+                        request_id=pending_human_input.get("request_id", ""),
+                        answer_text=pending_human_input.get("answer_text", ""),
+                        selected_option=pending_human_input.get("selected_option"),
+                    )
+                except Exception:
+                    await client.send_command(
+                        "input_response",
+                        request_id=pending_human_input.get("request_id", ""),
+                        answer_text=pending_human_input.get("answer_text", ""),
+                        selected_option=pending_human_input.get("selected_option"),
+                        metadata={"source": "feishu", "chat_id": chat_id},
+                    )
+                return
+            await client.send_message(
+                text,
+                metadata={
+                    "message_id": message.get("message_id", ""),
+                    "chat_id": chat_id,
+                    "chat_type": message.get("chat_type", ""),
+                },
+            )
+            return
+
+        session_id = self._session_manager.bind_runtime_session(
             source,
             session_id=f"feishu:chat:{chat_id}",
         )
+        interaction_responses = getattr(self, "_interaction_responses", None) or InteractionResponseService(self._event_bus)
         message_id = str(message.get("message_id", "")).strip()
         if message_id:
             existing_event_id = self._session_manager.get_recent_inbound_event_id(
@@ -178,11 +256,7 @@ class FeishuInputAdapter:
             if existing_event_id:
                 return
         confirm_value = _parse_confirm_response(text)
-        if (
-            confirm_value is not None
-            and self._event_bus.has_pending_confirmation
-            and session_id == self._event_bus.pending_confirmation_session_id
-        ):
+        if confirm_value is not None and interaction_responses.has_pending_confirmation(session_id=session_id):
             if message_id:
                 self._session_manager.remember_inbound_event_id(
                     session_id,
@@ -190,14 +264,15 @@ class FeishuInputAdapter:
                     message_id,
                     f"feishu-confirm:{message_id}",
                 )
-            self._event_bus.submit_confirmation_response(
+            interaction_responses.submit_confirmation_response(
                 confirm_value,
-                request_id=self._event_bus.pending_request_id,
+                request_id=interaction_responses.get_pending_confirmation_request_id(session_id=session_id),
                 session_id=session_id,
+                client_id="feishu-bot",
             )
             return
-        if self._event_bus.get_pending_human_input_request(session_id=session_id) is not None:
-            response = self._event_bus.normalize_human_input_text(text, session_id=session_id)
+        if interaction_responses.get_pending_human_input_request(session_id=session_id) is not None:
+            response = interaction_responses.normalize_human_input_text(text, session_id=session_id)
             if response is not None:
                 if message_id:
                     self._session_manager.remember_inbound_event_id(
@@ -206,13 +281,15 @@ class FeishuInputAdapter:
                         message_id,
                         f"feishu-human-input:{message_id}",
                     )
-                self._event_bus.submit_human_input_response(
+                interaction_responses.submit_human_input_response(
                     response.get("answer_text", ""),
                     request_id=response.get("request_id", ""),
                     session_id=response.get("session_id", session_id),
                     selected_option=response.get("selected_option"),
                 )
                 return
+        from core.io_protocol import EventTarget, EventType, InboundEvent, TargetKind
+
         inbound_event = InboundEvent(
             session_id=session_id,
             type=EventType.MESSAGE.value,
@@ -241,4 +318,7 @@ class FeishuInputAdapter:
         await self._client.start()
 
     async def close(self):
+        for client in self._gateway_clients.values():
+            await client.close()
+        self._gateway_clients.clear()
         await self._client.stop()

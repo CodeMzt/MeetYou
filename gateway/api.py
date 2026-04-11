@@ -12,30 +12,21 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
 
 from core.exceptions import ConfigError
-from core.io_protocol import (
-    EventTarget,
-    EventType,
-    InboundEvent,
-    SourceKind,
-    TargetKind,
-    make_source,
-)
+from core.interaction_response_service import InteractionResponseService
 from core.protocol_schema import build_ui_protocol_schema
+from gateway.client_ws import ClientWebSocketManager
+from gateway.agent_ws_manager import AgentConnectionManager
+from gateway.dependencies import GatewayDependencies
 from gateway.models import (
-    AckPayload,
-    AckResponse,
     ConfigEntryResponse,
     ConfigPatchRequest,
     ConfigPatchResponse,
     ConfigSnapshotResponse,
-    ControlRequest,
     ErrorResponse,
     HealthEnvelopeResponse,
     HealthResponse,
-    InputRequest,
     MemoryGraphResponse,
     MemorySnapshotResponse,
     RuntimeEnvelopePayload,
@@ -44,8 +35,8 @@ from gateway.models import (
     RuntimeUsageResponse,
     UiProtocolSchemaEnvelopeResponse,
     UiProtocolSchemaResponse,
-    WebSocketCommand,
 )
+from gateway.routes import build_agent_router, build_client_router, build_developer_router, build_operator_router
 from service_runtime.models import RuntimeError, RuntimeErrorCategory
 from gateway.ws_manager import WebSocketManager, WebSocketOutputAdapter
 
@@ -77,11 +68,29 @@ class FastAPIGateway:
         runtime_debug_getter=None,
         health_getter=None,
         ws_delivery_observer=None,
+        core_domain=None,
+        agent_access_token: str = "",
         access_token: str = "",
         cors_origins: list[str] | tuple[str, ...] | None = None,
     ):
+        self._dependencies = GatewayDependencies(
+            event_bus=event_bus,
+            session_manager=session_manager,
+            interaction_response_service=InteractionResponseService(event_bus),
+            core_domain=core_domain,
+            config_snapshot_getter=config_snapshot_getter,
+            config_item_getter=config_item_getter,
+            config_updater=config_updater,
+            memory_snapshot_getter=memory_snapshot_getter,
+            memory_graph_getter=memory_graph_getter,
+            runtime_state_getter=runtime_state_getter,
+            runtime_usage_getter=runtime_usage_getter,
+            runtime_debug_getter=runtime_debug_getter,
+            health_getter=health_getter,
+        )
         self._event_bus = event_bus
         self._session_manager = session_manager
+        self._interaction_responses = self._dependencies.interaction_response_service
         self._config_snapshot_getter = config_snapshot_getter
         self._config_item_getter = config_item_getter
         self._config_updater = config_updater
@@ -91,6 +100,7 @@ class FastAPIGateway:
         self._runtime_usage_getter = runtime_usage_getter
         self._runtime_debug_getter = runtime_debug_getter
         self._health_getter = health_getter
+        self._agent_access_token = str(agent_access_token or "").strip() or str(access_token or "").strip()
         self._access_token = str(access_token or "").strip()
         self._cors_origins = tuple(
             origin
@@ -101,6 +111,8 @@ class FastAPIGateway:
             if origin
         )
         self.ws_manager = WebSocketManager(delivery_observer=ws_delivery_observer)
+        self.client_ws_manager = ClientWebSocketManager()
+        self.agent_ws_manager = AgentConnectionManager()
         self.output_adapter = WebSocketOutputAdapter(self.ws_manager)
         self.app = FastAPI(title="MeetYou Gateway")
         self.app.add_middleware(
@@ -108,7 +120,7 @@ class FastAPIGateway:
             allow_origins=list(self._cors_origins),
             allow_origin_regex=_LOOPBACK_ORIGIN_RE.pattern,
             allow_credentials=False,
-            allow_methods=["GET", "POST", "PATCH"],
+            allow_methods=["GET", "POST", "PATCH", "PUT"],
             allow_headers=["Authorization", "Content-Type", "X-API-Key"],
         )
         self._server = None
@@ -215,6 +227,22 @@ class FastAPIGateway:
             ),
         )
 
+    def _require_core_domain(self):
+        if self._dependencies.core_domain is not None:
+            return self._dependencies.core_domain
+        self._raise_http_error(
+            status_code=503,
+            code="core_domain_unavailable",
+            category=RuntimeErrorCategory.DEPENDENCY.value,
+            message="Core domain services are not available",
+        )
+
+    async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict) -> None:
+        await self.client_ws_manager.publish_event(thread_id, event_type=event_type, payload=payload)
+
+    async def dispatch_agent_call(self, *, agent_id: str, payload: dict) -> bool:
+        return await self.agent_ws_manager.send_to_agent(agent_id, payload)
+
     def _extract_bearer_token(self, authorization: str) -> str:
         scheme, _, token = str(authorization or "").partition(" ")
         if scheme.lower() != "bearer":
@@ -255,6 +283,20 @@ class FastAPIGateway:
             code="unauthorized",
             category=RuntimeErrorCategory.RUNTIME.value,
             message="缺少有效访问令牌",
+            details={"auth_type": "bearer_or_api_key"},
+        )
+
+    def _require_agent_http_auth(self, request: Request) -> None:
+        if not self._agent_access_token:
+            return
+        access_token = self._resolve_http_access_token(request)
+        if access_token == self._agent_access_token:
+            return
+        self._raise_http_error(
+            status_code=401,
+            code="unauthorized",
+            category=RuntimeErrorCategory.RUNTIME.value,
+            message="缺少有效 agent 访问令牌",
             details={"auth_type": "bearer_or_api_key"},
         )
 
@@ -311,6 +353,33 @@ class FastAPIGateway:
         )
         return False
 
+    async def _authorize_agent_websocket(self, websocket: WebSocket) -> bool:
+        origin = websocket.headers.get("origin", "")
+        if origin and not self._is_origin_allowed(origin):
+            await self._send_ws_error_and_close(
+                websocket,
+                code="origin_not_allowed",
+                category=RuntimeErrorCategory.RUNTIME.value,
+                message="当前 Origin 不在允许列表内",
+                details={"origin": origin},
+                close_code=status.WS_1008_POLICY_VIOLATION,
+            )
+            return False
+        if not self._agent_access_token:
+            return True
+        access_token = self._resolve_ws_access_token(websocket)
+        if access_token == self._agent_access_token:
+            return True
+        await self._send_ws_error_and_close(
+            websocket,
+            code="unauthorized",
+            category=RuntimeErrorCategory.RUNTIME.value,
+            message="缺少有效 agent 访问令牌",
+            details={"auth_type": "bearer_or_api_key_or_query"},
+            close_code=4401,
+        )
+        return False
+
     async def _safe_send_json(self, websocket: WebSocket, payload: dict) -> bool:
         try:
             await websocket.send_json(payload)
@@ -321,6 +390,11 @@ class FastAPIGateway:
             return False
 
     def _setup_routes(self):
+        self.app.include_router(build_agent_router(self))
+        self.app.include_router(build_client_router(self))
+        self.app.include_router(build_operator_router(self))
+        self.app.include_router(build_developer_router(self))
+
         @self.app.get("/health", response_model=HealthEnvelopeResponse)
         async def health():
             payload = await self._resolve(self._health_getter) if self._health_getter is not None else {}
@@ -341,141 +415,6 @@ class FastAPIGateway:
             return UiProtocolSchemaEnvelopeResponse(
                 schema_name=_HTTP_SCHEMA,
                 ui_schema=UiProtocolSchemaResponse(**build_ui_protocol_schema()),
-            )
-
-        @self.app.post("/inputs", response_model=AckResponse)
-        async def post_inputs(http_request: Request, request: InputRequest):
-            self._require_http_auth(http_request)
-            metadata = dict(request.metadata)
-            if request.preferred_mode:
-                metadata["preferred_mode"] = request.preferred_mode
-            if request.options is not None:
-                metadata["input_options"] = request.options.model_dump(exclude_none=True)
-            client_message_id = str(request.client_message_id or "").strip()
-            if client_message_id:
-                metadata["client_message_id"] = client_message_id
-            source = make_source(SourceKind.WEB.value, request.source_id, **request.metadata)
-            session_id = self._session_manager.get_or_create_session(source, request.session_id)
-            if client_message_id:
-                existing_event_id = self._session_manager.get_recent_inbound_event_id(
-                    session_id,
-                    source,
-                    client_message_id,
-                )
-                if existing_event_id:
-                    return AckResponse(
-                        schema_name=_HTTP_SCHEMA,
-                        ack=AckPayload(
-                            action="input.accepted",
-                            session_id=session_id,
-                            event_id=existing_event_id,
-                        ),
-                    )
-            event = InboundEvent(
-                session_id=session_id,
-                type=EventType.MESSAGE.value,
-                role=request.role,
-                content=request.content,
-                source=source,
-                target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
-                metadata=metadata,
-            )
-            if client_message_id:
-                remembered_event_id = self._session_manager.remember_inbound_event_id(
-                    session_id,
-                    source,
-                    client_message_id,
-                    event.event_id,
-                )
-                if remembered_event_id != event.event_id:
-                    return AckResponse(
-                        schema_name=_HTTP_SCHEMA,
-                        ack=AckPayload(
-                            action="input.accepted",
-                            session_id=session_id,
-                            event_id=remembered_event_id,
-                        ),
-                    )
-            await self._event_bus.inbound_queue.put(event)
-            return AckResponse(
-                schema_name=_HTTP_SCHEMA,
-                ack=AckPayload(
-                    action="input.accepted",
-                    session_id=session_id,
-                    event_id=event.event_id,
-                ),
-            )
-
-        @self.app.post("/controls", response_model=AckResponse)
-        async def post_controls(http_request: Request, request: ControlRequest):
-            self._require_http_auth(http_request)
-            metadata = dict(request.metadata)
-            metadata["control_kind"] = "reply_control"
-            client_request_id = str(request.client_request_id or "").strip()
-            if client_request_id:
-                metadata["client_request_id"] = client_request_id
-            source = make_source(SourceKind.WEB.value, request.source_id, **request.metadata)
-            session_id = self._session_manager.get_or_create_session(source, request.session_id)
-            if client_request_id:
-                existing_event_id = self._session_manager.get_recent_inbound_event_id(
-                    session_id,
-                    source,
-                    client_request_id,
-                )
-                if existing_event_id:
-                    return AckResponse(
-                        schema_name=_HTTP_SCHEMA,
-                        ack=AckPayload(
-                            action=request.action,
-                            session_id=session_id,
-                            event_id=existing_event_id,
-                            request_id=client_request_id,
-                            status="accepted",
-                        ),
-                    )
-            event = InboundEvent(
-                session_id=session_id,
-                type=EventType.CONTROL.value,
-                role="system",
-                content={
-                    "action": request.action,
-                    "guidance": request.guidance,
-                    "checkpoint_id": request.checkpoint_id,
-                    "turn_id": request.turn_id,
-                    "stream_id": request.stream_id,
-                },
-                source=source,
-                target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
-                metadata=metadata,
-            )
-            if client_request_id:
-                remembered_event_id = self._session_manager.remember_inbound_event_id(
-                    session_id,
-                    source,
-                    client_request_id,
-                    event.event_id,
-                )
-                if remembered_event_id != event.event_id:
-                    return AckResponse(
-                        schema_name=_HTTP_SCHEMA,
-                        ack=AckPayload(
-                            action=request.action,
-                            session_id=session_id,
-                            event_id=remembered_event_id,
-                            request_id=client_request_id,
-                            status="accepted",
-                        ),
-                    )
-            await self._event_bus.inbound_queue.put(event)
-            return AckResponse(
-                schema_name=_HTTP_SCHEMA,
-                ack=AckPayload(
-                    action=request.action,
-                    session_id=session_id,
-                    event_id=event.event_id,
-                    request_id=client_request_id,
-                    status="accepted",
-                ),
             )
 
         @self.app.get("/config", response_model=ConfigSnapshotResponse)
@@ -627,245 +566,18 @@ class FastAPIGateway:
         async def websocket_endpoint(websocket: WebSocket):
             if not await self._authorize_websocket(websocket):
                 return
-            await websocket.accept()
-            source_id = websocket.query_params.get("source_id", "websocket")
-            requested_session_id = websocket.query_params.get("session_id")
-            source = make_source(SourceKind.WEB.value, source_id)
-            session_id = self._session_manager.get_or_create_session(source, requested_session_id)
-            await self.ws_manager.connect(session_id, websocket)
-            connected = await self._safe_send_json(websocket, {
-                "schema": _WS_SCHEMA,
-                "kind": "connection",
-                "connection": {
-                    "session_id": session_id,
-                    "source_id": source_id,
-                    "status": "connected",
+            await self._send_ws_error_and_close(
+                websocket,
+                code="legacy_websocket_path_removed",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="根路径 /ws 已停止承载聊天流，请改用 /client/ws。",
+                details={
+                    "legacy_path": "/ws",
+                    "replacement_path": "/client/ws",
+                    "required_query": ["thread_id"],
                 },
-            })
-            if not connected:
-                await self.ws_manager.disconnect(session_id, websocket)
-                return
-            try:
-                while True:
-                    try:
-                        command = WebSocketCommand.model_validate(
-                            await websocket.receive_json()
-                        )
-                    except WebSocketDisconnect:
-                        break
-                    except ValidationError as e:
-                        error = RuntimeError(
-                            code="invalid_payload",
-                            category="validation",
-                            message=str(e),
-                        )
-                        sent = await self._safe_send_json(websocket, {
-                            "schema": _WS_SCHEMA,
-                            "kind": "error",
-                            "error": error.model_dump(),
-                        })
-                        if not sent:
-                            break
-                        continue
-                    if command.action == "ping":
-                        sent = await self._safe_send_json(websocket, {
-                            "schema": _WS_SCHEMA,
-                            "kind": "pong",
-                        })
-                        if not sent:
-                            break
-                        continue
-                    if command.action == "confirm_response":
-                        if command.request_id is None or command.accepted is None:
-                            error = RuntimeError(
-                                code="invalid_confirm_response",
-                                category="validation",
-                                message="request_id 和 accepted 为必填字段",
-                            )
-                            sent = await self._safe_send_json(websocket, {
-                                "schema": _WS_SCHEMA,
-                                "kind": "error",
-                                "error": error.model_dump(),
-                            })
-                            if not sent:
-                                break
-                            continue
-                        resolved = self._event_bus.submit_confirmation_response(
-                            command.accepted,
-                            request_id=command.request_id,
-                            session_id=session_id,
-                        )
-                        if not resolved:
-                            error = RuntimeError(
-                                code="stale_confirm_response",
-                                message="确认请求已失效、已处理，或与当前会话不匹配。",
-                            )
-                            sent = await self._safe_send_json(websocket, {
-                                "schema": _WS_SCHEMA,
-                                "kind": "error",
-                                "error": error.model_dump(),
-                            })
-                            if not sent:
-                                break
-                            continue
-                        sent = await self._safe_send_json(websocket, {
-                            "schema": _WS_SCHEMA,
-                            "kind": "ack",
-                            "ack": {
-                                "action": command.action,
-                                "request_id": command.request_id,
-                                "session_id": session_id,
-                                "accepted": True,
-                            },
-                        })
-                        if not sent:
-                            break
-                        continue
-                    if command.action in {"stop", "append_guidance", "regenerate", "rollback", "list_checkpoints"}:
-                        client_request_id = str(command.client_request_id or "").strip()
-                        if client_request_id:
-                            existing_event_id = self._session_manager.get_recent_inbound_event_id(
-                                session_id,
-                                source,
-                                client_request_id,
-                            )
-                            if existing_event_id:
-                                sent = await self._safe_send_json(websocket, {
-                                    "schema": _WS_SCHEMA,
-                                    "kind": "ack",
-                                    "ack": {
-                                        "action": command.action,
-                                        "request_id": client_request_id,
-                                        "session_id": session_id,
-                                        "event_id": existing_event_id,
-                                        "accepted": True,
-                                        "status": "accepted",
-                                    },
-                                })
-                                if not sent:
-                                    break
-                                continue
-                        event = InboundEvent(
-                            session_id=session_id,
-                            type=EventType.CONTROL.value,
-                            role="system",
-                            content={
-                                "action": command.action,
-                                "guidance": command.guidance,
-                                "checkpoint_id": command.checkpoint_id,
-                                "turn_id": command.turn_id,
-                                "stream_id": command.stream_id,
-                            },
-                            source=source,
-                            target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
-                            metadata={
-                                "control_kind": "reply_control",
-                                **dict(command.metadata or {}),
-                                **({"client_request_id": client_request_id} if client_request_id else {}),
-                            },
-                        )
-                        if client_request_id:
-                            remembered_event_id = self._session_manager.remember_inbound_event_id(
-                                session_id,
-                                source,
-                                client_request_id,
-                                event.event_id,
-                            )
-                            if remembered_event_id != event.event_id:
-                                sent = await self._safe_send_json(websocket, {
-                                    "schema": _WS_SCHEMA,
-                                    "kind": "ack",
-                                    "ack": {
-                                        "action": command.action,
-                                        "request_id": client_request_id,
-                                        "session_id": session_id,
-                                        "event_id": remembered_event_id,
-                                        "accepted": True,
-                                        "status": "accepted",
-                                    },
-                                })
-                                if not sent:
-                                    break
-                                continue
-                        await self._event_bus.inbound_queue.put(event)
-                        sent = await self._safe_send_json(websocket, {
-                            "schema": _WS_SCHEMA,
-                            "kind": "ack",
-                            "ack": {
-                                "action": command.action,
-                                "request_id": client_request_id,
-                                "session_id": session_id,
-                                "event_id": event.event_id,
-                                "accepted": True,
-                                "status": "accepted",
-                            },
-                        })
-                        if not sent:
-                            break
-                        continue
-                    if command.action == "input_response":
-                        if command.request_id is None:
-                            error = RuntimeError(
-                                code="invalid_input_response",
-                                category="validation",
-                                message="request_id 为必填字段",
-                            )
-                            sent = await self._safe_send_json(websocket, {
-                                "schema": _WS_SCHEMA,
-                                "kind": "error",
-                                "error": error.model_dump(),
-                            })
-                            if not sent:
-                                break
-                            continue
-                        resolved = self._event_bus.submit_human_input_response(
-                            command.answer_text or "",
-                            request_id=command.request_id,
-                            session_id=session_id,
-                            selected_option=command.selected_option,
-                        )
-                        if not resolved:
-                            error = RuntimeError(
-                                code="stale_input_response",
-                                message="输入请求已失效、已处理，或与当前会话不匹配。",
-                            )
-                            sent = await self._safe_send_json(websocket, {
-                                "schema": _WS_SCHEMA,
-                                "kind": "error",
-                                "error": error.model_dump(),
-                            })
-                            if not sent:
-                                break
-                            continue
-                        sent = await self._safe_send_json(websocket, {
-                            "schema": _WS_SCHEMA,
-                            "kind": "ack",
-                            "ack": {
-                                "action": command.action,
-                                "request_id": command.request_id,
-                                "session_id": session_id,
-                                "accepted": True,
-                            },
-                        })
-                        if not sent:
-                            break
-                        continue
-                    error = RuntimeError(
-                        code="unsupported_action",
-                        category="validation",
-                        message=f"不支持的 action: {command.action}",
-                    )
-                    sent = await self._safe_send_json(websocket, {
-                        "schema": _WS_SCHEMA,
-                        "kind": "error",
-                        "error": error.model_dump(),
-                    })
-                    if not sent:
-                        break
-            except WebSocketDisconnect:
-                pass
-            finally:
-                await self.ws_manager.disconnect(session_id, websocket)
+                close_code=4404,
+            )
 
     async def start(self, host: str = "127.0.0.1", port: int = 8000):
         config = uvicorn.Config(self.app, host=host, port=port, log_level="info")

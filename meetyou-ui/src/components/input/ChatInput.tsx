@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react'
-import { Send, Settings2, Sparkles, BrainCircuit, Square } from 'lucide-react'
+import React, { useMemo, useRef, useState } from 'react'
+import { Send, Settings2, Sparkles, BrainCircuit, Square, Paperclip } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { AssistantMode, ThinkingOverride, ConfirmRequestPayload, HumanInputRequestPayload, RuntimeStateSnapshot, ConnectionState } from '../../types'
 import styles from './ChatInput.module.css'
@@ -13,10 +13,11 @@ const THINKING_OPTIONS: Array<{ label: string; value: ThinkingOverride }> = [
 ]
 
 const MODE_OPTIONS: Array<{ label: string; value: AssistantMode }> = [
-  { label: '普通', value: 'normal' },
-  { label: '自动', value: 'auto' },
+  { label: '通用', value: 'general' },
   { label: '研究', value: 'research' },
   { label: '文档', value: 'documents' },
+  { label: '学习', value: 'study' },
+  { label: '自动化', value: 'automation' },
 ]
 
 interface ChatInputProps {
@@ -33,6 +34,7 @@ interface ChatInputProps {
   pendingHumanInput: HumanInputRequestPayload | null
   runtimeSnapshot: RuntimeStateSnapshot | null
   sendControlCommand?: (action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback', params?: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string }) => void
+  onUploadAttachment?: (file: File) => void
 }
 
 export default function ChatInput({
@@ -48,15 +50,17 @@ export default function ChatInput({
   confirmRequest,
   pendingHumanInput,
   runtimeSnapshot,
-  sendControlCommand
+  sendControlCommand,
+  onUploadAttachment,
 }: ChatInputProps) {
   const [showOptions, setShowOptions] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerLocked = Boolean(confirmRequest || pendingHumanInput)
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
 
   const inputPlaceholder = useMemo(() => {
     if (!connected) {
-      return connectionState === 'connecting' ? '正在连接后端...' : '等待后端连接...'
+      return connectionState === 'connecting' ? '正在连接后端，可先输入...' : '后端未连接，可先输入，连接后发送...'
     }
     if (confirmRequest) return '请在上方确认操作...'
     if (pendingHumanInput) return pendingHumanInput.placeholder || '请在上方补充输入...'
@@ -128,9 +132,32 @@ export default function ChatInput({
           className={styles.settingsBtn} 
           onClick={() => setShowOptions(!showOptions)}
           disabled={composerLocked}
+          title="会话设置"
         >
           <Settings2 size={18} />
         </button>
+
+        <button
+          className={styles.settingsBtn}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={composerLocked}
+          title="上传附件"
+        >
+          <Paperclip size={18} />
+        </button>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          className={styles.hiddenFileInput}
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) {
+              onUploadAttachment?.(file)
+            }
+            event.currentTarget.value = ''
+          }}
+        />
 
         <textarea
           className={styles.textarea}
@@ -138,7 +165,7 @@ export default function ChatInput({
           value={inputVal}
           onChange={(e) => setInputVal(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={!connected || composerLocked}
+          disabled={composerLocked}
           rows={1}
           autoFocus
         />

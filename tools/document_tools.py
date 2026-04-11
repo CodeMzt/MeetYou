@@ -132,9 +132,124 @@ def _dedupe_keep_order(items: list[str]) -> list[str]:
     return output
 
 
+def _is_hidden_path(path: Path) -> bool:
+    return path.name.startswith(".")
+
+
+def _looks_binary_path(path: Path) -> bool:
+    return path.suffix.lower() in _BINARY_EXTENSIONS
+
+
+def build_workspace_analysis_payload(root: Path, *, depth: int = 3, include_hidden: bool = False, focus: str = "") -> dict[str, Any]:
+    if not root.exists():
+        return {"tool": "analyze_workspace", "path": str(root), "status": "missing"}
+    if not root.is_dir():
+        return {"tool": "analyze_workspace", "path": str(root), "status": "not_directory"}
+
+    safe_depth = max(1, min(int(depth or 3), 6))
+    focus_lower = str(focus or "").strip().lower()
+    tree_preview: list[str] = []
+    extension_counts: dict[str, int] = {}
+    manifest_files: list[str] = []
+    entry_clues: list[str] = []
+    large_files: list[dict[str, Any]] = []
+    binary_files: list[str] = []
+    focus_hits: list[str] = []
+    total_files = 0
+    total_dirs = 0
+
+    def walk(current: Path, current_depth: int) -> None:
+        nonlocal total_files, total_dirs
+        try:
+            children = sorted(current.iterdir(), key=lambda item: (item.is_file(), item.name.lower()))
+        except Exception:
+            return
+
+        for child in children:
+            if not include_hidden and _is_hidden_path(child):
+                continue
+
+            rel = _safe_relpath(child, root)
+            tree_preview.append(f"{'  ' * current_depth}{child.name}/" if child.is_dir() else f"{'  ' * current_depth}{child.name}")
+            if child.is_dir():
+                total_dirs += 1
+                if current_depth + 1 < safe_depth:
+                    walk(child, current_depth + 1)
+                continue
+
+            total_files += 1
+            suffix = child.suffix.lower() or "[no_ext]"
+            extension_counts[suffix] = extension_counts.get(suffix, 0) + 1
+
+            if child.name in _MANIFEST_NAMES:
+                manifest_files.append(rel)
+            if child.name in _ENTRYPOINT_NAMES:
+                entry_clues.append(rel)
+            if child.stat().st_size >= 5_000_000:
+                large_files.append({"path": rel, "size_bytes": child.stat().st_size})
+            if _looks_binary_path(child):
+                binary_files.append(rel)
+            if focus_lower and focus_lower in rel.lower():
+                focus_hits.append(rel)
+
+    walk(root, 0)
+
+    extension_summary = [
+        {"extension": extension, "count": count}
+        for extension, count in sorted(extension_counts.items(), key=lambda item: (-item[1], item[0]))[:12]
+    ]
+
+    return {
+        "tool": "analyze_workspace",
+        "path": str(root),
+        "status": "ok",
+        "focus": _normalize_text(focus),
+        "summary": {
+            "directory_count": total_dirs,
+            "file_count": total_files,
+            "extension_counts": extension_summary,
+            "manifest_files": _dedupe_keep_order(manifest_files)[:20],
+            "entry_clues": _dedupe_keep_order(entry_clues)[:20],
+            "large_files": sorted(large_files, key=lambda item: item["size_bytes"], reverse=True)[:10],
+            "binary_files": _dedupe_keep_order(binary_files)[:20],
+            "focus_hits": _dedupe_keep_order(focus_hits)[:20],
+            "tree_preview": tree_preview[:80],
+        },
+        "answer_style": "Use the workspace summary to explain the directory structure, likely entrypoints, manifests, and potential hotspots.",
+    }
+
+
 class DocumentTools:
-    def __init__(self, mode_manager):
+    def __init__(self, mode_manager, agent_dispatcher=None, allow_local_fallback: bool = True):
         self._mode_manager = mode_manager
+        self._agent_dispatcher = agent_dispatcher
+        self._allow_local_fallback = bool(allow_local_fallback)
+
+    def set_agent_dispatcher(self, dispatcher) -> None:
+        self._agent_dispatcher = dispatcher
+
+    def set_local_fallback_enabled(self, enabled: bool) -> None:
+        self._allow_local_fallback = bool(enabled)
+
+    def _ensure_local_capability_available(
+        self,
+        *,
+        capability_suffix: str,
+        session_id: str = "",
+        path: str = "",
+    ) -> None:
+        if self._agent_dispatcher is not None or self._allow_local_fallback:
+            return
+        error = RuntimeError("Core local fallback is disabled")
+        error.tool_error_code = "local_agent_required"
+        error.tool_error_message = "当前 Core 不再直接执行本地文档能力，请连接 Desktop Agent 后重试。"
+        error.tool_error_details = {
+            "capability_suffix": capability_suffix,
+            "session_id": str(session_id or ""),
+            "path": str(path or ""),
+        }
+        error.tool_error_retryable = False
+        raise error
 
     def _parser_config(self) -> dict[str, Any]:
         return self._mode_manager.get_document_parser_config()
@@ -146,10 +261,10 @@ class DocumentTools:
         return Path(raw).expanduser().resolve()
 
     def _is_hidden(self, path: Path) -> bool:
-        return path.name.startswith(".")
+        return _is_hidden_path(path)
 
     def _looks_binary(self, path: Path) -> bool:
-        return path.suffix.lower() in _BINARY_EXTENSIONS
+        return _looks_binary_path(path)
 
     def _chunk_text(self, text: str, chunking: str, *, max_chunks: int) -> list[dict[str, Any]]:
         normalized = str(text or "").strip()
@@ -185,6 +300,25 @@ class DocumentTools:
             except UnicodeDecodeError:
                 continue
         return path.read_text(encoding="utf-8", errors="replace")
+
+    def _read_content_from_text(self, path: Path, raw_text: str) -> tuple[str, str]:
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            payload = json.loads(raw_text)
+            return "json", json.dumps(payload, ensure_ascii=False, indent=2)
+        if suffix == ".csv":
+            rows: list[list[str]] = []
+            reader = csv.reader(str(raw_text or "").splitlines())
+            for index, row in enumerate(reader):
+                rows.append([str(item) for item in row])
+                if index >= 20:
+                    break
+            return "csv", "\n".join(", ".join(row) for row in rows)
+        if suffix in {".html", ".htm"}:
+            extractor = _HTMLTextExtractor()
+            extractor.feed(str(raw_text or ""))
+            return "html", extractor.get_text()
+        return "text", str(raw_text or "")
 
     def _read_json_file(self, path: Path) -> str:
         payload = json.loads(self._read_text_file(path))
@@ -366,6 +500,50 @@ class DocumentTools:
             "chunks": chunks,
         }
 
+    async def _collect_document_via_agent(
+        self,
+        path: Path,
+        *,
+        goal: str,
+        chunking: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        config = self._parser_config()
+        max_total_chars = int(config.get("max_total_chars", 24_000) or 24_000)
+        max_chunks = int(config.get("max_chunks_per_document", 12) or 12)
+        try:
+            result = await self._agent_dispatcher.dispatch_local_capability(
+                capability_suffix="file.read",
+                arguments={"path": str(path), "max_chars": max_total_chars},
+                session_id=session_id,
+                title=f"Read Local File: {path.name}",
+                operation_type="tool.read_local_documents",
+            )
+            doc_type, raw_content = self._read_content_from_text(path, str(result.get("content") or ""))
+        except Exception as exc:
+            return {
+                "path": str(path),
+                "status": "unreadable",
+                "warning": str(exc),
+            }
+
+        content = str(raw_content or "").strip()
+        trimmed = content[:max_total_chars]
+        truncated = len(content) > len(trimmed) or bool(result.get("truncated"))
+        chunks = self._chunk_text(trimmed, chunking, max_chunks=max_chunks)
+        return {
+            "path": str(path),
+            "name": path.name,
+            "type": doc_type,
+            "status": "ok",
+            "size_bytes": int(result.get("size_bytes") or 0),
+            "goal": _normalize_text(goal),
+            "truncated": truncated,
+            "char_count": len(content),
+            "content_excerpt": _trim_text(trimmed, 2000),
+            "chunks": chunks,
+        }
+
     async def analyze_workspace(
         self,
         path: str,
@@ -377,93 +555,28 @@ class DocumentTools:
         route_context: dict[str, Any] | None = None,
         activity_callback=None,
     ) -> str:
-        del session_id, source, route_context, activity_callback
+        del source, route_context, activity_callback
         root = self._resolve_path(path)
-        if not root.exists():
-            return json.dumps(
-                {"tool": "analyze_workspace", "path": str(root), "status": "missing"},
-                ensure_ascii=False,
-                indent=2,
+        self._ensure_local_capability_available(
+            capability_suffix="workspace.analyze",
+            session_id=session_id,
+            path=str(root),
+        )
+        if self._agent_dispatcher is None:
+            payload = build_workspace_analysis_payload(root, depth=depth, include_hidden=include_hidden, focus=focus)
+        else:
+            payload = await self._agent_dispatcher.dispatch_local_capability(
+                capability_suffix="workspace.analyze",
+                arguments={
+                    "path": str(root),
+                    "depth": depth,
+                    "include_hidden": include_hidden,
+                    "focus": focus,
+                },
+                session_id=session_id,
+                title=f"Analyze Workspace: {root.name}",
+                operation_type="tool.analyze_workspace",
             )
-        if not root.is_dir():
-            return json.dumps(
-                {"tool": "analyze_workspace", "path": str(root), "status": "not_directory"},
-                ensure_ascii=False,
-                indent=2,
-            )
-
-        safe_depth = max(1, min(int(depth or 3), 6))
-        focus_lower = str(focus or "").strip().lower()
-        tree_preview: list[str] = []
-        extension_counts: dict[str, int] = {}
-        manifest_files: list[str] = []
-        entry_clues: list[str] = []
-        large_files: list[dict[str, Any]] = []
-        binary_files: list[str] = []
-        focus_hits: list[str] = []
-        total_files = 0
-        total_dirs = 0
-
-        def walk(current: Path, current_depth: int) -> None:
-            nonlocal total_files, total_dirs
-            try:
-                children = sorted(current.iterdir(), key=lambda item: (item.is_file(), item.name.lower()))
-            except Exception:
-                return
-
-            for child in children:
-                if not include_hidden and self._is_hidden(child):
-                    continue
-
-                rel = _safe_relpath(child, root)
-                tree_preview.append(f"{'  ' * current_depth}{child.name}/" if child.is_dir() else f"{'  ' * current_depth}{child.name}")
-                if child.is_dir():
-                    total_dirs += 1
-                    if current_depth + 1 < safe_depth:
-                        walk(child, current_depth + 1)
-                    continue
-
-                total_files += 1
-                suffix = child.suffix.lower() or "[no_ext]"
-                extension_counts[suffix] = extension_counts.get(suffix, 0) + 1
-
-                lowered_name = child.name.lower()
-                if child.name in _MANIFEST_NAMES:
-                    manifest_files.append(rel)
-                if child.name in _ENTRYPOINT_NAMES:
-                    entry_clues.append(rel)
-                if child.stat().st_size >= 5_000_000:
-                    large_files.append({"path": rel, "size_bytes": child.stat().st_size})
-                if self._looks_binary(child):
-                    binary_files.append(rel)
-                if focus_lower and focus_lower in rel.lower():
-                    focus_hits.append(rel)
-
-        walk(root, 0)
-
-        extension_summary = [
-            {"extension": extension, "count": count}
-            for extension, count in sorted(extension_counts.items(), key=lambda item: (-item[1], item[0]))[:12]
-        ]
-
-        payload = {
-            "tool": "analyze_workspace",
-            "path": str(root),
-            "status": "ok",
-            "focus": _normalize_text(focus),
-            "summary": {
-                "directory_count": total_dirs,
-                "file_count": total_files,
-                "extension_counts": extension_summary,
-                "manifest_files": _dedupe_keep_order(manifest_files)[:20],
-                "entry_clues": _dedupe_keep_order(entry_clues)[:20],
-                "large_files": sorted(large_files, key=lambda item: item["size_bytes"], reverse=True)[:10],
-                "binary_files": _dedupe_keep_order(binary_files)[:20],
-                "focus_hits": _dedupe_keep_order(focus_hits)[:20],
-                "tree_preview": tree_preview[:80],
-            },
-            "answer_style": "Use the workspace summary to explain the directory structure, likely entrypoints, manifests, and potential hotspots.",
-        }
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
     async def read_local_documents(
@@ -476,9 +589,25 @@ class DocumentTools:
         route_context: dict[str, Any] | None = None,
         activity_callback=None,
     ) -> str:
-        del session_id, source, route_context, activity_callback
+        del source, route_context, activity_callback
         normalized_paths = [paths] if isinstance(paths, str) else list(paths or [])
-        documents = [self._collect_document(self._resolve_path(item), goal=goal, chunking=chunking) for item in normalized_paths]
+        self._ensure_local_capability_available(
+            capability_suffix="file.read",
+            session_id=session_id,
+            path=",".join(str(self._resolve_path(item)) for item in normalized_paths[:5]),
+        )
+        if self._agent_dispatcher is None:
+            documents = [self._collect_document(self._resolve_path(item), goal=goal, chunking=chunking) for item in normalized_paths]
+        else:
+            documents = [
+                await self._collect_document_via_agent(
+                    self._resolve_path(item),
+                    goal=goal,
+                    chunking=chunking,
+                    session_id=session_id,
+                )
+                for item in normalized_paths
+            ]
         readable = [item for item in documents if item.get("status") == "ok"]
         payload = {
             "tool": "read_local_documents",
@@ -503,7 +632,7 @@ class DocumentTools:
         route_context: dict[str, Any] | None = None,
         activity_callback=None,
     ) -> str:
-        del session_id, source, route_context, activity_callback, confirmed
+        del source, route_context, activity_callback, confirmed
         target = self._resolve_path(path)
         normalized_mode = str(mode or "overwrite").strip().lower() or "overwrite"
         trusted = self._mode_manager.is_trusted_write_path(str(target))
@@ -526,6 +655,23 @@ class DocumentTools:
         if not trusted:
             payload["status"] = "blocked_untrusted_path"
             payload["trusted_write_roots"] = self._mode_manager.get_trusted_write_roots()
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
+        self._ensure_local_capability_available(
+            capability_suffix="file.write",
+            session_id=session_id,
+            path=str(target),
+        )
+        if self._agent_dispatcher is not None:
+            result = await self._agent_dispatcher.dispatch_local_capability(
+                capability_suffix="file.write",
+                arguments={"path": str(target), "content": str(content or ""), "mode": normalized_mode},
+                session_id=session_id,
+                title=f"Write Local File: {target.name}",
+                operation_type="tool.write_local_document",
+            )
+            payload["status"] = "written"
+            payload["bytes_written"] = result.get("bytes_written", 0)
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -589,9 +735,14 @@ class DocumentTools:
         route_context: dict[str, Any] | None = None,
         activity_callback=None,
     ) -> str:
-        del session_id, source, route_context, activity_callback, confirmed
+        del source, route_context, activity_callback, confirmed
         target = self._resolve_path(path)
-        if not target.exists() or target.is_dir():
+        self._ensure_local_capability_available(
+            capability_suffix="file.read",
+            session_id=session_id,
+            path=str(target),
+        )
+        if self._agent_dispatcher is None and (not target.exists() or target.is_dir()):
             return json.dumps(
                 {
                     "tool": "rewrite_local_document",
@@ -603,7 +754,29 @@ class DocumentTools:
                 indent=2,
             )
 
-        original = self._read_text_file(target)
+        if self._agent_dispatcher is None:
+            original = self._read_text_file(target)
+        else:
+            try:
+                read_result = await self._agent_dispatcher.dispatch_local_capability(
+                    capability_suffix="file.read",
+                    arguments={"path": str(target), "max_chars": 200000},
+                    session_id=session_id,
+                    title=f"Read For Rewrite: {target.name}",
+                    operation_type="tool.rewrite_local_document.read",
+                )
+                original = str(read_result.get("content") or "")
+            except Exception:
+                return json.dumps(
+                    {
+                        "tool": "rewrite_local_document",
+                        "path": str(target),
+                        "status": "missing_or_not_file",
+                        "action_risk": "read",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
         payload = {
             "tool": "rewrite_local_document",
             "path": str(target),
@@ -643,6 +816,17 @@ class DocumentTools:
         if not self._mode_manager.is_trusted_write_path(str(target)):
             payload["status"] = "blocked_untrusted_path"
             payload["trusted_write_roots"] = self._mode_manager.get_trusted_write_roots()
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
+        if self._agent_dispatcher is not None:
+            await self._agent_dispatcher.dispatch_local_capability(
+                capability_suffix="file.write",
+                arguments={"path": str(target), "content": rewritten, "mode": "overwrite"},
+                session_id=session_id,
+                title=f"Rewrite Local File: {target.name}",
+                operation_type="tool.rewrite_local_document.write",
+            )
+            payload["status"] = "written"
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         target.write_text(rewritten, encoding="utf-8")

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
+import { fetchWithAuth, readErrorMessage } from '../apiClient';
+
 export interface MemoryRecord {
   id: string;
   type: string;
@@ -70,16 +72,20 @@ export function useMemory(baseUrl: string = 'http://127.0.0.1:8000') {
   const fetchMemory = useCallback(async (includeInvalidated = false) => {
     try {
       setLoading(true);
-      // Fetch snapshot
-      const resSnapshot = await fetch(`${baseUrl}/memory?include_invalidated=${includeInvalidated}`);
-      if (!resSnapshot.ok) throw new Error('Failed to fetch memory snapshot');
-      const dataSnapshot = await resSnapshot.json();
+      const [resSnapshot, resGraph] = await Promise.all([
+        fetchWithAuth(`${baseUrl}/operator/memory?include_invalidated=${includeInvalidated}`),
+        fetchWithAuth(`${baseUrl}/operator/memory/graph?include_invalidated=${includeInvalidated}`),
+      ]);
+      if (!resSnapshot.ok) {
+        const failure = await readErrorMessage(resSnapshot, 'Failed to fetch memory snapshot');
+        throw new Error(failure.message);
+      }
+      if (!resGraph.ok) {
+        const failure = await readErrorMessage(resGraph, 'Failed to fetch memory graph');
+        throw new Error(failure.message);
+      }
+      const [dataSnapshot, dataGraph] = await Promise.all([resSnapshot.json(), resGraph.json()]);
       setSnapshot(dataSnapshot);
-
-      // Fetch graph
-      const resGraph = await fetch(`${baseUrl}/memory/graph?include_invalidated=${includeInvalidated}`);
-      if (!resGraph.ok) throw new Error('Failed to fetch memory graph');
-      const dataGraph = await resGraph.json();
       setGraph(dataGraph);
 
       setError(null);

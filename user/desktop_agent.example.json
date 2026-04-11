@@ -1,0 +1,15 @@
+{
+  "core_base_url": "http://127.0.0.1:8000",
+  "agent_id": "desktop-main-agent",
+  "display_name": "Desktop Main Agent",
+  "workspace_ids": ["personal", "desktop-main", "study"],
+  "read_roots": ["."],
+  "trusted_write_roots": ["."],
+  "cmd_policy_path": "user/cmd_policy.json",
+  "mcp_servers_path": "user/mcp_servers.json",
+  "command_timeout_seconds": 120,
+  "heartbeat_interval_seconds": 20,
+  "reconnect_delay_seconds": 3,
+  "supports_offline_cache": true,
+  "transport_profile": "desktop_wss"
+}

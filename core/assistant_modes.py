@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from core.capability_registry import CapabilityRegistry
+from core.public_contract import to_internal_assistant_mode
 from core.prompt_assembler import PromptAssembler
 from core.route_runtime import RouteRuntime
 from core.semantic_router import SemanticRouterAgent
@@ -792,7 +793,7 @@ _DEFAULT_MCP_CATALOG = {
         "summary": "私有 Notion 知识库读取与检索。",
         "scenarios": ["office", "knowledge base", "workspace memory"],
         "risk_level": "read",
-        "auth_env": ["NOTION_API_KEY"],
+        "auth_env": ["NOTION_TOKEN"],
         "fallback_tools": ["search_knowledge", "search_memory", "organize_notes"],
         "enabled_by_default": False,
     },
@@ -883,7 +884,7 @@ def _unique_strings(values: list[Any] | tuple[Any, ...] | None) -> list[str]:
 
 
 def _normalize_mode(value: Any, *, fallback: str = ASSISTANT_MODE_NORMAL) -> str:
-    normalized = str(value or "").strip().lower()
+    normalized = to_internal_assistant_mode(value, fallback=fallback)
     if normalized in VALID_ASSISTANT_MODES:
         return normalized
     return fallback
@@ -942,6 +943,9 @@ class AssistantModeManager:
 
     def get_office_integrations(self) -> dict[str, Any]:
         return _deep_merge(_DEFAULT_OFFICE_INTEGRATIONS, _parse_json_config(self._config.get("office_integrations")))
+
+    def set_source_catalog_backend(self, backend, *, migrate_current: bool = False) -> None:
+        self._source_catalog.set_store_backend(backend, migrate_current=migrate_current)
 
     def get_source_catalog_path(self) -> str:
         return self._source_catalog.get_catalog_path()

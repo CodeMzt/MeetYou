@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Gauge, X, Minus, Square } from 'lucide-react'
 import './dashboard.css'
 import UsagePanel from './components/status/UsagePanel'
+import { fetchWithAuth } from './apiClient'
+import { parseRuntimeDebugEnvelope } from './protocolClient'
 import { RuntimeDebugSnapshot, RuntimeUsageSnapshot } from './types'
 
 export default function StatsWindow() {
@@ -11,23 +13,63 @@ export default function StatsWindow() {
 
   const [usageSnapshot, setUsageSnapshot] = useState<RuntimeUsageSnapshot | null>(null)
   const [runtimeDebugSnapshot, setRuntimeDebugSnapshot] = useState<RuntimeDebugSnapshot | null>(null)
+  const [sessionId, setSessionId] = useState('')
+  const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:8000')
+
+  useEffect(() => {
+    if (!sessionId) {
+      setRuntimeDebugSnapshot(null)
+      return
+    }
+
+    let cancelled = false
+
+    const loadDebug = async () => {
+      try {
+        const response = await fetchWithAuth(
+          `${baseUrl}/developer/runtime/debug?session_id=${encodeURIComponent(sessionId)}`,
+        )
+        if (!response.ok) {
+          return
+        }
+        const snapshot = parseRuntimeDebugEnvelope(await response.json())
+        if (!cancelled) {
+          setRuntimeDebugSnapshot(snapshot)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to load runtime debug snapshot:', error)
+        }
+      }
+    }
+
+    void loadDebug()
+    const timer = window.setInterval(() => {
+      void loadDebug()
+    }, 2000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [baseUrl, sessionId])
 
   useEffect(() => {
     // Listener for stats update
-    const handleStatsUpdated = (_event: any, data: { usageSnapshot: RuntimeUsageSnapshot | null, runtimeDebugSnapshot: RuntimeDebugSnapshot | null }) => {
+    const handleStatsUpdated = (_event: any, data: { usageSnapshot: RuntimeUsageSnapshot | null, sessionId?: string, baseUrl?: string }) => {
       setUsageSnapshot(data.usageSnapshot)
-      setRuntimeDebugSnapshot(data.runtimeDebugSnapshot)
+      setSessionId(data.sessionId || '')
+      setBaseUrl(data.baseUrl || 'http://127.0.0.1:8000')
     }
 
     // Register IPC listener
-    window.ipcRenderer?.on('stats-updated', handleStatsUpdated)
+    window.ipcRenderer?.on('devtools-updated', handleStatsUpdated)
 
-    // Request initial stats
-    window.ipcRenderer?.send('request-stats')
+    window.ipcRenderer?.send('request-devtools')
 
     return () => {
       // Cleanup listener
-      window.ipcRenderer?.off('stats-updated', handleStatsUpdated)
+      window.ipcRenderer?.off('devtools-updated', handleStatsUpdated)
     }
   }, [])
 
@@ -36,7 +78,7 @@ export default function StatsWindow() {
       {/* Titlebar */}
       <div className="titlebar dashboard-titlebar">
         <div className="titlebar-title" style={{ paddingLeft: 8 }}>
-          <Gauge size={16} /> Token / Context 统计
+          <Gauge size={16} /> 开发工具
         </div>
         <div style={{ flex: 1 }} />
         <div className="window-controls">

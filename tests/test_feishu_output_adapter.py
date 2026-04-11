@@ -240,6 +240,95 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1. A", message_calls[0]["json"]["content"])
         self.assertIn("2. B", message_calls[0]["json"]["content"])
 
+    async def test_client_event_confirm_request_prompts_user(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
+
+        await adapter.send_client_event(
+            "oc_test",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "confirm.requested",
+                    "request_id": "req-1",
+                    "content": "需要确认执行。",
+                },
+            },
+        )
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+        self.assertIn("确认编号: req-1", message_calls[0]["json"]["content"])
+        self.assertEqual(adapter.get_pending_confirm_request("oc_test"), "req-1")
+
+    async def test_client_event_operation_update_renders_status(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
+
+        await adapter.send_client_event(
+            "oc_test",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "operation.updated",
+                    "operation_id": "op-1",
+                    "status": "running",
+                    "detail": "desktop agent accepted",
+                },
+            },
+        )
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+        self.assertIn("[操作] op-1 running: desktop agent accepted", message_calls[0]["json"]["content"])
+
+    async def test_client_event_stream_renders_completed_answer(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
+
+        await adapter.send_client_event(
+            "oc_test",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "message.delta",
+                    "stream_id": "stream-1",
+                    "channel": "answer",
+                    "delta": "hello",
+                },
+            },
+        )
+        await adapter.send_client_event(
+            "oc_test",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "message.completed",
+                    "stream_id": "stream-1",
+                    "message": {"content": "hello"},
+                },
+            },
+        )
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

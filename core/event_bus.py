@@ -209,6 +209,9 @@ class EventBus:
         accepted: bool,
         request_id: str = "",
         session_id: str = "",
+        client_id: str = "",
+        approval_id: str = "",
+        reason: str = "",
     ) -> bool:
         """
         由 CLI、前端或飞书输入适配器调用：用户回复了确认请求。
@@ -231,6 +234,9 @@ class EventBus:
                 "accepted": accepted,
                 "request_id": pending.request_id,
                 "session_id": pending.session_id,
+                "client_id": str(client_id or "").strip(),
+                "approval_id": str(approval_id or "").strip(),
+                "reason": str(reason or "").strip(),
             },
         )
 
@@ -239,6 +245,9 @@ class EventBus:
         accepted: bool,
         request_id: str = "",
         session_id: str = "",
+        client_id: str = "",
+        approval_id: str = "",
+        reason: str = "",
     ) -> bool:
         """
         立即处理确认回执。
@@ -248,6 +257,9 @@ class EventBus:
             accepted,
             request_id=request_id,
             session_id=session_id,
+            client_id=client_id,
+            approval_id=approval_id,
+            reason=reason,
         )
 
     @property

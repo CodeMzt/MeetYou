@@ -26,19 +26,33 @@ def _safe_materials(value: Any) -> list[str]:
 
 
 class StudyTools:
-    def __init__(self, document_tools: DocumentTools):
+    def __init__(self, document_tools: DocumentTools, state_backend=None):
         self._document_tools = document_tools
         self._progress_path = Path("user/study_progress.json")
+        self._state_backend = state_backend
+
+    def set_state_backend(self, backend) -> None:
+        self._state_backend = backend
 
     def _load_progress(self) -> dict[str, Any]:
+        if self._state_backend is not None:
+            payload = self._state_backend.load()
+            if isinstance(payload, dict) and payload:
+                return payload
         if not self._progress_path.exists():
             return {"topics": []}
         try:
-            return json.loads(self._progress_path.read_text(encoding="utf-8"))
+            payload = json.loads(self._progress_path.read_text(encoding="utf-8"))
+            if self._state_backend is not None:
+                self._state_backend.save(payload)
+            return payload
         except Exception:
             return {"topics": []}
 
     def _save_progress(self, payload: dict[str, Any]) -> None:
+        if self._state_backend is not None:
+            self._state_backend.save(payload)
+            return
         self._progress_path.parent.mkdir(parents=True, exist_ok=True)
         self._progress_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

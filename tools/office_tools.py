@@ -25,20 +25,34 @@ def _safe_list(value: Any) -> list[str]:
 
 
 class OfficeTools:
-    def __init__(self, mode_manager, document_tools: DocumentTools):
+    def __init__(self, mode_manager, document_tools: DocumentTools, state_backend=None):
         self._mode_manager = mode_manager
         self._document_tools = document_tools
         self._state_path = Path("user/office_state.json")
+        self._state_backend = state_backend
+
+    def set_state_backend(self, backend) -> None:
+        self._state_backend = backend
 
     def _load_state(self) -> dict[str, Any]:
+        if self._state_backend is not None:
+            payload = self._state_backend.load()
+            if isinstance(payload, dict) and payload:
+                return payload
         if not self._state_path.exists():
             return {"schedules": [], "message_drafts": [], "synced_notes": []}
         try:
-            return json.loads(self._state_path.read_text(encoding="utf-8"))
+            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+            if self._state_backend is not None:
+                self._state_backend.save(payload)
+            return payload
         except Exception:
             return {"schedules": [], "message_drafts": [], "synced_notes": []}
 
     def _save_state(self, state: dict[str, Any]) -> None:
+        if self._state_backend is not None:
+            self._state_backend.save(state)
+            return
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         self._state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 

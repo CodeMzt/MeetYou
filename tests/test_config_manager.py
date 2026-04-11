@@ -15,6 +15,7 @@ class ConfigManagerTests(unittest.TestCase):
             "MEETYOU_API_KEY": os.environ.get("MEETYOU_API_KEY"),
             "MEETYOU_HEARTBEAT_API_KEY": os.environ.get("MEETYOU_HEARTBEAT_API_KEY"),
             "MEETYOU_EMBEDDING_API_KEY": os.environ.get("MEETYOU_EMBEDDING_API_KEY"),
+            "MEETYOU_DATABASE_URL": os.environ.get("MEETYOU_DATABASE_URL"),
             "MEETYOU_FEISHU_APP_ID": os.environ.get("MEETYOU_FEISHU_APP_ID"),
             "MEETYOU_FEISHU_APP_SECRET": os.environ.get("MEETYOU_FEISHU_APP_SECRET"),
         }
@@ -63,6 +64,51 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertNotEqual(snapshot["api_key"]["value"], "test-secret")
         self.assertEqual(config.get("api_key"), "test-secret")
 
+    def test_missing_core_mcp_config_logs_boundary_message(self):
+        with self.assertLogs("meetyou.config", level="INFO") as captured:
+            config = ConfigManager(
+                config_file_path=str(self.temp_root / "user" / "config.json"),
+                env_file_path=str(self.temp_root / ".env"),
+            )
+
+        diagnostic = config.get_mcp_server_config_diagnostic()
+        self.assertEqual(config.get_mcp_servers(), {})
+        self.assertEqual(diagnostic["status"], "missing")
+        self.assertIn("core_mcp_servers.json", diagnostic["path"])
+        self.assertIn("Desktop Agent", diagnostic["message"])
+        self.assertTrue(
+            any("Core MCP 配置文件不存在" in message for message in captured.output),
+            captured.output,
+        )
+
+    def test_core_mcp_config_is_loaded_separately_from_desktop_agent_mcp(self):
+        (self.temp_root / "user" / "core_mcp_servers.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "tavily_web": {
+                            "command": "npx.cmd",
+                            "args": ["-y", "tavily-mcp@0.1.3"],
+                            "enabled": True,
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        diagnostic = config.get_mcp_server_config_diagnostic()
+        self.assertEqual(sorted(config.get_mcp_servers()), ["tavily_web"])
+        self.assertEqual(diagnostic["status"], "loaded")
+        self.assertEqual(diagnostic["server_count"], 1)
+        self.assertIn("1 个服务端 MCP", diagnostic["message"])
+
     def test_load_config_strips_removed_legacy_keys(self):
         (self.temp_root / "user" / "config.json").write_text(
             json.dumps(
@@ -98,19 +144,22 @@ class ConfigManagerTests(unittest.TestCase):
             {
                 "api_provider": "anthropic",
                 "api_key": "new-secret",
+                "task_file_path": "user/custom_tasks.json",
             }
         )
         config.reload()
 
         self.assertEqual(warnings, [])
-        self.assertEqual(set(applied_keys), {"api_provider", "api_key"})
+        self.assertEqual(set(applied_keys), {"api_provider", "api_key", "task_file_path"})
         self.assertEqual(config.get("api_provider"), "anthropic")
         self.assertEqual(config.get("api_key"), "new-secret")
+        self.assertEqual(config.get("task_file_path"), "user/custom_tasks.json")
 
         config_data = json.loads((self.temp_root / "user" / "config.json").read_text(encoding="utf-8"))
         self.assertEqual(config_data["_meta"]["schema_version"], "2")
         self.assertEqual(config_data["_meta"]["revision"], 1)
         self.assertEqual(config_data["api_provider"], "anthropic")
+        self.assertEqual(config_data["task_file_path"], "user/custom_tasks.json")
         self.assertIn("MEETYOU_API_KEY='new-secret'", (self.temp_root / ".env").read_text(encoding="utf-8"))
         self.assertTrue((self.temp_root / "user" / "config.json.bak").exists())
         self.assertTrue((self.temp_root / ".env.bak").exists())

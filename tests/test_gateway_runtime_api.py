@@ -235,117 +235,12 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertTrue(payload["health"]["ready"])
         self.assertEqual(payload["health"]["components"][0]["name"], "session_execution")
 
-    def test_post_inputs_accepts_thinking_options(self):
-        response = self.client.post(
-            "/inputs",
-            json={
-                "content": "hello",
-                "session_id": "web:session:1",
-                "source_id": "browser-tab-a",
-                "preferred_mode": "research",
-                "metadata": {"page": "chat"},
-                "options": {
-                    "thinking": {
-                        "enabled": True,
-                        "effort": "high",
-                        "budget_tokens": 512,
-                    }
-                },
-            },
-            headers=self._auth_headers(),
-        )
+    def test_inputs_and_controls_routes_are_removed(self):
+        input_response = self.client.post("/inputs", json={"content": "hello"}, headers=self._auth_headers())
+        control_response = self.client.post("/controls", json={"action": "stop"}, headers=self._auth_headers())
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["kind"], "ack")
-        self.assertTrue(payload["ack"]["accepted"])
-        self.assertEqual(payload["ack"]["session_id"], "web:session:1")
-
-        queued_event = self.event_bus.inbound_queue.get_nowait()
-        self.assertEqual(queued_event.content, "hello")
-        self.assertEqual(queued_event.metadata["page"], "chat")
-        self.assertEqual(queued_event.metadata["preferred_mode"], "research")
-        self.assertEqual(
-            queued_event.metadata["input_options"]["thinking"],
-            {"enabled": True, "effort": "high", "budget_tokens": 512},
-        )
-
-    def test_post_inputs_deduplicates_same_client_message_id(self):
-        payload = {
-            "content": "hello once",
-            "session_id": "web:session:dedup",
-            "source_id": "browser-tab-a",
-            "client_message_id": "msg-001",
-            "role": "user",
-        }
-
-        first = self.client.post("/inputs", json=payload, headers=self._auth_headers())
-        second = self.client.post("/inputs", json=payload, headers=self._auth_headers())
-
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 200)
-
-        first_payload = first.json()
-        second_payload = second.json()
-        self.assertEqual(first_payload["ack"]["event_id"], second_payload["ack"]["event_id"])
-
-        queued_event = self.event_bus.inbound_queue.get_nowait()
-        self.assertEqual(queued_event.content, "hello once")
-        self.assertEqual(queued_event.metadata["client_message_id"], "msg-001")
-        self.assertTrue(self.event_bus.inbound_queue.empty())
-
-    def test_post_inputs_rejects_unauthorized_request(self):
-        response = self.client.post("/inputs", json={"content": "hello"})
-
-        self.assertEqual(response.status_code, 401)
-        payload = response.json()
-        self.assertEqual(payload["kind"], "error")
-        self.assertEqual(payload["error"]["code"], "unauthorized")
-
-    def test_post_controls_accepts_reply_control_command(self):
-        response = self.client.post(
-            "/controls",
-            json={
-                "action": "stop",
-                "session_id": "web:session:1",
-                "source_id": "browser-tab-a",
-                "client_request_id": "ctrl-001",
-                "turn_id": "turn-1",
-            },
-            headers=self._auth_headers(),
-        )
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["kind"], "ack")
-        self.assertEqual(payload["ack"]["action"], "stop")
-        self.assertEqual(payload["ack"]["status"], "accepted")
-
-        queued_event = self.event_bus.inbound_queue.get_nowait()
-        self.assertEqual(queued_event.type, "control")
-        self.assertEqual(queued_event.content["action"], "stop")
-        self.assertEqual(queued_event.metadata["control_kind"], "reply_control")
-        self.assertEqual(queued_event.metadata["client_request_id"], "ctrl-001")
-
-    def test_post_controls_deduplicates_same_client_request_id(self):
-        payload = {
-            "action": "rollback",
-            "session_id": "web:session:1",
-            "source_id": "browser-tab-a",
-            "client_request_id": "ctrl-rollback-001",
-            "checkpoint_id": "cp-1",
-        }
-
-        first = self.client.post("/controls", json=payload, headers=self._auth_headers())
-        second = self.client.post("/controls", json=payload, headers=self._auth_headers())
-
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 200)
-        self.assertEqual(first.json()["ack"]["event_id"], second.json()["ack"]["event_id"])
-
-        queued_event = self.event_bus.inbound_queue.get_nowait()
-        self.assertEqual(queued_event.content["action"], "rollback")
-        self.assertTrue(self.event_bus.inbound_queue.empty())
+        self.assertEqual(input_response.status_code, 404)
+        self.assertEqual(control_response.status_code, 404)
 
     def test_get_runtime_state(self):
         response = self.client.get(
@@ -414,28 +309,16 @@ class GatewayRuntimeApiTests(unittest.TestCase):
             with self.assertRaises(WebSocketDisconnect):
                 websocket.receive_json()
 
-    def test_websocket_control_command_returns_ack_and_enqueues_event(self):
+    def test_websocket_returns_legacy_path_error_for_root_ws(self):
         with self.client.websocket_connect(
             "/ws?session_id=web:session:1&source_id=browser-tab-a&access_token=runtime-token"
         ) as websocket:
-            websocket.receive_json()
-            websocket.send_json(
-                {
-                    "action": "append_guidance",
-                    "guidance": "请更简短",
-                    "turn_id": "turn-1",
-                    "client_request_id": "ctrl-ws-001",
-                }
-            )
             payload = websocket.receive_json()
-            self.assertEqual(payload["kind"], "ack")
-            self.assertEqual(payload["ack"]["action"], "append_guidance")
-            self.assertEqual(payload["ack"]["status"], "accepted")
-
-        queued_event = self.event_bus.inbound_queue.get_nowait()
-        self.assertEqual(queued_event.type, "control")
-        self.assertEqual(queued_event.content["action"], "append_guidance")
-        self.assertEqual(queued_event.content["guidance"], "请更简短")
+            self.assertEqual(payload["kind"], "error")
+            self.assertEqual(payload["error"]["code"], "legacy_websocket_path_removed")
+            self.assertEqual(payload["error"]["details"]["replacement_path"], "/client/ws")
+            with self.assertRaises(WebSocketDisconnect):
+                websocket.receive_json()
 
 
 if __name__ == "__main__":

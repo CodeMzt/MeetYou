@@ -160,6 +160,39 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["recurrence"]["freq"], "daily")
         self.assertTrue(task["next_run_at"])
 
+    async def test_scheduled_task_carries_capability_and_routing_preferences(self):
+        manager = TaskManager(_FakeMemory())
+        due_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        created = json.loads(
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="自动整理桌面开发任务",
+                schedule_kind="once",
+                due_at=due_at,
+                auto_run=True,
+                preferred_capability_ref="manage_tasks",
+                preferred_agent_ids=["desktop-main-agent"],
+                preferred_agent_types=["desktop"],
+                agent_routing_policy="strict_preferred",
+                source={"id": "desktop-user"},
+                session_id="web:session:1",
+            )
+        )
+
+        task = created["tasks"][0]
+        self.assertEqual(task["preferred_capability_ref"], "manage_tasks")
+        self.assertEqual(task["preferred_agent_ids"], ["desktop-main-agent"])
+        self.assertEqual(task["preferred_agent_types"], ["desktop"])
+        self.assertEqual(task["agent_routing_policy"], "strict_preferred")
+
+        claimed = await manager.claim_due_tasks()
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed[0]["preferred_capability_ref"], "manage_tasks")
+        self.assertEqual(claimed[0]["preferred_agent_ids"], ["desktop-main-agent"])
+        self.assertEqual(claimed[0]["preferred_agent_types"], ["desktop"])
+        self.assertEqual(claimed[0]["agent_routing_policy"], "strict_preferred")
+
     async def test_weekly_recurrence_object_requires_explicit_trigger_hour(self):
         manager = TaskManager(_FakeMemory())
 
@@ -651,6 +684,55 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
             repaired = json.loads(task_path.read_text(encoding="utf-8"))
             self.assertEqual(repaired["metadata"]["schema_version"], "2")
             self.assertEqual(len(repaired["tasks"]), 1)
+
+    async def test_explicit_task_file_path_writes_store_under_user_directory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_path = Path(tmp_dir) / "memory_graph.json"
+            task_path = Path(tmp_dir) / "user" / "memory_tasks.json"
+            manager = TaskManager(
+                _FakeMemory(str(memory_path)),
+                task_file_path=str(task_path),
+            )
+
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="每日巡检",
+                schedule_kind="once",
+                due_at="2026-04-03T09:00:00Z",
+                source={"id": "desktop-user"},
+            )
+
+            self.assertTrue(task_path.exists())
+            self.assertTrue(task_path.with_name("memory_tasks.json.bak").exists())
+            self.assertFalse((Path(tmp_dir) / "memory_tasks.json").exists())
+
+    async def test_explicit_task_file_path_migrates_legacy_store_and_removes_root_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_path = Path(tmp_dir) / "memory_graph.json"
+            legacy_manager = TaskManager(_FakeMemory(str(memory_path)))
+            created = json.loads(
+                await legacy_manager.manage_scheduled_tasks(
+                    action="create",
+                    summary="每日巡检",
+                    schedule_kind="once",
+                    due_at="2026-04-03T09:00:00Z",
+                    source={"id": "desktop-user"},
+                )
+            )
+            task_key = created["tasks"][0]["task_key"]
+
+            legacy_path = Path(tmp_dir) / "memory_tasks.json"
+            target_path = Path(tmp_dir) / "user" / "memory_tasks.json"
+
+            migrated = TaskManager(
+                _FakeMemory(str(memory_path)),
+                task_file_path=str(target_path),
+            )
+
+            self.assertEqual(migrated.get_task_by_key(task_key)["task_key"], task_key)
+            self.assertTrue(target_path.exists())
+            self.assertFalse(legacy_path.exists())
+            self.assertFalse(legacy_path.with_name("memory_tasks.json.bak").exists())
 
 
     async def test_background_status_exposes_nearest_urgent_due_and_repeated_failures(self):

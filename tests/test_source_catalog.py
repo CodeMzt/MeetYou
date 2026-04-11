@@ -6,6 +6,7 @@ import unittest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.state_backends import RuntimeStateBlobBackend
 from core.source_catalog import SourceCatalogManager
 
 
@@ -25,6 +26,18 @@ class _ProbeAdapter:
 
 class _StaticAdapter:
     pass
+
+
+class _InMemoryStateBlobService:
+    def __init__(self):
+        self.state = {}
+
+    def load_state(self, *, principal_id, state_key: str, default_factory):
+        return self.state.get((str(principal_id), state_key), default_factory())
+
+    def save_state(self, *, principal_id, state_key: str, payload: dict, meta: dict | None = None):
+        self.state[(str(principal_id), state_key)] = dict(payload or {})
+        return None
 
 
 class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
@@ -113,6 +126,75 @@ class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(status["available"])
         self.assertIn("invalid_json", status["error"])
+
+    async def test_reads_catalog_from_blob_backend_when_available(self):
+        path = self._write_catalog({"version": "1", "default_source_profiles": {}, "context_limits": [], "sources": []})
+        service = _InMemoryStateBlobService()
+        service.state[("self", "source_catalog")] = {
+            "version": "2",
+            "default_source_profiles": {
+                "academic_research": {
+                    "preferred_source_ids": ["source_db"],
+                    "official_only": True,
+                    "primary_domains": [],
+                }
+            },
+            "context_limits": [],
+            "sources": [
+                {
+                    "id": "source_db",
+                    "enabled": True,
+                    "domain": "db.example.com",
+                    "label": "DB",
+                    "connector_type": "rss_atom_feed",
+                    "profiles": ["academic_research"],
+                    "priority": 20,
+                    "primary_source": True,
+                }
+            ],
+        }
+        manager = SourceCatalogManager(_FakeConfig({"source_catalog_path": path}))
+        manager.set_store_backend(
+            RuntimeStateBlobBackend(service, principal_id="self", state_key="source_catalog", default_factory=dict)
+        )
+
+        status = manager.get_catalog_status()
+
+        self.assertTrue(status["available"])
+        self.assertEqual(status["storage"], "database")
+        self.assertEqual(manager.get_sources("academic_research")[0]["id"], "source_db")
+
+    async def test_migrates_file_catalog_into_blob_backend(self):
+        path = self._write_catalog(
+            {
+                "version": "1",
+                "default_source_profiles": {"academic_research": {"preferred_source_ids": [], "official_only": True}},
+                "context_limits": [],
+                "sources": [
+                    {
+                        "id": "source_file",
+                        "enabled": True,
+                        "domain": "file.example.com",
+                        "label": "File",
+                        "connector_type": "whitelist_page_reader",
+                        "profiles": ["academic_research"],
+                        "priority": 30,
+                        "primary_source": True,
+                    }
+                ],
+            }
+        )
+        service = _InMemoryStateBlobService()
+        manager = SourceCatalogManager(_FakeConfig({"source_catalog_path": path}))
+        manager.set_store_backend(
+            RuntimeStateBlobBackend(service, principal_id="self", state_key="source_catalog", default_factory=dict),
+            migrate_current=True,
+        )
+
+        stored = service.state[("self", "source_catalog")]
+
+        self.assertEqual(stored["version"], "1")
+        self.assertEqual(stored["sources"][0]["id"], "source_file")
 
     async def test_context_limit_uses_catalog_override(self):
         path = self._write_catalog(

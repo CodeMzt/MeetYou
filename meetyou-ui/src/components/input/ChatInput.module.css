@@ -134,6 +134,10 @@
   color: var(--text-secondary);
 }
 
+.hiddenFileInput {
+  display: none;
+}
+
 .sendBtn {
   background: rgba(128, 128, 128, 0.1);
   color: var(--text-secondary);

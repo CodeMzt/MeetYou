@@ -1,0 +1,184 @@
+import { startTransition, useCallback, useState } from 'react'
+import { createClientOperation, decideClientApproval } from '../../clientApi'
+import { normalizeAttachmentObjects } from '../../attachmentObject'
+import { createSystemTurn } from '../../chatState'
+import { parseClientWsPayload } from '../../protocolClient'
+import type { ClientContext } from './useClientContext'
+import type { OperationView } from '../../types'
+
+function upsertOperationView(operations: OperationView[], operation: OperationView): OperationView[] {
+  const index = operations.findIndex((item) => item.operation_id === operation.operation_id)
+  if (index === -1) {
+    return [operation, ...operations]
+  }
+  const next = [...operations]
+  next[index] = operation
+  return next
+}
+
+function deriveOperationTone(status: string): OperationView['tone'] {
+  if (status === 'succeeded') return 'success'
+  if (status === 'failed' || status === 'rejected' || status === 'cancelled') return 'failed'
+  if (status === 'running' || status === 'dispatching') return 'running'
+  return 'pending'
+}
+
+function deriveOperationSummary(result: Record<string, unknown>, error: Record<string, unknown>, detail: string, phase: string, status: string): string {
+  if (status === 'waiting_approval') {
+    return detail || '等待审批'
+  }
+  if (typeof result.summary === 'string' && result.summary) {
+    return result.summary
+  }
+  if (typeof error.message === 'string' && error.message) {
+    return error.message
+  }
+  if (detail) {
+    return detail
+  }
+  return phase || status
+}
+
+function applyOperationEvent(
+  operations: OperationView[],
+  event: Extract<import('../../types').ClientWsEvent, { kind: 'operation_updated' }>,
+): OperationView[] {
+  const existing = operations.find((item) => item.operation_id === event.operationId)
+  const nextResult = event.result || {}
+  const hasResultPayload = Object.keys(nextResult).length > 0
+  const status = event.status || existing?.status || 'queued'
+  const phase = event.phase || existing?.phase || ''
+  const detail = event.detail || existing?.detail || ''
+  const result = hasResultPayload ? nextResult : existing?.result || {}
+  const error = event.error || existing?.error || {}
+  const attachments = hasResultPayload
+    ? normalizeAttachmentObjects(nextResult.attachment_outputs)
+    : existing?.attachments || []
+  
+  const next: OperationView = {
+    operation_id: event.operationId,
+    thread_id: event.threadId,
+    workspace_id: event.workspaceId || existing?.workspace_id || '',
+    title: event.title || existing?.title || event.operationId,
+    operation_type: event.operationType || existing?.operation_type || 'capability_call',
+    execution_target: event.executionTarget || existing?.execution_target || 'specific_agent',
+    target_agent_id: event.targetAgentId || existing?.target_agent_id || '',
+    capability_id: event.capabilityId || existing?.capability_id || '',
+    status,
+    approval_id: event.approvalId || existing?.approval_id,
+    approval_status: event.approvalStatus || existing?.approval_status,
+    approval_required: event.approvalRequired || existing?.approval_required,
+    call_id: event.callId || existing?.call_id || '',
+    phase,
+    detail,
+    result,
+    error,
+    attachments,
+    tone: deriveOperationTone(status),
+    summary: deriveOperationSummary(result, error, detail, phase, status),
+    isBlocking: false,
+  }
+  return upsertOperationView(operations, next)
+}
+
+export function useOperations(
+  baseUrl: string,
+  clientContext: ClientContext | null,
+  desktopAgentId: string,
+  initializeClientContext: () => Promise<ClientContext>,
+  dispatchChat: any
+) {
+  const [operations, setOperations] = useState<OperationView[]>([])
+
+  const sendAgentEchoOperation = useCallback(
+    async (text: string) => {
+      const content = text.trim()
+      if (!content) {
+        return
+      }
+      const context = clientContext ?? (await initializeClientContext())
+      const targetAgentId = desktopAgentId
+      if (!targetAgentId) {
+        throw new Error(`当前 workspace ${context.workspace.workspace_id} 没有可用的桌面 Agent`)
+      }
+      const operation = await createClientOperation(baseUrl, {
+        thread_id: context.threadId,
+        workspace_id: context.workspace.workspace_id,
+        client_id: context.clientId,
+        session_id: context.session.session_id,
+        title: `Agent Echo: ${content.slice(0, 40)}`,
+        operation_type: 'capability_call',
+        execution_target: 'specific_agent',
+        target_agent_id: targetAgentId,
+        capability_id: `agent.${targetAgentId}.utility.echo`,
+        arguments: { text: content },
+      })
+      startTransition(() => {
+        setOperations((current) =>
+          upsertOperationView(current, {
+            ...operation,
+            call_id: '',
+            phase: '',
+            detail: '',
+            result: {},
+            error: {},
+            attachments: [],
+            tone: 'pending',
+            summary: '等待调度',
+            isBlocking: false,
+          }),
+        )
+        dispatchChat({
+          type: 'append_system_turn',
+          turn: createSystemTurn(`已创建 Agent 操作: ${operation.title || operation.operation_id}`),
+        })
+      })
+    },
+    [baseUrl, clientContext, desktopAgentId, initializeClientContext, dispatchChat],
+  )
+
+  const decideOperationApproval = useCallback(
+    async (approvalId: string, decision: 'approve' | 'reject') => {
+      const context = clientContext ?? (await initializeClientContext())
+      await decideClientApproval(baseUrl, approvalId, {
+        decision,
+        client_id: context.clientId,
+      })
+      startTransition(() => {
+        dispatchChat({
+          type: 'append_system_turn',
+          turn: createSystemTurn(decision === 'approve' ? '已提交审批通过，正在继续执行。' : '已提交审批拒绝。'),
+        })
+        setOperations((current) =>
+          current.map((item) =>
+            item.approval_id === approvalId
+              ? {
+                  ...item,
+                  approval_status: decision === 'approve' ? 'approved' : 'rejected',
+                  status: decision === 'approve' ? 'queued' : 'rejected',
+                  tone: decision === 'approve' ? 'pending' : 'failed',
+                  summary: decision === 'approve' ? '审批已通过，等待调度' : '审批已拒绝',
+                }
+              : item,
+          ),
+        )
+      })
+    },
+    [baseUrl, clientContext, initializeClientContext, dispatchChat],
+  )
+
+  const processWsUpdateForOperations = useCallback((update: ReturnType<typeof parseClientWsPayload>) => {
+    if (update.kind === 'operation_updated') {
+      startTransition(() => {
+        setOperations((current) => applyOperationEvent(current, update))
+      })
+    }
+  }, [])
+
+  return {
+    operations,
+    sendAgentEchoOperation,
+    decideOperationApproval,
+    processWsUpdateForOperations,
+  }
+}

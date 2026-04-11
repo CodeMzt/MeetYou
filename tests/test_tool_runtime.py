@@ -13,6 +13,7 @@ from core.brain import Brain
 from core.tool_runtime import ToolCallResult
 import core.tool_runtime.executor as tool_executor_module
 from core.tools_manager import ToolsManager
+from tools import system_tools as real_system_tools
 
 
 class _FakeClientSession:
@@ -68,6 +69,31 @@ class _FakeModeManager:
         return False
 
 
+class _FakeAgentDispatcher:
+    async def dispatch_local_capability(
+        self,
+        *,
+        capability_suffix: str,
+        arguments: dict,
+        session_id: str = "",
+        title: str = "",
+        operation_type: str = "",
+        timeout_seconds: int = 120,
+    ):
+        del session_id, title, operation_type, timeout_seconds
+        if capability_suffix == "file.write":
+            path = Path(arguments["path"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            mode = str(arguments.get("mode") or "overwrite")
+            content = str(arguments.get("content") or "")
+            if mode == "append":
+                path.write_text(path.read_text(encoding="utf-8") + content if path.exists() else content, encoding="utf-8")
+            else:
+                path.write_text(content, encoding="utf-8")
+            return {"bytes_written": len(content.encode("utf-8"))}
+        raise AssertionError(f"Unexpected capability: {capability_suffix}")
+
+
 class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def _build_manager(self, *, call_mcp_tool=None, exec_sys_cmd=None, command_safety_checker=None, mode_manager=None):
         async def builtin_time():
@@ -97,6 +123,22 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def _noop_async(self, *args, **kwargs):
         del args, kwargs
         return None
+
+    def _build_manager_with_real_system_tools(self, *, mode_manager):
+        memory = SimpleNamespace(
+            save_memory=None,
+            recall_memory=None,
+            recall_memory_structured=None,
+        )
+        context_manager = SimpleNamespace(update_context=None)
+        mcp_manager = SimpleNamespace(
+            tool_map={},
+            mcp_servers_list=[],
+            mcp_tools={},
+            init_mcp_servers=self._noop_async,
+            call_mcp_tool=self._noop_async,
+        )
+        return ToolsManager(memory, context_manager, mcp_manager, real_system_tools, mode_manager=mode_manager)
 
     async def test_permission_denied_returns_structured_error(self):
         manager = self._build_manager()
@@ -182,6 +224,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_authorization_gateway_enforces_document_confirmation_and_write_boundary(self):
         with tempfile.TemporaryDirectory() as trusted_dir, tempfile.TemporaryDirectory() as other_dir:
             manager = self._build_manager(mode_manager=_FakeModeManager([trusted_dir]))
+            manager.set_agent_dispatcher(_FakeAgentDispatcher())
             trusted_path = str(Path(trusted_dir) / "report.md")
             outside_path = str(Path(other_dir) / "report.md")
             route_context = {
@@ -247,6 +290,32 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result.ok)
             self.assertEqual(result.error.code, "tool_readonly_violation")
             self.assertTrue(result.metadata["authorization"]["read_only"])
+
+    async def test_core_local_tools_fail_without_agent_dispatcher(self):
+        with tempfile.TemporaryDirectory() as trusted_dir:
+            manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([trusted_dir]))
+            real_system_tools.init_system_tools(None, None, "missing.json", allow_local_fallback=False)
+            real_system_tools.set_agent_dispatcher(None)
+            self.addCleanup(real_system_tools.set_agent_dispatcher, None)
+            self.addCleanup(real_system_tools.set_local_fallback_enabled, True)
+
+            command_result = await manager.call_tool(
+                "exec_sys_cmd",
+                {"cmd": 'python -c "print(123)"'},
+                route_context={"tool_bundle": ["exec_sys_cmd"], "mcp_servers": [], "current_mode": "documents"},
+            )
+            read_result = await manager.call_tool(
+                "read_local_documents",
+                {"paths": [str(Path(trusted_dir) / "notes.md")]},
+                route_context={"tool_bundle": ["read_local_documents"], "mcp_servers": [], "current_mode": "documents"},
+            )
+
+            self.assertFalse(command_result.ok)
+            self.assertEqual(command_result.error.code, "local_agent_required")
+            self.assertEqual(command_result.error.details["capability_suffix"], "shell.exec")
+            self.assertFalse(read_result.ok)
+            self.assertEqual(read_result.error.code, "local_agent_required")
+            self.assertEqual(read_result.error.details["capability_suffix"], "file.read")
 
     async def test_brain_route_call_normalizes_structured_result(self):
         brain = Brain(

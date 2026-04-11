@@ -168,17 +168,23 @@ class ToolExecutor:
             )
         except Exception as exc:
             logger.exception("Built-in tool %s failed", tool_name)
+            error_code = getattr(exc, "tool_error_code", "tool_builtin_failed")
+            error_message = getattr(exc, "tool_error_message", "Built-in tool execution failed.")
+            error_details = dict(getattr(exc, "tool_error_details", {}) or {})
+            error_retryable = bool(getattr(exc, "tool_error_retryable", False))
             return ToolCallResult.failure(
                 tool_name=tool_name,
                 source=ToolSourceType.BUILTIN,
                 action_risk=action_risk,
-                code="tool_builtin_failed",
+                code=error_code,
                 category=ToolErrorCategory.EXECUTION,
-                message="Built-in tool execution failed.",
+                message=error_message,
+                retryable=error_retryable,
                 details={
                     "tool_name": tool_name,
                     "exception_type": type(exc).__name__,
                     "exception_message": str(exc),
+                    **error_details,
                 },
             )
 

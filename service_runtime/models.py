@@ -133,6 +133,7 @@ class RuntimeHealth(BaseModel):
     live: bool = True
     ready: bool = False
     degraded: bool = False
+    platform_boundary: dict[str, Any] = Field(default_factory=dict)
     components: list[RuntimeComponentHealth] = Field(default_factory=list)
     checks: list[RuntimeHealthCheck] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
@@ -208,6 +209,10 @@ class RuntimeHealth(BaseModel):
 
     def replace_metrics(self, metrics: dict[str, Any] | None) -> None:
         self.metrics = dict(metrics or {})
+        self.updated_at = utcnow_iso()
+
+    def replace_platform_boundary(self, platform_boundary: dict[str, Any] | None) -> None:
+        self.platform_boundary = dict(platform_boundary or {})
         self.updated_at = utcnow_iso()
 
     def replace_telemetry(self, telemetry: list[RuntimeTelemetrySignal] | list[dict[str, Any]] | None) -> None:

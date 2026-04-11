@@ -41,6 +41,12 @@ SUPPORTED_PROVIDER_OPTIONS = (
 
 SUPPORTED_PROVIDER_VALUES = tuple(option["value"] for option in SUPPORTED_PROVIDER_OPTIONS)
 
+OBJECT_STORE_BACKEND_OPTIONS = (
+    {"label": "Local Filesystem", "value": "local"},
+    {"label": "Filesystem", "value": "filesystem"},
+    {"label": "S3 Compatible", "value": "s3_compatible"},
+)
+
 THINKING_EFFORT_OPTIONS = (
     {"label": "低", "value": "low"},
     {"label": "中", "value": "medium"},
@@ -143,9 +149,77 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "input": "password",
         "advanced": True,
     },
+    "agent_access_token": {
+        "title": "Agent 访问令牌",
+        "description": "Desktop Agent 与 Edge Agent 连接 Core 时使用的令牌。",
+        "group": "secrets",
+        "input": "password",
+        "advanced": True,
+    },
+    "database_url": {
+        "title": "数据库连接串",
+        "description": "Core Service 使用的 PostgreSQL 连接串。",
+        "group": "secrets",
+        "input": "password",
+        "advanced": True,
+    },
     "gateway_access_token": {
         "title": "Gateway 访问令牌",
         "description": "HTTP 与 WebSocket 访问统一使用的受保护令牌。",
+        "group": "secrets",
+        "input": "password",
+        "advanced": True,
+    },
+    "object_store_backend": {
+        "title": "对象存储后端",
+        "description": "附件内容存储使用的后端实现。当前支持 local/filesystem。",
+        "group": "advanced",
+        "input": "select",
+        "options": list(OBJECT_STORE_BACKEND_OPTIONS),
+        "advanced": True,
+    },
+    "attachment_storage_root": {
+        "title": "附件本地存储目录",
+        "description": "local/filesystem 后端保存附件内容的根目录。",
+        "group": "advanced",
+        "input": "text",
+        "advanced": True,
+        "placeholder": "user/attachments",
+    },
+    "object_store_endpoint": {
+        "title": "对象存储 Endpoint",
+        "description": "为后续 MinIO/S3 接入预留的 endpoint 配置。当前仅做占位。",
+        "group": "advanced",
+        "input": "text",
+        "advanced": True,
+        "placeholder": "https://minio.example.com",
+    },
+    "object_store_bucket": {
+        "title": "对象存储 Bucket",
+        "description": "为后续 MinIO/S3 接入预留的 bucket 配置。当前仅做占位。",
+        "group": "advanced",
+        "input": "text",
+        "advanced": True,
+        "placeholder": "meetyou-attachments",
+    },
+    "object_store_region": {
+        "title": "对象存储 Region",
+        "description": "S3 / MinIO 后端使用的 region。",
+        "group": "advanced",
+        "input": "text",
+        "advanced": True,
+        "placeholder": "us-east-1",
+    },
+    "object_store_access_key": {
+        "title": "对象存储 Access Key",
+        "description": "S3 / MinIO 后端使用的 access key。",
+        "group": "secrets",
+        "input": "password",
+        "advanced": True,
+    },
+    "object_store_secret_key": {
+        "title": "对象存储 Secret Key",
+        "description": "S3 / MinIO 后端使用的 secret key。",
         "group": "secrets",
         "input": "password",
         "advanced": True,
@@ -196,6 +270,14 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "memory",
         "input": "text",
         "advanced": True,
+    },
+    "task_file_path": {
+        "title": "任务文件路径",
+        "description": "任务与调度状态持久化文件的保存路径。",
+        "group": "memory",
+        "input": "text",
+        "advanced": True,
+        "placeholder": "user/memory_tasks.json",
     },
     "heartbeat_api_provider": {
         "title": "心跳模型提供商",

@@ -184,7 +184,10 @@ def _memory_sources_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]
     source_id = 1
 
     for entry in payload.get("profile", []):
+        source_label = _normalize_text(entry.get("source_label"))
         title = _normalize_text(entry.get("fact_key") or "Memory fact")
+        if source_label:
+            title = f"{title} [{source_label}]"
         summary = _normalize_text(entry.get("fact_value") or entry.get("content"))
         if not summary:
             continue
@@ -202,10 +205,13 @@ def _memory_sources_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]
         source_id += 1
 
     for entry in payload.get("facts", []):
+        source_label = _normalize_text(entry.get("source_label"))
         summary = _normalize_text(entry.get("content"))
         if not summary:
             continue
         title = _normalize_text(entry.get("fact_key") or "Long-term fact")
+        if source_label:
+            title = f"{title} [{source_label}]"
         sources.append(
             {
                 "id": source_id,
@@ -220,13 +226,17 @@ def _memory_sources_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]
         source_id += 1
 
     for entry in payload.get("recent_events", []):
+        source_label = _normalize_text(entry.get("source_label"))
         summary = _normalize_text(entry.get("content"))
         if not summary:
             continue
+        title = _normalize_text(entry.get("created_at") or "Recent event")
+        if source_label:
+            title = f"{title} [{source_label}]"
         sources.append(
             {
                 "id": source_id,
-                "title": _normalize_text(entry.get("created_at") or "Recent event"),
+                "title": title,
                 "source_type": "memory",
                 "url": "",
                 "page_id": "",

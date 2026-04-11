@@ -20,7 +20,11 @@ class SessionBinding:
 
 class SessionManager:
     """
-    负责来源与会话的绑定关系，以及默认输出目标解析。
+    负责运行时 session registry、默认输出目标解析和短期幂等键缓存。
+
+    它不再负责决定会话主键来源。
+    持久化 session 的真相源应当是数据库中的 session 资源；
+    这里仅维护运行时绑定关系与流式/幂等辅助状态。
     """
 
     def __init__(self):
@@ -73,6 +77,42 @@ class SessionManager:
             metadata=dict(source.metadata),
         )
 
+    def bind_runtime_session(
+        self,
+        source: EventSource,
+        session_id: str,
+        default_target: EventTarget | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        final_session_id = str(session_id or "").strip()
+        if not final_session_id:
+            raise ValueError("session_id is required for runtime binding")
+        key = self._build_source_key(source)
+        binding = self._bindings.get(final_session_id)
+        if binding is None:
+            binding = SessionBinding(
+                session_id=final_session_id,
+                source=source,
+                default_target=default_target or self._build_default_target(source),
+                metadata=dict(metadata or {}),
+            )
+            self._bindings[final_session_id] = binding
+        else:
+            binding.source = source
+            if default_target is not None:
+                binding.default_target = default_target
+            if metadata:
+                merged = dict(binding.metadata)
+                merged.update(dict(metadata))
+                binding.metadata = merged
+            elif not binding.default_target:
+                binding.default_target = self._build_default_target(source)
+        if default_target is None and binding.default_target is None:
+            binding.default_target = self._build_default_target(source)
+        self._touch_binding(binding)
+        self._source_to_session[key] = final_session_id
+        return final_session_id
+
     def register_source(
         self,
         source: EventSource,
@@ -80,36 +120,15 @@ class SessionManager:
         default_target: EventTarget | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        key = self._build_source_key(source)
-        existing = self._source_to_session.get(key)
-        if existing:
-            self.touch_session(existing)
-            return existing
-
-        final_session_id = session_id or f"{source.kind}:{source.id or uuid4().hex}"
-        binding = SessionBinding(
-            session_id=final_session_id,
-            source=source,
-            default_target=default_target or self._build_default_target(source),
-            metadata=metadata or {},
+        return self.bind_runtime_session(
+            source,
+            session_id=str(session_id or "").strip(),
+            default_target=default_target,
+            metadata=metadata,
         )
-        self._touch_binding(binding)
-        self._bindings[final_session_id] = binding
-        self._source_to_session[key] = final_session_id
-        return final_session_id
 
     def get_or_create_session(self, source: EventSource, session_id: str | None = None) -> str:
-        if session_id:
-            if session_id not in self._bindings:
-                self._bindings[session_id] = SessionBinding(
-                    session_id=session_id,
-                    source=source,
-                    default_target=self._build_default_target(source),
-                )
-                self._source_to_session[self._build_source_key(source)] = session_id
-            self.touch_session(session_id)
-            return session_id
-        return self.register_source(source)
+        return self.bind_runtime_session(source, session_id=str(session_id or "").strip())
 
     def get_binding(self, session_id: str) -> SessionBinding | None:
         return self._bindings.get(session_id)

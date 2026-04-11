@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from uuid import uuid4
+
+from core.db.repositories import MessageRepository
+from core.services.base import ServiceBase
+
+
+class MessageService(ServiceBase):
+    def create_message(
+        self,
+        *,
+        thread_id,
+        role: str,
+        content: str,
+        session_id=None,
+        channel: str = "message",
+        status: str = "completed",
+        source_client_id=None,
+        meta: dict | None = None,
+    ):
+        with self.session_scope() as session:
+            return MessageRepository(session).create(
+                message_id=f"msg_{uuid4().hex}",
+                thread_id=thread_id,
+                session_id=session_id,
+                role=role,
+                channel=channel,
+                content=content,
+                status=status,
+                source_client_id=source_client_id,
+                meta=meta,
+            )
+
+    def list_messages_for_thread(self, thread_id):
+        with self.session_scope() as session:
+            return MessageRepository(session).list_by_thread_id(thread_id)
+
+    def get_by_message_id(self, message_id: str):
+        with self.session_scope() as session:
+            return MessageRepository(session).get_by_message_id(message_id)

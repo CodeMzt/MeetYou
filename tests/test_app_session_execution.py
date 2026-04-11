@@ -1,7 +1,8 @@
 import asyncio
+from datetime import datetime, timezone
 import unittest
 
-from core.app import App
+from core.app import App, SessionExecutionRequest
 from core.brain import BrainOutputEvent
 from core.event_bus import EventBus
 from core.io_protocol import InboundEvent, SourceKind, make_source
@@ -375,6 +376,54 @@ class _ImmediateReplayControlBrain(_FakeBrain):
         yield BrainOutputEvent(type="done")
 
 
+class _GatewayStub:
+    def __init__(self):
+        self.thread_events = []
+
+    async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict):
+        self.thread_events.append({"thread_id": thread_id, "event_type": event_type, "payload": dict(payload)})
+
+
+class _MessageServiceStub:
+    def __init__(self):
+        self.created = []
+
+    def create_message(self, **kwargs):
+        self.created.append(dict(kwargs))
+        return type(
+            "MessageRecord",
+            (),
+            {
+                "message_id": "msg_assistant_1",
+                "role": kwargs.get("role", "assistant"),
+                "content": kwargs.get("content", ""),
+                "status": kwargs.get("status", "completed"),
+                "channel": kwargs.get("channel", "message"),
+                "created_at": datetime.now(timezone.utc),
+            },
+        )()
+
+
+class _CoreServicesStub:
+    def __init__(self):
+        self.message = _MessageServiceStub()
+        self.session = type(
+            "SessionServiceStub",
+            (),
+            {"get_by_session_id": staticmethod(lambda session_id: type("S", (), {"id": "row-session-1", "thread_id": "row-thread-1", "session_id": session_id})())},
+        )()
+        self.thread = type(
+            "ThreadServiceStub",
+            (),
+            {"get_by_id": staticmethod(lambda row_id: type("T", (), {"id": row_id, "thread_id": "thr_test", "workspace_id": "row-workspace-1"})())},
+        )()
+        self.workspace = type(
+            "WorkspaceServiceStub",
+            (),
+            {"get_by_id": staticmethod(lambda row_id: type("W", (), {"id": row_id, "workspace_id": "personal"})())},
+        )()
+
+
 class AppSessionExecutionTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _build_app(brain):
@@ -625,6 +674,34 @@ class AppSessionExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(app.speaker.stream_starts, [])
         control_events = [event for event in app.speaker.events if event.type == "control"]
         self.assertTrue(any(event.content.get("action") == "rollback" and event.content.get("status") == "completed" for event in control_events))
+
+    async def test_process_session_execution_publishes_client_thread_events(self):
+        app = self._build_app(_ImmediateReplayControlBrain())
+        app.gateway = _GatewayStub()
+        app.core_services = _CoreServicesStub()
+
+        request = SessionExecutionRequest(
+            session_id="session-1",
+            event=InboundEvent(
+                session_id="session-1",
+                type="message",
+                role="user",
+                content="first",
+                source=make_source(SourceKind.WEB.value, "tab-1"),
+            ),
+            input_info={"role": "user", "content": "first", "metadata": {}},
+            target=type("Target", (), {"kind": "current_session", "id": "", "metadata": {}})(),
+            is_boot=False,
+        )
+
+        await app._process_session_execution(request)
+
+        event_types = [item["event_type"] for item in app.gateway.thread_events]
+        self.assertIn("runtime.state", event_types)
+        self.assertIn("message.delta", event_types)
+        self.assertIn("message.completed", event_types)
+        self.assertEqual(app.gateway.thread_events[-1]["thread_id"], "thr_test")
+        self.assertEqual(app.core_services.message.created[-1]["content"], "regenerated-answer")
 
 
 async def _async_noop(*args, **kwargs):

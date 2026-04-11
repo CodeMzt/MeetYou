@@ -4,18 +4,25 @@ import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
+import WorkspacePanel from './components/workspace/WorkspacePanel'
 import { AssistantMode, ThinkingOverride } from './types'
 import styles from './App.module.css'
 
 export default function App() {
+  const baseUrl = 'http://127.0.0.1:8000'
   const {
     messages,
+    operations,
+    workspace,
     sendMessage,
+    decideOperationApproval,
+    sessionId,
     connectionState,
     connected,
+    desktopAgentConnected,
     runtimeSnapshot,
     usageSnapshot,
-    runtimeDebugSnapshot,
+    approvalDisplay,
     confirmRequest,
     pendingHumanInput,
     healthSnapshot,
@@ -24,12 +31,14 @@ export default function App() {
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
-  } = useMeetYou('http://127.0.0.1:8000')
+    uploadAttachment,
+    downloadAttachment,
+  } = useMeetYou(baseUrl)
 
   const [inputVal, setInputVal] = useState('')
   const [isPinned, setIsPinned] = useState(true)
   const [thinkingOverride, setThinkingOverride] = useState<ThinkingOverride>('default')
-  const [preferredMode, setPreferredMode] = useState<AssistantMode>('normal')
+  const [preferredMode, setPreferredMode] = useState<AssistantMode>('general')
 
   const togglePin = () => {
     const nextPinned = !isPinned
@@ -38,8 +47,8 @@ export default function App() {
   }
 
   useEffect(() => {
-    window.ipcRenderer?.send('update-stats', { usageSnapshot, runtimeDebugSnapshot })
-  }, [usageSnapshot, runtimeDebugSnapshot])
+    window.ipcRenderer?.send('update-devtools', { usageSnapshot, sessionId, baseUrl })
+  }, [usageSnapshot, sessionId, baseUrl])
 
   const handleSend = () => {
     if (!inputVal.trim() || !connected || confirmRequest || pendingHumanInput) {
@@ -53,9 +62,10 @@ export default function App() {
     <div className={styles.appContainer}>
       <Titlebar
         connectionState={connectionState}
+        workspace={workspace}
+        desktopAgentConnected={desktopAgentConnected}
         isPinned={isPinned}
         onTogglePin={togglePin}
-        onToggleUsagePanel={() => window.ipcRenderer?.send('open-stats')}
       />
 
       <StatusIsland 
@@ -65,18 +75,30 @@ export default function App() {
       />
 
       <div className={styles.contentArea}>
+        <WorkspacePanel
+          workspace={workspace}
+          connectionState={connectionState}
+          desktopAgentConnected={desktopAgentConnected}
+          operations={operations}
+          approvalDisplay={approvalDisplay}
+          pendingHumanInput={pendingHumanInput}
+          onOpenDiagnostics={() => window.ipcRenderer?.send('open-devtools')}
+        />
+
         <MessageList
           connected={connected}
           messages={messages}
+          operations={operations}
           runtimeSnapshot={runtimeSnapshot}
-          runtimeDebugSnapshot={runtimeDebugSnapshot}
           healthSnapshot={healthSnapshot}
           lastError={lastError}
           archivedTurnCount={archivedTurnCount}
-          confirmRequest={confirmRequest}
+          approvalDisplay={approvalDisplay}
           pendingHumanInput={pendingHumanInput}
           sendConfirmResponse={sendConfirmResponse}
           sendHumanInputResponse={sendHumanInputResponse}
+          decideOperationApproval={decideOperationApproval}
+          onDownloadAttachment={(attachmentId) => void downloadAttachment(attachmentId)}
           sendControlCommand={sendControlCommand}
         />
       </div>
@@ -95,6 +117,7 @@ export default function App() {
         pendingHumanInput={pendingHumanInput}
         runtimeSnapshot={runtimeSnapshot}
         sendControlCommand={sendControlCommand}
+        onUploadAttachment={(file) => void uploadAttachment(file)}
       />
     </div>
   )

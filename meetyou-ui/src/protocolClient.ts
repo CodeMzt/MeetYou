@@ -1,5 +1,7 @@
 import type {
   AckPayload,
+  ClientMessage,
+  ClientWsEvent,
   ConfirmRequestPayload,
   HumanInputRequestPayload,
   RuntimeCompressionSnapshot,
@@ -48,6 +50,25 @@ function normalizeContent(value: unknown): string {
     return JSON.stringify(value)
   } catch {
     return String(value)
+  }
+}
+
+function toClientMessage(value: unknown): ClientMessage | null {
+  const record = toRecord(value)
+  if (!record.message_id || !record.thread_id || !record.role) {
+    return null
+  }
+  return {
+    message_id: toString(record.message_id),
+    thread_id: toString(record.thread_id),
+    session_id: toString(record.session_id),
+    workspace_id: toString(record.workspace_id),
+    client_id: toString(record.client_id),
+    role: (toString(record.role) || 'assistant') as ClientMessage['role'],
+    content: normalizeContent(record.content),
+    status: toString(record.status) || 'completed',
+    channel: toString(record.channel) || 'message',
+    created_at: toString(record.created_at),
   }
 }
 
@@ -586,6 +607,193 @@ export function parseWsPayload(payload: unknown, now: number = Date.now()): Prot
       occurred_at: '',
     }
     return { kind: 'error', error }
+  }
+
+  return { kind: 'ignore' }
+}
+
+export function parseClientWsPayload(payload: unknown): ClientWsEvent {
+  const record = toRecord(payload)
+  const kind = toString(record.kind)
+
+  if (kind === 'connection') {
+    const connection = toRecord(record.connection)
+    return {
+      kind: 'connection',
+      threadId: toString(connection.thread_id),
+      status: 'connected',
+    }
+  }
+
+  if (kind === 'pong') {
+    return { kind: 'pong' }
+  }
+
+  if (kind === 'ack') {
+    const ack = toAckPayload(record.ack)
+    return ack ? { kind: 'ack', ack } : { kind: 'ignore' }
+  }
+
+  if (kind === 'error') {
+    const error = toRuntimeErrorPayload(record.error)
+    return error ? { kind: 'error', error } : { kind: 'ignore' }
+  }
+
+  if (kind !== 'event') {
+    return { kind: 'ignore' }
+  }
+
+  const event = toRecord(record.event)
+  const eventType = toString(event.type)
+  const threadId = toString(event.thread_id)
+  const sessionId = toString(event.session_id)
+
+  if (eventType === 'message.created') {
+    const message = toClientMessage(event.message)
+    return message ? { kind: 'message_created', threadId, sessionId, message } : { kind: 'ignore' }
+  }
+
+  if (eventType === 'confirm.requested') {
+    return {
+      kind: 'confirm_requested',
+      sessionId,
+      payload: {
+        requestId: toString(event.request_id),
+        content: toString(event.content),
+        timeout: toNumber(event.timeout) || undefined,
+        defaultDecision: typeof event.default_decision === 'boolean' ? toBoolean(event.default_decision) : undefined,
+        approvalId: toString(event.approval_id) || undefined,
+        approvalStatus: toString(event.approval_status) || undefined,
+        approvalType: toString(event.approval_type) || undefined,
+        riskLevel: toString(event.risk_level) || undefined,
+        operationId: toString(event.operation_id) || undefined,
+      },
+    }
+  }
+
+  if (eventType === 'confirm.resolved') {
+    return {
+      kind: 'confirm_resolved',
+      sessionId,
+      requestId: toString(event.request_id),
+      accepted: toBoolean(event.accepted),
+    }
+  }
+
+  if (eventType === 'human_input.requested') {
+    return {
+      kind: 'human_input_requested',
+      sessionId,
+      payload: {
+        requestId: toString(event.request_id),
+        question: toString(event.question),
+        options: toStringArray(event.options),
+        placeholder: toString(event.placeholder),
+        timeout: toNumber(event.timeout) || undefined,
+      },
+    }
+  }
+
+  if (eventType === 'human_input.resolved') {
+    return {
+      kind: 'human_input_resolved',
+      sessionId,
+      requestId: toString(event.request_id),
+      answerText: toString(event.answer_text),
+      selectedOption: toString(event.selected_option) || undefined,
+    }
+  }
+
+  if (eventType === 'operation.updated') {
+    return {
+      kind: 'operation_updated',
+      threadId,
+      operationId: toString(event.operation_id),
+      workspaceId: toString(event.workspace_id),
+      title: toString(event.title),
+      operationType: toString(event.operation_type),
+      executionTarget: toString(event.execution_target),
+      targetAgentId: toString(event.target_agent_id),
+      capabilityId: toString(event.capability_id),
+      callId: toString(event.call_id),
+      status: toString(event.status),
+      phase: toString(event.phase),
+      detail: toString(event.detail),
+      result: toRecord(event.result),
+      error: toRecord(event.error),
+      approvalId: toString(event.approval_id),
+      approvalStatus: toString(event.approval_status),
+      approvalRequired: toBoolean(event.approval_required),
+    }
+  }
+
+  if (eventType === 'runtime.state') {
+    const snapshot = toRuntimeStateSnapshot(event.snapshot)
+    return snapshot ? { kind: 'runtime_state', snapshot } : { kind: 'ignore' }
+  }
+
+  if (eventType === 'runtime.usage') {
+    const snapshot = toRuntimeUsageSnapshot(event.snapshot)
+    return snapshot ? { kind: 'runtime_usage', snapshot } : { kind: 'ignore' }
+  }
+
+  if (eventType === 'activity.status') {
+    const metadata = toRecord(event.metadata)
+    return {
+      kind: 'activity',
+      activity: {
+        id: toString(event.event_id) || `${toString(event.turn_id) || toString(event.stream_id) || 'activity'}-${Date.now()}`,
+        turnId: toString(event.turn_id),
+        streamId: toString(event.stream_id),
+        phase: toString(event.phase) || 'status',
+        content: toString(event.content),
+        activityKind: toString(event.activity_kind) || 'tool_chain',
+        toolNames: toStringArray(event.tool_names),
+        metadata,
+        createdAt: Date.now(),
+      },
+    }
+  }
+
+  if (eventType === 'message.delta') {
+    return {
+      kind: 'message_delta',
+      threadId,
+      sessionId,
+      streamId: toString(event.stream_id),
+      turnId: toString(event.turn_id),
+      delta: toString(event.delta),
+      channel: 'answer',
+      phase: 'chunk',
+    }
+  }
+
+  if (eventType === 'reasoning.delta') {
+    return {
+      kind: 'message_delta',
+      threadId,
+      sessionId,
+      streamId: toString(event.stream_id),
+      turnId: toString(event.turn_id),
+      delta: toString(event.delta),
+      channel: 'reasoning',
+      phase: toString(event.phase) || 'chunk',
+    }
+  }
+
+  if (eventType === 'message.completed') {
+    const message = toClientMessage(event.message)
+    if (!message) {
+      return { kind: 'ignore' }
+    }
+    return {
+      kind: 'message_completed',
+      threadId,
+      sessionId,
+      streamId: toString(event.stream_id),
+      turnId: toString(event.turn_id),
+      message,
+    }
   }
 
   return { kind: 'ignore' }

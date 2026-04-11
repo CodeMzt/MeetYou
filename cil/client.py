@@ -5,9 +5,8 @@
 import asyncio
 import json
 import logging
+import os
 from uuid import uuid4
-
-import aiohttp
 
 try:
     from prompt_toolkit import Application
@@ -26,6 +25,7 @@ except ImportError:  # pragma: no cover - optional at import time
     TextArea = None
 
 from core.logger import setup_logger
+from clients.gateway_client import GatewayConversationClient
 
 logger = logging.getLogger("meetyou.cil")
 
@@ -43,17 +43,23 @@ class CILClient:
             raise RuntimeError("prompt_toolkit is required to run CILClient.")
 
         self.base_url = base_url.rstrip("/")
-        self.ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
         self.source_id = f"cil-{uuid4().hex[:8]}"
-        self.session_id = f"cil-session-{uuid4().hex[:8]}"
-        self._http_session: aiohttp.ClientSession | None = None
-        self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._closed = False
         self._pending_confirm_request_id: str | None = None
-        self._ws_task: asyncio.Task | None = None
+        self._pending_human_input_request_id: str | None = None
         self._streaming = False
         self._stream_prefix_pending = False
         self._connection_logged = False
+        self._conversation = GatewayConversationClient(
+            base_url=self.base_url,
+            client_id=self.source_id,
+            client_type="cil",
+            display_name="CIL",
+            workspace_id="personal",
+            access_token=os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN", ""),
+            thread_title="CIL Chat",
+            event_handler=self._handle_client_ws_payload,
+        )
 
         self.output_field = TextArea(text="", read_only=True, scrollbar=True)
         self.input_field = TextArea(height=5, prompt="CIL> ")
@@ -119,51 +125,25 @@ class CILClient:
             f"目标 gateway: {self.base_url}\n\n"
         )
 
-    async def _ensure_http_session(self):
-        if self._http_session is None:
-            self._http_session = aiohttp.ClientSession()
-
-    async def _connect_ws(self):
-        await self._ensure_http_session()
-        url = f"{self.ws_url}/ws?session_id={self.session_id}&source_id={self.source_id}"
-        self._ws = await self._http_session.ws_connect(url)
-        self._connection_logged = False
-
-    async def _maintain_connection(self):
-        while not self._closed:
-            try:
-                if self._ws is None or self._ws.closed:
-                    await self._connect_ws()
-                await self._read_ws()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning("CIL WebSocket 连接异常: %s", e)
-                self._append(f"\n[系统] 与 gateway 连接中断: {e}\n")
-                await asyncio.sleep(2)
-
-    async def _read_ws(self):
-        if self._ws is None:
-            return
-        async for message in self._ws:
-            if message.type == aiohttp.WSMsgType.TEXT:
-                await self._handle_ws_payload(message.json())
-            elif message.type == aiohttp.WSMsgType.ERROR:
-                raise RuntimeError("gateway WebSocket 错误")
-            elif message.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED):
-                raise RuntimeError("gateway WebSocket 已关闭")
-
-    async def _handle_ws_payload(self, data: dict):
-        if data.get("schema") != "meetyou.ws.v1":
+    async def _handle_client_ws_payload(self, data: dict):
+        if data.get("schema") != "meetyou.client.ws.v1":
             return
 
         if data.get("kind") == "connection":
-            session_id = data.get("connection", {}).get("session_id")
+            session_id = data.get("connection", {}).get("session_id") or self._conversation.session_id
             if session_id:
-                self.session_id = session_id
+                self._conversation.session_id = session_id
             if not self._connection_logged:
-                self._append(f"[系统] 已连接 gateway，会话 {self.session_id}\n")
+                self._append(f"[系统] 已连接 gateway，会话 {self._conversation.session_id}\n")
                 self._connection_logged = True
+            return
+
+        if data.get("kind") == "ack":
+            ack = data.get("ack", {})
+            if ack.get("action") == "confirm_response":
+                self._append("[系统] 确认结果已提交\n")
+            elif ack.get("action") == "input_response":
+                self._append("[系统] 补充信息已提交\n")
             return
 
         if data.get("kind") == "error":
@@ -175,13 +155,10 @@ class CILClient:
             return
 
         evt = data.get("event", {})
-        stream = data.get("stream", {})
-        confirm = data.get("confirm", {})
         event_type = evt.get("type")
-        stream_phase = stream.get("phase", "")
 
-        if event_type == "confirm_request":
-            self._pending_confirm_request_id = confirm.get("request_id")
+        if event_type == "confirm.requested":
+            self._pending_confirm_request_id = evt.get("request_id")
             self._append(
                 "\n"
                 + "=" * 50
@@ -193,77 +170,81 @@ class CILClient:
             )
             return
 
-        if event_type == "error":
-            if self._streaming and not self._stream_prefix_pending:
-                self._append("\n")
-            self._streaming = False
-            self._stream_prefix_pending = False
-            self._append(f"[系统错误] {evt.get('content', '')}\n")
+        if event_type == "human_input.requested":
+            self._pending_human_input_request_id = evt.get("request_id")
+            options = [str(item).strip() for item in (evt.get("options") or []) if str(item).strip()]
+            option_lines = "\n".join(f"{idx}. {item}" for idx, item in enumerate(options, start=1))
+            self._append(
+                "\n"
+                + "=" * 50
+                + "\n"
+                + str(evt.get("question", ""))
+                + (f"\n{option_lines}" if option_lines else "")
+                + "\n输入编号或直接回复内容\n"
+                + "=" * 50
+                + "\n"
+            )
             return
 
-        if event_type == "status":
-            if stream_phase == "start":
-                self._append("Mozart: ")
-                self._streaming = True
-                return
-            if stream_phase == "end":
-                self._append("\n")
-                self._streaming = False
-                return
-            if evt.get("content"):
-                self._append(f"[系统] {evt['content']}\n")
+        if event_type == "confirm.resolved":
+            self._pending_confirm_request_id = None
             return
 
-        if event_type == "message":
-            content = str(evt.get("content", "")).replace("\r", "")
-            if stream_phase == "start":
-                self._streaming = True
-                self._stream_prefix_pending = True
+        if event_type == "human_input.resolved":
+            self._pending_human_input_request_id = None
+            return
+
+        if event_type == "activity.status":
+            content = str(evt.get("content", "")).strip()
+            if content:
+                self._append(f"[系统] {content}\n")
+            return
+
+        if event_type == "message.created":
+            return
+
+        if event_type == "runtime.state" or event_type == "runtime.usage" or event_type == "operation.updated":
+            return
+
+        if event_type == "reasoning.delta":
+            return
+
+        if event_type == "message.delta":
+            if evt.get("channel") != "answer":
                 return
-            if stream_phase == "chunk":
-                if content:
-                    if self._stream_prefix_pending:
+            content = str(evt.get("delta", "")).replace("\r", "")
+            if content:
+                if self._stream_prefix_pending:
+                    self._append("Mozart: ")
+                    self._stream_prefix_pending = False
+                elif not self._streaming:
+                    self._append("Mozart: ")
+                self._append(content)
+                self._streaming = True
+            return
+
+        if event_type == "message.completed":
+            message = evt.get("message", {})
+            content = str(message.get("content", "")).replace("\r", "")
+            if self._streaming:
+                if self._stream_prefix_pending:
+                    if content:
                         self._append("Mozart: ")
-                        self._stream_prefix_pending = False
+                    self._stream_prefix_pending = False
+                if content and self.output_field.text.rstrip().endswith(content.rstrip()) is False:
                     self._append(content)
-                self._streaming = True
-                return
-            if stream_phase == "end":
-                if self._streaming and not self._stream_prefix_pending:
+                if not self._stream_prefix_pending:
                     self._append("\n")
-                self._streaming = False
-                self._stream_prefix_pending = False
-                return
-            if self._streaming and not self._stream_prefix_pending:
-                self._append("\n")
+            else:
+                if content:
+                    self._append(f"Mozart: {content}\n")
             self._streaming = False
             self._stream_prefix_pending = False
-            self._append(f"Mozart: {content}\n")
-
-    async def _send_ws_json(self, payload: dict):
-        if self._ws is None or self._ws.closed:
-            raise RuntimeError("尚未连接到 gateway")
-        await self._ws.send_json(payload)
+            return
 
     async def _send_message(self, text: str):
-        await self._ensure_http_session()
         self._append(f"You: {text}\n")
-        async with self._http_session.post(
-            f"{self.base_url}/inputs",
-            json={
-                "content": text,
-                "session_id": self.session_id,
-                "source_id": self.source_id,
-                "role": "user",
-            },
-        ) as response:
-            if response.status >= 400:
-                body = await response.text()
-                self._append(f"[系统错误] 发送失败: {response.status} {body}\n")
-                return
-            payload = await response.json()
-            if payload.get("session_id"):
-                self.session_id = payload["session_id"]
+        await self._conversation.send_message(text)
 
     async def _send_confirm_response(self, raw_text: str):
         normalized = raw_text.strip().lower()
@@ -280,23 +261,44 @@ class CILClient:
             self._append("[系统] 当前没有待确认请求\n")
             return
 
-        await self._send_ws_json(
-            {
-                "action": "confirm_response",
-                "request_id": request_id,
-                "accepted": accepted,
-                "metadata": {"source": "cil"},
-            }
-        )
+        try:
+            await self._conversation.submit_confirm_response(
+                request_id=request_id,
+                accepted=accepted,
+            )
+        except Exception:
+            await self._conversation.send_command(
+                "confirm_response",
+                request_id=request_id,
+                accepted=accepted,
+                metadata={"source": "cil"},
+            )
         self._pending_confirm_request_id = None
 
+    async def _send_human_input_response(self, raw_text: str):
+        request_id = self._pending_human_input_request_id
+        if not request_id:
+            self._append("[系统] 当前没有待补充输入请求\n")
+            return
+        text = raw_text.strip()
+        try:
+            await self._conversation.submit_human_input_response(
+                request_id=request_id,
+                answer_text=text,
+                selected_option=text,
+            )
+        except Exception:
+            await self._conversation.send_command(
+                "input_response",
+                request_id=request_id,
+                answer_text=text,
+                selected_option=text,
+                metadata={"source": "cil"},
+            )
+        self._pending_human_input_request_id = None
+
     async def _config_list(self):
-        await self._ensure_http_session()
-        async with self._http_session.get(f"{self.base_url}/config") as response:
-            payload = await response.json()
-            if response.status >= 400:
-                self._append(f"[系统错误] 读取配置失败: {payload}\n")
-                return
+        payload = await self._conversation.request_json("GET", "/operator/config")
 
         items = payload.get("items", {})
         self._append("[配置列表]\n")
@@ -311,12 +313,7 @@ class CILClient:
             self._append(f"- {key} = {display} ({source})\n")
 
     async def _config_get(self, key: str):
-        await self._ensure_http_session()
-        async with self._http_session.get(f"{self.base_url}/config/{key}") as response:
-            payload = await response.json()
-            if response.status >= 400:
-                self._append(f"[系统错误] 读取配置失败: {payload}\n")
-                return
+        payload = await self._conversation.request_json("GET", f"/operator/config/{key}")
 
         value = payload.get("value")
         display = value if payload.get("is_secret") else json.dumps(value, ensure_ascii=False)
@@ -336,16 +333,12 @@ class CILClient:
             return raw_value
 
     async def _config_set(self, key: str, raw_value: str):
-        await self._ensure_http_session()
         value = self._parse_config_value(raw_value)
-        async with self._http_session.patch(
-            f"{self.base_url}/config",
-            json={"updates": {key: value}},
-        ) as response:
-            payload = await response.json()
-            if response.status >= 400:
-                self._append(f"[系统错误] 更新配置失败: {payload}\n")
-                return
+        payload = await self._conversation.request_json(
+            "PATCH",
+            "/operator/config",
+            json_body={"updates": {key: value}},
+        )
 
         self._append(
             "[配置更新]\n"
@@ -390,6 +383,9 @@ class CILClient:
             if self._pending_confirm_request_id:
                 await self._send_confirm_response(text)
                 return
+            if self._pending_human_input_request_id:
+                await self._send_human_input_response(text)
+                return
             await self._send_message(text)
         except Exception as e:
             logger.error("处理 CIL 输入失败: %s", e)
@@ -397,18 +393,9 @@ class CILClient:
 
     async def run(self):
         self._render_banner()
-        self._ws_task = asyncio.create_task(self._maintain_connection())
         try:
+            await self._conversation.start()
             await self.app.run_async()
         finally:
             self._closed = True
-            if self._ws_task is not None:
-                self._ws_task.cancel()
-                try:
-                    await self._ws_task
-                except asyncio.CancelledError:
-                    pass
-            if self._ws is not None and not self._ws.closed:
-                await self._ws.close()
-            if self._http_session is not None:
-                await self._http_session.close()
+            await self._conversation.close()

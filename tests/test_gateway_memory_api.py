@@ -139,6 +139,23 @@ class GatewayMemoryApiTests(unittest.TestCase):
         self.assertIn("stats", payload)
         self.assertEqual(payload["stats"]["record_count"], 1)
 
+    def test_operator_memory_routes(self):
+        snapshot_response = self.client.get(
+            "/operator/memory",
+            params={"source_id": "browser-tab-a", "session_id": "s1"},
+            headers=self._auth_headers(),
+        )
+        graph_response = self.client.get(
+            "/operator/memory/graph",
+            params={"source_id": "browser-tab-a"},
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(snapshot_response.status_code, 200)
+        self.assertEqual(graph_response.status_code, 200)
+        self.assertEqual(snapshot_response.json()["scope"]["source_id"], "browser-tab-a")
+        self.assertEqual(graph_response.json()["nodes"][0]["label"], "阿明")
+
     def test_get_memory_requires_auth(self):
         response = self.client.get("/memory")
 
