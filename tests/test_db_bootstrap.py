@@ -105,6 +105,21 @@ class DatabaseBootstrapTests(unittest.TestCase):
         finally:
             context.engine.dispose()
 
+    def test_procedure_service_can_infer_from_content(self):
+        context = bootstrap_core_domain(database_url=TEST_DATABASE_URL, run_migrations=True)
+        try:
+            inferred = context.services.procedure.infer_for_turn(
+                principal_id=context.principal.id,
+                content="Please review this patch for regressions and risky changes.",
+                preferred_mode="general",
+                workspace_id="personal",
+            )
+            self.assertTrue(inferred["matched"])
+            self.assertEqual(inferred["procedure_id"], "code_review")
+            self.assertGreater(inferred["score"], 0)
+        finally:
+            context.engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()

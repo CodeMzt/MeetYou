@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchRuntimeUsageSnapshot, listClientProcedures } from './clientApi'
+import {
+  fetchRuntimeUsageSnapshot,
+  getClientProcedureDetail,
+  getClientThreadProcedureContext,
+  listOperatorSourceProfiles,
+  listClientProcedures,
+  updateOperatorWorkspaceGovernance,
+  pinClientThreadProcedure,
+  unpinClientThreadProcedure,
+} from './clientApi'
 
 const originalFetch = globalThis.fetch
 const originalLocalStorage = globalThis.localStorage
@@ -97,6 +106,224 @@ describe('clientApi', () => {
     expect(procedures[0]?.procedure_id).toBe('proc_focus')
     expect(procedures[0]?.default_execution_target).toBe('specific_agent')
     expect(procedures[0]?.preferred_capability_ref).toBe('manage_tasks')
+  })
+
+  it('loads procedure detail and thread procedure context from client API', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            procedure_id: 'code_review',
+            title: 'Code Review',
+            description: '围绕代码变更、风险与验证给出结构化审查。',
+            applicable_modes: ['general'],
+            recommended_capabilities: ['search_memory'],
+            preferred_capability_ref: 'search_memory',
+            preferred_agent_ids: [],
+            preferred_agent_types: [],
+            agent_routing_policy: 'balanced',
+            default_execution_target: 'core_only',
+            risk_profile: 'read',
+            status: 'active',
+            prompt_overlay: 'Focus on correctness first.',
+            recommended_source_profiles: ['workspace_local'],
+            infer_keywords: ['review', 'patch'],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            source: 'inferred',
+            pinned_procedure: null,
+            latest_inferred_procedure: {
+              procedure_id: 'code_review',
+              title: 'Code Review',
+              description: '围绕代码变更、风险与验证给出结构化审查。',
+              applicable_modes: ['general'],
+              recommended_capabilities: ['search_memory'],
+              preferred_capability_ref: 'search_memory',
+              preferred_agent_ids: [],
+              preferred_agent_types: [],
+              agent_routing_policy: 'balanced',
+              default_execution_target: 'core_only',
+              risk_profile: 'read',
+              status: 'active',
+              prompt_overlay: 'Focus on correctness first.',
+              recommended_source_profiles: ['workspace_local'],
+              infer_keywords: ['review', 'patch'],
+            },
+            effective_procedure: {
+              procedure_id: 'code_review',
+              title: 'Code Review',
+              description: '围绕代码变更、风险与验证给出结构化审查。',
+              applicable_modes: ['general'],
+              recommended_capabilities: ['search_memory'],
+              preferred_capability_ref: 'search_memory',
+              preferred_agent_ids: [],
+              preferred_agent_types: [],
+              agent_routing_policy: 'balanced',
+              default_execution_target: 'core_only',
+              risk_profile: 'read',
+              status: 'active',
+              prompt_overlay: 'Focus on correctness first.',
+              recommended_source_profiles: ['workspace_local'],
+              infer_keywords: ['review', 'patch'],
+            },
+            latest_inferred_reason: 'keywords:review,patch',
+            latest_inferred_score: 7,
+            latest_inferred_at: '2026-04-12T00:00:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const detail = await getClientProcedureDetail('http://127.0.0.1:8000', 'code_review')
+    const context = await getClientThreadProcedureContext('http://127.0.0.1:8000', 'thr_1')
+
+    expect(detail.prompt_overlay).toContain('Focus on correctness')
+    expect(detail.infer_keywords).toContain('review')
+    expect(context.source).toBe('inferred')
+    expect(context.effective_procedure?.procedure_id).toBe('code_review')
+    expect(context.latest_inferred_score).toBe(7)
+  })
+
+  it('pins and unpins thread procedure via client API', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            source: 'pinned',
+            pinned_procedure: {
+              procedure_id: 'code_review',
+              title: 'Code Review',
+              description: '围绕代码变更、风险与验证给出结构化审查。',
+              applicable_modes: ['general'],
+              recommended_capabilities: ['search_memory'],
+              preferred_capability_ref: 'search_memory',
+              preferred_agent_ids: [],
+              preferred_agent_types: [],
+              agent_routing_policy: 'balanced',
+              default_execution_target: 'core_only',
+              risk_profile: 'read',
+              status: 'active',
+              prompt_overlay: 'Focus on correctness first.',
+              recommended_source_profiles: ['workspace_local'],
+              infer_keywords: ['review', 'patch'],
+            },
+            latest_inferred_procedure: null,
+            effective_procedure: {
+              procedure_id: 'code_review',
+              title: 'Code Review',
+              description: '围绕代码变更、风险与验证给出结构化审查。',
+              applicable_modes: ['general'],
+              recommended_capabilities: ['search_memory'],
+              preferred_capability_ref: 'search_memory',
+              preferred_agent_ids: [],
+              preferred_agent_types: [],
+              agent_routing_policy: 'balanced',
+              default_execution_target: 'core_only',
+              risk_profile: 'read',
+              status: 'active',
+              prompt_overlay: 'Focus on correctness first.',
+              recommended_source_profiles: ['workspace_local'],
+              infer_keywords: ['review', 'patch'],
+            },
+            latest_inferred_reason: '',
+            latest_inferred_score: 0,
+            latest_inferred_at: '',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            source: 'none',
+            pinned_procedure: null,
+            latest_inferred_procedure: null,
+            effective_procedure: null,
+            latest_inferred_reason: '',
+            latest_inferred_score: 0,
+            latest_inferred_at: '',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const pinned = await pinClientThreadProcedure('http://127.0.0.1:8000', 'thr_1', 'code_review')
+    const unpinned = await unpinClientThreadProcedure('http://127.0.0.1:8000', 'thr_1')
+
+    expect(pinned.source).toBe('pinned')
+    expect(pinned.pinned_procedure?.procedure_id).toBe('code_review')
+    expect(unpinned.source).toBe('none')
+  })
+
+  it('updates workspace governance through operator API', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          workspace_id: 'study',
+          title: '学习',
+          status: 'active',
+          base_mode: 'study',
+          description: '学习资料、笔记与复盘工作空间。',
+          prompt_overlay: '',
+          default_execution_target: 'core_only',
+          capability_policy: 'allow_all',
+          allowed_capability_ids: [],
+          preferred_agent_ids: [],
+          preferred_agent_types: [],
+          preferred_source_profiles: ['study_materials', 'workspace_local'],
+          agent_routing_policy: 'balanced',
+          memory_ranking_policy: 'workspace_first',
+          capability_routing_overrides: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const workspace = await updateOperatorWorkspaceGovernance('http://127.0.0.1:8000', 'study', {
+      preferred_source_profiles: ['study_materials', 'workspace_local'],
+      memory_ranking_policy: 'workspace_first',
+    })
+
+    expect(workspace.workspace_id).toBe('study')
+    expect(workspace.preferred_source_profiles).toEqual(['study_materials', 'workspace_local'])
+    expect(workspace.memory_ranking_policy).toBe('workspace_first')
+  })
+
+  it('loads source profile catalog from operator API', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            profile_name: 'workspace_local',
+            label: 'Workspace / Local Knowledge',
+            description: 'Prefer local files, memory, and private workspace knowledge.',
+            official_only: false,
+            default_freshness: 'workspace',
+          },
+          {
+            profile_name: 'policy_global',
+            label: 'Policy Global',
+            description: 'Government and regulator sources outside China.',
+            official_only: true,
+            default_freshness: 'high',
+          },
+        ]),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const profiles = await listOperatorSourceProfiles('http://127.0.0.1:8000')
+
+    expect(profiles).toHaveLength(2)
+    expect(profiles[0]?.profile_name).toBe('workspace_local')
+    expect(profiles[1]?.official_only).toBe(true)
   })
 
   it('downloads attachment content with auth headers', async () => {

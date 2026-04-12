@@ -947,6 +947,125 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
+    async def test_workspace_source_profile_preference_overrides_mode_default(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="text", text="workspace policy applied"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 4,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ]
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-workspace-source-profile",
+                {
+                    "role": "user",
+                    "content": "Please summarize this simply.",
+                    "metadata": {
+                        "preferred_mode": "normal",
+                        "workspace_id": "study",
+                        "workspace_title": "Study",
+                        "workspace_base_mode": "study",
+                        "workspace_prompt_overlay": "Prefer teaching-oriented explanations.",
+                        "workspace_default_execution_target": "core_only",
+                        "workspace_preferred_source_profiles": ["policy_global"],
+                        "workspace_memory_ranking_policy": "workspace_first",
+                    },
+                },
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-workspace-source-profile")
+            self.assertEqual(session.metadata["source_profile"], "policy_global")
+            self.assertEqual(
+                session.metadata["current_route"]["workspace"]["preferred_source_profiles"],
+                ["policy_global"],
+            )
+            self.assertEqual(
+                session.metadata["current_route"]["workspace"]["memory_ranking_policy"],
+                "workspace_first",
+            )
+            self.assertIn("Workspace source profile preference: policy_global", session.metadata["route_reason"])
+        finally:
+            await brain.close_brain()
+
+    async def test_workspace_source_profile_preference_does_not_override_specific_research_profile(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="text", text="research policy kept"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 4,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ]
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-research-source-profile",
+                {
+                    "role": "user",
+                    "content": "Create a research report with citations.",
+                    "metadata": {
+                        "workspace_id": "personal",
+                        "workspace_title": "Personal",
+                        "workspace_base_mode": "general",
+                        "workspace_prompt_overlay": "Prefer local grounding when possible.",
+                        "workspace_default_execution_target": "core_only",
+                        "workspace_preferred_source_profiles": ["workspace_local"],
+                        "workspace_memory_ranking_policy": "workspace_first",
+                    },
+                },
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-research-source-profile")
+            self.assertEqual(session.metadata["source_profile"], "tech_updates")
+            self.assertNotIn("Workspace source profile preference", session.metadata["route_reason"])
+        finally:
+            await brain.close_brain()
+
     async def test_max_switches_per_turn_blocks_additional_mode_changes(self):
         adapter = QueuedStreamAdapter(
             rounds=[

@@ -33,9 +33,12 @@ from gateway.models import (
     ClientOperationResponse,
     ClientMessageCreateRequest,
     ClientMessageResponse,
+    ClientProcedureDetailResponse,
     ClientProcedureResponse,
     ClientSessionCreateRequest,
     ClientSessionResponse,
+    ClientThreadPinnedProcedureRequest,
+    ClientThreadProcedureContextResponse,
     ClientThreadCreateRequest,
     ClientThreadResponse,
     ClientWsCommand,
@@ -76,30 +79,41 @@ def _procedure_response(procedure) -> ClientProcedureResponse:
     )
 
 
+def _procedure_detail_response(procedure) -> ClientProcedureDetailResponse:
+    detail = domain_procedure_detail_view(procedure)
+    return ClientProcedureDetailResponse(**detail)
+
+
 def domain_procedure_routing_view(procedure) -> dict[str, Any]:
     from core.services.procedure_service import ProcedureService
 
     return ProcedureService.get_routing_view(procedure)
 
 
+def domain_procedure_detail_view(procedure) -> dict[str, Any]:
+    from core.services.procedure_service import ProcedureService
+
+    return ProcedureService.get_detail_view(procedure)
+
+
 def _procedure_snapshot(procedure) -> dict:
-    routing = domain_procedure_routing_view(procedure)
-    return {
-        "procedure_id": procedure.procedure_id,
-        "title": procedure.title,
-        "description": procedure.description,
-        "prompt_overlay": procedure.prompt_overlay,
-        "applicable_modes": list(getattr(procedure, "applicable_modes", []) or []),
-        "recommended_capabilities": routing["recommended_capabilities"],
-        "recommended_source_profiles": list(getattr(procedure, "recommended_source_profiles", []) or []),
-        "preferred_capability_ref": routing["preferred_capability_ref"],
-        "preferred_agent_ids": routing["preferred_agent_ids"],
-        "preferred_agent_types": routing["preferred_agent_types"],
-        "agent_routing_policy": routing["agent_routing_policy"],
-        "default_execution_target": procedure.default_execution_target,
-        "risk_profile": procedure.risk_profile,
-        "status": procedure.status,
-    }
+    return domain_procedure_detail_view(procedure)
+
+
+def _thread_procedure_context_response(domain, thread) -> ClientThreadProcedureContextResponse:
+    context = domain.services.procedure.get_thread_context(thread)
+    pinned = context.get("pinned_procedure")
+    latest_inferred = context.get("latest_inferred_procedure")
+    effective = context.get("effective_procedure")
+    return ClientThreadProcedureContextResponse(
+        source=str(context.get("source") or "none"),
+        pinned_procedure=ClientProcedureDetailResponse(**pinned) if isinstance(pinned, dict) else None,
+        latest_inferred_procedure=ClientProcedureDetailResponse(**latest_inferred) if isinstance(latest_inferred, dict) else None,
+        effective_procedure=ClientProcedureDetailResponse(**effective) if isinstance(effective, dict) else None,
+        latest_inferred_reason=str(context.get("latest_inferred_reason") or ""),
+        latest_inferred_score=max(int(context.get("latest_inferred_score", 0) or 0), 0),
+        latest_inferred_at=str(context.get("latest_inferred_at") or ""),
+    )
 
 
 def _operation_response(operation, *, workspace_id: str, thread_id: str) -> ClientOperationResponse:
@@ -194,7 +208,9 @@ def _workspace_response(workspace) -> ClientWorkspaceResponse:
         allowed_capability_ids=governance["allowed_capability_ids"],
         preferred_agent_ids=governance["preferred_agent_ids"],
         preferred_agent_types=governance["preferred_agent_types"],
+        preferred_source_profiles=governance["preferred_source_profiles"],
         agent_routing_policy=governance["agent_routing_policy"],
+        memory_ranking_policy=governance["memory_ranking_policy"],
         capability_routing_overrides=governance["capability_routing_overrides"],
     )
 
@@ -489,7 +505,7 @@ async def _resolve_chat_confirmation_from_approval(gateway, domain, *, approval,
             code="confirm_context_missing",
             message="聊天确认缺少 request/session 上下文，无法继续决策",
         )
-    resolved = gateway._event_bus.submit_confirmation_response(
+    resolved = gateway._interaction_responses.submit_confirmation_response(
         payload.decision == "approve",
         request_id=request_id,
         session_id=session_id,
@@ -647,6 +663,15 @@ def build_client_router(gateway) -> APIRouter:
             for item in domain.services.procedure.list_active(principal_id=domain.principal.id)
         ]
 
+    @router.get("/procedures/{procedure_id}", response_model=ClientProcedureDetailResponse)
+    async def get_procedure(procedure_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        procedure = domain.services.procedure.get_by_procedure_id(procedure_id)
+        if procedure is None:
+            gateway._raise_http_error(status_code=404, code="procedure_not_found", message=f"未知 procedure: {procedure_id}")
+        return _procedure_detail_response(procedure)
+
     @router.post("/attachments/upload-ticket", response_model=ClientAttachmentUploadTicketResponse)
     async def create_attachment_upload_ticket(http_request: Request, payload: ClientAttachmentUploadTicketRequest):
         gateway._require_http_auth(http_request)
@@ -802,6 +827,50 @@ def build_client_router(gateway) -> APIRouter:
         workspace = _get_workspace_by_row_id(domain, thread.workspace_id)
         return _thread_response(thread, getattr(workspace, "workspace_id", ""))
 
+    @router.get("/threads/{thread_id}/procedure-context", response_model=ClientThreadProcedureContextResponse)
+    async def get_thread_procedure_context(thread_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        thread = domain.services.thread.get_by_thread_id(thread_id)
+        if thread is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {thread_id}")
+        return _thread_procedure_context_response(domain, thread)
+
+    @router.put("/threads/{thread_id}/pinned-procedure", response_model=ClientThreadProcedureContextResponse)
+    async def set_thread_pinned_procedure(thread_id: str, request: Request, payload: ClientThreadPinnedProcedureRequest):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        thread = domain.services.thread.get_by_thread_id(thread_id)
+        if thread is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {thread_id}")
+        procedure = domain.services.procedure.get_by_procedure_id(str(payload.procedure_id or "").strip())
+        if procedure is None:
+            gateway._raise_http_error(
+                status_code=404,
+                code="procedure_not_found",
+                message=f"未知 procedure: {payload.procedure_id}",
+            )
+        if str(getattr(procedure, "status", "active") or "active").strip().lower() != "active":
+            gateway._raise_http_error(
+                status_code=409,
+                code="procedure_not_active",
+                message=f"procedure {payload.procedure_id} 当前不可固定",
+            )
+        domain.services.thread.set_pinned_procedure(thread_id=thread.id, pinned_procedure_id=procedure.procedure_id)
+        refreshed = domain.services.thread.get_by_id(thread.id) or thread
+        return _thread_procedure_context_response(domain, refreshed)
+
+    @router.delete("/threads/{thread_id}/pinned-procedure", response_model=ClientThreadProcedureContextResponse)
+    async def clear_thread_pinned_procedure(thread_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        thread = domain.services.thread.get_by_thread_id(thread_id)
+        if thread is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {thread_id}")
+        domain.services.thread.set_pinned_procedure(thread_id=thread.id, pinned_procedure_id=None)
+        refreshed = domain.services.thread.get_by_id(thread.id) or thread
+        return _thread_procedure_context_response(domain, refreshed)
+
     @router.post("/sessions", response_model=ClientSessionResponse)
     async def create_session(http_request: Request, payload: ClientSessionCreateRequest):
         gateway._require_http_auth(http_request)
@@ -810,6 +879,7 @@ def build_client_router(gateway) -> APIRouter:
         if thread is None:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {payload.thread_id}")
         workspace = _require_thread_workspace(gateway, domain, thread=thread, workspace_id=payload.workspace_id)
+        governance = domain.services.workspace.get_governance_view(workspace)
         client = domain.services.client.ensure_client(
             client_id=payload.client_id,
             principal_id=domain.principal.id,
@@ -837,6 +907,7 @@ def build_client_router(gateway) -> APIRouter:
         if thread is None:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {payload.thread_id}")
         workspace = _require_thread_workspace(gateway, domain, thread=thread, workspace_id=payload.workspace_id)
+        governance = domain.services.workspace.get_governance_view(workspace)
         client = domain.services.client.ensure_client(
             client_id=payload.client_id,
             principal_id=domain.principal.id,
@@ -879,8 +950,10 @@ def build_client_router(gateway) -> APIRouter:
             "workspace_id": payload.workspace_id,
             "workspace_title": workspace.title,
             "workspace_base_mode": workspace.base_mode,
-            "workspace_prompt_overlay": workspace.prompt_overlay,
-            "workspace_default_execution_target": workspace.default_execution_target,
+            "workspace_prompt_overlay": governance["prompt_overlay"],
+            "workspace_default_execution_target": governance["default_execution_target"],
+            "workspace_preferred_source_profiles": governance["preferred_source_profiles"],
+            "workspace_memory_ranking_policy": governance["memory_ranking_policy"],
         }
         inbound_metadata.update(dict(payload.metadata or {}))
         if payload.client_message_id:
@@ -902,8 +975,10 @@ def build_client_router(gateway) -> APIRouter:
             meta={
                 "workspace_id": payload.workspace_id,
                 "workspace_base_mode": workspace.base_mode,
-                "workspace_prompt_overlay": workspace.prompt_overlay,
-                "workspace_default_execution_target": workspace.default_execution_target,
+                "workspace_prompt_overlay": governance["prompt_overlay"],
+                "workspace_default_execution_target": governance["default_execution_target"],
+                "workspace_preferred_source_profiles": governance["preferred_source_profiles"],
+                "workspace_memory_ranking_policy": governance["memory_ranking_policy"],
                 **dict(payload.metadata or {}),
                 **({"client_message_id": payload.client_message_id} if payload.client_message_id else {}),
                 "preferred_mode": payload.preferred_mode or workspace.base_mode,
@@ -1351,7 +1426,9 @@ def build_client_router(gateway) -> APIRouter:
                 client_type="electron",
                 display_name=payload.client_id,
             )
-        if existing.approval_type == "chat_confirmation":
+        linked_operation = domain.services.operation.get_by_id(existing.operation_id)
+        linked_metadata = dict(getattr(linked_operation, "meta", {}) or {}) if linked_operation is not None else {}
+        if str(linked_metadata.get("confirm_request_id") or "").strip() and str(linked_metadata.get("confirm_session_id") or "").strip():
             approval, operation = await _resolve_chat_confirmation_from_approval(
                 gateway,
                 domain,

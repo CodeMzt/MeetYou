@@ -190,6 +190,73 @@
     {
       "type": "function",
       "function": {
+        "name": "manage_procedures",
+        "description": "Inspect procedures or propose creating, updating, deleting, pinning, or unpinning a procedure through the approval callback flow.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "list",
+                "detail",
+                "propose_create",
+                "propose_update",
+                "propose_delete",
+                "propose_pin",
+                "propose_unpin"
+              ]
+            },
+            "procedure_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "prompt_overlay": {
+              "type": "string"
+            },
+            "default_execution_target": {
+              "type": "string"
+            },
+            "risk_profile": {
+              "type": "string"
+            },
+            "applicable_modes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "recommended_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "recommended_source_profiles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "infer_keywords": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["action"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "manage_scheduled_tasks",
         "description": "Create, list, inspect, update, complete, cancel, disable, delete, or restore assistant-owned scheduled tasks.",
         "parameters": {

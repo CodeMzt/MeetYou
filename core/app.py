@@ -465,6 +465,9 @@ class App:
         workspace_row = core_services.workspace.get_by_id(session_row.workspace_id)
 
         event_metadata = dict(getattr(event, "metadata", {}) or {})
+        approval_type = str(event_metadata.get("approval_type") or "chat_confirmation").strip() or "chat_confirmation"
+        operation_type = str(event_metadata.get("approval_operation_type") or "chat_confirmation").strip() or "chat_confirmation"
+        operation_title = str(event_metadata.get("approval_title") or "Chat Confirmation").strip() or "Chat Confirmation"
         risk_level = str(
             event_metadata.get("risk_level")
             or event_metadata.get("action_risk")
@@ -473,9 +476,9 @@ class App:
         operation = core_services.operation.create_operation(
             thread_id=thread_row.id,
             workspace_id=session_row.workspace_id,
-            operation_type="chat_confirmation",
+            operation_type=operation_type,
             execution_target="core_only",
-            title="Chat Confirmation",
+            title=operation_title,
             requested_by_client_id=session_row.client_id,
             requested_by_session_id=session_row.id,
             status="waiting_approval",
@@ -485,11 +488,12 @@ class App:
                 "confirm_prompt": str(getattr(event, "content", "") or ""),
                 "approval_required": True,
                 "source": "event_bus_confirm",
+                **({"approval_metadata": dict(event_metadata)} if event_metadata else {}),
             },
         )
         approval = core_services.approval.create_approval(
             operation_id=operation.id,
-            approval_type="chat_confirmation",
+            approval_type=approval_type,
             risk_level=risk_level,
         )
         operation = core_services.operation.update_status(
@@ -1690,6 +1694,51 @@ class App:
             is_boot=effective_session_id == "system:boot",
         )
 
+    def _enrich_request_procedure_context(self, request: SessionExecutionRequest) -> None:
+        if self.core_services is None or self.core_domain is None:
+            return
+        metadata = dict(request.input_info.get("metadata") or {})
+        session_row = self.core_services.session.get_by_session_id(request.session_id)
+        if session_row is None:
+            return
+        thread_row = self.core_services.thread.get_by_id(session_row.thread_id)
+        workspace_row = self.core_services.workspace.get_by_id(session_row.workspace_id)
+        if thread_row is None or workspace_row is None:
+            return
+        if request.event.type == EventType.MESSAGE.value and request.event.role == "user":
+            inference = self.core_services.procedure.infer_for_turn(
+                principal_id=self.core_domain.principal.id,
+                content=str(request.input_info.get("content") or ""),
+                preferred_mode=str(metadata.get("preferred_mode") or workspace_row.base_mode or ""),
+                workspace_id=str(getattr(workspace_row, "workspace_id", "") or ""),
+            )
+            self.core_services.thread.set_latest_inferred_procedure(
+                thread_id=thread_row.id,
+                procedure_id=str(inference.get("procedure_id") or ""),
+                score=int(inference.get("score", 0) or 0),
+                reason=str(inference.get("reason") or ""),
+                inferred_at=str(inference.get("inferred_at") or ""),
+            )
+            refreshed_thread = self.core_services.thread.get_by_id(thread_row.id)
+            if refreshed_thread is not None:
+                thread_row = refreshed_thread
+        context = self.core_services.procedure.get_thread_context(thread_row)
+        pinned = context.get("pinned_procedure")
+        effective = context.get("effective_procedure")
+        if isinstance(pinned, dict):
+            metadata["pinned_procedure_id"] = str(pinned.get("procedure_id") or "")
+            metadata["pinned_procedure"] = dict(pinned)
+        else:
+            metadata.pop("pinned_procedure_id", None)
+            metadata.pop("pinned_procedure", None)
+        if isinstance(effective, dict):
+            metadata["effective_procedure"] = dict(effective)
+            metadata["effective_procedure_source"] = str(context.get("source") or "none")
+        else:
+            metadata.pop("effective_procedure", None)
+            metadata["effective_procedure_source"] = "none"
+        request.input_info["metadata"] = metadata
+
     async def _process_session_execution(self, request: SessionExecutionRequest) -> None:
         stream_id = ""
         turn_id = uuid4().hex
@@ -1713,6 +1762,8 @@ class App:
             api_url = self.config.get("api_url") or ""
             model = self.config.get("model") or ""
             model_options = self._build_model_options(getattr(request.event, "metadata", {}))
+
+            self._enrich_request_procedure_context(request)
 
             if request.event.type == EventType.MESSAGE.value and request.event.role == "user":
                 await self._emit_pending_task_updates(request.session_id, request.target, request.event.source)
@@ -2379,6 +2430,7 @@ class App:
             migrate_current=True,
         )
         system_tools.set_agent_dispatcher(self.core_domain.agent_dispatch)
+        self.tools_manager.set_core_domain(self.core_domain)
         self.tools_manager.set_agent_dispatcher(self.core_domain.agent_dispatch)
         await self._sync_config_state_to_db()
         logger.info(

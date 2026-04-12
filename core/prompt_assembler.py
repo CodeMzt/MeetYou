@@ -29,7 +29,17 @@ class PromptAssembler:
         base_mode = str(workspace.get("base_mode") or "").strip()
         prompt_overlay = str(workspace.get("prompt_overlay") or "").strip()
         default_execution_target = str(workspace.get("default_execution_target") or "").strip()
-        if not any([workspace_id, title, base_mode, prompt_overlay, default_execution_target]):
+        preferred_source_profiles = _unique_strings(workspace.get("preferred_source_profiles"))
+        memory_ranking_policy = str(workspace.get("memory_ranking_policy") or "").strip()
+        if not any([
+            workspace_id,
+            title,
+            base_mode,
+            prompt_overlay,
+            default_execution_target,
+            preferred_source_profiles,
+            memory_ranking_policy,
+        ]):
             return ""
         lines = ["[Workspace Policy]"]
         header = title or workspace_id
@@ -43,6 +53,10 @@ class PromptAssembler:
             lines.append(f"Default workspace mode: {base_mode}")
         if default_execution_target:
             lines.append(f"Default workspace execution target: {default_execution_target}")
+        if preferred_source_profiles:
+            lines.append(f"Preferred source profiles: {', '.join(preferred_source_profiles)}")
+        if memory_ranking_policy:
+            lines.append(f"Memory ranking policy: {memory_ranking_policy}")
         if prompt_overlay:
             lines.append(prompt_overlay)
         return "\n".join(lines)
@@ -95,6 +109,30 @@ class PromptAssembler:
             lines.append(f"Default execution target: {default_execution_target}")
         if risk_profile:
             lines.append(f"Risk profile: {risk_profile}")
+        return "\n".join(lines)
+
+    def _build_effective_procedure_policy(self, procedure: dict[str, Any] | None) -> str:
+        if not isinstance(procedure, dict):
+            return ""
+        source = str(procedure.get("source") or "").strip().lower()
+        if source != "inferred":
+            return ""
+        procedure_id = str(procedure.get("procedure_id") or "").strip()
+        title = str(procedure.get("title") or "").strip()
+        prompt_overlay = str(procedure.get("prompt_overlay") or "").strip()
+        recommended_capabilities = _unique_strings(procedure.get("recommended_capabilities"))
+        if not any([procedure_id, title, prompt_overlay, recommended_capabilities]):
+            return ""
+        header = title or procedure_id
+        if procedure_id and title and procedure_id != title:
+            header = f"{title} ({procedure_id})"
+        lines = ["[Current Procedure Context]"]
+        if header:
+            lines.append(f"Current inferred procedure: {header}.")
+        if prompt_overlay:
+            lines.append(prompt_overlay)
+        if recommended_capabilities:
+            lines.append(f"Recommended capabilities: {', '.join(recommended_capabilities)}")
         return "\n".join(lines)
 
     def _build_skill_first_policy(self, capability_set) -> str:
@@ -187,5 +225,10 @@ class PromptAssembler:
         )
         workspace_policy = self._build_workspace_policy(route_context.get("workspace"))
         procedure_policy = self._build_pinned_procedure_policy(route_context.get("pinned_procedure"))
-        sections = [section for section in [workspace_policy, procedure_policy, prompt_text] if section]
+        effective_procedure_policy = self._build_effective_procedure_policy(route_context.get("effective_procedure"))
+        sections = [
+            section
+            for section in [workspace_policy, procedure_policy, effective_procedure_policy, prompt_text]
+            if section
+        ]
         return "\n\n".join(sections).strip()

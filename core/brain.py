@@ -910,6 +910,40 @@ class Brain:
             "loaded_skills": list((session.metadata.get("current_route") or {}).get("loaded_skills") or []),
         }
 
+    @staticmethod
+    def _first_source_profile(values: Any) -> str:
+        if not isinstance(values, list):
+            return ""
+        for item in values:
+            normalized = str(item or "").strip()
+            if normalized:
+                return normalized
+        return ""
+
+    def _resolve_governed_source_profile(self, route_context: dict[str, Any]) -> tuple[str, str]:
+        effective_procedure = route_context.get("effective_procedure")
+        if isinstance(effective_procedure, dict):
+            profile = self._first_source_profile(effective_procedure.get("recommended_source_profiles"))
+            if profile:
+                return profile, f"Effective procedure source profile preference: {profile}"
+
+        pinned_procedure = route_context.get("pinned_procedure")
+        if isinstance(pinned_procedure, dict):
+            profile = self._first_source_profile(pinned_procedure.get("recommended_source_profiles"))
+            if profile:
+                return profile, f"Pinned procedure source profile preference: {profile}"
+
+        workspace = route_context.get("workspace")
+        if isinstance(workspace, dict):
+            current_source_profile = str(route_context.get("source_profile") or "").strip()
+            if current_source_profile and current_source_profile not in {"workspace_local", "study_materials"}:
+                return "", ""
+            profile = self._first_source_profile(workspace.get("preferred_source_profiles"))
+            if profile:
+                return profile, f"Workspace source profile preference: {profile}"
+
+        return "", ""
+
     def _apply_route_metadata_overrides(self, route_context: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
         route_dict = dict(route_context or {})
         workspace_id = str(metadata.get("workspace_id") or "").strip()
@@ -917,13 +951,29 @@ class Brain:
         workspace_base_mode = str(metadata.get("workspace_base_mode") or "").strip()
         workspace_prompt_overlay = str(metadata.get("workspace_prompt_overlay") or "").strip()
         workspace_default_execution_target = str(metadata.get("workspace_default_execution_target") or "").strip()
-        if any([workspace_id, workspace_title, workspace_base_mode, workspace_prompt_overlay, workspace_default_execution_target]):
+        workspace_preferred_source_profiles = [
+            str(item).strip() for item in metadata.get("workspace_preferred_source_profiles", []) if str(item).strip()
+        ]
+        workspace_memory_ranking_policy = str(metadata.get("workspace_memory_ranking_policy") or "").strip()
+        if any(
+            [
+                workspace_id,
+                workspace_title,
+                workspace_base_mode,
+                workspace_prompt_overlay,
+                workspace_default_execution_target,
+                workspace_preferred_source_profiles,
+                workspace_memory_ranking_policy,
+            ]
+        ):
             route_dict["workspace"] = {
                 "workspace_id": workspace_id,
                 "title": workspace_title,
                 "base_mode": workspace_base_mode,
                 "prompt_overlay": workspace_prompt_overlay,
                 "default_execution_target": workspace_default_execution_target,
+                "preferred_source_profiles": workspace_preferred_source_profiles,
+                "memory_ranking_policy": workspace_memory_ranking_policy,
             }
         procedure_payload = metadata.get("pinned_procedure")
         procedure_id = str(metadata.get("pinned_procedure_id") or "").strip()
@@ -953,6 +1003,41 @@ class Brain:
                     if existing_reason
                     else procedure_reason
                 )
+        effective_procedure_payload = metadata.get("effective_procedure")
+        effective_procedure_source = str(metadata.get("effective_procedure_source") or "").strip()
+        if isinstance(effective_procedure_payload, dict):
+            route_dict["effective_procedure"] = {
+                "procedure_id": str(effective_procedure_payload.get("procedure_id") or "").strip(),
+                "title": str(effective_procedure_payload.get("title") or "").strip(),
+                "description": str(effective_procedure_payload.get("description") or "").strip(),
+                "prompt_overlay": str(effective_procedure_payload.get("prompt_overlay") or "").strip(),
+                "applicable_modes": [
+                    str(item).strip() for item in effective_procedure_payload.get("applicable_modes", []) if str(item).strip()
+                ],
+                "recommended_capabilities": [
+                    str(item).strip()
+                    for item in effective_procedure_payload.get("recommended_capabilities", [])
+                    if str(item).strip()
+                ],
+                "recommended_source_profiles": [
+                    str(item).strip()
+                    for item in effective_procedure_payload.get("recommended_source_profiles", [])
+                    if str(item).strip()
+                ],
+                "default_execution_target": str(effective_procedure_payload.get("default_execution_target") or "").strip(),
+                "risk_profile": str(effective_procedure_payload.get("risk_profile") or "").strip(),
+                "status": str(effective_procedure_payload.get("status") or "").strip(),
+                "source": effective_procedure_source,
+            }
+            if effective_procedure_source == "inferred":
+                existing_reason = str(route_dict.get("route_reason") or "").strip()
+                inferred_reason = f"Inferred procedure: {route_dict['effective_procedure']['procedure_id']}"
+                if inferred_reason not in existing_reason:
+                    route_dict["route_reason"] = (
+                        f"{existing_reason} {inferred_reason}".strip()
+                        if existing_reason
+                        else inferred_reason
+                    )
         route_dict["disable_tools"] = bool(metadata.get("disable_tools"))
         if metadata.get("disable_tools"):
             route_dict["tool_bundle"] = []
@@ -963,6 +1048,16 @@ class Brain:
                 if existing_reason
                 else "Transient internal signal; tools disabled."
             )
+        governed_source_profile, source_profile_reason = self._resolve_governed_source_profile(route_dict)
+        if governed_source_profile:
+            route_dict["source_profile"] = governed_source_profile
+            existing_reason = str(route_dict.get("route_reason") or "").strip()
+            if source_profile_reason and source_profile_reason not in existing_reason:
+                route_dict["route_reason"] = (
+                    f"{existing_reason} {source_profile_reason}".strip()
+                    if existing_reason
+                    else source_profile_reason
+                )
         return route_dict
 
     def _resolve_route(self, input_info: dict, session: BrainSession, *, reason_prefix: str = "") -> dict[str, Any]:

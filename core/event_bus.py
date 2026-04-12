@@ -161,6 +161,7 @@ class EventBus:
         session_id: str = "system:confirm",
         source=None,
         target: EventTarget | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """
         请求用户确认。
@@ -185,6 +186,7 @@ class EventBus:
             source=source or make_source("system", "confirm"),
             target=target or EventTarget(kind=TargetKind.CURRENT_SESSION.value),
             timeout=timeout,
+            metadata=dict(metadata or {}),
         )
         self._register_pending_request(
             request_id=event.request_id,

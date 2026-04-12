@@ -7,7 +7,7 @@
 - Core、Client、客户端内本地后端、边缘节点、Workspace、Thread、Session、Operation 各自是什么。
 - Mode、Procedure、Skill、Tool、MCP 的职责边界如何划分。
 - 记忆如何组织，尤其是 workspace memory 与 global memory 的关系。
-- 多工作空间 Agent、跨会话协作、显式 Procedure 调用如何建模。
+- 多工作空间 Agent、跨会话协作、自动 Procedure 推断与治理如何建模。
 
 ## 2. 领域对象
 
@@ -154,6 +154,17 @@ Workspace 适合承载：
 
 - task 调度输出会显式带上 preferred capability ref 与 routing preference
 - scheduled task 的 route context 已能读取这些偏好，供后台执行路径消费
+
+当前已落地的第八批治理字段：
+
+- `preferred_source_profiles`
+- `memory_ranking_policy`
+
+当前已生效的第八批行为：
+
+- workspace 可公开声明来源偏好，并进入统一 workspace governance surface
+- message 路由会把 workspace 的来源偏好注入 route context；procedure 推荐来源仍高于 workspace 偏好
+- workspace 记忆排序策略已公开为治理字段；当前实现固定为 `workspace_first`
 
 Workspace 不是：
 
@@ -359,7 +370,16 @@ Mode 不负责：
 
 ### 6.2 Procedure
 
-Procedure 是高层工作流模板，是 V2 的一等公民。
+Procedure 是高层 workflow profile，是 V2 的一等公民，用来承接原来 rich workflow skill 的那部分职责。
+
+Procedure 比 Skill 更强，原因在于它不是一段临时 prompt 提示，而是会进入正式资源主链的工作流画像：
+
+- 有稳定 `procedure_id` 与数据库资源模型
+- 可直接影响 `execution_target`、capability ref 与 agent routing
+- 可被 thread、task、scheduler 长期继承
+- 可进入审计、回放与调试链路
+
+设计定位上，Procedure 默认由 AI / Core 根据当前 thread、workspace、task、历史 route context 自动推断；它不是要求用户每轮手动挑选的前端菜单。
 
 示例：
 
@@ -371,20 +391,38 @@ Procedure 是高层工作流模板，是 V2 的一等公民。
 Procedure 应声明：
 
 - `procedure_id`
+- `prompt_overlay`
 - `applicable_modes`
 - `recommended_capabilities`
 - `recommended_source_profiles`
 - `default_execution_target`
 - `risk_profile`
+- `preferred_capability_ref`
+- `preferred_agent_ids`
+- `preferred_agent_types`
+- `agent_routing_policy`
 
-### 6.3 显式固定调用
+### 6.3 Procedure 推断与生命周期
 
-V2 明确允许用户显式固定调用某个 Procedure。
+V2 默认不要求用户显式选择 Procedure。
 
-支持两种方式：
+默认链路应为：
 
-- 单次调用：本轮明确指定 procedure
-- 会话固定：在当前 thread 或 session 中暂时 pin 某个 procedure，直到取消
+- AI / Core 自动推断当前消息、任务或线程更适合挂哪个 Procedure
+- 当某个 Procedure 需要跨多轮稳定生效时，可把当前推断固化为 thread 级 pinned procedure
+- 前端不需要把 Procedure 做成主路径执行器；最多提供当前 Procedure、可用 Procedure 列表与内容的只读展示
+
+持久化变更治理应为：
+
+- 新建 Procedure
+- 更新 Procedure
+- 删除 Procedure
+- 将自动推断结果固化为 thread 级 pin
+- 取消 thread 级 pin
+
+以上会改变持久化 catalog 或 thread 上下文绑定，因此都需要先通过回调 / 审批向用户询问，再执行变更。
+
+结论：用户通过确认或拒绝参与 Procedure 治理，而不是自己承担 Procedure 的主动编辑工作。
 
 ### 6.4 Skill
 
@@ -396,7 +434,9 @@ Skill 更轻量，适合：
 - 特定注意事项
 - 某类输入的处理策略
 
-Skill 不再承担复杂工作流职责。
+Skill 不再承担复杂工作流职责，也不再作为用户面 workflow identity。
+
+复杂、可复用、需要长期审计和路由控制的 workflow，应逐步从 Skill 上移到 Procedure；Skill 保留为运行时 prompt / tool 策略装配材料。
 
 ### 6.5 Tool
 
@@ -541,8 +581,9 @@ Core 仍然是最终真相源。
 ### 11.2 收敛
 
 - `scene` 降级为内部 route label
-- Procedure 升级为一等公民
+- Procedure 升级为 AI 管理的一等 workflow profile
 - Skill 从 prompt 文件型存储迁出
+- rich workflow skill 逐步迁入 Procedure
 - Capability 统一注册与治理
 
 ### 11.3 禁止继续放大耦合
@@ -553,6 +594,5 @@ Core 仍然是最终真相源。
 
 ## 12. 待决问题
 
-- Procedure pin 是绑定到 thread，还是绑定到 session；默认建议 thread。
 - 某些 workspace 是否允许完全隐藏其他 workspace 来源记忆；默认建议不隐藏，只降权排序。
 - Bridge agent 下的子设备是否需要独立健康状态资源；默认建议需要。

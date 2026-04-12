@@ -91,6 +91,34 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
     }
   }, [baseUrl, clientContext])
 
+  const refreshWorkspace = useCallback(async (workspaceIdOverride?: string) => {
+    const activeContext = clientContext
+    const workspaceId = String(workspaceIdOverride || activeContext?.workspace.workspace_id || '').trim()
+    if (!activeContext || !workspaceId) {
+      return null
+    }
+    try {
+      const workspaces = await listClientWorkspaces(baseUrl)
+      const nextWorkspace = workspaces.find((item) => item.workspace_id === workspaceId) ?? null
+      if (!nextWorkspace) {
+        return null
+      }
+      setClientContext((current) => {
+        if (!current || current.workspace.workspace_id !== workspaceId) {
+          return current
+        }
+        return {
+          ...current,
+          workspace: nextWorkspace,
+        }
+      })
+      return nextWorkspace
+    } catch (error) {
+      console.warn('Failed to refresh workspace:', error)
+      return null
+    }
+  }, [baseUrl, clientContext])
+
   const initializeClientContext = useCallback(async () => {
     if (clientContext) {
       return clientContext
@@ -115,7 +143,7 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
         workspace_id: workspace.workspace_id,
         client_id: sourceIdRef.current,
         client_type: 'electron',
-        display_name: 'Desktop App',
+        display_name: '桌面应用',
       })
       const nextContext: ClientContext = {
         workspace,
@@ -157,5 +185,6 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
     clientId,
     initializeClientContext,
     refreshExecutionTargets,
+    refreshWorkspace,
   }
 }

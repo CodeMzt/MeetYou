@@ -37,7 +37,9 @@ export interface ClientWorkspace {
   allowed_capability_ids: string[]
   preferred_agent_ids: string[]
   preferred_agent_types: string[]
+  preferred_source_profiles: string[]
   agent_routing_policy: string
+  memory_ranking_policy: string
   capability_routing_overrides: Record<string, unknown>
 }
 
@@ -54,6 +56,22 @@ export interface ClientProcedure {
   default_execution_target: string
   risk_profile: string
   status: string
+}
+
+export interface ClientProcedureDetail extends ClientProcedure {
+  prompt_overlay: string
+  recommended_source_profiles: string[]
+  infer_keywords: string[]
+}
+
+export interface ClientThreadProcedureContext {
+  source: 'none' | 'pinned' | 'inferred' | string
+  pinned_procedure: ClientProcedureDetail | null
+  latest_inferred_procedure: ClientProcedureDetail | null
+  effective_procedure: ClientProcedureDetail | null
+  latest_inferred_reason: string
+  latest_inferred_score: number
+  latest_inferred_at: string
 }
 
 export interface ClientThread {
@@ -122,6 +140,14 @@ export interface ClientExecutionTarget {
   status: string
   owner_client_id: string
   workspace_ids: string[]
+}
+
+export interface OperatorSourceProfile {
+  profile_name: string
+  label: string
+  description: string
+  official_only: boolean
+  default_freshness: string
 }
 
 export interface ClientMessage {

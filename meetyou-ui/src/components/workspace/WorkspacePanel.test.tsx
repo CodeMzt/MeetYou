@@ -1,0 +1,88 @@
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+import type { ClientThreadProcedureContext, ClientWorkspace, OperationView } from '../../types'
+import WorkspacePanel from './WorkspacePanel'
+
+const workspace: ClientWorkspace = {
+  workspace_id: 'personal',
+  title: '个人',
+  status: 'active',
+  base_mode: 'general',
+  description: '默认个人工作空间。',
+  prompt_overlay: '',
+  default_execution_target: 'core_only',
+  capability_policy: 'allow_all',
+  allowed_capability_ids: [],
+  preferred_agent_ids: [],
+  preferred_agent_types: [],
+  preferred_source_profiles: ['workspace_local'],
+  agent_routing_policy: 'balanced',
+  memory_ranking_policy: 'workspace_first',
+  capability_routing_overrides: {},
+}
+
+const procedureContext: ClientThreadProcedureContext = {
+  source: 'inferred',
+  pinned_procedure: null,
+  latest_inferred_procedure: {
+    procedure_id: 'code_review',
+    title: '代码审查',
+    description: '围绕代码变更、风险与验证给出结构化审查。',
+    applicable_modes: ['general'],
+    recommended_capabilities: ['search_memory', 'summarize_text'],
+    preferred_capability_ref: 'search_memory',
+    preferred_agent_ids: [],
+    preferred_agent_types: [],
+    agent_routing_policy: 'balanced',
+    default_execution_target: 'core_only',
+    risk_profile: 'read',
+    status: 'active',
+    prompt_overlay: '优先关注正确性。',
+    recommended_source_profiles: ['workspace_local'],
+    infer_keywords: ['review', 'patch'],
+  },
+  effective_procedure: {
+    procedure_id: 'code_review',
+    title: '代码审查',
+    description: '围绕代码变更、风险与验证给出结构化审查。',
+    applicable_modes: ['general'],
+    recommended_capabilities: ['search_memory', 'summarize_text'],
+    preferred_capability_ref: 'search_memory',
+    preferred_agent_ids: [],
+    preferred_agent_types: [],
+    agent_routing_policy: 'balanced',
+    default_execution_target: 'core_only',
+    risk_profile: 'read',
+    status: 'active',
+    prompt_overlay: '优先关注正确性。',
+    recommended_source_profiles: ['workspace_local'],
+    infer_keywords: ['review', 'patch'],
+  },
+  latest_inferred_reason: 'keywords:review,patch',
+  latest_inferred_score: 7,
+  latest_inferred_at: '2026-04-12T00:00:00Z',
+}
+
+describe('WorkspacePanel', () => {
+  it('renders current procedure context as read-only workspace metadata', () => {
+    const markup = renderToStaticMarkup(
+      <WorkspacePanel
+        workspace={workspace}
+        procedureContext={procedureContext}
+        connectionState="connected"
+        desktopAgentConnected={false}
+        operations={[] as OperationView[]}
+        approvalDisplay={null}
+        pendingHumanInput={null}
+      />,
+    )
+
+    expect(markup).toContain('当前规程')
+    expect(markup).toContain('代码审查')
+    expect(markup).toContain('自动推断')
+    expect(markup).toContain('最近一次推断')
+    expect(markup).toContain('search_memory')
+    expect(markup).toContain('工作区/本地知识')
+    expect(markup).toContain('当前工作区优先')
+  })
+})

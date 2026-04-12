@@ -355,6 +355,29 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("code_review", prompt_text)
         self.assertIn("Focus on correctness, regressions, tests", prompt_text)
 
+    def test_prompt_includes_inferred_procedure_context(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        prompt_text = manager.assemble_prompt_for_route(
+            {
+                "current_mode": "normal",
+                "content": "Please review this patch and call out regressions.",
+                "active_skills": [],
+                "loaded_skills": [],
+                "effective_procedure": {
+                    "procedure_id": "code_review",
+                    "title": "Code Review",
+                    "prompt_overlay": "Focus on correctness first.",
+                    "recommended_capabilities": ["search_memory"],
+                    "source": "inferred",
+                },
+            }
+        )
+
+        self.assertIn("[Current Procedure Context]", prompt_text)
+        self.assertIn("Current inferred procedure", prompt_text)
+        self.assertIn("search_memory", prompt_text)
+
     def test_prompt_includes_workspace_policy(self):
         manager = AssistantModeManager(_FakeConfig())
 
@@ -370,6 +393,8 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "base_mode": "study",
                     "prompt_overlay": "Prefer teaching-oriented explanations and review questions.",
                     "default_execution_target": "core_only",
+                    "preferred_source_profiles": ["study_materials"],
+                    "memory_ranking_policy": "workspace_first",
                 },
             }
         )
@@ -378,6 +403,8 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("Current workspace: Study (study).", prompt_text)
         self.assertIn("Default workspace mode: study", prompt_text)
         self.assertIn("Default workspace execution target: core_only", prompt_text)
+        self.assertIn("Preferred source profiles: study_materials", prompt_text)
+        self.assertIn("Memory ranking policy: workspace_first", prompt_text)
         self.assertIn("Prefer teaching-oriented explanations", prompt_text)
 
     def test_capability_diagnostics_reports_mcp_fallback_states(self):
@@ -592,6 +619,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "list_skills",
                     "load_skill",
                     "create_skill",
+                    "manage_procedures",
                 "summarize_text",
                 "organize_notes",
                 "extract_action_items",

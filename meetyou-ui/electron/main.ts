@@ -9,9 +9,13 @@ let win: BrowserWindow | null
 let dashboardWin: BrowserWindow | null = null
 let settingsWin: BrowserWindow | null = null
 let devtoolsWin: BrowserWindow | null = null
+let statsWin: BrowserWindow | null = null
+let workspaceWin: BrowserWindow | null = null
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
 let latestDevtools = { usageSnapshot: null, runtimeDebugSnapshot: null }
+let latestStats = { usageSnapshot: null }
+let latestWorkspacePanel = null
 
 function getWorkspaceRoot() {
   return path.resolve(app.getAppPath(), '..')
@@ -121,6 +125,102 @@ function createSettingsWindow() {
 
   settingsWin.on('closed', () => {
     settingsWin = null
+  })
+}
+
+function createWorkspaceWindow() {
+  if (workspaceWin) {
+    if (workspaceWin.isMinimized()) workspaceWin.restore()
+    workspaceWin.focus()
+    return
+  }
+
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width, height } = primaryDisplay.workAreaSize
+
+  const windowWidth = 560
+  const windowHeight = 700
+
+  workspaceWin = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x: width / 2 - windowWidth / 2,
+    y: height / 2 - windowHeight / 2,
+    icon: path.join(process.env.VITE_PUBLIC || '', 'electron-vite.svg'),
+    transparent: true,
+    frame: false,
+    resizable: true,
+    minWidth: 520,
+    minHeight: 620,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  if (process.platform === 'win32') {
+    workspaceWin.setBackgroundMaterial('mica')
+  } else if (process.platform === 'darwin') {
+    workspaceWin.setVibrancy('popover')
+  }
+
+  if (VITE_DEV_SERVER_URL) {
+    workspaceWin.loadURL(`${VITE_DEV_SERVER_URL}#/workspace`)
+  } else {
+    workspaceWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: 'workspace' })
+  }
+
+  workspaceWin.on('closed', () => {
+    workspaceWin = null
+  })
+}
+
+function createStatsWindow() {
+  if (statsWin) {
+    if (statsWin.isMinimized()) statsWin.restore()
+    statsWin.focus()
+    return
+  }
+
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width, height } = primaryDisplay.workAreaSize
+
+  const windowWidth = 460
+  const windowHeight = 620
+
+  statsWin = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x: width / 2 - windowWidth / 2,
+    y: height / 2 - windowHeight / 2,
+    icon: path.join(process.env.VITE_PUBLIC || '', 'electron-vite.svg'),
+    transparent: true,
+    frame: false,
+    resizable: true,
+    minWidth: 420,
+    minHeight: 520,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  if (process.platform === 'win32') {
+    statsWin.setBackgroundMaterial('mica')
+  } else if (process.platform === 'darwin') {
+    statsWin.setVibrancy('popover')
+  }
+
+  if (VITE_DEV_SERVER_URL) {
+    statsWin.loadURL(`${VITE_DEV_SERVER_URL}#/stats`)
+  } else {
+    statsWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: 'stats' })
+  }
+
+  statsWin.on('closed', () => {
+    statsWin = null
   })
 }
 
@@ -238,6 +338,9 @@ function createWindow() {
   ipcMain.on('open-settings', () => {
     createSettingsWindow()
   })
+  ipcMain.on('open-workspace-panel', () => {
+    createWorkspaceWindow()
+  })
   ipcMain.on('open-devtools', () => {
     createDevtoolsWindow()
   })
@@ -250,17 +353,34 @@ function createWindow() {
   ipcMain.on('request-devtools', (e) => {
     e.sender.send('devtools-updated', latestDevtools)
   })
-  ipcMain.on('open-stats', () => {
-    createDevtoolsWindow()
-  })
-  ipcMain.on('update-stats', (e, data) => {
-    latestDevtools = data
-    if (devtoolsWin) {
-      devtoolsWin.webContents.send('devtools-updated', data)
+  ipcMain.on('update-stats', (_e, data) => {
+    latestStats = data
+    if (statsWin) {
+      statsWin.webContents.send('stats-updated', data)
     }
   })
   ipcMain.on('request-stats', (e) => {
-    e.sender.send('devtools-updated', latestDevtools)
+    e.sender.send('stats-updated', latestStats)
+  })
+  ipcMain.on('update-workspace-panel', (_e, data) => {
+    latestWorkspacePanel = data
+    if (workspaceWin) {
+      workspaceWin.webContents.send('workspace-panel-updated', data)
+    }
+  })
+  ipcMain.on('request-workspace-panel', (e) => {
+    e.sender.send('workspace-panel-updated', latestWorkspacePanel)
+  })
+  ipcMain.on('workspace-governance-updated', (_e, data) => {
+    if (win) {
+      win.webContents.send('workspace-governance-updated', data)
+    }
+    if (workspaceWin) {
+      workspaceWin.webContents.send('workspace-governance-updated', data)
+    }
+  })
+  ipcMain.on('open-stats', () => {
+    createStatsWindow()
   })
   ipcMain.removeHandler('get-gateway-access-token')
   ipcMain.handle('get-gateway-access-token', () => readGatewayAccessToken())

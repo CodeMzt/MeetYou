@@ -66,6 +66,11 @@ V2 推荐的核心资源：
 - `POST /client/operations`
 - `GET /client/operations/{operation_id}`
 - `POST /client/approvals/{approval_id}/decision`
+- `GET /client/procedures`
+- `GET /client/procedures/{procedure_id}`
+- `GET /client/threads/{thread_id}/procedure-context`
+- `PUT /client/threads/{thread_id}/pinned-procedure`
+- `DELETE /client/threads/{thread_id}/pinned-procedure`
 - `GET /client/workspaces`
 - `GET /client/tasks`
 - `GET /client/memory/search`
@@ -118,7 +123,9 @@ V2 推荐的核心资源：
 - `allowed_capability_ids`
 - `preferred_agent_ids`
 - `preferred_agent_types`
+- `preferred_source_profiles`
 - `agent_routing_policy`
+- `memory_ranking_policy`
 - `capability_routing_overrides`
 
 补充原则：
@@ -129,6 +136,8 @@ V2 推荐的核心资源：
 - 当 workspace 启用 `capability_policy=allowlist` 时，显式 `capability_call` 必须满足 allowlist 约束
 - 当 operation 使用 `workspace_any_agent` 时，Core 可依据 workspace `preferred_agent_ids` 与 owner-client affinity 自动补出目标 agent
 - 当 workspace 配置 `preferred_agent_types` 与 `agent_routing_policy` 时，Core 会把这些字段纳入自动选路排序
+- 当 workspace 配置 `preferred_source_profiles` 时，Core 会把这些来源偏好注入消息路由治理；procedure 的推荐来源仍优先于 workspace 偏好
+- 当前 `memory_ranking_policy` 已公开为 workspace surface 字段；V1 仅支持 `workspace_first`
 - 当 workspace 配置 `capability_routing_overrides` 时，Core 会对特定 capability ref/abstract key 优先应用 capability 级 override
 
 ## 4. 跨会话协作
@@ -212,6 +221,8 @@ Core 将：
 - `GET /operator/health`
 - `GET /operator/config`
 - `PATCH /operator/config`
+- `GET /operator/source-profiles`
+- `PATCH /operator/workspaces/{workspace_id}`
 - `GET /operator/agents`
 - `POST /operator/agents/{agent_id}/disable`
 - `GET /operator/audit`
@@ -271,6 +282,14 @@ Core 将：
 - Feishu / CIL 等 channel adapter 也应复用共享 client SDK 的资源语义方法
 - 本地兼容 adapter / route 如仍需桥接到 EventBus，应优先通过统一交互响应服务，而不是直接调用 `EventBus.submit_*`
 - 本地兼容 adapter / route 如需读取 pending 状态，也应优先通过统一交互响应服务，而不是直接读取 `EventBus` 内部字段
+
+### 8.4 Procedure Read-Only Surface And Governance Callback
+
+- `GET /client/procedures` 返回可见 procedure catalog 的摘要列表
+- `GET /client/procedures/{procedure_id}` 返回 procedure 内容视图需要的完整字段，例如 `prompt_overlay`、`recommended_source_profiles` 与 routing 偏好
+- `GET /client/threads/{thread_id}/procedure-context` 返回 thread 当前的 `pinned_procedure`、最近一次 `latest_inferred_procedure`、当前 `effective_procedure` 以及来源 `source`
+- `PUT /client/threads/{thread_id}/pinned-procedure` 与 `DELETE /client/threads/{thread_id}/pinned-procedure` 用于用户显式固定 / 取消固定当前 thread 的 procedure
+- AI 发起的 Procedure `create / update / delete` 仍通过确认回调治理；当前实现复用现有 confirmation + approval 主链，而不是为 procedure 再单独引入第二套确认协议
 
 ### 8.3 Human Input 提交
 

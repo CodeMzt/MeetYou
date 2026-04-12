@@ -126,9 +126,11 @@ scripts\manual-acceptance.cmd check
 
 1. 标题栏连接状态不是 `disconnected`
 2. `StatusIsland` 可展开，不会报错
-3. Workflow 菜单能列出 procedure
-4. 输入一条普通消息后，能看到消息流和返回
-5. 执行一个 procedure 后，能看到 `OperationPanel` 中出现新的 operation 卡片
+3. 标题栏的 `上下文与用量` 按钮可打开独立窗口，并能看到当前会话的上下文 / token 面板
+4. 标题栏的 `工作区与规程` 按钮可打开独立窗口，并能看到 workspace 概览、procedure 目录、procedure 详情以及当前上下文
+5. 在 `工作区与规程` 窗口里可以把某个 procedure 固定到当前 thread，也可以取消固定
+6. 输入一条普通消息后，能看到消息流和返回
+7. 不要求从前端手动执行 procedure；如果消息被系统路由到某个 procedure，上下文展示不应报错
 
 建议先尝试这类低风险输入：
 
@@ -136,10 +138,10 @@ scripts\manual-acceptance.cmd check
 请用两句话说明当前系统现在主要由哪些部分组成。
 ```
 
-Procedure 建议优先点一个 `core_only` 的规程，例如：
+如需确认 Procedure 数据面，可优先检查 `GET /client/procedures` 返回，并确认至少包含一个内置 procedure，例如：
 
-- `Code Review`
-- `Study Note Synthesis`
+- `代码审查`
+- `学习笔记整理`
 
 ### 步骤 4：检查 workspace / procedure / agent 视图
 
