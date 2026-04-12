@@ -294,5 +294,5 @@ agent-data/
 
 ## 15. 待决问题
 
-- 是否需要为 MQTT pull 模式附件下载增加预拉取缓存。
+- 是否需要为未来弱联网 Agent profile 的附件下载增加预拉取缓存。
 - 附件生命周期是否允许按 workspace override。

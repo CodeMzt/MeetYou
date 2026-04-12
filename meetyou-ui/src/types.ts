@@ -132,7 +132,7 @@ export interface OperatorAgent {
   workspace_ids: string[]
 }
 
-export interface ClientExecutionTarget {
+export interface ClientAvailableAgent {
   agent_id: string
   agent_type: string
   display_name: string

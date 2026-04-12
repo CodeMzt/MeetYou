@@ -45,7 +45,7 @@ V2 的最终目标是：
 - 让服务器成为唯一真相源
 - 让 PC 客户端中的本地执行能力从 Core 剥离为客户端内本地后端
 - 让各客户端的交互前端从开发态聊天壳演进为稳定 Client UI
-- 为未来 Edge Agent / MQTT transport / workspace 协调打通基础模型
+- 为未来 Edge Agent / workspace 协调打通统一执行节点模型
 
 ### 3.1 第一版基本可用产品目标
 
@@ -102,7 +102,7 @@ V2 的最终目标是：
 
 以下内容不是第一版基本可用产品的完成前置条件：
 
-- Edge Agent / MQTT 全量落地
+- Edge Agent 能力集全量落地
 - Mobile client
 - 附件/对象存储完整产品化
 - EventBus 内部等待机制彻底替换
@@ -130,7 +130,7 @@ Phase 5  本地工具从 Core 剥离到客户端内本地后端
 Phase 6  Frontend 迁移到 Client API
 Phase 7  附件通道与对象存储
 Phase 8  Workspace / Memory / Procedure 收口
-Phase 9  Edge Agent MQTT 基础设施
+Phase 9  Edge Agent transport 收口
 Phase 10 清理旧路径与稳定化
 ```
 
@@ -139,7 +139,7 @@ Phase 10 清理旧路径与稳定化
 1. 先执行 legacy/spec 文档清理，并统一 `mode`、`execution_target`、审批与会话相关术语，避免继续在错误模型上叠加实现
 2. 再收口 Phase 3 与 Phase 8 之间仍未统一的核心模型，重点是 approval 主链、session 真相源、workspace 治理边界
 3. 在核心模型一致后推进 Phase 7 附件闭环，补齐 upload ticket / complete / download 主链
-4. 最后再启动 Phase 9 Edge Agent / MQTT，避免边缘接入与主链收口交叉放大复杂度
+4. 最后再启动 Phase 9 Edge Agent transport 收口，避免边缘接入与主链收口交叉放大复杂度
 
 ### 4.3 当前已冻结决策
 
@@ -164,9 +164,8 @@ Phase 10 清理旧路径与稳定化
 默认推进顺序如下；若用户当轮有明确目标，以用户目标优先：
 
 1. `F76` 对象存储产品化能力
-2. `F87` Workspace memory ranking 与 source-profile policy
-3. `F92` / `F93` Edge Agent MQTT broker 集成与稳定性验证
-4. `F100` / `F101` 旧路径清理与稳定化文档收口
+2. `F92` / `F93` Edge Agent transport 稳定化与能力扩展
+3. `F100` / `F101` 旧路径清理与稳定化文档收口
 
 ## 5. 当前代码与目标代码的映射
 
@@ -254,7 +253,8 @@ Phase 10 清理旧路径与稳定化
 - `F81` Workspace capability 准入策略。范围：allowlist / overlay 对显式 capability operation 生效。边界：`core/services/workspace_service.py`、`gateway/routes/client.py`、`core/services/capability_service.py`。关联批次：`4.9`。状态：已完成。
 - `F82` Workspace agent 成员关系与默认选路。范围：workspace 绑定的 agent、`workspace_any_agent`、默认 `specific_agent` 补目标 agent。边界：`core/services/agent_service.py`、`core/services/workspace_service.py`、`gateway/routes/client.py`、`meetyou-ui/src/hooks/core/useClientContext.ts`。关联批次：`4.10`、`4.12`。状态：已完成。
 - `F83` Workspace capability 级 routing policy。范围：抽象 capability key、capability routing override、workspace 全局 routing preference 的统一决策。边界：`core/services/workspace_service.py`、`core/services/capability_service.py`、`gateway/routes/client.py`。关联批次：`4.13`、`4.15`。状态：已完成。
-- `F87` Workspace memory ranking 与 source-profile policy。范围：workspace 记忆排序、来源标记、source profile 偏好进入统一治理层。边界：`core/memory/`、workspace 查询服务、相关前端 workspace 视图。状态：进行中。
+- `F87` Workspace memory ranking 与 source-profile policy。范围：workspace 记忆排序、来源标记、source profile 偏好进入统一治理层。边界：`core/memory/`、workspace 查询服务、相关前端 workspace 视图。状态：已完成。
+  已交付：workspace `preferred_source_profiles` / `memory_ranking_policy` 正式进入 governance surface、消息 metadata 与 route context；procedure 推荐来源优先于 workspace 偏好；`GET /operator/source-profiles` 与 `PATCH /operator/workspaces/{workspace_id}` 已提供受控目录与校验；Electron 独立“工作区与规程”窗口已提供只读展示与受控编辑 UI。
 
 ###### Procedure / Task / Scheduler Integration
 
@@ -266,10 +266,10 @@ Phase 10 清理旧路径与稳定化
 
 ##### Phase 9
 
-- `F90` Edge Agent 协议骨架与 pull / lease envelope。边界：`edge_agent/protocol.py`、`edge_agent/runtime.py`。关联批次：`4.30`。状态：已完成。
+- `F90` Edge Agent 协议骨架与统一 websocket transport。边界：`edge_agent/protocol.py`、`edge_agent/runtime.py`。关联批次：`4.30`。状态：已完成。
 - `F91` Edge Agent 正式运行目标。边界：`edge_agent/main.py`、`main.py`。关联批次：`4.33`。状态：已完成。
-- `F92` MQTT broker 集成第一批。范围：broker 连接、topic 收发、pull/lease 实际通信。边界：`edge_agent/`、gateway bridge、相关测试。状态：待开始。
-- `F93` Edge pull / lease 稳定性与 broker 集成测试。边界：`tests/test_edge_agent_*`、MQTT 集成环境。状态：待开始。
+- `F92` Edge Agent transport 稳定化。范围：统一 `WSS /agent/ws` 心跳、重连、注册与 capability call 基线。边界：`edge_agent/`、`gateway/routes/agent.py`、相关测试。状态：已完成。
+- `F93` Edge Agent 能力扩展与稳定性测试。边界：`tests/test_edge_agent_*`、边缘 capability 样例。状态：待开始。
 
 ##### Phase 10
 
@@ -628,12 +628,12 @@ Phase 10 清理旧路径与稳定化
 - Procedure 的持久化变更必须先经过回调确认
 - 前端不要求手动执行 Procedure；如有 Procedure 视图，仅需展示目录、内容和当前上下文
 
-## Phase 9 Edge Agent MQTT 基础设施
+## Phase 9 Edge Agent transport 收口
 
 ### 目标
 
-- 为树莓派等设备引入 MQTT transport
-- 支持 pull 模式
+- 让边缘 Agent 与桌面 Agent 共享同一套 `/agent/ws` transport
+- 清理 transport 语义与文档分裂
 
 ### 输入依赖
 
@@ -642,21 +642,19 @@ Phase 10 清理旧路径与稳定化
 
 ### 主要任务
 
-1. 建立 Agent Gateway / MQTT bridge
-2. 实现 topic 规范
-3. 实现 `agent.pull.next`
-4. 实现 `capability.call.lease`
-5. 实现 edge agent 最小样例
+1. 统一 Edge Agent 到 `WSS /agent/ws` + `meetyou.agent.v1`
+2. 补齐 edge agent 最小运行时与 capability call 基线
+3. 更新文档、测试与配置模板
 
 ### 测试
 
-- MQTT broker 集成测试
-- lease 机制测试
-- pull empty / pull lease 测试
+- edge agent 运行时测试
+- hello / heartbeat / capability call 测试
+- 边缘 capability 样例测试
 
 ### 验收
 
-- 弱设备可通过 pull 模式领取任务
+- Edge Agent 与 Desktop Agent 使用同一套 transport 与协议主链
 
 ## Phase 10 清理旧路径与稳定化
 

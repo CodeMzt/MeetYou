@@ -72,6 +72,7 @@ V2 推荐的核心资源：
 - `PUT /client/threads/{thread_id}/pinned-procedure`
 - `DELETE /client/threads/{thread_id}/pinned-procedure`
 - `GET /client/workspaces`
+- `GET /client/workspaces/{workspace_id}/agents`
 - `GET /client/tasks`
 - `GET /client/memory/search`
 - `GET /client/ws`
@@ -93,11 +94,17 @@ V2 推荐的核心资源：
 
 原则：
 
+- `execution_target` 是路由策略枚举，不是“Agent 列表”接口
 - Client 可以表达目标偏好，但不负责最终选路
 - Core 必须在创建 `operation` 后完成 capability routing
 - 当 `execution_target=specific_agent` 时，`target_agent_id` 为必填
 - 当 `execution_target` 为其他值时，`target_agent_id` 不应再被当作正式必填字段
 - 当 `execution_target` 为空时，Core 可回退到当前 workspace 的 `default_execution_target`
+
+配套约定：
+
+- `GET /client/workspaces/{workspace_id}/agents` 返回的是当前 workspace 下在线可路由的 Agent 列表
+- Client 若需要显式展示或挑选目标 Agent，应使用该接口，而不是把 `execution_target` 当作候选节点集合
 
 补充约定：
 
@@ -192,7 +199,6 @@ Core 将：
 - `POST /agent/attachments/upload-ticket`
 - `POST /agent/attachments/complete`
 - `POST /agent/offline/receipts`
-- MQTT topic: `meetyou/agents/{agent_id}/*`
 
 语义细节见 `docs/agent-protocol-v1.md`。
 
@@ -206,6 +212,11 @@ Core 将：
 - 配置管理
 - Agent 管理
 - 安全管理
+
+补充原则：
+
+- `GET /operator/source-profiles` 是 workspace source-profile 偏好的受控目录真源，UI 不应自行发明 profile 名
+- `PATCH /operator/workspaces/{workspace_id}` 写入 `preferred_source_profiles` 与 `memory_ranking_policy` 时需要经过服务端校验
 
 ### 6.2 主要资源
 

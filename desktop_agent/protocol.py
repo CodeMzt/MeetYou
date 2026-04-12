@@ -2,30 +2,19 @@ from __future__ import annotations
 
 import platform
 import socket
-from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
 
+from agent_protocol import (
+    AGENT_SCHEMA,
+    build_agent_capabilities_snapshot,
+    build_agent_heartbeat,
+    build_agent_hello,
+    build_call_accepted_message,
+    build_call_error_message,
+    build_call_progress_message,
+    build_call_result_message,
+)
 from desktop_agent.config import DesktopAgentConfig
-
-
-AGENT_SCHEMA = "meetyou.agent.v1"
-
-
-def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def make_envelope(*, envelope_type: str, agent_id: str, payload: dict[str, Any], correlation_id: str = "") -> dict[str, Any]:
-    return {
-        "schema": AGENT_SCHEMA,
-        "type": envelope_type,
-        "message_id": f"msg_{uuid4().hex}",
-        "sent_at": utcnow_iso(),
-        "agent_id": agent_id,
-        "correlation_id": correlation_id,
-        "payload": payload,
-    }
 
 
 def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -84,23 +73,20 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
 
 
 def build_hello(config: DesktopAgentConfig) -> dict[str, Any]:
-    return make_envelope(
-        envelope_type="agent.hello",
+    return build_agent_hello(
         agent_id=config.agent_id,
-        payload={
-            "agent_type": "desktop",
-            "display_name": config.display_name,
-            "transport_profile": config.transport_profile,
-            "owner_client_id": config.owner_client_id,
-            "owner_client_type": config.owner_client_type,
-            "owner_client_display_name": config.owner_client_display_name,
-            "workspace_ids": config.workspace_ids,
-            "supports_offline_cache": config.supports_offline_cache,
-            "host": {
-                "hostname": socket.gethostname(),
-                "os": platform.system().lower(),
-                "arch": platform.machine().lower(),
-            },
+        agent_type="desktop",
+        display_name=config.display_name,
+        transport_profile=config.transport_profile,
+        owner_client_id=config.owner_client_id,
+        owner_client_type=config.owner_client_type,
+        owner_client_display_name=config.owner_client_display_name,
+        workspace_ids=config.workspace_ids,
+        supports_offline_cache=config.supports_offline_cache,
+        host={
+            "hostname": socket.gethostname(),
+            "os": platform.system().lower(),
+            "arch": platform.machine().lower(),
         },
     )
 
@@ -111,50 +97,36 @@ def build_capabilities_snapshot(
     revision: int = 1,
     extra_capabilities: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return make_envelope(
-        envelope_type="agent.capabilities.snapshot",
+    return build_agent_capabilities_snapshot(
         agent_id=config.agent_id,
-        payload={
-            "revision": revision,
-            "capabilities": build_static_capabilities(config, extra_capabilities=extra_capabilities),
-        },
+        revision=revision,
+        capabilities=build_static_capabilities(config, extra_capabilities=extra_capabilities),
     )
 
 
 def build_heartbeat(config: DesktopAgentConfig, *, status: str = "ready", metrics: dict[str, Any] | None = None) -> dict[str, Any]:
-    return make_envelope(
-        envelope_type="agent.heartbeat",
+    return build_agent_heartbeat(
         agent_id=config.agent_id,
-        payload={
-            "status": status,
-            "metrics": dict(metrics or {}),
-        },
+        status=status,
+        metrics=metrics,
     )
 
 
 def build_call_accepted(config: DesktopAgentConfig, *, call_id: str, correlation_id: str) -> dict[str, Any]:
-    return make_envelope(
-        envelope_type="capability.call.accepted",
+    return build_call_accepted_message(
         agent_id=config.agent_id,
+        call_id=call_id,
         correlation_id=correlation_id,
-        payload={
-            "call_id": call_id,
-            "accepted": True,
-            "started_at": utcnow_iso(),
-        },
     )
 
 
 def build_call_progress(config: DesktopAgentConfig, *, call_id: str, correlation_id: str, phase: str, detail: str) -> dict[str, Any]:
-    return make_envelope(
-        envelope_type="capability.call.progress",
+    return build_call_progress_message(
         agent_id=config.agent_id,
+        call_id=call_id,
         correlation_id=correlation_id,
-        payload={
-            "call_id": call_id,
-            "phase": phase,
-            "detail": detail,
-        },
+        phase=phase,
+        detail=detail,
     )
 
 
@@ -166,34 +138,21 @@ def build_call_result(
     result: dict[str, Any],
     attachment_outputs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return make_envelope(
-        envelope_type="capability.call.result",
+    return build_call_result_message(
         agent_id=config.agent_id,
+        call_id=call_id,
         correlation_id=correlation_id,
-        payload={
-            "call_id": call_id,
-            "status": "succeeded",
-            "result": dict(result or {}),
-            "attachment_outputs": list(attachment_outputs or []),
-            "finished_at": utcnow_iso(),
-        },
+        result=result,
+        attachment_outputs=attachment_outputs,
     )
 
 
 def build_call_error(config: DesktopAgentConfig, *, call_id: str, correlation_id: str, code: str, message: str, retryable: bool = False) -> dict[str, Any]:
-    return make_envelope(
-        envelope_type="capability.call.error",
+    return build_call_error_message(
         agent_id=config.agent_id,
+        call_id=call_id,
         correlation_id=correlation_id,
-        payload={
-            "call_id": call_id,
-            "status": "failed",
-            "error": {
-                "code": code,
-                "category": "runtime",
-                "message": message,
-                "retryable": retryable,
-            },
-            "finished_at": utcnow_iso(),
-        },
+        code=code,
+        message=message,
+        retryable=retryable,
     )

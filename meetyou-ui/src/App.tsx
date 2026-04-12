@@ -49,8 +49,8 @@ export default function App() {
   }
 
   useEffect(() => {
-    window.ipcRenderer?.send('update-devtools', { usageSnapshot, sessionId, baseUrl })
-  }, [usageSnapshot, sessionId, baseUrl])
+    window.ipcRenderer?.send('update-devtools', { sessionId, baseUrl })
+  }, [sessionId, baseUrl])
 
   useEffect(() => {
     window.ipcRenderer?.send('update-stats', { usageSnapshot })
@@ -99,29 +99,31 @@ export default function App() {
         onTogglePin={togglePin}
       />
 
-      <StatusIsland 
-        runtimeSnapshot={runtimeSnapshot}
-        usageSnapshot={usageSnapshot}
-        healthSnapshot={healthSnapshot}
-      />
-
-      <div className={styles.contentArea}>
-        <MessageList
-          connected={connected}
-          messages={messages}
-          operations={operations}
+      <div className={styles.mainContent}>
+        <StatusIsland 
           runtimeSnapshot={runtimeSnapshot}
+          usageSnapshot={usageSnapshot}
           healthSnapshot={healthSnapshot}
-          lastError={lastError}
-          archivedTurnCount={archivedTurnCount}
-          approvalDisplay={approvalDisplay}
-          pendingHumanInput={pendingHumanInput}
-          sendConfirmResponse={sendConfirmResponse}
-          sendHumanInputResponse={sendHumanInputResponse}
-          decideOperationApproval={decideOperationApproval}
-          onDownloadAttachment={(attachmentId) => void downloadAttachment(attachmentId)}
-          sendControlCommand={sendControlCommand}
         />
+
+        <div className={styles.contentArea}>
+          <MessageList
+            connected={connected}
+            messages={messages}
+            operations={operations}
+            runtimeSnapshot={runtimeSnapshot}
+            healthSnapshot={healthSnapshot}
+            lastError={lastError}
+            archivedTurnCount={archivedTurnCount}
+            approvalDisplay={approvalDisplay}
+            pendingHumanInput={pendingHumanInput}
+            sendConfirmResponse={sendConfirmResponse}
+            sendHumanInputResponse={sendHumanInputResponse}
+            decideOperationApproval={decideOperationApproval}
+            onDownloadAttachment={(attachmentId) => void downloadAttachment(attachmentId)}
+            sendControlCommand={sendControlCommand}
+          />
+        </div>
       </div>
 
       <ChatInput

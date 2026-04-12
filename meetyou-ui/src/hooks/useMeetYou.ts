@@ -31,7 +31,7 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     sessionId,
     clientId,
     initializeClientContext,
-    refreshExecutionTargets,
+    refreshAvailableAgents,
     refreshWorkspace,
   } = useClientContext(baseUrl, (threadId) => {
     void loadThreadHistory(threadId)
@@ -161,13 +161,13 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     if (!clientContext) {
       return
     }
-    void refreshExecutionTargets(clientContext)
+    void refreshAvailableAgents(clientContext)
     void reloadProcedureContext(clientContext.threadId)
     const timer = window.setInterval(() => {
-      void refreshExecutionTargets(clientContext)
+      void refreshAvailableAgents(clientContext)
     }, DESKTOP_AGENT_REFRESH_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [clientContext, refreshExecutionTargets, reloadProcedureContext])
+  }, [clientContext, refreshAvailableAgents, reloadProcedureContext])
 
   const effectiveConnectionState = useMemo(() => {
     if (!clientContext || clientConnectionState === 'connecting' || transportState.connectionState === 'connecting') {

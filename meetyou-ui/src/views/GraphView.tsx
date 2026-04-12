@@ -448,14 +448,14 @@ export default function GraphView({ graph }: { graph: MemoryGraph | null }) {
               backdropFilter: 'blur(16px)',
               WebkitBackdropFilter: 'blur(16px)',
               padding: '12px 14px',
-              borderRadius: 12,
+              borderRadius: 'var(--radius-md)',
               zIndex: 10,
               border: '1px solid var(--graph-surface-border)',
               display: 'flex',
               flexDirection: 'column',
               gap: 12,
               width: 180,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.06)'
+              boxShadow: 'var(--shadow-md)'
             }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: theme.textStrong }}>物理引擎参数</div>
               <label style={{ fontSize: 11, color: theme.textSoft, display: 'flex', flexDirection: 'column', gap: 6 }}>

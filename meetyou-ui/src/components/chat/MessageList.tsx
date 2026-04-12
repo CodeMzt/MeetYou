@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { User, Bot } from 'lucide-react'
 import { ChatTurn, HumanInputRequestPayload, OperationView, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel } from '../../types'
 import TurnBody from './TurnBody'
 import ActionCard from './ActionCard'
@@ -83,28 +84,40 @@ export default function MessageList({
           return (
             <motion.div
               key={`${message.role}-${message.id || message.turnId || message.createdAt}`}
-              className={`${styles.message} ${styles[message.role]}`}
-              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              className={`${styles.messageWrapper} ${styles[message.role]}`}
+              initial={{ opacity: 0, y: 15, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
               layout
             >
-              <div className={styles.messageInner}>
-                <TurnBody
-                  turn={message}
-                  runtimeSnapshot={runtimeSnapshot}
-                  isLastAssistantTurn={isLastAssistantTurn}
-                  onDownloadAttachment={onDownloadAttachment}
-                  onRegenerate={sendControlCommand ? () => sendControlCommand('regenerate', { turn_id: message.turnId }) : undefined}
-                />
-                {(message.confirmRequest || message.humanInputRequest || message.confirmResponse || message.humanInputResponse) && (
-                  <ActionCard 
-                    turn={message} 
-                    sendConfirmResponse={sendConfirmResponse} 
-                    sendHumanInputResponse={sendHumanInputResponse} 
+              {message.role === 'assistant' && (
+                <div className={styles.avatar}>
+                  <Bot size={16} />
+                </div>
+              )}
+              <div className={styles.message}>
+                <div className={styles.messageInner}>
+                  <TurnBody
+                    turn={message}
+                    runtimeSnapshot={runtimeSnapshot}
+                    isLastAssistantTurn={isLastAssistantTurn}
+                    onDownloadAttachment={onDownloadAttachment}
+                    onRegenerate={sendControlCommand ? () => sendControlCommand('regenerate', { turn_id: message.turnId }) : undefined}
                   />
-                )}
+                  {(message.confirmRequest || message.humanInputRequest || message.confirmResponse || message.humanInputResponse) && (
+                    <ActionCard 
+                      turn={message} 
+                      sendConfirmResponse={sendConfirmResponse} 
+                      sendHumanInputResponse={sendHumanInputResponse} 
+                    />
+                  )}
+                </div>
               </div>
+              {message.role === 'user' && (
+                <div className={styles.avatar}>
+                  <User size={16} />
+                </div>
+              )}
             </motion.div>
           )
         })}

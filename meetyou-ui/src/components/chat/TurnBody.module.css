@@ -1,9 +1,10 @@
 .content {
-  /* text rendering logic */
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .placeholder {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.6;
 }

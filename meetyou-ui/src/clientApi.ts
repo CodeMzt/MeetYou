@@ -1,7 +1,7 @@
 import { fetchWithAuth, readErrorMessage, resolveAccessToken } from './apiClient'
 import { parseRuntimeUsageEnvelope } from './protocolClient'
 import type {
-  ClientExecutionTarget,
+  ClientAvailableAgent,
   ClientMessage,
   ClientMessageCreatePayload,
   ClientOperation,
@@ -120,9 +120,9 @@ export async function createClientOperation(
   return readJsonOrThrow<ClientOperation>(response, '创建操作失败')
 }
 
-export async function listClientExecutionTargets(baseUrl: string, workspaceId: string): Promise<ClientExecutionTarget[]> {
-  const response = await fetchWithAuth(`${baseUrl}/client/workspaces/${encodeURIComponent(workspaceId)}/execution-targets`)
-  return readJsonOrThrow<ClientExecutionTarget[]>(response, '加载执行目标失败')
+export async function listClientAvailableAgents(baseUrl: string, workspaceId: string): Promise<ClientAvailableAgent[]> {
+  const response = await fetchWithAuth(`${baseUrl}/client/workspaces/${encodeURIComponent(workspaceId)}/agents`)
+  return readJsonOrThrow<ClientAvailableAgent[]>(response, '加载可用 Agent 失败')
 }
 
 export async function listClientProcedures(baseUrl: string): Promise<ClientProcedure[]> {

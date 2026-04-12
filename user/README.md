@@ -12,6 +12,7 @@
 - `memory_graph.example.json` -> `memory_graph.json`
 - `feishu_chat_ids.example.json` -> `feishu_chat_ids.json`
 - `desktop_agent.example.json` -> `desktop_agent.json`
+- `edge_agent.example.json` -> `edge_agent.json`
 - `core_mcp_servers.example.json` -> `core_mcp_servers.json`
 
 `desktop_agent.json` 常用字段：
@@ -20,6 +21,13 @@
 - `trusted_write_roots`: Agent 允许写入的可信根目录
 - `cmd_policy_path`: 本地命令策略文件路径
 - `mcp_servers_path`: Desktop Agent 本地 MCP 配置文件路径
+
+`edge_agent.json` 常用字段：
+
+- `agent_id`: 边缘 Agent 唯一标识
+- `workspace_ids`: 允许加入的 workspace 列表
+- `heartbeat_interval_seconds`: 心跳间隔
+- `transport_profile`: 当前统一 agent websocket transport 下的 profile，默认 `edge_wss`
 
 MCP 文件边界：
 

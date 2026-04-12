@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import ValidationError
 
+from agent_protocol import build_capability_call_request
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import (
     EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE,
@@ -13,7 +14,6 @@ from core.public_contract import (
     normalize_execution_target,
     requires_specific_agent,
 )
-from gateway.agent_protocol import build_capability_call_request
 
 from gateway.models import (
     ClientApprovalDecisionRequest,
@@ -28,7 +28,7 @@ from gateway.models import (
     ClientConfirmResponseResult,
     ClientHumanInputResponseRequest,
     ClientHumanInputResponseResult,
-    ClientExecutionTargetResponse,
+    ClientAvailableAgentResponse,
     ClientOperationCreateRequest,
     ClientOperationResponse,
     ClientMessageCreateRequest,
@@ -625,8 +625,8 @@ def build_client_router(gateway) -> APIRouter:
         domain = gateway._require_core_domain()
         return [_workspace_response(workspace) for workspace in domain.services.workspace.list_workspaces()]
 
-    @router.get("/workspaces/{workspace_id}/execution-targets", response_model=list[ClientExecutionTargetResponse])
-    async def list_execution_targets(workspace_id: str, request: Request):
+    @router.get("/workspaces/{workspace_id}/agents", response_model=list[ClientAvailableAgentResponse])
+    async def list_workspace_agents(workspace_id: str, request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         workspace = domain.services.workspace.get_by_workspace_id(workspace_id)
@@ -641,7 +641,7 @@ def build_client_router(gateway) -> APIRouter:
                 continue
             owner_client = domain.services.client.get_by_id(agent.owner_client_id) if getattr(agent, "owner_client_id", None) else None
             rows.append(
-                ClientExecutionTargetResponse(
+                ClientAvailableAgentResponse(
                     agent_id=agent.agent_id,
                     display_name=agent.display_name,
                     agent_type=agent.agent_type,

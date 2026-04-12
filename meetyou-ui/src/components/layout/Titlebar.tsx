@@ -32,11 +32,17 @@ export default function Titlebar({
     <div className={styles.titlebar}>
       <div className={styles.topRow}>
         <div className={styles.titleContent}>
+          <img src="/icon.svg" alt="MeetYou" className={styles.appIcon} />
           <span className={styles.titleText}>MeetYou</span>
-          <span
-            className={`${styles.statusDot} ${styles[connectionState]}`}
-            title={connectionText}
-          />
+          <div 
+            className={styles.envPill}
+            title={`服务端：${connectionText} | 本地代理：${desktopAgentConnected ? '在线' : '离线'}`}
+          >
+            <span className={styles.envWorkspaceName}>
+              {workspace?.title || workspace?.workspace_id || '未绑定'}
+            </span>
+            <span className={`${styles.statusDot} ${styles[connectionState]}`} />
+          </div>
         </div>
 
         <div className={styles.dragRegion} />
@@ -73,21 +79,6 @@ export default function Titlebar({
           <button className={`${styles.winBtn} ${styles.close}`} onClick={handleClose} title="关闭">
             <X size={14} />
           </button>
-        </div>
-      </div>
-
-      <div className={styles.metaRow}>
-        <div className={styles.metaCard} title={`服务端 ${connectionText}`}>
-          <span className={styles.metaLabel}>服务端</span>
-          <span className={styles.metaValue}>{connectionText}</span>
-        </div>
-        <div className={styles.metaCard} title={`本地代理 ${desktopAgentConnected ? '在线' : '离线'}`}>
-          <span className={styles.metaLabel}>本地代理</span>
-          <span className={styles.metaValue}>{desktopAgentConnected ? '在线' : '离线'}</span>
-        </div>
-        <div className={styles.metaCard} title={`工作区 ${workspace?.title || workspace?.workspace_id || '未绑定'}`}>
-          <span className={styles.metaLabel}>工作区</span>
-          <span className={styles.metaValue}>{workspace?.title || workspace?.workspace_id || '未绑定'}</span>
         </div>
       </div>
     </div>

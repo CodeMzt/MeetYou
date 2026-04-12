@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from gateway.agent_protocol import build_capability_call_request
+from agent_protocol import build_capability_call_request
 
 
 class AgentDispatchError(RuntimeError):

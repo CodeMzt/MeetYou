@@ -622,7 +622,7 @@ class ClientWorkspaceResponse(BaseModel):
         return normalize_execution_target(value)
 
 
-class ClientExecutionTargetResponse(BaseModel):
+class ClientAvailableAgentResponse(BaseModel):
     agent_id: str
     display_name: str
     agent_type: str

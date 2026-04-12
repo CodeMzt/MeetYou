@@ -74,7 +74,17 @@ export default function UsagePanel({
           <span>{usageSnapshot.context_limit_model || '未知模型'}</span>
         </div>
         <div className={styles.progressBar} aria-label="context usage progress">
-          <div className={styles.progressFill} style={{ width: `${pressureRatio}%` }} />
+          <div className={`${styles.progressChunk} ${styles.system}`} style={{ width: `${(contextBreakdown.system / usageSnapshot.context_limit_tokens) * 100}%` }} />
+          <div className={`${styles.progressChunk} ${styles.history}`} style={{ width: `${(contextBreakdown.history / usageSnapshot.context_limit_tokens) * 100}%` }} />
+          <div className={`${styles.progressChunk} ${styles.memory}`} style={{ width: `${(contextBreakdown.memory_context / usageSnapshot.context_limit_tokens) * 100}%` }} />
+          <div className={`${styles.progressChunk} ${styles.current}`} style={{ width: `${(contextBreakdown.current_input / usageSnapshot.context_limit_tokens) * 100}%` }} />
+        </div>
+
+        <div className={styles.usageLegend}>
+          <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-warning)' }}/> 系统</div>
+          <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-success)' }}/> 历史</div>
+          <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#af52de' }}/> 记忆</div>
+          <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-accent)' }}/> 当前</div>
         </div>
 
         {usageHint && <div className={styles.empty}>{usageHint}</div>}
@@ -140,6 +150,22 @@ export default function UsagePanel({
 
       <div className={styles.section}>
         <div className={styles.sectionTitle}>上下文构成</div>
+        <div className={styles.progressMeta}>
+          <span>{pressureRatio}% 已占用</span>
+          <span>{usageSnapshot.context_limit_model || '未知模型'}</span>
+        </div>
+        <div className={styles.progressBar} aria-label="context usage progress">
+          <div className={`${styles.progressChunk} ${styles.system}`} style={{ width: `${(contextBreakdown.system / usageSnapshot.context_limit_tokens) * 100}%` }} />
+          <div className={`${styles.progressChunk} ${styles.history}`} style={{ width: `${(contextBreakdown.history / usageSnapshot.context_limit_tokens) * 100}%` }} />
+          <div className={`${styles.progressChunk} ${styles.memory}`} style={{ width: `${(contextBreakdown.memory_context / usageSnapshot.context_limit_tokens) * 100}%` }} />
+          <div className={`${styles.progressChunk} ${styles.current}`} style={{ width: `${(contextBreakdown.current_input / usageSnapshot.context_limit_tokens) * 100}%` }} />
+        </div>
+        <div className={styles.usageLegend}>
+          <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-warning)' }}/> 系统</div>
+          <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-success)' }}/> 历史</div>
+          <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#af52de' }}/> 记忆</div>
+          <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-accent)' }}/> 当前</div>
+        </div>
         <div className={styles.breakdown}>
           <span>系统 {formatTokenCount(contextBreakdown.system)}</span>
           <span>历史 {formatTokenCount(contextBreakdown.history)}</span>
