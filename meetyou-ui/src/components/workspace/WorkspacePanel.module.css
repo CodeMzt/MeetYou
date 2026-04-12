@@ -1,12 +1,13 @@
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
+  gap: 16px;
+  padding: 16px;
   border-radius: var(--radius-lg);
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
 }
 
 .header {
@@ -46,25 +47,26 @@
 
 .statusCard,
 .activityCard {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 4px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(128, 128, 128, 0.06);
+  padding: 10px;
+  background: var(--bg-app);
+  border-radius: 12px;
   border: 1px solid var(--border-subtle);
 }
 
 .statusLabel,
 .activityLabel {
-  font-size: 10px;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .statusValue,
 .activityValue {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -82,12 +84,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--bg-reasoning);
   border: 1px solid var(--border-subtle);
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: 11px;
+  color: var(--text-primary);
 }
 
 .metaList {
@@ -99,11 +101,11 @@
 .procedureCard {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   padding: 12px;
   border-radius: 12px;
-  background: linear-gradient(180deg, rgba(123, 97, 255, 0.08), rgba(128, 128, 128, 0.04));
-  border: 1px solid rgba(123, 97, 255, 0.18);
+  background: var(--bg-app);
+  border: 1px solid var(--border-accent);
 }
 
 .procedureHeader {
@@ -132,17 +134,17 @@
   font-size: 11px;
   border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--bg-reasoning);
 }
 
 .procedureSource[data-source='pinned'] {
-  color: var(--text-primary);
-  background: rgba(66, 153, 225, 0.14);
+  color: var(--text-accent);
+  background: var(--bg-accent);
 }
 
 .procedureSource[data-source='inferred'] {
   color: var(--text-primary);
-  background: rgba(123, 97, 255, 0.16);
+  background: var(--bg-reasoning);
 }
 
 .procedureNameRow {
@@ -185,7 +187,7 @@
   padding: 4px 8px;
   border-radius: 999px;
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-card);
   font-size: 11px;
   color: var(--text-secondary);
 }

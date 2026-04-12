@@ -101,6 +101,7 @@ npm install
 - `user/memory_graph.example.json` -> `user/memory_graph.json`
 - `user/feishu_chat_ids.example.json` -> `user/feishu_chat_ids.json`
 - `user/desktop_agent.example.json` -> `user/desktop_agent.json`
+- `user/edge_agent.example.json` -> `user/edge_agent.json`
 
 可以先复制环境变量模板：
 
@@ -238,7 +239,7 @@ npm run dev
 - `POST /client/messages`：客户端提交聊天消息
 - `GET /client/ws`：订阅 thread 级实时事件
 - `GET /client/workspaces`：列出客户端可用 workspace
-- `GET /client/workspaces/{workspace_id}/execution-targets`：列出该 workspace 下可用执行目标
+- `GET /client/workspaces/{workspace_id}/agents`：列出该 workspace 下在线可用 Agent
 - `GET /operator/config`、`GET /operator/memory`：运维 / 观察面接口
 - `GET /runtime/state`、`GET /runtime/usage`、`GET /developer/runtime/debug`：运行态与开发诊断接口
 - `GET /ws`：旧主聊天路径，现仅返回兼容性错误并提示迁移到 `/client/ws`
@@ -274,7 +275,9 @@ ws://127.0.0.1:8000/client/ws?thread_id=thread-personal-001
 
 ## PC 客户端说明
 
-`meetyou-ui/` 是 PC 客户端前端；`desktop_agent/` 则是 PC 客户端内本地后端的当前实现雏形。两者共同构成 PC 客户端。
+`meetyou-ui/` 是 PC 客户端前端；`desktop_agent/` 则是 PC 客户端内本地后端的当前实现。两者共同构成 PC 客户端。
+
+`edge_agent/` 是按 workspace 接入的边缘 Agent 运行时。它和 `desktop_agent/` 当前都通过统一的 `WSS /agent/ws` + `meetyou.agent.v1` transport 接入 Core，只是 `transport_profile` 分别标记为 `desktop_wss` 与 `edge_wss`。
 
 - 聊天界面
 - 推理摘要展示
@@ -296,6 +299,16 @@ npm run dev
 ```bash
 npm run build
 ```
+
+## Edge Agent
+
+启动边缘 Agent：
+
+```bash
+python main.py edge-agent
+```
+
+默认读取 `user/edge_agent.json`，并通过 `ws://127.0.0.1:8000/agent/ws` 接入服务端 Gateway。
 
 ## 飞书 Bot
 

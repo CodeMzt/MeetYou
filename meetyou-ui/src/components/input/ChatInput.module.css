@@ -3,7 +3,7 @@
   width: 100%;
   max-width: 800px;
   margin: 0 auto;
-  padding: 0 var(--spacing-sm) var(--spacing-lg) var(--spacing-sm);
+  padding: 0 var(--spacing-md, 16px) var(--spacing-lg, 24px) var(--spacing-md, 16px);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
@@ -13,7 +13,7 @@
 .optionsPopup {
   position: absolute;
   bottom: 100%;
-  left: var(--spacing-sm);
+  left: var(--spacing-md, 16px);
   margin-bottom: var(--spacing-sm);
   background: var(--bg-card);
   backdrop-filter: var(--blur-md);
@@ -26,6 +26,8 @@
   flex-direction: column;
   gap: var(--spacing-md);
   z-index: 100;
+  width: calc(100vw - 32px);
+  max-width: 320px;
 }
 
 .optionGroup {
@@ -87,14 +89,14 @@
   -webkit-backdrop-filter: var(--blur-lg);
   border: 1px solid var(--border-glass);
   box-shadow: var(--shadow-md);
-  border-radius: var(--radius-lg);
-  padding: 8px 12px;
-  transition: all 0.3s ease;
+  border-radius: var(--radius-lg, 16px);
+  padding: 10px 14px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .inputWrapper:focus-within {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1), var(--shadow-md);
+  border-color: var(--border-focus, #0066cc);
+  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.15), var(--shadow-md);
 }
 
 .inputWrapper.locked {

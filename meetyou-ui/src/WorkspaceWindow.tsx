@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { LayoutTemplate, Minus, Square, X } from 'lucide-react'
+import { LayoutTemplate } from 'lucide-react'
 import type {
   ApprovalDisplayModel,
   ClientThreadProcedureContext,
@@ -9,10 +9,12 @@ import type {
   OperationView,
 } from './types'
 import './dashboard.css'
+import styles from './WorkspaceWindow.module.css'
 import { getClientThreadProcedureContext } from './clientApi'
 import WorkspaceGovernanceEditor from './components/workspace/WorkspaceGovernanceEditor'
 import ProcedureCatalogPanel from './components/workspace/ProcedureCatalogPanel'
 import WorkspacePanel from './components/workspace/WorkspacePanel'
+import SubWindow from './components/layout/SubWindow'
 
 type WorkspaceWindowPayload = {
   baseUrl: string
@@ -39,9 +41,6 @@ const EMPTY_PAYLOAD: WorkspaceWindowPayload = {
 }
 
 export default function WorkspaceWindow() {
-  const handleClose = () => window.ipcRenderer?.send('window-close')
-  const handleMinimize = () => window.ipcRenderer?.send('window-minimize')
-  const handleMaximize = () => window.ipcRenderer?.send('window-maximize')
   const [payload, setPayload] = useState<WorkspaceWindowPayload>(EMPTY_PAYLOAD)
   const [procedureContext, setProcedureContext] = useState<ClientThreadProcedureContext | null>(null)
 
@@ -90,64 +89,52 @@ export default function WorkspaceWindow() {
   }, [])
 
   return (
-    <div className="dashboard-container">
-      <div className="titlebar dashboard-titlebar">
-        <div className="titlebar-title" style={{ paddingLeft: 8 }}>
-          <LayoutTemplate size={16} /> 工作区与规程
+    <SubWindow title="工作区与规程" icon={<LayoutTemplate size={16} />} className={styles.windowOverride}>
+      <div className={`dashboard-content ${styles.mainContent}`}>
+        <div className={styles.container}>
+          <div className={styles.leftColumn}>
+          {payload.workspace ? (
+            <WorkspacePanel
+              workspace={payload.workspace}
+              procedureContext={procedureContext}
+              connectionState={payload.connectionState}
+              desktopAgentConnected={payload.desktopAgentConnected}
+              operations={payload.operations}
+              approvalDisplay={payload.approvalDisplay}
+              pendingHumanInput={payload.pendingHumanInput}
+            />
+          ) : null}
+
+          {payload.workspace ? (
+            <WorkspaceGovernanceEditor
+              baseUrl={payload.baseUrl}
+              workspace={payload.workspace}
+              onWorkspaceSaved={(workspace) => {
+                setPayload((current) => ({
+                  ...current,
+                  workspace,
+                }))
+              }}
+            />
+          ) : null}
         </div>
-        <div style={{ flex: 1 }} />
-        <div className="window-controls">
-          <button className="win-btn minimize" onClick={handleMinimize} title="最小化">
-            <Minus size={14} />
-          </button>
-          <button className="win-btn maximize" onClick={handleMaximize} title="最大化">
-            <Square size={12} />
-          </button>
-          <button className="win-btn close" onClick={handleClose} title="关闭">
-            <X size={14} />
-          </button>
+
+        <div className={styles.rightColumn}>
+          {payload.workspace ? (
+            <ProcedureCatalogPanel
+              baseUrl={payload.baseUrl}
+              threadId={payload.threadId}
+              procedureContext={procedureContext}
+              onProcedureContextChange={setProcedureContext}
+            />
+          ) : (
+            <div style={{ padding: 20, color: 'var(--text-secondary)' }}>
+              正在等待主窗口同步当前工作区与规程上下文。
+            </div>
+          )}
         </div>
       </div>
-
-      <div className="dashboard-content" style={{ padding: '20px', display: 'flex', flexDirection: 'column' }}>
-        {payload.workspace ? (
-          <WorkspacePanel
-            workspace={payload.workspace}
-            procedureContext={procedureContext}
-            connectionState={payload.connectionState}
-            desktopAgentConnected={payload.desktopAgentConnected}
-            operations={payload.operations}
-            approvalDisplay={payload.approvalDisplay}
-            pendingHumanInput={payload.pendingHumanInput}
-          />
-        ) : null}
-
-        {payload.workspace ? (
-          <WorkspaceGovernanceEditor
-            baseUrl={payload.baseUrl}
-            workspace={payload.workspace}
-            onWorkspaceSaved={(workspace) => {
-              setPayload((current) => ({
-                ...current,
-                workspace,
-              }))
-            }}
-          />
-        ) : null}
-
-        {payload.workspace ? (
-          <ProcedureCatalogPanel
-            baseUrl={payload.baseUrl}
-            threadId={payload.threadId}
-            procedureContext={procedureContext}
-            onProcedureContextChange={setProcedureContext}
-          />
-        ) : (
-          <div style={{ padding: 20, color: 'var(--text-secondary)' }}>
-            正在等待主窗口同步当前工作区与规程上下文。
-          </div>
-        )}
       </div>
-    </div>
+    </SubWindow>
   )
 }

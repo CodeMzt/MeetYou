@@ -322,7 +322,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
             revision=1,
         )
 
-        targets_resp = self.client.get("/client/workspaces/focus-lab/execution-targets", headers=self._auth_headers())
+        targets_resp = self.client.get("/client/workspaces/focus-lab/agents", headers=self._auth_headers())
         self.assertEqual(targets_resp.status_code, 200)
         self.assertEqual(targets_resp.json()[0]["agent_id"], "focus-lab-agent")
         self.assertEqual(targets_resp.json()[0]["owner_client_id"], "electron-main")

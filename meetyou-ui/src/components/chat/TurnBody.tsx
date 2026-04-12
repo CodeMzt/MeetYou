@@ -19,7 +19,7 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, o
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
 
   const placeholderText =
-    turn.isStreaming && !turn.content && !turn.reasoning && turn.activities.length === 0
+    turn.isStreaming && !turn.content && !turn.reasoning && (!turn.activities || turn.activities.length === 0)
       ? getRuntimeTitle(runtimeSnapshot, 'connected')
       : ''
 
@@ -28,11 +28,11 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, o
       {turn.role === 'assistant' && (
         <>
           <ActivityBlock
-            activities={turn.activities}
-            isStreaming={turn.isStreaming}
+            activities={turn.activities || []}
+            isStreaming={turn.isStreaming || false}
             trimmedCount={turn.trimmedActivityCount ?? 0}
           />
-          <ReasoningBlock text={turn.reasoning} isStreaming={turn.isStreaming && !turn.content} />
+          <ReasoningBlock text={turn.reasoning || ''} isStreaming={(turn.isStreaming || false) && !turn.content} />
         </>
       )}
       {turn.content ? (

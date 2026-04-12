@@ -13,7 +13,7 @@ let statsWin: BrowserWindow | null = null
 let workspaceWin: BrowserWindow | null = null
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
-let latestDevtools = { usageSnapshot: null, runtimeDebugSnapshot: null }
+let latestDevtools = { sessionId: '', baseUrl: 'http://127.0.0.1:8000' }
 let latestStats = { usageSnapshot: null }
 let latestWorkspacePanel = null
 
@@ -50,7 +50,7 @@ function createDevtoolsWindow() {
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
     y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC || '', 'electron-vite.svg'),
+    icon: path.join(process.env.VITE_PUBLIC || '', 'icon.svg'),
     transparent: true,
     frame: false,
     resizable: true,
@@ -98,7 +98,7 @@ function createSettingsWindow() {
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
     y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC || '', 'electron-vite.svg'),
+    icon: path.join(process.env.VITE_PUBLIC || '', 'icon.svg'),
     transparent: true,
     frame: false,
     resizable: true,
@@ -146,7 +146,7 @@ function createWorkspaceWindow() {
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
     y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC || '', 'electron-vite.svg'),
+    icon: path.join(process.env.VITE_PUBLIC || '', 'icon.svg'),
     transparent: true,
     frame: false,
     resizable: true,
@@ -194,7 +194,7 @@ function createStatsWindow() {
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
     y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC || '', 'electron-vite.svg'),
+    icon: path.join(process.env.VITE_PUBLIC || '', 'icon.svg'),
     transparent: true,
     frame: false,
     resizable: true,
@@ -242,7 +242,7 @@ function createDashboardWindow() {
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
     y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC || '', 'electron-vite.svg'),
+    icon: path.join(process.env.VITE_PUBLIC || '', 'icon.svg'),
     transparent: true,
     frame: false,
     resizable: true,
@@ -284,7 +284,7 @@ function createWindow() {
     height: windowHeight,
     x: width - windowWidth - 20,
     y: height - windowHeight - 40,
-    icon: path.join(process.env.VITE_PUBLIC || '', 'electron-vite.svg'),
+    icon: path.join(process.env.VITE_PUBLIC || '', 'icon.svg'),
     transparent: true,
     frame: false,
     alwaysOnTop: true,

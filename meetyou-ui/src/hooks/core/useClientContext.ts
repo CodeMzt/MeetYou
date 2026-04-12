@@ -2,12 +2,12 @@ import { useCallback, useRef, useState, useReducer } from 'react'
 import {
   createClientSession,
   createClientThread,
-  listClientExecutionTargets,
+  listClientAvailableAgents,
   listClientWorkspaces,
 } from '../../clientApi'
 import { createInitialTransportState, reduceTransportState } from '../../transportState'
 import { createSystemTurn } from '../../chatState'
-import type { ClientExecutionTarget, ClientSession, ClientWorkspace, RuntimeErrorPayload } from '../../types'
+import type { ClientAvailableAgent, ClientSession, ClientWorkspace, RuntimeErrorPayload } from '../../types'
 
 export const DESKTOP_AGENT_REFRESH_INTERVAL_MS = 10000
 
@@ -18,7 +18,7 @@ export interface ClientContext {
   clientId: string
 }
 
-export function chooseDesktopAgent(agents: ClientExecutionTarget[], workspaceId: string, clientId: string): string {
+export function chooseDesktopAgent(agents: ClientAvailableAgent[], workspaceId: string, clientId: string): string {
   const matched = agents.find(
     (agent) =>
       agent.agent_type === 'desktop' &&
@@ -30,13 +30,13 @@ export function chooseDesktopAgent(agents: ClientExecutionTarget[], workspaceId:
 }
 
 export async function resolveDesktopAgentId(
-  loadExecutionTargets: (baseUrl: string, workspaceId: string) => Promise<ClientExecutionTarget[]>,
+  loadAvailableAgents: (baseUrl: string, workspaceId: string) => Promise<ClientAvailableAgent[]>,
   baseUrl: string,
   workspaceId: string,
   clientId: string,
 ): Promise<string> {
-  const executionTargets = await loadExecutionTargets(baseUrl, workspaceId)
-  return chooseDesktopAgent(executionTargets, workspaceId, clientId)
+  const availableAgents = await loadAvailableAgents(baseUrl, workspaceId)
+  return chooseDesktopAgent(availableAgents, workspaceId, clientId)
 }
 
 function chooseWorkspace(workspaces: ClientWorkspace[]): ClientWorkspace | null {
@@ -71,14 +71,14 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
   const sessionId = clientContext?.session.session_id || transportState.sessionId
   const clientId = clientContext?.clientId || sourceIdRef.current
 
-  const refreshExecutionTargets = useCallback(async (contextOverride?: ClientContext | null) => {
+  const refreshAvailableAgents = useCallback(async (contextOverride?: ClientContext | null) => {
     const activeContext = contextOverride ?? clientContext
     if (!activeContext) {
       return ''
     }
     try {
       const nextAgentId = await resolveDesktopAgentId(
-        listClientExecutionTargets,
+        listClientAvailableAgents,
         baseUrl,
         activeContext.workspace.workspace_id,
         activeContext.clientId,
@@ -86,7 +86,7 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
       setDesktopAgentId((current) => (current === nextAgentId ? current : nextAgentId))
       return nextAgentId
     } catch (error) {
-      console.warn('Failed to load execution targets:', error)
+      console.warn('Failed to load available agents:', error)
       return ''
     }
   }, [baseUrl, clientContext])
@@ -153,7 +153,7 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
       }
       setClientContext(nextContext)
 
-      await refreshExecutionTargets(nextContext)
+      await refreshAvailableAgents(nextContext)
       dispatchTransport({ type: 'sync_session', sessionId: session.session_id })
       onInitSuccess(thread.thread_id)
       return nextContext
@@ -174,7 +174,7 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
         clientInitPromiseRef.current = null
       }
     }
-  }, [baseUrl, clientContext, onInitSuccess, onError, refreshExecutionTargets])
+  }, [baseUrl, clientContext, onInitSuccess, onError, refreshAvailableAgents])
 
   return {
     clientContext,
@@ -184,7 +184,7 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
     sessionId,
     clientId,
     initializeClientContext,
-    refreshExecutionTargets,
+    refreshAvailableAgents,
     refreshWorkspace,
   }
 }

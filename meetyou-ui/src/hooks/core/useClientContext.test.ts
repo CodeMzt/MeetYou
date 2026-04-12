@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ClientExecutionTarget } from '../../types'
+import type { ClientAvailableAgent } from '../../types'
 import {
   chooseDesktopAgent,
   DESKTOP_AGENT_REFRESH_INTERVAL_MS,
@@ -8,7 +8,7 @@ import {
 
 describe('useClientContext helpers', () => {
   it('picks the online desktop agent for the current workspace and client', () => {
-    const executionTargets: ClientExecutionTarget[] = [
+    const availableAgents: ClientAvailableAgent[] = [
       {
         agent_id: 'desktop-other',
         agent_type: 'desktop',
@@ -29,12 +29,12 @@ describe('useClientContext helpers', () => {
       },
     ]
 
-    expect(chooseDesktopAgent(executionTargets, 'desktop-main', 'desktop-app')).toBe('desktop-main-agent')
+    expect(chooseDesktopAgent(availableAgents, 'desktop-main', 'desktop-app')).toBe('desktop-main-agent')
     expect(DESKTOP_AGENT_REFRESH_INTERVAL_MS).toBe(10000)
   })
 
-  it('reloads execution targets and returns the newly available desktop agent', async () => {
-    const loadExecutionTargets = vi.fn().mockResolvedValue([
+  it('reloads available agents and returns the newly available desktop agent', async () => {
+    const loadAvailableAgents = vi.fn().mockResolvedValue([
       {
         agent_id: 'desktop-main-agent',
         agent_type: 'desktop',
@@ -44,11 +44,11 @@ describe('useClientContext helpers', () => {
         owner_client_id: 'desktop-app',
         workspace_ids: ['personal'],
       },
-    ] satisfies ClientExecutionTarget[])
+    ] satisfies ClientAvailableAgent[])
 
     await expect(
-      resolveDesktopAgentId(loadExecutionTargets, 'http://127.0.0.1:8000', 'personal', 'desktop-app'),
+      resolveDesktopAgentId(loadAvailableAgents, 'http://127.0.0.1:8000', 'personal', 'desktop-app'),
     ).resolves.toBe('desktop-main-agent')
-    expect(loadExecutionTargets).toHaveBeenCalledWith('http://127.0.0.1:8000', 'personal')
+    expect(loadAvailableAgents).toHaveBeenCalledWith('http://127.0.0.1:8000', 'personal')
   })
 })

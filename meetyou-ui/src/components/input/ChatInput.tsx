@@ -88,10 +88,10 @@ export default function ChatInput({
       <AnimatePresence>
         {showOptions && (
           <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            initial={{ opacity: 0, y: 10, scale: 0.95, transformOrigin: 'bottom left' }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 5, scale: 0.95 }}
-            transition={{ duration: 0.15 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
             className={styles.optionsPopup}
           >
             <div className={styles.optionGroup}>

@@ -1,11 +1,12 @@
 import React, { useEffect } from 'react'
-import { Clock, Network, FileText, LayoutDashboard, X, Minus, Square, Database } from 'lucide-react'
+import { Clock, Network, FileText, LayoutDashboard, Database } from 'lucide-react'
 import './dashboard.css'
 import { useMemory } from './hooks/useMemory'
 import OverviewView from './views/OverviewView'
 import RecordsView from './views/RecordsView'
 import TimelineView from './views/TimelineView'
 import GraphView from './views/GraphView'
+import SubWindow from './components/layout/SubWindow'
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = React.useState('overview')
@@ -18,31 +19,8 @@ export default function Dashboard() {
     }
   }, [activeTab, refresh])
 
-  const handleClose = () => window.ipcRenderer?.send('window-close')
-  const handleMinimize = () => window.ipcRenderer?.send('window-minimize')
-  const handleMaximize = () => window.ipcRenderer?.send('window-maximize')
-
   return (
-    <div className="dashboard-container">
-      {/* Titlebar with Windows Controls */}
-      <div className="titlebar dashboard-titlebar">
-        <div className="titlebar-title" style={{ paddingLeft: 8 }}>
-          <Database size={16} /> 记忆图谱
-        </div>
-        <div style={{ flex: 1 }} />
-        <div className="window-controls">
-          <button className="win-btn minimize" onClick={handleMinimize} title="最小化">
-            <Minus size={14} />
-          </button>
-          <button className="win-btn maximize" onClick={handleMaximize} title="最大化">
-            <Square size={12} />
-          </button>
-          <button className="win-btn close" onClick={handleClose} title="关闭">
-            <X size={14} />
-          </button>
-        </div>
-      </div>
-
+    <SubWindow title="记忆图谱" icon={<Database size={16} />}>
       <div className="dashboard-layout">
         {/* Sidebar */}
         <div className="dashboard-sidebar">
@@ -80,7 +58,7 @@ export default function Dashboard() {
           {activeTab === 'graph' && <GraphView graph={graph} />}
         </div>
       </div>
-    </div>
+    </SubWindow>
   )
 }
 

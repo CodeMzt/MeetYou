@@ -55,16 +55,16 @@ export default function RecordsView({ snapshot }: { snapshot: MemorySnapshot | n
               <span
                 style={{
                   fontSize: 11,
-                  background: 'var(--accent-color)',
-                  color: 'white',
+                  background: 'var(--text-accent)',
+                  color: 'var(--text-inverse)',
                   padding: '2px 6px',
-                  borderRadius: 4,
+                  borderRadius: 'var(--radius-sm)',
                   textTransform: 'uppercase',
                 }}
               >
                 {record.type}
               </span>
-              <span style={{ fontSize: 11, color: record.status === 'active' ? '#34c759' : '#ff3b30' }}>
+              <span style={{ fontSize: 11, color: record.status === 'active' ? 'var(--text-success)' : 'var(--text-error)' }}>
                 {record.status}
               </span>
             </div>
@@ -78,14 +78,14 @@ export default function RecordsView({ snapshot }: { snapshot: MemorySnapshot | n
               {record.content}
             </div>
             <div style={{ marginTop: 'auto', paddingTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 11, background: 'rgba(128,128,128,0.1)', padding: '2px 6px', borderRadius: 4 }}>
+              <span style={{ fontSize: 11, background: 'var(--border-subtle)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
                 置信度: {(record.confidence * 100).toFixed(0)}%
               </span>
-              <span style={{ fontSize: 11, background: 'rgba(128,128,128,0.1)', padding: '2px 6px', borderRadius: 4 }}>
+              <span style={{ fontSize: 11, background: 'var(--border-subtle)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
                 强度: {(record.strength * 100).toFixed(0)}%
               </span>
               {record.fact_value ? (
-                <span style={{ fontSize: 11, background: 'rgba(128,128,128,0.1)', padding: '2px 6px', borderRadius: 4 }}>
+                <span style={{ fontSize: 11, background: 'var(--border-subtle)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
                   值: {record.fact_value}
                 </span>
               ) : null}

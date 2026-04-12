@@ -20,7 +20,7 @@ MeetYou V2 的目标不是单机桌面助手，而是一个以私人服务器为
 
 ## 2. 本版已确认决策
 
-- 边缘设备使用 `MQTT transport`。
+- 当前所有 Agent 统一通过 `WSS /agent/ws` + `meetyou.agent.v1` 接入，具体形态通过 `transport_profile` 区分，例如 `desktop_wss`、`edge_wss`。
 - `Desktop Agent` 必须支持局部离线任务缓存。
 - Core 与 Agent 之间的大附件传输独立为对象存储通道。
 - 飞书这种弱交互 Client 允许直接审批高风险执行。
@@ -28,27 +28,25 @@ MeetYou V2 的目标不是单机桌面助手，而是一个以私人服务器为
 - 一个 Agent 可以同时加入多个 workspace。
 - Procedure 默认由 AI / Core 自动推断与维护；用户只通过确认回调参与持久化变更，不承担主动选择或编辑。
 - 记忆采用全局统一存储，workspace 通过标签和检索优先级体现，而不是硬隔离存两份。
-- 弱设备需要拉模式，而不是只支持 Core 主动推送。
+- Client Local Backend 与 Edge / Bridge Node 在部署归属上不同，但在 Core 内部统一建模为 `Agent`。
 
 ## 3. 拓扑
 
 ```text
-PC Client (UI + Local Backend) ----\
-Feishu Client ----------------------> Core Service ---- Object Storage
-Mobile Client (UI + Local Backend) -/        |
-                                             |
-                                      Agent Gateway
-                                             |
-                                        MQTT Broker
-                                             |
-                                  Edge / Bridge Nodes
+PC Client UI ------------------------\
+Feishu Client ------------------------> Core Service (Gateway + Core) ---- Object Storage
+Mobile Client UI --------------------/                  |
+                                                        |
+PC Client Local Backend (desktop_agent) ----------------|
+Edge / Bridge Agents (edge_agent / future bridge) ------/
 ```
 
 说明：
 
-- Client 与 Core 通过 HTTP / WebSocket 交互。
-- PC / 手机客户端中的本地后端优先通过 WSS / HTTPS 连接 Core。
-- Edge / Bridge Node 优先通过 MQTT 连接 Agent Gateway。
+- Gateway 只存在于服务端，作为 Core Service 的 HTTP / WebSocket 接入层。
+- Client 与 Core 通过 Gateway 的 `client/*` 与 `client/ws` 交互。
+- 所有 Agent 都通过 Gateway 的 `agent/*` 与 `agent/ws` 交互。
+- `Agent` 是 Core 统一使用的执行节点抽象；Client Local Backend 与 Edge / Bridge Node 是它的两种部署角色。
 - 大文件、截图、音频、文档附件不走主消息通道，统一走对象存储。
 
 ## 4. 角色职责
@@ -126,6 +124,11 @@ Client Local Backend 是客户端内部的本地执行 / 桥接后端。
 - 最终审批决策
 - 全局记忆与任务真相源
 
+补充：
+
+- 从 Core 视角看，Client Local Backend 会注册成一个 `Agent`
+- 这类 Agent 通常带 `owner_client_id`，表示它属于某个具体 Client
+
 ### 4.4 Edge / Bridge Node
 
 Edge / Bridge Node 是按 workspace 接入的设备执行节点。
@@ -148,6 +151,11 @@ Edge / Bridge Node 是按 workspace 接入的设备执行节点。
 - 全局编排
 - 最终审批决策
 - 全局记忆与任务真相源
+
+补充：
+
+- 从 Core 视角看，Edge / Bridge Node 同样注册成 `Agent`
+- 与客户端内本地后端相比，它通常没有 `owner_client_id`，而是主要通过 workspace membership 参与选路
 
 ## 5. 会话、线程、操作
 
@@ -190,6 +198,15 @@ Operation 绑定：
 - `target_agent_id` 或 `execution_target`
 - `attachments`
 
+这里的 `execution_target` 是路由策略枚举，不是 Agent 列表：
+
+- `core_only`
+- `specific_agent`
+- `workspace_any_agent`
+- `prefer_agent_fallback_core`
+
+如果 Client 需要查看当前 workspace 下有哪些候选执行节点，应使用单独的 workspace-agent 列表接口，而不是把 `execution_target` 当作节点集合。
+
 结论：不同 session 不直接互相通信，而是通过共享 `thread` 和 `operation` 由 Core 统一协调。
 
 ## 6. 关键场景
@@ -214,9 +231,9 @@ Core -> Feishu / Desktop UI / Mobile: 推送 operation 结果与附件引用
 
 ### 6.3 边缘设备弱联网场景
 
-- 使用 MQTT transport
-- 支持 pull 模式
-- 设备周期性请求下一条任务，而不是要求 Core 总是主动推送
+- 当前弱联网边缘设备仍统一使用 `WSS /agent/ws` 主链
+- 重连、心跳与离线缓存由具体 Agent runtime 自行处理
+- 如未来确有弱设备长期离线或 broker 级需求，再在统一 Agent 语义上增加额外 transport profile，而不是引入另一套 Agent 模型
 
 ## 7. API 面分层
 
@@ -317,13 +334,13 @@ V2 明确允许飞书审批高风险动作，但前提是：
 
 ### 11.2 Edge Agent
 
-- 连接方式：MQTT
+- 连接方式：WSS / HTTPS
 - 负责：传感器、GPIO、局域网设备、边缘采样
-- 特性：支持 pull 模式
+- 特性：通过 `edge_wss` 等 transport profile 区分边缘形态
 
 ### 11.3 Bridge Agent
 
-- 连接方式：WSS 或 MQTT
+- 连接方式：WSS / HTTPS
 - 负责：代管不能直接运行 MeetYou Agent 的子设备
 - 特性：对外暴露的是“桥接后的能力”，而不是让 Core 直接理解所有底层设备协议
 
@@ -391,8 +408,8 @@ V2 明确允许飞书审批高风险动作，但前提是：
 
 ### Phase 3
 
-- 实现 Edge Agent MQTT transport
-- 增加 pull 模式
+- 统一 Edge Agent 到 `/agent/ws` transport
+- 补齐 Edge Agent 最小运行时与测试基线
 - 实现 workspace overlay 与多 workspace agent membership
 
 ### Phase 4
@@ -424,5 +441,5 @@ V2 明确允许飞书审批高风险动作，但前提是：
 
 ### ADR-005
 
-- 决策：边缘设备走 MQTT，并支持 pull 模式。
-- 原因：更适合弱设备与不稳定网络环境。
+- 决策：当前所有 Agent 统一走 `WSS /agent/ws`，通过 `transport_profile` 区分桌面与边缘形态。
+- 原因：先统一 Core 的执行节点心智模型与协议面，避免在主链尚未稳定前并行维护第二套 transport 语义。

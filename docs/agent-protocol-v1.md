@@ -21,9 +21,8 @@ V1 同时覆盖两类 Agent：
 
 - Core 是唯一编排者。
 - Agent 上报能力，Core 负责选路。
-- 协议语义统一，传输可按 Agent 类型分 profile。
+- 协议语义统一，传输通过同一套 `WSS /agent/ws` 主链承载，具体形态按 `transport_profile` 区分。
 - 小消息走主协议，大附件走对象存储。
-- 支持弱设备拉模式。
 - 支持多 workspace agent membership。
 
 ## 3. 传输 Profile
@@ -37,19 +36,10 @@ V1 同时覆盖两类 Agent：
 
 ### 3.2 Edge Profile
 
-- 主传输：`MQTT`
+- 主传输：`WSS`
 - 辅助：必要时 `HTTPS` 上传附件元数据或获取对象存储票据
 - 适用：树莓派、嵌入式、边缘节点
-
-### 3.3 Weak Pull Profile
-
-弱设备仍使用 MQTT transport，但执行模型采用拉模式：
-
-- Agent 不要求 Core 永远主动下发任务
-- Agent 主动请求下一条可执行任务
-- Core 在 Agent 请求后返回一条 lease 或空结果
-
-这比纯推模式更适合弱设备、间歇联网设备和低功耗设备。
+- 特性：与 Desktop Profile 共享同一套 `meetyou.agent.v1` envelope，只通过 `transport_profile` 标记边缘形态，例如 `edge_wss`
 
 ## 4. 鉴权模型
 
@@ -117,7 +107,7 @@ Agent 协议不直接承载聊天 session，而是围绕 `operation` 和 `capabi
 - `correlation_id`：关联请求 ID，可为空
 - `payload`：消息体
 
-## 7. Desktop Profile 连接生命周期
+## 7. Agent 连接生命周期
 
 ### 7.1 初始化
 
@@ -138,40 +128,30 @@ Core -> Desktop Agent: agent.ready
 
 回连时可补发：
 
-- `agent.offline.receipts`
-- `agent.offline.attachments`
+- 预留的离线补同步消息
 - 最新 `agent.capabilities.snapshot`
 
 ## 8. Edge Profile 连接生命周期
 
-### 8.1 MQTT Topic 建议
+当前 Edge Profile 与 Desktop Profile 共享同一套连接生命周期：
 
-- `meetyou/agents/{agent_id}/up`
-- `meetyou/agents/{agent_id}/down`
-- `meetyou/agents/{agent_id}/pull`
+```text
+Edge Agent -> Core: agent.hello
+Core -> Edge Agent: agent.hello.ack
+Edge Agent -> Core: agent.capabilities.snapshot
+Core -> Edge Agent: agent.ready
+```
+
+运行中：
+
+- Agent 发送 `agent.heartbeat`
+- Core 下发 `capability.call.request`
+- Agent 回传 `accepted/progress/result/error`
 
 说明：
 
-- `up`：Agent -> Core
-- `down`：Core -> Agent
-- `pull`：弱设备请求任务 lease
-
-### 8.2 普通 MQTT 模式
-
-- Agent 订阅 `down`
-- Core 下发执行请求到 `down`
-- Agent 回传结果到 `up`
-
-### 8.3 Pull 模式
-
-弱设备周期性发送：
-
-- `agent.pull.next`
-
-Core 返回：
-
-- `capability.call.lease`
-- 或 `agent.pull.empty`
+- `transport_profile=edge_wss` 只表示运行形态，不引入第二套 envelope
+- 如果未来真的需要弱联网拉模式，应作为同一 Agent 协议上的后续扩展，而不是当前主链假设
 
 ## 9. 核心消息类型
 
@@ -383,64 +363,17 @@ Core 返回：
 }
 ```
 
-### 9.10 `agent.pull.next`
-
-弱设备主动请求下一条任务。
-
-```json
-{
-  "schema": "meetyou.agent.v1",
-  "type": "agent.pull.next",
-  "message_id": "msg_pull_1",
-  "sent_at": "2026-04-08T10:02:00Z",
-  "agent_id": "raspi-home-lab-agent",
-  "payload": {
-    "max_tasks": 1,
-    "supported_tags": ["device", "sensor"],
-    "lease_seconds": 60
-  }
-}
-```
-
-### 9.11 `capability.call.lease`
-
-Core 响应弱设备 pull 请求。
-
-```json
-{
-  "schema": "meetyou.agent.v1",
-  "type": "capability.call.lease",
-  "message_id": "msg_lease_1",
-  "sent_at": "2026-04-08T10:02:00Z",
-  "payload": {
-    "lease_id": "lease_123",
-    "operation_id": "op_456",
-    "call_id": "call_456",
-    "workspace_id": "home-lab",
-    "capability_id": "agent.raspi-home-lab.sensor.read",
-    "arguments": {
-      "sensor": "temp_humidity"
-    },
-    "expires_at": "2026-04-08T10:03:00Z"
-  }
-}
-```
-
-### 9.12 `agent.pull.empty`
-
-Core 没有可分配任务时返回。
-
-### 9.13 `agent.offline.receipts`
+### 9.10 `agent.offline.receipts`
 
 Desktop Agent 回连后补同步离线执行结果摘要。
 
-### 9.14 `agent.offline.attachments`
+### 9.11 `agent.offline.attachments`
 
 Desktop Agent 回连后补同步离线期间产生的附件引用。
 
 ## 10. 大附件传输
 
-大附件不应通过 WSS 或 MQTT 主消息通道传输。
+大附件不应通过 WSS 主消息通道传输。
 
 统一模型：
 
@@ -542,8 +475,8 @@ Agent 可因以下原因返回失败：
 
 ### Phase 3
 
-- MQTT Edge Profile
-- `agent.pull.next` / `capability.call.lease`
+- Edge Profile over `WSS /agent/ws`
+- Edge Agent 最小运行时与测试基线
 - Desktop 离线缓存补同步
 
 ### Phase 4
@@ -553,6 +486,6 @@ Agent 可因以下原因返回失败：
 
 ## 16. 待决问题
 
-- 是否需要为 MQTT pull 模式增加优先级租约机制。
+- 是否需要为未来弱联网 transport profile 增加任务拉取机制。
 - 离线缓存的本地加密与过期策略。
 - 对象存储下载 URL 的时效与复用策略。

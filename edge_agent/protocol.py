@@ -1,84 +1,116 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import platform
+import socket
 from typing import Any
-from uuid import uuid4
+
+from agent_protocol import (
+    AGENT_SCHEMA,
+    build_agent_capabilities_snapshot,
+    build_agent_heartbeat,
+    build_agent_hello,
+    build_call_accepted_message,
+    build_call_error_message,
+    build_call_progress_message,
+    build_call_result_message,
+)
+from edge_agent.config import EdgeAgentConfig
 
 
-EDGE_AGENT_SCHEMA = "meetyou.edge.v1"
+def build_static_capabilities(config: EdgeAgentConfig, *, extra_capabilities: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    workspace_ids = list(config.workspace_ids)
+    base = [
+        {
+            "capability_id": f"agent.{config.agent_id}.utility.echo",
+            "kind": "tool",
+            "title": "Echo Payload",
+            "tags": ["edge", "utility", "debug"],
+            "risk_level": "read",
+            "requires_confirmation": False,
+            "workspace_ids": workspace_ids,
+        }
+    ]
+    if extra_capabilities:
+        base.extend(dict(item) for item in extra_capabilities)
+    return base
 
 
-def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def topic_up(agent_id: str) -> str:
-    return f"meetyou/agents/{str(agent_id).strip()}/up"
-
-
-def topic_down(agent_id: str) -> str:
-    return f"meetyou/agents/{str(agent_id).strip()}/down"
-
-
-def topic_pull(agent_id: str) -> str:
-    return f"meetyou/agents/{str(agent_id).strip()}/pull"
-
-
-def make_envelope(*, message_type: str, agent_id: str, payload: dict[str, Any], correlation_id: str = "") -> dict[str, Any]:
-    return {
-        "schema": EDGE_AGENT_SCHEMA,
-        "type": message_type,
-        "message_id": f"msg_{uuid4().hex}",
-        "sent_at": utcnow_iso(),
-        "agent_id": agent_id,
-        "correlation_id": correlation_id,
-        "payload": dict(payload or {}),
-    }
-
-
-def build_pull_next(agent_id: str, *, workspace_ids: list[str], capabilities: list[str] | None = None) -> dict[str, Any]:
-    return make_envelope(
-        message_type="agent.pull.next",
-        agent_id=agent_id,
-        payload={
-            "workspace_ids": list(workspace_ids or []),
-            "capabilities": list(capabilities or []),
+def build_hello(config: EdgeAgentConfig) -> dict[str, Any]:
+    return build_agent_hello(
+        agent_id=config.agent_id,
+        agent_type=config.agent_type,
+        display_name=config.display_name,
+        transport_profile=config.transport_profile,
+        workspace_ids=config.workspace_ids,
+        supports_offline_cache=config.supports_offline_cache,
+        host={
+            "hostname": socket.gethostname(),
+            "os": platform.system().lower(),
+            "arch": platform.machine().lower(),
         },
     )
 
 
-def build_pull_empty(agent_id: str, *, correlation_id: str, retry_after_seconds: int = 10) -> dict[str, Any]:
-    return make_envelope(
-        message_type="agent.pull.empty",
-        agent_id=agent_id,
-        correlation_id=correlation_id,
-        payload={
-            "retry_after_seconds": max(int(retry_after_seconds), 1),
-        },
-    )
-
-
-def build_capability_call_lease(
-    agent_id: str,
+def build_capabilities_snapshot(
+    config: EdgeAgentConfig,
     *,
-    correlation_id: str,
-    operation_id: str,
-    call_id: str,
-    workspace_id: str,
-    capability_id: str,
-    lease_seconds: int = 60,
-    arguments: dict[str, Any] | None = None,
+    revision: int = 1,
+    extra_capabilities: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return make_envelope(
-        message_type="capability.call.lease",
-        agent_id=agent_id,
+    return build_agent_capabilities_snapshot(
+        agent_id=config.agent_id,
+        revision=revision,
+        capabilities=build_static_capabilities(config, extra_capabilities=extra_capabilities),
+    )
+
+
+def build_heartbeat(config: EdgeAgentConfig, *, status: str = "ready", metrics: dict[str, Any] | None = None) -> dict[str, Any]:
+    return build_agent_heartbeat(
+        agent_id=config.agent_id,
+        status=status,
+        metrics=metrics,
+    )
+
+
+def build_call_accepted(config: EdgeAgentConfig, *, call_id: str, correlation_id: str) -> dict[str, Any]:
+    return build_call_accepted_message(
+        agent_id=config.agent_id,
+        call_id=call_id,
         correlation_id=correlation_id,
-        payload={
-            "operation_id": operation_id,
-            "call_id": call_id,
-            "workspace_id": workspace_id,
-            "capability_id": capability_id,
-            "lease_seconds": max(int(lease_seconds), 1),
-            "arguments": dict(arguments or {}),
-        },
+    )
+
+
+def build_call_progress(config: EdgeAgentConfig, *, call_id: str, correlation_id: str, phase: str, detail: str) -> dict[str, Any]:
+    return build_call_progress_message(
+        agent_id=config.agent_id,
+        call_id=call_id,
+        correlation_id=correlation_id,
+        phase=phase,
+        detail=detail,
+    )
+
+
+def build_call_result(
+    config: EdgeAgentConfig,
+    *,
+    call_id: str,
+    correlation_id: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    return build_call_result_message(
+        agent_id=config.agent_id,
+        call_id=call_id,
+        correlation_id=correlation_id,
+        result=result,
+    )
+
+
+def build_call_error(config: EdgeAgentConfig, *, call_id: str, correlation_id: str, code: str, message: str, retryable: bool = False) -> dict[str, Any]:
+    return build_call_error_message(
+        agent_id=config.agent_id,
+        call_id=call_id,
+        correlation_id=correlation_id,
+        code=code,
+        message=message,
+        retryable=retryable,
     )

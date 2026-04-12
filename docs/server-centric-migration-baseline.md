@@ -33,7 +33,7 @@
 
 当前第二版进度补充：第四批“Object Store 抽象层”已经落地，AttachmentService 已不再直接依赖本地路径实现。 
 
-当前第二版进度补充：第五批“Edge Agent / MQTT 第一批骨架”已经落地，topic/helper、lease envelope 与最小 edge runtime skeleton 已具备。 
+当前第二版进度补充：第五批“Edge Agent 第一批骨架”已经落地，边缘 Agent 的最小 runtime 与协议收口已经进入正式主链。 
 
 当前第二版进度补充：下一批进入 attachment ref 接入消息层，使附件从 operation 扩展到更完整的 UI 对象模型。 
 
@@ -41,7 +41,7 @@
 
 当前第二版进度补充：第七批“可配置 Object Store Backend”已经落地，attachment 存储已具备正式配置入口。 
 
-当前第二版进度补充：第八批“Edge Agent 正式运行目标”已经落地，`python main.py edge-agent` 已可用。 
+当前第二版进度补充：第八批“Edge Agent 正式运行目标”已经落地，`python main.py edge-agent` 已可用，并已切到统一 `/agent/ws` transport。 
 
 当前第二版进度补充：第九批“S3-Compatible Object Store 第一批”已经落地，对象存储后端已从 local/filesystem 扩展到 `s3_compatible`。 
 
@@ -53,9 +53,9 @@
 - 第二批：Desktop Agent uploader 已完成
 - 第三批：Attachment reference 展示层已完成
 - 第四批：Object Store 抽象层已完成
-- 第五批：Edge Agent / MQTT 第一批骨架已完成
+- 第五批：Edge Agent 第一批骨架已完成
 
-当前第二版进度补充：下一批进入 Edge Agent / MQTT 第一批骨架实现。
+当前第二版进度补充：下一批进入 Edge Agent transport 语义与文档收口。
 
 当前第二版进度补充：下一批进入对象存储后端抽象，为 MinIO / S3 接入做准备。
 
@@ -657,7 +657,7 @@
 | Phase 6 | Frontend 迁移到 Client API | 部分完成 | `useMeetYou.ts` 已切到 `clientApi.ts` + `client/ws` 主链 | UI 仍带明显开发控制台姿态 |
 | Phase 7 | 附件通道与对象存储 | 部分完成 | `Attachment` 模型与 `AttachmentService` 已有骨架 | upload ticket、complete、download flow 未完成 |
 | Phase 8 | Workspace / Memory / Procedure 收口 | 部分完成 | workspace 资源、agent 绑定、memory records 与 Procedure 已入库，F88 自动推断 / 生命周期治理已完成 | workspace 记忆排序仍待收口 |
-| Phase 9 | Edge Agent MQTT | 未开始 | 当前仓库无 MQTT bridge、pull.next、edge sample 主链 | 整体待启动 |
+| Phase 9 | Edge Agent transport 收口 | 已完成 | `edge_agent/` 已统一到 `/agent/ws` + `meetyou.agent.v1` 主链，并具备最小运行时与测试 | 后续只剩边缘能力集扩充与治理 |
 | Phase 10 | 清理旧路径与稳定化 | 进行中 | 旧主聊天路径已退出，旧 spec 与兼容文档已开始清理 | 根路径兼容接口、双模型与旧语义仍待收口 |
 
 ## 4. 旧功能映射
@@ -703,7 +703,7 @@
 | 前端仍偏开发壳 | 默认 localhost、自动创建 `Desktop Chat`、保留 `Agent Echo` 调试姿态、状态表达仍偏开发态 | 与真实 Client 产品角色不一致 | P2 | Phase 6 收口 |
 | 根路径兼容 surface 仍存在 | `/config`、`/memory`、`/runtime/*` 等根路径接口仍在 | 新开发者容易继续误用旧语义 | P2 | Phase 10 收口 |
 | 附件通道未闭环 | 只有入口和模型骨架，缺少 upload/download 主链 | 无法承接截图、文档等真实跨端对象流 | P2 | Phase 7 |
-| Edge Agent / MQTT 未启动 | 当前无 bridge、topic 规范、pull 模式样例 | 边缘设备接入无落地路径 | P2 | Phase 9 |
+| Edge Agent 能力集仍偏骨架 | transport 已统一，但边缘专属 capability 与更完整运行治理仍较少 | 边缘设备场景仍偏最小样例 | P2 | Phase 9 |
 
 ## 6. 推荐后续顺序
 
@@ -727,11 +727,11 @@
 2. 在 Desktop Agent 补齐 uploader
 3. 在前端补齐下载、回显和操作入口
 
-### 阶段 D：Edge Agent / MQTT
+### 阶段 D：Edge Agent transport 收口
 
-1. 建立 Agent Gateway / MQTT bridge 与 topic 规范
-2. 实现 `agent.pull.next` 与 `capability.call.lease`
-3. 提供 edge agent 最小样例与集成测试基线
+1. 统一 Edge Agent 到 `/agent/ws` + `meetyou.agent.v1`
+2. 提供 edge agent 最小样例与测试基线
+3. 在统一 transport 上继续扩展边缘能力与治理策略
 
 ## 7. 当前架构审查结论
 

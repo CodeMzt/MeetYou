@@ -10,8 +10,8 @@ export default function TimelineView({ snapshot }: { snapshot: MemorySnapshot | 
   })
 
   return (
-    <div className="card scroll-surface" style={{ height: '100%', overflowY: 'auto', padding: 20 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, position: 'relative' }}>
+    <div className="card scroll-surface" style={{ height: '100%', overflowY: 'auto', padding: 'var(--spacing-lg)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)', position: 'relative' }}>
         <div
           style={{
             position: 'absolute',
@@ -29,10 +29,10 @@ export default function TimelineView({ snapshot }: { snapshot: MemorySnapshot | 
               style={{
                 width: 16,
                 height: 16,
-                borderRadius: '50%',
+                borderRadius: 'var(--radius-full)',
                 background:
-                  event.type === 'episode' ? '#8e8e93' : event.type === 'fact' ? '#34c759' : '#0a84ff',
-                border: '4px solid var(--bg-color)',
+                  event.type === 'episode' ? 'var(--text-tertiary)' : event.type === 'fact' ? 'var(--text-success)' : 'var(--text-accent)',
+                border: '4px solid var(--bg-card)',
                 flexShrink: 0,
               }}
             />
@@ -58,9 +58,9 @@ export default function TimelineView({ snapshot }: { snapshot: MemorySnapshot | 
                       key={tag}
                       style={{
                         fontSize: 10,
-                        background: 'rgba(128,128,128,0.1)',
+                        background: 'var(--border-subtle)',
                         padding: '2px 6px',
-                        borderRadius: 4,
+                        borderRadius: 'var(--radius-sm)',
                       }}
                     >
                       #{tag}

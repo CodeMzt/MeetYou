@@ -1,17 +1,40 @@
 import { useEffect, useState } from 'react'
-import { Gauge, X, Minus, Square } from 'lucide-react'
+import { Gauge } from 'lucide-react'
 import './dashboard.css'
-import UsagePanel from './components/status/UsagePanel'
 import { fetchWithAuth } from './apiClient'
 import { parseRuntimeDebugEnvelope } from './protocolClient'
-import { RuntimeDebugSnapshot, RuntimeUsageSnapshot } from './types'
+import { RuntimeDebugSnapshot, RuntimeErrorPayload } from './types'
+import styles from './StatsWindow.module.css'
+import SubWindow from './components/layout/SubWindow'
+
+type DevtoolsPayload = {
+  sessionId?: string
+  baseUrl?: string
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.map((item) => String(item || '').trim()).filter(Boolean)
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+function formatBooleanLabel(value: unknown, truthy: string, falsy: string): string {
+  return value ? truthy : falsy
+}
+
+function renderErrorSummary(lastFailure: RuntimeErrorPayload | null): string {
+  if (!lastFailure) {
+    return '暂无失败记录'
+  }
+  return `${lastFailure.code} / ${lastFailure.category} / ${lastFailure.retryable ? '可重试' : '不可重试'}`
+}
 
 export default function StatsWindow() {
-  const handleClose = () => window.ipcRenderer?.send('window-close')
-  const handleMinimize = () => window.ipcRenderer?.send('window-minimize')
-  const handleMaximize = () => window.ipcRenderer?.send('window-maximize')
-
-  const [usageSnapshot, setUsageSnapshot] = useState<RuntimeUsageSnapshot | null>(null)
   const [runtimeDebugSnapshot, setRuntimeDebugSnapshot] = useState<RuntimeDebugSnapshot | null>(null)
   const [sessionId, setSessionId] = useState('')
   const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:8000')
@@ -55,51 +78,182 @@ export default function StatsWindow() {
   }, [baseUrl, sessionId])
 
   useEffect(() => {
-    // Listener for stats update
-    const handleStatsUpdated = (_event: any, data: { usageSnapshot: RuntimeUsageSnapshot | null, sessionId?: string, baseUrl?: string }) => {
-      setUsageSnapshot(data.usageSnapshot)
-      setSessionId(data.sessionId || '')
-      setBaseUrl(data.baseUrl || 'http://127.0.0.1:8000')
+    const handleStatsUpdated = (_event: unknown, data: DevtoolsPayload | null) => {
+      setSessionId(data?.sessionId || '')
+      setBaseUrl(data?.baseUrl || 'http://127.0.0.1:8000')
     }
 
-    // Register IPC listener
     window.ipcRenderer?.on('devtools-updated', handleStatsUpdated)
 
     window.ipcRenderer?.send('request-devtools')
 
     return () => {
-      // Cleanup listener
       window.ipcRenderer?.off('devtools-updated', handleStatsUpdated)
     }
   }, [])
 
+  const route = toRecord(runtimeDebugSnapshot?.route)
+  const authorization = toRecord(runtimeDebugSnapshot?.authorization)
+  const routePreview = toRecord(authorization.route_preview)
+  const confirmation = toRecord(authorization.confirmation)
+  const contextPlan = toRecord(runtimeDebugSnapshot?.context_plan)
+  const lengthPolicy = toRecord(contextPlan.length_policy)
+  const layers = toRecord(contextPlan.layers)
+  const memoryScope = toRecord(runtimeDebugSnapshot?.memory_scope)
+  const taskState = toRecord(runtimeDebugSnapshot?.task_state)
+  const backgroundState = toRecord(taskState.background)
+  const scheduleState = toRecord(backgroundState.schedule)
+  const executionState = toRecord(backgroundState.execution)
+  const request = runtimeDebugSnapshot?.request
+  const compression = runtimeDebugSnapshot?.compression
+  const objectOperations = Array.isArray(runtimeDebugSnapshot?.object_operations)
+    ? runtimeDebugSnapshot?.object_operations.slice(0, 3)
+    : []
+  const routeHistory = Array.isArray(runtimeDebugSnapshot?.route_history)
+    ? runtimeDebugSnapshot?.route_history.slice(-4)
+    : []
+
   return (
-    <div className="dashboard-container">
-      {/* Titlebar */}
-      <div className="titlebar dashboard-titlebar">
-        <div className="titlebar-title" style={{ paddingLeft: 8 }}>
-          <Gauge size={16} /> 开发工具
+    <SubWindow title="运行调试" icon={<Gauge size={16} />} contentStyle={{ padding: '20px', display: 'flex', flexDirection: 'column' }}>
+      <div className={styles.hero}>
+        <div>
+          <div className={styles.kicker}>Runtime Debug</div>
+          <h2 className={styles.title}>仅展示 `/developer/runtime/debug` 独有信息</h2>
+          <p className={styles.description}>这里用于排查路由决策、请求预算、授权预览、压缩状态和最近失败，不再重复“上下文与用量”窗口里的 token 统计。</p>
         </div>
-        <div style={{ flex: 1 }} />
-        <div className="window-controls">
-          <button className="win-btn minimize" onClick={handleMinimize} title="最小化">
-            <Minus size={14} />
-          </button>
-          <button className="win-btn maximize" onClick={handleMaximize} title="最大化">
-            <Square size={12} />
-          </button>
-          <button className="win-btn close" onClick={handleClose} title="关闭">
-            <X size={14} />
-          </button>
+        <div className={styles.metaCard}>
+          <span className={styles.metaLabel}>Session</span>
+          <strong className={styles.metaValue}>{sessionId || '未绑定'}</strong>
+          <span className={styles.metaLabel}>更新时间</span>
+          <strong className={styles.metaValue}>{runtimeDebugSnapshot?.updated_at || '未同步'}</strong>
         </div>
       </div>
 
-      <div className="dashboard-content" style={{ padding: '20px', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
-          这里承接 `/developer/runtime/debug` 的调试信息，用于开发态检查请求诊断、上下文压缩和最近失败原因。
-        </div>
-        <UsagePanel usageSnapshot={usageSnapshot} runtimeDebugSnapshot={runtimeDebugSnapshot} />
-      </div>
-    </div>
+      {!runtimeDebugSnapshot ? (
+        <div className={styles.empty}>当前会话还没有可用的 runtime debug 快照。</div>
+      ) : (
+        <>
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>路由决策</div>
+            <div className={styles.grid}>
+              <div className={styles.card}>
+                <span className={styles.cardLabel}>当前模式</span>
+                <strong className={styles.cardValue}>{String(route.current_mode || 'unknown')}</strong>
+              </div>
+              <div className={styles.card}>
+                <span className={styles.cardLabel}>请求模式</span>
+                <strong className={styles.cardValue}>{String(route.requested_mode || 'unknown')}</strong>
+              </div>
+              <div className={styles.card}>
+                <span className={styles.cardLabel}>Source Profile</span>
+                <strong className={styles.cardValue}>{String(route.source_profile || 'unknown')}</strong>
+              </div>
+              <div className={styles.card}>
+                <span className={styles.cardLabel}>上下文预载</span>
+                <strong className={styles.cardValue}>{formatBooleanLabel(route.should_preload_context, '启用', '关闭')}</strong>
+              </div>
+            </div>
+            <div className={styles.blockText}>{String(route.route_reason || '无路由原因')}</div>
+            <div className={styles.tagRow}>
+              {toStringArray(route.tool_bundle).map((item) => <span key={item} className={styles.tag}>{item}</span>)}
+              {toStringArray(route.signals).map((item) => <span key={item} className={styles.tag}>{item}</span>)}
+            </div>
+          </section>
+
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>请求诊断</div>
+            {request ? (
+              <>
+                <div className={styles.grid}>
+                  <div className={styles.card}><span className={styles.cardLabel}>Provider</span><strong className={styles.cardValue}>{request.provider_name || 'unknown'}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>Model</span><strong className={styles.cardValue}>{request.model || 'unknown'}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>Transport</span><strong className={styles.cardValue}>{request.transport_mode || 'unknown'}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>Target Host</span><strong className={styles.cardValue}>{request.api_target.host || 'unknown'}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>消息数</span><strong className={styles.cardValue}>{request.message_count}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>工具数</span><strong className={styles.cardValue}>{request.tool_count}</strong></div>
+                </div>
+                <div className={styles.inlineMeta}>
+                  <span>请求 tokens 估算：{request.request_tokens_estimated}</span>
+                  <span>压力：{Math.round(request.pressure_ratio * 100)}%</span>
+                  <span>{request.near_limit ? '接近上限' : '未接近上限'}</span>
+                  <span>历史消息：{request.layers.history_message_count}</span>
+                </div>
+              </>
+            ) : (
+              <div className={styles.empty}>暂无请求诊断快照。</div>
+            )}
+          </section>
+
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>预算与压缩</div>
+            <div className={styles.inlineMeta}>
+              <span>目标输入：{String(lengthPolicy.target_input_tokens || 'unknown')}</span>
+              <span>保留输出：{String(lengthPolicy.reserved_response_tokens || 'unknown')}</span>
+              <span>预留比例：{String(lengthPolicy.reserve_ratio || 'unknown')}</span>
+              <span>摘要层：{formatBooleanLabel(layers.conversation_summary, '启用', '关闭')}</span>
+              <span>记忆召回：{formatBooleanLabel(layers.memory_recall, '启用', '关闭')}</span>
+            </div>
+            {compression ? (
+              <div className={styles.grid}>
+                <div className={styles.card}><span className={styles.cardLabel}>压缩状态</span><strong className={styles.cardValue}>{compression.triggered ? '已触发' : '未触发'}</strong></div>
+                <div className={styles.card}><span className={styles.cardLabel}>压缩级别</span><strong className={styles.cardValue}>{compression.level || 'none'}</strong></div>
+                <div className={styles.card}><span className={styles.cardLabel}>修剪消息</span><strong className={styles.cardValue}>{compression.trimmed_messages}</strong></div>
+                <div className={styles.card}><span className={styles.cardLabel}>摘要 tokens</span><strong className={styles.cardValue}>{compression.summary_tokens}</strong></div>
+              </div>
+            ) : (
+              <div className={styles.empty}>本轮没有压缩信息。</div>
+            )}
+          </section>
+
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>授权与执行边界</div>
+            <div className={styles.inlineMeta}>
+              <span>可见工具：{toStringArray(routePreview.visible_tools).length}</span>
+              <span>候选工具：{toStringArray(routePreview.candidate_tools).length}</span>
+              <span>确认挂起：{formatBooleanLabel(confirmation.pending, '是', '否')}</span>
+              <span>记忆预取：{formatBooleanLabel(memoryScope.prefetched, '是', '否')}</span>
+              <span>记忆命中：{formatBooleanLabel(memoryScope.found, '是', '否')}</span>
+            </div>
+            <div className={styles.tagRow}>
+              {toStringArray(routePreview.visible_tools).map((item) => <span key={item} className={styles.tag}>{item}</span>)}
+            </div>
+          </section>
+
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>运行背景</div>
+            <div className={styles.inlineMeta}>
+              <span>待执行任务：{String(scheduleState.due_task_count || 0)}</span>
+              <span>待完成执行：{String(executionState.awaiting_completion_count || 0)}</span>
+              <span>最近失败：{renderErrorSummary(runtimeDebugSnapshot.last_failure)}</span>
+            </div>
+            {objectOperations.length > 0 ? (
+              <div className={styles.list}>
+                {objectOperations.map((item, index) => (
+                  <div key={`${String(item.action || 'op')}-${index}`} className={styles.listItem}>
+                    <strong>{String(item.action || 'action')}</strong>
+                    <span>{String(item.object_type || 'object')}</span>
+                    <span>{String(item.status || 'status')}</span>
+                    <span>{String(item.summary || '')}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {routeHistory.length > 0 ? (
+              <div className={styles.list}>
+                {routeHistory.map((item, index) => (
+                  <div key={`route-history-${index}`} className={styles.listItem}>
+                    <strong>Round {String(item.round ?? index)}</strong>
+                    <span>{String(item.mode || 'unknown')}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {runtimeDebugSnapshot.last_failure ? (
+              <div className={styles.blockText}>{runtimeDebugSnapshot.last_failure.message}</div>
+            ) : null}
+          </section>
+        </>
+      )}
+    </SubWindow>
   )
 }

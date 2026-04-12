@@ -1,16 +1,18 @@
 .panel {
-  border: 1px solid var(--glass-border);
-  background: var(--bubble-assistant);
-  border-radius: var(--radius-md);
-  padding: 13px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  box-shadow: 0 8px 24px var(--shadow-color);
+  gap: 16px;
+  box-shadow: var(--shadow-sm);
 }
 
 .compactPanel {
-  gap: 10px;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
 }
 
 .header {
@@ -31,7 +33,7 @@
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .compactGrid {
@@ -40,17 +42,32 @@
 
 .stat {
   border-radius: 12px;
-  background: rgba(128, 128, 128, 0.06);
-  padding: 10px 12px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  padding: 12px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 4px;
+}
+
+.compactGrid .stat {
+  padding: 10px;
 }
 
 .label,
 .footer {
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.stat strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .section {
@@ -70,8 +87,18 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
+}
+
+.inlineList span,
+.breakdown span {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-reasoning);
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-primary);
 }
 
 .progressMeta {
@@ -83,15 +110,40 @@
 }
 
 .progressBar {
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(128, 128, 128, 0.14);
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--border-subtle);
   overflow: hidden;
+  display: flex;
+  width: 100%;
 }
 
-.progressFill {
+.progressChunk {
   height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--text-accent), #7c4dff);
   transition: width 0.2s ease;
+}
+
+.progressChunk.system { background: var(--text-warning); }
+.progressChunk.history { background: var(--text-success); }
+.progressChunk.memory { background: #af52de; }
+.progressChunk.current { background: var(--text-accent); }
+
+.usageLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
 }

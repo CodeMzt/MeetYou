@@ -11,7 +11,7 @@ export default function OverviewView({ snapshot }: { snapshot: MemorySnapshot | 
     .slice(0, 5);
 
   return (
-    <div className="overview-view" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div className="overview-view" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>
       <div className="card">
         <h3 style={{ marginBottom: 12 }}>工作上下文</h3>
         <p style={{ fontSize: 13, marginBottom: 8 }}>
@@ -22,27 +22,27 @@ export default function OverviewView({ snapshot }: { snapshot: MemorySnapshot | 
         </p>
       </div>
 
-      <div style={{ display: 'flex', gap: 16 }}>
+      <div style={{ display: 'flex', gap: 'var(--spacing-md)' }}>
         <div className="card" style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--accent-color)' }}>{stats.by_type.profile || 0}</div>
+          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-accent)' }}>{stats.by_type.profile || 0}</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>用户画像</div>
         </div>
         <div className="card" style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--accent-color)' }}>{stats.by_type.fact || 0}</div>
+          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-accent)' }}>{stats.by_type.fact || 0}</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>长期事实</div>
         </div>
         <div className="card" style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--accent-color)' }}>{stats.by_type.episode || 0}</div>
+          <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-accent)' }}>{stats.by_type.episode || 0}</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>事件记录</div>
         </div>
       </div>
 
       <div className="card" style={{ flex: 1 }}>
         <h3 style={{ marginBottom: 12 }}>最近事件</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }}>
           {recentEvents.length === 0 && <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>暂无事件</span>}
           {recentEvents.map(ev => (
-            <div key={ev.id} style={{ fontSize: 13, padding: '8px 12px', background: 'rgba(128,128,128,0.05)', borderRadius: 6 }}>
+            <div key={ev.id} style={{ fontSize: 13, padding: '8px 12px', background: 'var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
               <div style={{ color: 'var(--text-secondary)', fontSize: 11, marginBottom: 4 }}>
                 {new Date(ev.created_at).toLocaleString()}
               </div>

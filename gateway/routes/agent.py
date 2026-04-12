@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
-from pydantic import ValidationError
-
-from gateway.agent_protocol import (
+from agent_protocol import (
     AGENT_WS_SCHEMA,
     AgentCapabilitiesSnapshotPayload,
     AgentEnvelope,
@@ -16,6 +12,10 @@ from gateway.agent_protocol import (
     CapabilityCallResultPayload,
     build_agent_envelope,
 )
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
+from pydantic import ValidationError
+
 from service_runtime.models import RuntimeError
 
 

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#171717" />
+  <!-- Elegant Minimalist "M" -->
+  <path d="M 136 376 L 136 216 C 136 160 176 136 212 136 C 240 136 256 156 256 184 C 256 156 272 136 300 136 C 336 136 376 160 376 216 L 376 376" fill="none" stroke="#F5F5F5" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

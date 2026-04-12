@@ -3,6 +3,29 @@
   "version": "1.0.0",
   "description": "MeetYou Desktop Floating Widget",
   "main": "dist-electron/main.js",
+  "build": {
+    "appId": "com.meetyou.app",
+    "productName": "MeetYou",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "mac": {
+      "icon": "build/icon.icns"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png"
+    }
+  },
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",

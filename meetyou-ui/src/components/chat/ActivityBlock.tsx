@@ -11,10 +11,10 @@ interface ActivityBlockProps {
   trimmedCount: number
 }
 
-export default function ActivityBlock({ activities, isStreaming, trimmedCount }: ActivityBlockProps) {
+export default function ActivityBlock({ activities = [], isStreaming, trimmedCount = 0 }: ActivityBlockProps) {
   const [expanded, setExpanded] = useState(false)
 
-  if (activities.length === 0) return null
+  if (!activities || activities.length === 0) return null
 
   const headerText = isStreaming ? '正在使用工具' : '工具活动'
 

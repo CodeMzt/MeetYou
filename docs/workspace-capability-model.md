@@ -165,6 +165,8 @@ Workspace 适合承载：
 - workspace 可公开声明来源偏好，并进入统一 workspace governance surface
 - message 路由会把 workspace 的来源偏好注入 route context；procedure 推荐来源仍高于 workspace 偏好
 - workspace 记忆排序策略已公开为治理字段；当前实现固定为 `workspace_first`
+- operator 侧已公开 source profile 目录，workspace 编辑 UI 使用受控多选而不是自由文本
+- workspace 写入非法 source profile 或非法 memory ranking policy 时，API 会直接拒绝请求
 
 Workspace 不是：
 

@@ -11,7 +11,8 @@
 - 运行主链先看 `main.py`、`service_runtime/service.py`、`core/app.py`；`core_service/` 目录存在，但当前启动主链不从这里进入。
 - `core/app.py` 是后端主装配点；这里会组装 EventBus、Brain、Heart、Memory、Tools、Session runtime 和 `FastAPIGateway`。
 - 前端入口分两层：`meetyou-ui/electron/main.ts` 是 Electron main process，`meetyou-ui/src/main.tsx` 是 renderer 入口。
-- `desktop_agent/` 是客户端本地后端，负责本地文件、Shell、本地 MCP 和桌面能力；`edge_agent/` 是边缘节点运行时。
+- `desktop_agent/` 是客户端本地后端实现，负责本地文件、Shell、本地 MCP 和桌面能力；`edge_agent/` 是按 workspace 接入的边缘 Agent 运行时。
+- `desktop_agent/` 与 `edge_agent/` 当前统一通过 `WSS /agent/ws` + `meetyou.agent.v1` 接入；差异主要体现在 `agent_type` 与 `transport_profile`，不要再按旧 MQTT 方案假设 edge 主链。
 - 不要把本地文件读写、Shell、本地 MCP 生命周期重新塞回 Core；这些能力当前通过 agent dispatch 委派给 Desktop Agent / Edge Agent。
 
 ## 接口与连接
@@ -19,13 +20,14 @@
 - Agent 正式实时入口是 `WSS /agent/ws`。
 - 前端默认服务地址是 `http://127.0.0.1:8000`，定义在 `meetyou-ui/src/hooks/useMeetYou.ts`。
 - Gateway 鉴权是可选的；启用后 HTTP / WebSocket 接受 `Authorization: Bearer ...` 或 `X-API-Key`。
-- `desktop-agent` 的 token 会优先读 `MEETYOU_AGENT_ACCESS_TOKEN`，未设置时回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`。
+- `desktop-agent` 与 `edge-agent` 都会优先读 `MEETYOU_AGENT_ACCESS_TOKEN`；`desktop-agent` / `edge-agent` 也支持各自的专用 env，并可回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`。
 
 ## 配置与状态
 - `user/config.json` 不是可选文件；`ConfigManager` 启动时缺失会直接报错。密钥放 `.env`。
 - `user/` 是本地运行态目录；Git 只保留 `*.example.json` 模板和 `user/README.md`。
 - `user/core_mcp_servers.json` 只给 Core 侧安全 MCP；`user/mcp_servers.json` 只给 Desktop Agent 本地 MCP。缺少前者不代表后者缺失。
 - `desktop-agent` 默认读取 `user/desktop_agent.json`；本地能力边界主要看 `read_roots`、`trusted_write_roots`、`cmd_policy_path`、`mcp_servers_path`。
+- `edge-agent` 默认读取 `user/edge_agent.json`；边缘能力边界主要看 `workspace_ids`、`agent_type`、`transport_profile`。
 - 正式持久化已经切到 PostgreSQL；`bootstrap_core_domain()` 会在 service 启动时跑 Alembic migration。不要再假设 `user/*.json` 是唯一真相源。
 
 ## 任务边界
