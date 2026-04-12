@@ -21,7 +21,7 @@ export default function UsagePanel({
       <div className={`${styles.panel} ${isCompact ? styles.compactPanel : ''}`.trim()}>
         <div className={styles.header}>
           <Gauge size={14} />
-          <span>Token / Context</span>
+          <span>模型用量 / 上下文</span>
         </div>
         <div className={styles.empty}>
           {isCompact ? '正在同步本会话 token / context 快照。' : '暂无本会话的 token 或上下文统计。'}
@@ -47,7 +47,7 @@ export default function UsagePanel({
       <div className={`${styles.panel} ${styles.compactPanel}`}>
         <div className={styles.header}>
           <Gauge size={14} />
-          <span>主窗口 Token / Context</span>
+          <span>主窗口模型用量 / 上下文</span>
         </div>
 
         <div className={`${styles.grid} ${styles.compactGrid}`}>
@@ -95,7 +95,7 @@ export default function UsagePanel({
     <div className={styles.panel}>
       <div className={styles.header}>
         <Gauge size={14} />
-        <span>Token / Context</span>
+        <span>模型用量 / 上下文</span>
       </div>
 
       <div className={styles.grid}>

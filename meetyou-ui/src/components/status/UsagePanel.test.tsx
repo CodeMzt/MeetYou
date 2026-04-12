@@ -45,7 +45,7 @@ describe('UsagePanel', () => {
       />,
     )
 
-    expect(markup).toContain('主窗口 Token / Context')
+    expect(markup).toContain('主窗口模型用量 / 上下文')
     expect(markup).toContain('上下文上限')
     expect(markup).toContain('128.0k')
     expect(markup).toContain('Token 统计将在首轮模型交互后显示，上下文上限已初始化。')

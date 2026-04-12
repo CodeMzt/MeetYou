@@ -10,6 +10,13 @@ from core.services.base import ServiceBase
 
 class WorkspaceService(ServiceBase):
     @staticmethod
+    def _normalize_memory_ranking_policy(value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"workspace_first"}:
+            return "workspace_first"
+        return normalized
+
+    @staticmethod
     def _normalize_routing_policy(value: Any) -> str:
         normalized = str(value or "").strip().lower()
         if normalized not in {"balanced", "prefer_owner_client", "strict_preferred"}:
@@ -36,11 +43,13 @@ class WorkspaceService(ServiceBase):
         allowed_capability_ids = cls._normalize_string_list(raw.get("allowed_capability_ids"))
         preferred_agent_ids = cls._normalize_string_list(raw.get("preferred_agent_ids"))
         preferred_agent_types = cls._normalize_string_list(raw.get("preferred_agent_types"))
+        preferred_source_profiles = cls._normalize_string_list(raw.get("preferred_source_profiles"))
         capability_routing_overrides = cls._normalize_capability_routing_overrides(raw.get("capability_routing_overrides"))
         capability_policy = str(raw.get("capability_policy") or "").strip().lower()
         if capability_policy not in {"allow_all", "allowlist"}:
             capability_policy = "allowlist" if allowed_capability_ids else "allow_all"
         agent_routing_policy = cls._normalize_routing_policy(raw.get("agent_routing_policy"))
+        memory_ranking_policy = cls._normalize_memory_ranking_policy(raw.get("memory_ranking_policy"))
         return {
             **{
                 key: value
@@ -50,7 +59,9 @@ class WorkspaceService(ServiceBase):
                     "allowed_capability_ids",
                     "preferred_agent_ids",
                     "preferred_agent_types",
+                    "preferred_source_profiles",
                     "agent_routing_policy",
+                    "memory_ranking_policy",
                     "capability_routing_overrides",
                 }
             },
@@ -58,7 +69,9 @@ class WorkspaceService(ServiceBase):
             "allowed_capability_ids": allowed_capability_ids,
             "preferred_agent_ids": preferred_agent_ids,
             "preferred_agent_types": preferred_agent_types,
+            "preferred_source_profiles": preferred_source_profiles,
             "agent_routing_policy": agent_routing_policy,
+            "memory_ranking_policy": memory_ranking_policy,
             "capability_routing_overrides": capability_routing_overrides,
         }
 
@@ -91,7 +104,9 @@ class WorkspaceService(ServiceBase):
             "allowed_capability_ids": list(normalized_meta.get("allowed_capability_ids") or []),
             "preferred_agent_ids": list(normalized_meta.get("preferred_agent_ids") or []),
             "preferred_agent_types": list(normalized_meta.get("preferred_agent_types") or []),
+            "preferred_source_profiles": list(normalized_meta.get("preferred_source_profiles") or []),
             "agent_routing_policy": str(normalized_meta.get("agent_routing_policy") or "balanced"),
+            "memory_ranking_policy": str(normalized_meta.get("memory_ranking_policy") or "workspace_first"),
             "capability_routing_overrides": dict(normalized_meta.get("capability_routing_overrides") or {}),
         }
 

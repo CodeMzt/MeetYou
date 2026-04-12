@@ -1,4 +1,4 @@
-import { Database, Minus, Pin, PinOff, Settings, X } from 'lucide-react'
+import { Database, Gauge, LayoutTemplate, Minus, Pin, PinOff, Settings, Wrench, X } from 'lucide-react'
 import { ClientWsConnectionState, ClientWorkspace } from '../../types'
 import { getConnectionText } from '../../utils/statusFormatting'
 import styles from './Titlebar.module.css'
@@ -24,6 +24,9 @@ export default function Titlebar({
   const handleMinimize = () => window.ipcRenderer?.send('window-minimize')
   const handleOpenDashboard = () => window.ipcRenderer?.send('open-dashboard')
   const handleOpenSettings = () => window.ipcRenderer?.send('open-settings')
+  const handleOpenWorkspacePanel = () => window.ipcRenderer?.send('open-workspace-panel')
+  const handleOpenStats = () => window.ipcRenderer?.send('open-stats')
+  const handleOpenDevtools = () => window.ipcRenderer?.send('open-devtools')
 
   return (
     <div className={styles.titlebar}>
@@ -49,6 +52,15 @@ export default function Titlebar({
           <button className={styles.iconBtn} onClick={handleOpenDashboard} title="记忆图谱">
             <Database size={15} />
           </button>
+          <button className={styles.iconBtn} onClick={handleOpenWorkspacePanel} title="工作区与规程">
+            <LayoutTemplate size={15} />
+          </button>
+          <button className={styles.iconBtn} onClick={handleOpenStats} title="上下文与用量">
+            <Gauge size={15} />
+          </button>
+          <button className={styles.iconBtn} onClick={handleOpenDevtools} title="开发工具">
+            <Wrench size={15} />
+          </button>
           <button className={styles.iconBtn} onClick={handleOpenSettings} title="设置">
             <Settings size={15} />
           </button>
@@ -65,17 +77,17 @@ export default function Titlebar({
       </div>
 
       <div className={styles.metaRow}>
-        <div className={styles.metaCard} title={`Core ${connectionText}`}>
-          <span className={styles.metaLabel}>Core</span>
+        <div className={styles.metaCard} title={`服务端 ${connectionText}`}>
+          <span className={styles.metaLabel}>服务端</span>
           <span className={styles.metaValue}>{connectionText}</span>
         </div>
-        <div className={styles.metaCard} title={`Local Agent ${desktopAgentConnected ? 'online' : 'offline'}`}>
-          <span className={styles.metaLabel}>Agent</span>
-          <span className={styles.metaValue}>{desktopAgentConnected ? 'online' : 'offline'}</span>
+        <div className={styles.metaCard} title={`本地代理 ${desktopAgentConnected ? '在线' : '离线'}`}>
+          <span className={styles.metaLabel}>本地代理</span>
+          <span className={styles.metaValue}>{desktopAgentConnected ? '在线' : '离线'}</span>
         </div>
-        <div className={styles.metaCard} title={`Workspace ${workspace?.title || workspace?.workspace_id || 'unbound'}`}>
-          <span className={styles.metaLabel}>Workspace</span>
-          <span className={styles.metaValue}>{workspace?.title || workspace?.workspace_id || 'unbound'}</span>
+        <div className={styles.metaCard} title={`工作区 ${workspace?.title || workspace?.workspace_id || '未绑定'}`}>
+          <span className={styles.metaLabel}>工作区</span>
+          <span className={styles.metaValue}>{workspace?.title || workspace?.workspace_id || '未绑定'}</span>
         </div>
       </div>
     </div>

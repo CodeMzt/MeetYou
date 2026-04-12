@@ -264,6 +264,7 @@ async def request_user_confirmation(
     session_id: str = "",
     source=None,
     timeout_seconds: int = 30,
+    metadata: dict | None = None,
 ) -> bool:
     if _event_bus is None:
         return False
@@ -273,6 +274,7 @@ async def request_user_confirmation(
         session_id=session_id or "system:confirm",
         source=source,
         target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+        metadata=dict(metadata or {}),
     )
 
 

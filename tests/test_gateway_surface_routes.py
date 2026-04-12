@@ -90,7 +90,9 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(desktop_workspace["capability_policy"], "allow_all")
         self.assertEqual(desktop_workspace["allowed_capability_ids"], [])
         self.assertEqual(desktop_workspace["preferred_agent_types"], ["desktop"])
+        self.assertEqual(desktop_workspace["preferred_source_profiles"], ["workspace_local"])
         self.assertEqual(desktop_workspace["agent_routing_policy"], "balanced")
+        self.assertEqual(desktop_workspace["memory_ranking_policy"], "workspace_first")
         self.assertEqual(desktop_workspace["capability_routing_overrides"], {})
 
         procedures_resp = self.client.get("/client/procedures", headers=self._auth_headers())
@@ -112,6 +114,58 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         thread_payload = thread_resp.json()
         self.assertEqual(thread_payload["workspace_id"], "personal")
         self.assertEqual(thread_payload["pinned_procedure_id"], "code_review")
+
+        procedure_detail_resp = self.client.get("/client/procedures/code_review", headers=self._auth_headers())
+        self.assertEqual(procedure_detail_resp.status_code, 200)
+        procedure_detail = procedure_detail_resp.json()
+        self.assertEqual(procedure_detail["procedure_id"], "code_review")
+        self.assertTrue(procedure_detail["prompt_overlay"])
+        self.assertIn("infer_keywords", procedure_detail)
+
+        inferred_thread_resp = self.client.post(
+            "/client/threads",
+            json={"workspace_id": "personal", "title": "Inferred procedure thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(inferred_thread_resp.status_code, 200)
+        inferred_thread = self.core_domain.services.thread.get_by_thread_id(inferred_thread_resp.json()["thread_id"])
+        self.core_domain.services.thread.set_latest_inferred_procedure(
+            thread_id=inferred_thread.id,
+            procedure_id="code_review",
+            score=7,
+            reason="keywords:review,patch",
+            inferred_at="2026-04-12T00:00:00Z",
+        )
+        context_resp = self.client.get(
+            f"/client/threads/{inferred_thread.thread_id}/procedure-context",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(context_resp.status_code, 200)
+        context_payload = context_resp.json()
+        self.assertEqual(context_payload["source"], "inferred")
+        self.assertEqual(context_payload["effective_procedure"]["procedure_id"], "code_review")
+        self.assertEqual(context_payload["latest_inferred_score"], 7)
+
+        pin_resp = self.client.put(
+            f"/client/threads/{inferred_thread.thread_id}/pinned-procedure",
+            json={"procedure_id": "desktop_fix_loop"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(pin_resp.status_code, 200)
+        pin_payload = pin_resp.json()
+        self.assertEqual(pin_payload["source"], "pinned")
+        self.assertEqual(pin_payload["pinned_procedure"]["procedure_id"], "desktop_fix_loop")
+        self.assertEqual(pin_payload["effective_procedure"]["procedure_id"], "desktop_fix_loop")
+
+        unpin_resp = self.client.delete(
+            f"/client/threads/{inferred_thread.thread_id}/pinned-procedure",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(unpin_resp.status_code, 200)
+        unpin_payload = unpin_resp.json()
+        self.assertEqual(unpin_payload["source"], "inferred")
+        self.assertIsNone(unpin_payload["pinned_procedure"])
+        self.assertEqual(unpin_payload["effective_procedure"]["procedure_id"], "code_review")
 
         session_resp = self.client.post(
             "/client/sessions",
@@ -197,6 +251,8 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                 "default_execution_target": "core_only",
                 "capability_policy": "allowlist",
                 "allowed_capability_ids": ["agent.focus-lab-agent.focus.allowed"],
+                "preferred_source_profiles": ["study_materials"],
+                "memory_ranking_policy": "workspace_first",
             },
             headers=self._auth_headers(),
         )
@@ -206,6 +262,8 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(create_resp.json()["prompt_overlay"], "Focus on learning outcomes.")
         self.assertEqual(create_resp.json()["capability_policy"], "allowlist")
         self.assertEqual(create_resp.json()["allowed_capability_ids"], ["agent.focus-lab-agent.focus.allowed"])
+        self.assertEqual(create_resp.json()["preferred_source_profiles"], ["study_materials"])
+        self.assertEqual(create_resp.json()["memory_ranking_policy"], "workspace_first")
 
         list_resp = self.client.get("/operator/workspaces", headers=self._auth_headers())
         self.assertEqual(list_resp.status_code, 200)
@@ -230,6 +288,8 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(focus_workspace_view["default_execution_target"], "core_only")
         self.assertEqual(focus_workspace_view["capability_policy"], "allowlist")
         self.assertEqual(focus_workspace_view["allowed_capability_ids"], ["agent.focus-lab-agent.focus.allowed"])
+        self.assertEqual(focus_workspace_view["preferred_source_profiles"], ["study_materials"])
+        self.assertEqual(focus_workspace_view["memory_ranking_policy"], "workspace_first")
 
         focus_workspace = self.core_domain.services.workspace.get_by_workspace_id("focus-lab")
         agent = self.core_domain.services.agent.register_agent(
@@ -304,6 +364,86 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         )
         self.assertEqual(missing_target_resp.status_code, 400)
         self.assertEqual(missing_target_resp.json()["error"]["code"], "target_agent_required")
+
+    def test_operator_workspace_patch_updates_source_profile_policy(self):
+        create_resp = self.client.post(
+            "/operator/workspaces",
+            json={
+                "workspace_id": "policy-lab",
+                "title": "Policy Lab",
+                "preferred_source_profiles": ["workspace_local"],
+                "memory_ranking_policy": "workspace_first",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(create_resp.status_code, 200)
+
+        patch_resp = self.client.patch(
+            "/operator/workspaces/policy-lab",
+            json={
+                "preferred_source_profiles": ["policy_global", "workspace_local"],
+                "memory_ranking_policy": "workspace_first",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(patch_resp.status_code, 200)
+        self.assertEqual(
+            patch_resp.json()["preferred_source_profiles"],
+            ["policy_global", "workspace_local"],
+        )
+        self.assertEqual(patch_resp.json()["memory_ranking_policy"], "workspace_first")
+
+        workspaces_resp = self.client.get("/client/workspaces", headers=self._auth_headers())
+        self.assertEqual(workspaces_resp.status_code, 200)
+        policy_workspace = {item["workspace_id"]: item for item in workspaces_resp.json()}["policy-lab"]
+        self.assertEqual(policy_workspace["preferred_source_profiles"], ["policy_global", "workspace_local"])
+        self.assertEqual(policy_workspace["memory_ranking_policy"], "workspace_first")
+
+    def test_operator_source_profiles_lists_known_catalog_profiles(self):
+        resp = self.client.get("/operator/source-profiles", headers=self._auth_headers())
+        self.assertEqual(resp.status_code, 200)
+        profiles = {item["profile_name"]: item for item in resp.json()}
+        self.assertIn("workspace_local", profiles)
+        self.assertIn("study_materials", profiles)
+        self.assertTrue(profiles["tech_updates"]["official_only"])
+
+    def test_operator_workspace_patch_rejects_unknown_source_profile(self):
+        create_resp = self.client.post(
+            "/operator/workspaces",
+            json={
+                "workspace_id": "invalid-policy-lab",
+                "title": "Invalid Policy Lab",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(create_resp.status_code, 200)
+
+        patch_resp = self.client.patch(
+            "/operator/workspaces/invalid-policy-lab",
+            json={"preferred_source_profiles": ["unknown_profile"]},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(patch_resp.status_code, 400)
+        self.assertEqual(patch_resp.json()["error"]["code"], "invalid_source_profile")
+
+    def test_operator_workspace_patch_rejects_unknown_memory_ranking_policy(self):
+        create_resp = self.client.post(
+            "/operator/workspaces",
+            json={
+                "workspace_id": "invalid-memory-lab",
+                "title": "Invalid Memory Lab",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(create_resp.status_code, 200)
+
+        patch_resp = self.client.patch(
+            "/operator/workspaces/invalid-memory-lab",
+            json={"memory_ranking_policy": "global_only"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(patch_resp.status_code, 400)
+        self.assertEqual(patch_resp.json()["error"]["code"], "invalid_memory_ranking_policy")
 
     def test_workspace_allowlist_blocks_disallowed_capability_operation(self):
         create_resp = self.client.post(
@@ -510,6 +650,8 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                 "base_mode": "study",
                 "prompt_overlay": "Prefer structured note-taking.",
                 "default_execution_target": "core_only",
+                "preferred_source_profiles": ["study_materials"],
+                "memory_ranking_policy": "workspace_first",
             },
             headers=self._auth_headers(),
         )
@@ -538,6 +680,8 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(queued_event.metadata["preferred_mode"], "study")
         self.assertEqual(queued_event.metadata["workspace_prompt_overlay"], "Prefer structured note-taking.")
         self.assertEqual(queued_event.metadata["workspace_default_execution_target"], "core_only")
+        self.assertEqual(queued_event.metadata["workspace_preferred_source_profiles"], ["study_materials"])
+        self.assertEqual(queued_event.metadata["workspace_memory_ranking_policy"], "workspace_first")
 
     def test_operation_defaults_to_workspace_execution_target(self):
         create_resp = self.client.post(
@@ -1192,6 +1336,8 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(queued_event.metadata["workspace_id"], "personal")
         self.assertEqual(queued_event.metadata["pinned_procedure_id"], "code_review")
         self.assertEqual(queued_event.metadata["pinned_procedure"]["procedure_id"], "code_review")
+        self.assertEqual(queued_event.metadata["workspace_preferred_source_profiles"], ["workspace_local"])
+        self.assertEqual(queued_event.metadata["workspace_memory_ranking_policy"], "workspace_first")
 
     def test_client_message_rejects_session_from_other_thread(self):
         thread_a_resp = self.client.post(
@@ -1508,6 +1654,104 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
             self.assertTrue(future.result())
             refreshed = self.core_domain.services.approval.get_by_approval_id(approval.approval_id)
             self.assertEqual(refreshed.status, "approved")
+        finally:
+            loop.close()
+
+    def test_procedure_governance_approval_decision_resolves_pending_confirm(self):
+        thread_resp = self.client.post(
+            "/client/threads",
+            json={"workspace_id": "personal", "title": "Procedure governance thread"},
+            headers=self._auth_headers(),
+        )
+        thread_id = thread_resp.json()["thread_id"]
+        session_resp = self.client.post(
+            "/client/sessions",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "client_id": "electron-main",
+                "client_type": "electron",
+                "display_name": "Electron Main",
+            },
+            headers=self._auth_headers(),
+        )
+        session_id = session_resp.json()["session_id"]
+        session_row = self.core_domain.services.session.get_by_session_id(session_id)
+        thread_row = self.core_domain.services.thread.get_by_thread_id(thread_id)
+        workspace_row = self.core_domain.services.workspace.get_by_workspace_id("personal")
+        operation = self.core_domain.services.operation.create_operation(
+            thread_id=thread_row.id,
+            workspace_id=workspace_row.id,
+            operation_type="procedure_governance",
+            execution_target="core_only",
+            title="Procedure Governance",
+            requested_by_client_id=session_row.client_id,
+            requested_by_session_id=session_row.id,
+            status="waiting_approval",
+            metadata={
+                "confirm_request_id": "req-procedure-governance",
+                "confirm_session_id": session_id,
+                "approval_required": True,
+            },
+        )
+        approval = self.core_domain.services.approval.create_approval(
+            operation_id=operation.id,
+            approval_type="procedure_governance",
+            risk_level="write",
+        )
+        self.core_domain.services.operation.update_status(
+            operation_id=operation.id,
+            status="waiting_approval",
+            metadata={
+                "approval_id": approval.approval_id,
+                "approval_status": approval.status,
+            },
+        )
+
+        async def on_confirm_response(payload):
+            updated_approval = self.core_domain.services.approval.decide_approval(
+                approval_id=approval.approval_id,
+                decision="approve" if payload.get("accepted") else "reject",
+                reason=str(payload.get("reason") or ""),
+                decided_by_client_id=None,
+            )
+            self.core_domain.services.operation.update_status(
+                operation_id=operation.id,
+                status="succeeded" if payload.get("accepted") else "rejected",
+                result_summary="治理已通过" if payload.get("accepted") else "治理已拒绝",
+                metadata={
+                    "approval_id": approval.approval_id,
+                    "approval_status": getattr(updated_approval, "status", ""),
+                },
+            )
+
+        self.event_bus.subscribe(self.event_bus.CONFIRM_RESPONSE, on_confirm_response)
+
+        loop = asyncio.new_event_loop()
+        try:
+            future = loop.create_future()
+            self.event_bus._register_pending_request(  # noqa: SLF001
+                request_id="req-procedure-governance",
+                session_id=session_id,
+                kind="confirm",
+                future=future,
+                event=None,
+            )
+            response = self.client.post(
+                f"/client/approvals/{approval.approval_id}/decision",
+                json={
+                    "decision": "approve",
+                    "reason": "approved from procedure governance approval route",
+                    "client_id": "electron-main",
+                },
+                headers=self._auth_headers(),
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "approved")
+            self.assertEqual(payload["operation_status"], "succeeded")
+            self.assertTrue(future.done())
+            self.assertTrue(future.result())
         finally:
             loop.close()
 

@@ -1,5 +1,6 @@
-import { startTransition, useCallback, useEffect, useMemo } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react'
 import { normalizeAttachmentObject } from '../attachmentObject'
+import type { ClientThreadProcedureContext } from '../types'
 import {
   DESKTOP_AGENT_REFRESH_INTERVAL_MS,
   useClientContext,
@@ -12,6 +13,7 @@ import { parseClientWsPayload } from '../protocolClient'
 import { createSystemTurn } from '../chatState'
 import {
   completeClientAttachment,
+  getClientThreadProcedureContext,
   downloadClientAttachmentContent,
   createClientAttachmentDownloadTicket,
   createClientAttachmentUploadTicket,
@@ -19,6 +21,8 @@ import {
 } from '../clientApi'
 
 export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
+  const [procedureContext, setProcedureContext] = useState<ClientThreadProcedureContext | null>(null)
+
   const {
     clientContext,
     desktopAgentId,
@@ -28,6 +32,7 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     clientId,
     initializeClientContext,
     refreshExecutionTargets,
+    refreshWorkspace,
   } = useClientContext(baseUrl, (threadId) => {
     void loadThreadHistory(threadId)
   }, (turn) => {
@@ -92,6 +97,27 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     dispatchChat
   )
 
+  const reloadProcedureContext = useCallback(async (threadIdOverride?: string) => {
+    const threadId = String(threadIdOverride || clientContext?.threadId || '').trim()
+    if (!threadId) {
+      setProcedureContext(null)
+      return null
+    }
+    try {
+      const nextContext = await getClientThreadProcedureContext(baseUrl, threadId)
+      setProcedureContext((current) => {
+        if (JSON.stringify(current) === JSON.stringify(nextContext)) {
+          return current
+        }
+        return nextContext
+      })
+      return nextContext
+    } catch (error) {
+      console.warn('Failed to load thread procedure context:', error)
+      return null
+    }
+  }, [baseUrl, clientContext?.threadId])
+
   const applyClientWsUpdate = useCallback((rawPayload: unknown) => {
     const update = parseClientWsPayload(rawPayload)
     
@@ -110,7 +136,15 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     // Domain level handlers
     processWsUpdateForChat(update)
     processWsUpdateForOperations(update)
-  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations])
+
+    if (
+      update.kind === 'message_completed' ||
+      update.kind === 'confirm_resolved' ||
+      update.kind === 'operation_updated'
+    ) {
+      void reloadProcedureContext()
+    }
+  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, reloadProcedureContext])
 
   useEffect(() => {
     void initializeClientContext()
@@ -128,11 +162,12 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
       return
     }
     void refreshExecutionTargets(clientContext)
+    void reloadProcedureContext(clientContext.threadId)
     const timer = window.setInterval(() => {
       void refreshExecutionTargets(clientContext)
     }, DESKTOP_AGENT_REFRESH_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [clientContext, refreshExecutionTargets])
+  }, [clientContext, refreshExecutionTargets, reloadProcedureContext])
 
   const effectiveConnectionState = useMemo(() => {
     if (!clientContext || clientConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
@@ -224,6 +259,7 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     messages: chatState.messages,
     operations,
     procedures,
+    procedureContext,
     workspace: clientContext?.workspace || null,
     threadId: clientContext?.threadId || '',
     sessionId,
@@ -246,12 +282,14 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     decideOperationApproval,
     executeProcedure,
     reloadProcedures,
+    reloadProcedureContext,
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
     uploadAttachment,
     downloadAttachment,
     refreshHealth,
+    refreshWorkspace,
     baseUrl,
     clientId,
   }

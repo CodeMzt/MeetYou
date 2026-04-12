@@ -1,0 +1,229 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kicker,
+.sectionLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.title {
+  margin: 4px 0 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.subtitle,
+.paragraph,
+.overlayText,
+.muted,
+.empty,
+.notice,
+.noticeSecondary,
+.success,
+.error,
+.listItemSummary,
+.detailId {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.refreshButton,
+.primaryAction,
+.secondaryAction {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: rgba(128, 128, 128, 0.06);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.primaryAction {
+  background: rgba(0, 102, 204, 0.12);
+  border-color: rgba(0, 102, 204, 0.18);
+}
+
+.refreshButton:hover,
+.secondaryAction:hover,
+.primaryAction:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.catalogLayout {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.listCard,
+.detailCard,
+.overlayCard {
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: rgba(128, 128, 128, 0.04);
+}
+
+.listCard,
+.detailCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.listHeader,
+.detailHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.listBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.listItem {
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 12px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.listItemSelected {
+  border-color: rgba(0, 102, 204, 0.28);
+  background: rgba(0, 102, 204, 0.08);
+}
+
+.listItemTitleRow,
+.listItemFooter,
+.detailTitleRow,
+.detailActionRow,
+.statusRow,
+.tagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.listItemStatus,
+.stateBadge,
+.stateBadgeSecondary,
+.statusChip,
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+}
+
+.stateBadge,
+.statusChip {
+  background: rgba(0, 102, 204, 0.08);
+}
+
+.stateBadgeSecondary {
+  background: rgba(123, 97, 255, 0.08);
+}
+
+.detailCard {
+  gap: 12px;
+  padding-bottom: 14px;
+}
+
+.detailHeader {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.detailTitleRow {
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.detailCard > *:not(.detailHeader) {
+  margin: 0 14px;
+}
+
+.overlayCard {
+  padding: 12px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notice,
+.success {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(0, 102, 204, 0.08);
+  border: 1px solid rgba(0, 102, 204, 0.12);
+}
+
+.noticeSecondary {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(123, 97, 255, 0.08);
+  border: 1px solid rgba(123, 97, 255, 0.12);
+}
+
+.error {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 59, 48, 0.08);
+  border: 1px solid rgba(255, 59, 48, 0.14);
+  color: #b42318;
+}
+
+@media (max-width: 840px) {
+  .catalogLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .header,
+  .listHeader,
+  .detailHeader {
+    flex-direction: column;
+  }
+}

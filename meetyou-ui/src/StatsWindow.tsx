@@ -95,6 +95,9 @@ export default function StatsWindow() {
       </div>
 
       <div className="dashboard-content" style={{ padding: '20px', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+          这里承接 `/developer/runtime/debug` 的调试信息，用于开发态检查请求诊断、上下文压缩和最近失败原因。
+        </div>
         <UsagePanel usageSnapshot={usageSnapshot} runtimeDebugSnapshot={runtimeDebugSnapshot} />
       </div>
     </div>

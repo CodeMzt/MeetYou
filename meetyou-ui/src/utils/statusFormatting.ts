@@ -95,6 +95,111 @@ export function getConnectionText(connectionState: ConnectionState): string {
   return '未连接'
 }
 
+export function formatAssistantModeLabel(mode: string): string {
+  const normalized = String(mode || '').trim().toLowerCase()
+  if (normalized === 'general') return '通用'
+  if (normalized === 'research') return '研究'
+  if (normalized === 'documents') return '文档'
+  if (normalized === 'study') return '学习'
+  if (normalized === 'automation') return '自动化'
+  return mode || '未设置'
+}
+
+export function formatExecutionTargetLabel(target: string): string {
+  const normalized = String(target || '').trim().toLowerCase()
+  if (normalized === 'core_only') return '仅核心服务'
+  if (normalized === 'specific_agent') return '指定代理'
+  if (normalized === 'workspace_any_agent') return '工作区任意代理'
+  if (normalized === 'prefer_agent_fallback_core') return '优先代理，失败回落核心服务'
+  return target || '未设置'
+}
+
+export function formatProcedureSourceLabel(source: string): string {
+  const normalized = String(source || '').trim().toLowerCase()
+  if (normalized === 'pinned') return '已固定'
+  if (normalized === 'inferred') return '自动推断'
+  return '暂无'
+}
+
+export function formatRiskProfileLabel(value: string): string {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'read') return '只读'
+  if (normalized === 'write') return '写入'
+  if (normalized === 'system') return '系统'
+  if (normalized === 'standard') return '标准'
+  if (normalized === 'low') return '低风险'
+  if (normalized === 'medium') return '中风险'
+  if (normalized === 'high') return '高风险'
+  return value || '未设置'
+}
+
+export function formatResourceStatusLabel(status: string): string {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (normalized === 'active') return '正常'
+  if (normalized === 'archived') return '已归档'
+  if (normalized === 'deleted') return '已删除'
+  if (normalized === 'pending') return '待处理'
+  return status || '未知'
+}
+
+export function formatCapabilityPolicyLabel(policy: string): string {
+  const normalized = String(policy || '').trim().toLowerCase()
+  if (normalized === 'allow_all') return '全部允许'
+  if (normalized === 'allowlist') return '白名单'
+  return policy || '未设置'
+}
+
+export function formatRoutingPolicyLabel(policy: string): string {
+  const normalized = String(policy || '').trim().toLowerCase()
+  if (normalized === 'balanced') return '均衡'
+  if (normalized === 'prefer_owner_client') return '优先当前客户端'
+  if (normalized === 'strict_preferred') return '严格偏好代理'
+  return policy || '未设置'
+}
+
+export function formatMemoryRankingPolicyLabel(policy: string): string {
+  const normalized = String(policy || '').trim().toLowerCase()
+  if (normalized === 'workspace_first') return '当前工作区优先'
+  return policy || '未设置'
+}
+
+export function formatSourceProfileLabel(profile: string): string {
+  const normalized = String(profile || '').trim().toLowerCase()
+  if (normalized === 'workspace_local') return '工作区/本地知识'
+  if (normalized === 'study_materials') return '学习资料'
+  if (normalized === 'tech_updates') return '技术更新'
+  if (normalized === 'policy_global') return '全球政策'
+  if (normalized === 'policy_cn') return '中国政策'
+  if (normalized === 'finance_macro') return '金融宏观'
+  if (normalized === 'academic_biomed') return '学术/生物医学'
+  if (normalized === 'cyber_threat') return '网络威胁'
+  return profile || '未设置'
+}
+
+export function formatOperationStatusLabel(status: string): string {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (normalized === 'queued') return '排队中'
+  if (normalized === 'dispatching') return '分发中'
+  if (normalized === 'running') return '执行中'
+  if (normalized === 'waiting_approval') return '等待审批'
+  if (normalized === 'succeeded') return '已完成'
+  if (normalized === 'failed') return '失败'
+  if (normalized === 'rejected') return '已拒绝'
+  if (normalized === 'cancelled') return '已取消'
+  return status || '未知'
+}
+
+export function formatInferenceReasonLabel(reason: string): string {
+  const normalized = String(reason || '').trim()
+  if (!normalized) {
+    return '已根据当前对话上下文自动推断'
+  }
+  return normalized
+    .replace(/\bmode:/gi, '模式：')
+    .replace(/\bworkspace:/gi, '工作区：')
+    .replace(/\bkeywords:/gi, '关键词：')
+}
+
 export function getLatestActivity(turnActivities: TurnActivity[]): TurnActivity | null {
   if (turnActivities.length === 0) return null
   return turnActivities[turnActivities.length - 1]

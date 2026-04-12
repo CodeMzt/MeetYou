@@ -447,6 +447,7 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "list_skills",
     "load_skill",
     "create_skill",
+    "manage_procedures",
     "search_knowledge",
     "search_memory",
     "search_web",

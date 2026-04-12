@@ -45,6 +45,8 @@
 
 当前第二版进度补充：第九批“S3-Compatible Object Store 第一批”已经落地，对象存储后端已从 local/filesystem 扩展到 `s3_compatible`。 
 
+当前第二版进度补充：第十批“Procedure 自动推断与生命周期治理”已经完成，后端自动推断 / 生命周期治理、只读 procedure detail/context surface、thread pin / unpin 资源面，以及 Electron 独立“工作区与规程”窗口已经落地。 
+
 当前第二版执行总结：
 
 - 第一批：`client` attachment 主链基础闭环已完成
@@ -640,7 +642,7 @@
 | 本地能力边界 | `exec_sys_cmd`、文档读写、工作区分析与桌面 MCP 已通过 Agent capability 承接 | 已完成 |
 | 平台依赖边界 | `platform_layer/` 仅保留运行宿主机平台识别、系统生命体征与上下文感知 | 已完成 |
 | 业务状态后端 | memory、task、office、study、source catalog 已接入数据库或 state blob 后端 | 已完成 |
-| Workspace / Memory / Procedure | workspace 与 agent、thread、operation 绑定已建立；memory tags 已入库；Procedure 已资源化并支持 thread pin | 部分完成 |
+| Workspace / Memory / Procedure | workspace 与 agent、thread、operation 绑定已建立；memory tags 已入库；Procedure 已资源化，支持 thread pin、自动推断上下文，以及只读 detail/context surface | 部分完成 |
 
 ### 3.2 与 `implementation-plan.md` 的阶段映射
 
@@ -654,7 +656,7 @@
 | Phase 5 | 本地工具剥离到客户端内本地后端 | 已完成 | shell、文件、工作区分析与桌面 MCP 已走 capability 分发 | 仅剩安全级 Core MCP 的长期治理说明 |
 | Phase 6 | Frontend 迁移到 Client API | 部分完成 | `useMeetYou.ts` 已切到 `clientApi.ts` + `client/ws` 主链 | UI 仍带明显开发控制台姿态 |
 | Phase 7 | 附件通道与对象存储 | 部分完成 | `Attachment` 模型与 `AttachmentService` 已有骨架 | upload ticket、complete、download flow 未完成 |
-| Phase 8 | Workspace / Memory / Procedure 收口 | 部分完成 | workspace 资源、agent 绑定、memory records 与 Procedure 已入库 | workspace 治理语义仍未完整落地 |
+| Phase 8 | Workspace / Memory / Procedure 收口 | 部分完成 | workspace 资源、agent 绑定、memory records 与 Procedure 已入库，F88 自动推断 / 生命周期治理已完成 | workspace 记忆排序仍待收口 |
 | Phase 9 | Edge Agent MQTT | 未开始 | 当前仓库无 MQTT bridge、pull.next、edge sample 主链 | 整体待启动 |
 | Phase 10 | 清理旧路径与稳定化 | 进行中 | 旧主聊天路径已退出，旧 spec 与兼容文档已开始清理 | 根路径兼容接口、双模型与旧语义仍待收口 |
 

@@ -354,6 +354,26 @@ class ClientProcedureResponse(BaseModel):
         return normalize_execution_target(value)
 
 
+class ClientProcedureDetailResponse(ClientProcedureResponse):
+    prompt_overlay: str = ""
+    recommended_source_profiles: list[str] = Field(default_factory=list)
+    infer_keywords: list[str] = Field(default_factory=list)
+
+
+class ClientThreadProcedureContextResponse(BaseModel):
+    source: str = "none"
+    pinned_procedure: ClientProcedureDetailResponse | None = None
+    latest_inferred_procedure: ClientProcedureDetailResponse | None = None
+    effective_procedure: ClientProcedureDetailResponse | None = None
+    latest_inferred_reason: str = ""
+    latest_inferred_score: int = 0
+    latest_inferred_at: str = ""
+
+
+class ClientThreadPinnedProcedureRequest(BaseModel):
+    procedure_id: str
+
+
 class ClientThreadResponse(BaseModel):
     thread_id: str
     workspace_id: str
@@ -586,7 +606,9 @@ class ClientWorkspaceResponse(BaseModel):
     allowed_capability_ids: list[str] = Field(default_factory=list)
     preferred_agent_ids: list[str] = Field(default_factory=list)
     preferred_agent_types: list[str] = Field(default_factory=list)
+    preferred_source_profiles: list[str] = Field(default_factory=list)
     agent_routing_policy: str = "balanced"
+    memory_ranking_policy: str = "workspace_first"
     capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("base_mode", mode="before")
@@ -621,7 +643,9 @@ class OperatorWorkspaceCreateRequest(BaseModel):
     allowed_capability_ids: list[str] = Field(default_factory=list)
     preferred_agent_ids: list[str] = Field(default_factory=list)
     preferred_agent_types: list[str] = Field(default_factory=list)
+    preferred_source_profiles: list[str] = Field(default_factory=list)
     agent_routing_policy: str = ""
+    memory_ranking_policy: str = "workspace_first"
     capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("base_mode", mode="before")
@@ -633,6 +657,19 @@ class OperatorWorkspaceCreateRequest(BaseModel):
     @classmethod
     def _normalize_default_execution_target(cls, value: Any) -> str:
         return normalize_execution_target(value)
+
+
+class OperatorWorkspaceUpdateRequest(BaseModel):
+    preferred_source_profiles: list[str] | None = None
+    memory_ranking_policy: str | None = None
+
+
+class OperatorSourceProfileResponse(BaseModel):
+    profile_name: str
+    label: str = ""
+    description: str = ""
+    official_only: bool = False
+    default_freshness: str = ""
 
 
 class OperatorWorkspaceResponse(BaseModel):
@@ -647,7 +684,9 @@ class OperatorWorkspaceResponse(BaseModel):
     allowed_capability_ids: list[str] = Field(default_factory=list)
     preferred_agent_ids: list[str] = Field(default_factory=list)
     preferred_agent_types: list[str] = Field(default_factory=list)
+    preferred_source_profiles: list[str] = Field(default_factory=list)
     agent_routing_policy: str = "balanced"
+    memory_ranking_policy: str = "workspace_first"
     capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("base_mode", mode="before")

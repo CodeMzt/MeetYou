@@ -141,7 +141,7 @@ export function useChatSession(
           client_id: context.clientId,
           session_id: context.session.session_id,
           client_type: 'electron',
-          display_name: 'Desktop App',
+          display_name: '桌面应用',
           role: 'user',
           content,
           client_message_id: createClientMessageId(),

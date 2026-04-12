@@ -1,7 +1,18 @@
 import { Activity, AlertTriangle, CheckCircle2, Loader2, PlayCircle, MoreHorizontal } from 'lucide-react'
 import type { OperationView } from '../../types'
+import { formatOperationStatusLabel } from '../../utils/statusFormatting'
 import AttachmentList from './AttachmentList'
 import styles from './OperationPanel.module.css'
+
+function formatPhaseLabel(phase: string): string {
+  const normalized = String(phase || '').trim().toLowerCase()
+  if (normalized === 'routing') return '路由'
+  if (normalized === 'dispatching') return '分发'
+  if (normalized === 'running') return '执行'
+  if (normalized === 'done') return '完成'
+  if (normalized === 'waiting_approval') return '等待审批'
+  return phase || ''
+}
 
 interface OperationPanelProps {
   operations: OperationView[]
@@ -52,8 +63,8 @@ export default function OperationPanel({ operations, onApprove, onReject, onDown
               <div className={styles.titleWrap}>
                 <div className={styles.title}>{operation.title || operation.operation_id}</div>
                 <div className={styles.meta}>
-                  {operation.target_agent_id || 'agent'} · {operation.status}
-                  {operation.phase && ` · ${operation.phase}`}
+                  {operation.target_agent_id || '核心服务'} · {formatOperationStatusLabel(operation.status)}
+                  {operation.phase && ` · ${formatPhaseLabel(operation.phase)}`}
                 </div>
               </div>
             </div>
@@ -73,7 +84,7 @@ export default function OperationPanel({ operations, onApprove, onReject, onDown
                 {JSON.stringify(operation.error.details, null, 2)}
               </div>
             )}
-            <AttachmentList attachments={operation.attachments} title="Attachments" onDownloadAttachment={onDownloadAttachment} />
+            <AttachmentList attachments={operation.attachments} title="附件" onDownloadAttachment={onDownloadAttachment} />
           </div>
         ))}
       </div>

@@ -24,6 +24,7 @@ _DEFAULT_TOOL_ACTION_RISKS: dict[str, str] = {
     "search_knowledge": "read",
     "manage_tasks": "local_write",
     "manage_scheduled_tasks": "local_write",
+    "manage_procedures": "local_write",
     "list_skills": "read",
     "load_skill": "read",
     "create_skill": "local_write",

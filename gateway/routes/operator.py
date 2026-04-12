@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
+from core.config import ConfigManager
 from core.exceptions import ConfigError
 from core.protocol_schema import build_ui_protocol_schema
+from core.source_catalog import SourceCatalogManager
 
 from gateway.models import (
     ConfigEntryResponse,
@@ -15,7 +17,9 @@ from gateway.models import (
     MemoryGraphResponse,
     MemorySnapshotResponse,
     OperatorAgentResponse,
+    OperatorSourceProfileResponse,
     OperatorWorkspaceCreateRequest,
+    OperatorWorkspaceUpdateRequest,
     OperatorWorkspaceResponse,
     UiProtocolSchemaEnvelopeResponse,
     UiProtocolSchemaResponse,
@@ -37,7 +41,9 @@ def _workspace_response(workspace) -> OperatorWorkspaceResponse:
         allowed_capability_ids=governance["allowed_capability_ids"],
         preferred_agent_ids=governance["preferred_agent_ids"],
         preferred_agent_types=governance["preferred_agent_types"],
+        preferred_source_profiles=governance["preferred_source_profiles"],
         agent_routing_policy=governance["agent_routing_policy"],
+        memory_ranking_policy=governance["memory_ranking_policy"],
         capability_routing_overrides=governance["capability_routing_overrides"],
     )
 
@@ -46,6 +52,49 @@ def gateway_workspace_governance(workspace) -> dict:
     from core.services.workspace_service import WorkspaceService
 
     return WorkspaceService.get_governance_view(workspace)
+
+
+def _load_source_profile_catalog() -> dict[str, dict]:
+    manager = SourceCatalogManager(ConfigManager())
+    profiles = manager.get_source_profiles()
+    return {
+        str(name).strip(): dict(payload or {})
+        for name, payload in profiles.items()
+        if str(name).strip()
+    }
+
+
+def _validate_source_profiles(gateway, values: list[str] | None) -> list[str]:
+    requested = []
+    seen: set[str] = set()
+    for item in values or []:
+        normalized = str(item or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        requested.append(normalized)
+    available = _load_source_profile_catalog()
+    invalid = [item for item in requested if item not in available]
+    if invalid:
+        gateway._raise_http_error(
+            status_code=400,
+            code="invalid_source_profile",
+            category=RuntimeErrorCategory.VALIDATION.value,
+            message=f"未知 source profile: {', '.join(invalid)}",
+        )
+    return requested
+
+
+def _validate_memory_ranking_policy(gateway, value: str | None) -> str:
+    normalized = str(value or "workspace_first").strip() or "workspace_first"
+    if normalized not in {"workspace_first"}:
+        gateway._raise_http_error(
+            status_code=400,
+            code="invalid_memory_ranking_policy",
+            category=RuntimeErrorCategory.VALIDATION.value,
+            message=f"未知 memory ranking policy: {normalized}",
+        )
+    return normalized
 
 
 def build_operator_router(gateway) -> APIRouter:
@@ -201,6 +250,21 @@ def build_operator_router(gateway) -> APIRouter:
         domain = gateway._require_core_domain()
         return [_workspace_response(workspace) for workspace in domain.services.workspace.list_workspaces()]
 
+    @router.get("/source-profiles", response_model=list[OperatorSourceProfileResponse])
+    async def list_source_profiles(request: Request):
+        gateway._require_http_auth(request)
+        profiles = _load_source_profile_catalog()
+        return [
+            OperatorSourceProfileResponse(
+                profile_name=name,
+                label=str(payload.get("label") or "").strip(),
+                description=str(payload.get("description") or "").strip(),
+                official_only=bool(payload.get("official_only", False)),
+                default_freshness=str(payload.get("default_freshness") or "").strip(),
+            )
+            for name, payload in profiles.items()
+        ]
+
     @router.post("/workspaces", response_model=OperatorWorkspaceResponse)
     async def create_workspace(http_request: Request, payload: OperatorWorkspaceCreateRequest):
         gateway._require_http_auth(http_request)
@@ -227,10 +291,35 @@ def build_operator_router(gateway) -> APIRouter:
                 "allowed_capability_ids": list(payload.allowed_capability_ids or []),
                 "preferred_agent_ids": list(payload.preferred_agent_ids or []),
                 "preferred_agent_types": list(payload.preferred_agent_types or []),
+                "preferred_source_profiles": _validate_source_profiles(gateway, payload.preferred_source_profiles),
                 "agent_routing_policy": str(payload.agent_routing_policy or "").strip(),
+                "memory_ranking_policy": _validate_memory_ranking_policy(gateway, payload.memory_ranking_policy),
                 "capability_routing_overrides": dict(payload.capability_routing_overrides or {}),
             },
         )
         return _workspace_response(workspace)
+
+    @router.patch("/workspaces/{workspace_id}", response_model=OperatorWorkspaceResponse)
+    async def update_workspace(http_request: Request, workspace_id: str, payload: OperatorWorkspaceUpdateRequest):
+        gateway._require_http_auth(http_request)
+        domain = gateway._require_core_domain()
+        workspace = domain.services.workspace.get_by_workspace_id(workspace_id)
+        if workspace is None:
+            gateway._raise_http_error(
+                status_code=404,
+                code="workspace_not_found",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=f"未知 workspace: {workspace_id}",
+            )
+        metadata: dict[str, object] = {}
+        if payload.preferred_source_profiles is not None:
+            metadata["preferred_source_profiles"] = _validate_source_profiles(gateway, payload.preferred_source_profiles)
+        if payload.memory_ranking_policy is not None:
+            metadata["memory_ranking_policy"] = _validate_memory_ranking_policy(gateway, payload.memory_ranking_policy)
+        updated = domain.services.workspace.update_workspace(
+            workspace_id=workspace_id,
+            metadata=metadata if metadata else None,
+        )
+        return _workspace_response(updated or workspace)
 
     return router

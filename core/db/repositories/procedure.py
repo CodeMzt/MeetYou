@@ -49,3 +49,11 @@ class ProcedureRepository(RepositoryBase):
             .order_by(Procedure.procedure_id.asc())
             .all()
         )
+
+    def list_all(self, principal_id) -> list[Procedure]:
+        return list(
+            self.session.query(Procedure)
+            .filter_by(principal_id=principal_id)
+            .order_by(Procedure.procedure_id.asc())
+            .all()
+        )

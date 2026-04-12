@@ -5,6 +5,9 @@ import type {
   ClientMessage,
   ClientMessageCreatePayload,
   ClientOperation,
+  OperatorSourceProfile,
+  ClientProcedureDetail,
+  ClientThreadProcedureContext,
   ClientSession,
   ClientThread,
   RuntimeUsageSnapshot,
@@ -27,6 +30,27 @@ async function readJsonOrThrow<T>(response: Response, fallback: string): Promise
 export async function listClientWorkspaces(baseUrl: string): Promise<ClientWorkspace[]> {
   const response = await fetchWithAuth(`${baseUrl}/client/workspaces`)
   return readJsonOrThrow<ClientWorkspace[]>(response, '加载工作空间失败')
+}
+
+export async function updateOperatorWorkspaceGovernance(
+  baseUrl: string,
+  workspaceId: string,
+  payload: {
+    preferred_source_profiles?: string[]
+    memory_ranking_policy?: string
+  },
+): Promise<ClientWorkspace> {
+  const response = await fetchWithAuth(`${baseUrl}/operator/workspaces/${encodeURIComponent(workspaceId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<ClientWorkspace>(response, '更新工作区治理失败')
+}
+
+export async function listOperatorSourceProfiles(baseUrl: string): Promise<OperatorSourceProfile[]> {
+  const response = await fetchWithAuth(`${baseUrl}/operator/source-profiles`)
+  return readJsonOrThrow<OperatorSourceProfile[]>(response, '加载 source profile 目录失败')
 }
 
 export async function createClientThread(
@@ -104,6 +128,42 @@ export async function listClientExecutionTargets(baseUrl: string, workspaceId: s
 export async function listClientProcedures(baseUrl: string): Promise<ClientProcedure[]> {
   const response = await fetchWithAuth(`${baseUrl}/client/procedures`)
   return readJsonOrThrow<ClientProcedure[]>(response, '加载 Procedure 列表失败')
+}
+
+export async function getClientProcedureDetail(baseUrl: string, procedureId: string): Promise<ClientProcedureDetail> {
+  const response = await fetchWithAuth(`${baseUrl}/client/procedures/${encodeURIComponent(procedureId)}`)
+  return readJsonOrThrow<ClientProcedureDetail>(response, '加载 Procedure 详情失败')
+}
+
+export async function getClientThreadProcedureContext(
+  baseUrl: string,
+  threadId: string,
+): Promise<ClientThreadProcedureContext> {
+  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/procedure-context`)
+  return readJsonOrThrow<ClientThreadProcedureContext>(response, '加载线程 Procedure 上下文失败')
+}
+
+export async function pinClientThreadProcedure(
+  baseUrl: string,
+  threadId: string,
+  procedureId: string,
+): Promise<ClientThreadProcedureContext> {
+  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/pinned-procedure`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ procedure_id: procedureId }),
+  })
+  return readJsonOrThrow<ClientThreadProcedureContext>(response, '固定线程规程失败')
+}
+
+export async function unpinClientThreadProcedure(
+  baseUrl: string,
+  threadId: string,
+): Promise<ClientThreadProcedureContext> {
+  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/pinned-procedure`, {
+    method: 'DELETE',
+  })
+  return readJsonOrThrow<ClientThreadProcedureContext>(response, '取消固定线程规程失败')
 }
 
 export async function decideClientApproval(

@@ -4,7 +4,6 @@ import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
-import WorkspacePanel from './components/workspace/WorkspacePanel'
 import { AssistantMode, ThinkingOverride } from './types'
 import styles from './App.module.css'
 
@@ -13,10 +12,12 @@ export default function App() {
   const {
     messages,
     operations,
+    procedureContext,
     workspace,
     sendMessage,
     decideOperationApproval,
     sessionId,
+    threadId,
     connectionState,
     connected,
     desktopAgentConnected,
@@ -33,6 +34,7 @@ export default function App() {
     sendControlCommand,
     uploadAttachment,
     downloadAttachment,
+    refreshWorkspace,
   } = useMeetYou(baseUrl)
 
   const [inputVal, setInputVal] = useState('')
@@ -49,6 +51,35 @@ export default function App() {
   useEffect(() => {
     window.ipcRenderer?.send('update-devtools', { usageSnapshot, sessionId, baseUrl })
   }, [usageSnapshot, sessionId, baseUrl])
+
+  useEffect(() => {
+    window.ipcRenderer?.send('update-stats', { usageSnapshot })
+  }, [usageSnapshot])
+
+  useEffect(() => {
+    window.ipcRenderer?.send('update-workspace-panel', {
+      baseUrl,
+      threadId,
+      workspace,
+      procedureContext,
+      connectionState,
+      desktopAgentConnected,
+      operations,
+      approvalDisplay,
+      pendingHumanInput,
+    })
+  }, [baseUrl, threadId, workspace, procedureContext, connectionState, desktopAgentConnected, operations, approvalDisplay, pendingHumanInput])
+
+  useEffect(() => {
+    const handleWorkspaceGovernanceUpdated = (_event: unknown, data: { workspace_id?: string } | null) => {
+      void refreshWorkspace(data?.workspace_id)
+    }
+
+    window.ipcRenderer?.on('workspace-governance-updated', handleWorkspaceGovernanceUpdated)
+    return () => {
+      window.ipcRenderer?.off('workspace-governance-updated', handleWorkspaceGovernanceUpdated)
+    }
+  }, [refreshWorkspace])
 
   const handleSend = () => {
     if (!inputVal.trim() || !connected || confirmRequest || pendingHumanInput) {
@@ -75,16 +106,6 @@ export default function App() {
       />
 
       <div className={styles.contentArea}>
-        <WorkspacePanel
-          workspace={workspace}
-          connectionState={connectionState}
-          desktopAgentConnected={desktopAgentConnected}
-          operations={operations}
-          approvalDisplay={approvalDisplay}
-          pendingHumanInput={pendingHumanInput}
-          onOpenDiagnostics={() => window.ipcRenderer?.send('open-devtools')}
-        />
-
         <MessageList
           connected={connected}
           messages={messages}

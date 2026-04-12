@@ -16,6 +16,7 @@ from tools.agent_memory import AgentMemoryTools
 from tools.document_tools import DocumentTools
 from tools.lightweight_tools import LightweightTools
 from tools.office_tools import OfficeTools
+from tools.procedure_tools import ProcedureTools
 from tools.scenario_tools import ScenarioTools
 from tools.study_tools import StudyTools
 from tools.web_search import WebSearchTools
@@ -34,6 +35,7 @@ class ToolsManager:
             DocumentTools(mode_manager, allow_local_fallback=False) if mode_manager is not None else None
         )
         self._lightweight_tools = LightweightTools()
+        self._procedure_tools = ProcedureTools()
         self._scenario_tools = ScenarioTools(
             memory,
             context_manager,
@@ -68,6 +70,7 @@ class ToolsManager:
             "list_skills": self._scenario_tools.list_skills,
             "load_skill": self._scenario_tools.load_skill,
             "create_skill": self._scenario_tools.create_skill,
+            "manage_procedures": self._procedure_tools.manage_procedures,
             "summarize_text": self._lightweight_tools.summarize_text,
             "organize_notes": self._lightweight_tools.organize_notes,
             "extract_action_items": self._lightweight_tools.extract_action_items,
@@ -123,6 +126,9 @@ class ToolsManager:
     def set_agent_dispatcher(self, dispatcher) -> None:
         if self._document_tools is not None:
             self._document_tools.set_agent_dispatcher(dispatcher)
+
+    def set_core_domain(self, core_domain) -> None:
+        self._procedure_tools.set_core_domain(core_domain)
 
     def set_state_backends(self, *, office_backend=None, study_backend=None) -> None:
         if self._office_tools is not None and office_backend is not None:
