@@ -946,6 +946,12 @@ class App:
                 "Do not frame it as a hard deadline unless the issue explicitly says the user is at risk of missing something.\n"
                 "Mention only the nearest scheduled follow-up and the next helpful step."
             ),
+            "temporal_attention": (
+                "There is a time-sensitive scheduled follow-up that may need user attention.\n"
+                "If you respond, keep it to at most two short sentences.\n"
+                "Do not frame it as a hard deadline unless the issue explicitly says the user is at risk of missing something.\n"
+                "Mention only the nearest scheduled follow-up and the next helpful step."
+            ),
             "system_issue": (
                 "There is a concrete background issue that may affect task execution or reminders.\n"
                 "If you respond, keep it to at most two short sentences.\n"
@@ -1284,6 +1290,63 @@ class App:
             "session_state": self.brain.get_session_runtime_snapshot(session_id) if session_id else None,
         }
 
+    def get_core_mcp_diagnostics(self) -> dict[str, Any]:
+        configured_servers = sorted(self.config.get_mcp_servers())
+        mcp_manager = getattr(self, "mcp_manager", None)
+        runtime_server_diagnostics = list(
+            getattr(mcp_manager, "get_server_diagnostics", lambda: [])()
+        )
+        available_servers = [
+            str(item.get("server_name") or "").strip()
+            for item in runtime_server_diagnostics
+            if str(item.get("status") or "").strip() == "enabled"
+            and str(item.get("server_name") or "").strip()
+        ]
+        mode_manager = getattr(self, "mode_manager", None)
+        if mode_manager is not None and hasattr(mode_manager, "get_core_mcp_boundary_diagnostics"):
+            boundary = mode_manager.get_core_mcp_boundary_diagnostics(
+                available_mcp_servers=available_servers,
+                configured_mcp_servers=configured_servers,
+            )
+        else:
+            boundary = {
+                "classification_standard": {},
+                "core_mcp_servers": [],
+                "agent_managed_mcp_servers": [],
+                "runtime_native_tools": [],
+                "summary": {
+                    "configured_server_count": len(configured_servers),
+                    "enabled_count": len(available_servers),
+                    "partial_failure_count": 0,
+                    "partial_failure_servers": [],
+                    "agent_managed_server_count": 0,
+                    "runtime_native_exception_count": 0,
+                },
+            }
+        runtime_by_name = {
+            str(item.get("server_name") or "").strip(): dict(item)
+            for item in runtime_server_diagnostics
+            if str(item.get("server_name") or "").strip()
+        }
+        enriched_core_servers: list[dict[str, Any]] = []
+        for item in boundary.get("core_mcp_servers", []):
+            payload = dict(item or {})
+            runtime_payload = runtime_by_name.get(str(payload.get("server_name") or "").strip(), {})
+            if runtime_payload:
+                payload["runtime"] = runtime_payload
+                if runtime_payload.get("error") and not payload.get("error"):
+                    payload["error"] = runtime_payload.get("error")
+                if runtime_payload.get("command") and not payload.get("command"):
+                    payload["command"] = runtime_payload.get("command")
+                if runtime_payload.get("tool_count") is not None:
+                    payload["tool_count"] = int(runtime_payload.get("tool_count") or 0)
+            enriched_core_servers.append(payload)
+        boundary["core_mcp_servers"] = enriched_core_servers
+        boundary["config"] = self.config.get_mcp_server_config_diagnostic()
+        boundary["configured_server_names"] = configured_servers
+        boundary["runtime_server_diagnostics"] = runtime_server_diagnostics
+        return boundary
+
     def _session_exists(self, session_id: str) -> bool:
         normalized_session_id = str(session_id or "").strip()
         if not normalized_session_id:
@@ -1362,6 +1425,7 @@ class App:
             "request": dict(session_debug.get("request") or {}),
             "compression": dict(session_debug.get("compression") or {}),
             "last_failure": dict(session_debug.get("last_failure") or {}),
+            "core_mcp": self.get_core_mcp_diagnostics(),
             "updated_at": str(session_debug.get("updated_at") or utcnow_iso()),
         }
 
@@ -2438,6 +2502,14 @@ class App:
             mcp_config_diagnostic.get("message") or "未提供 Core MCP 配置诊断。",
         )
         await self.tools_manager.init_tools(tools_schema_path, mcp_servers)
+        core_mcp_diagnostics = self.get_core_mcp_diagnostics()
+        core_mcp_summary = core_mcp_diagnostics.get("summary") or {}
+        logger.info(
+            "Core MCP 运行态: configured=%s enabled=%s partial_failures=%s",
+            int(core_mcp_summary.get("configured_server_count", 0) or 0),
+            int(core_mcp_summary.get("enabled_count", 0) or 0),
+            int(core_mcp_summary.get("partial_failure_count", 0) or 0),
+        )
         await self._refresh_brain_runtime()
         await self.heart.init_heart()
         system_tools.set_background_status_provider(self.heart.get_background_status)

@@ -30,6 +30,8 @@ class _FakeTaskManager:
             "due_task_count": 0,
             "overdue_task_count": 0,
             "pending_delivery_count": 0,
+            "awaiting_completion_count": 0,
+            "run_succeeded_pending_completion_count": 0,
             "nearest_due_task": None,
             "nearest_due_in_minutes": None,
             "urgent_due_tasks": [],
@@ -126,7 +128,9 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["idle_poke_eligible"])
         self.assertEqual(payload["last_idle_poke_at"], "")
         self.assertIn("system", payload)
+        self.assertIn("temporal", payload)
         self.assertIn("scheduler_stalled", payload["system"])
+        self.assertIn("temporal_attention_candidates", payload["temporal"])
         self.assertIn("jobs", payload)
         self.assertIn("scheduler", payload["jobs"])
         self.assertIn("background_status_sources", payload)
@@ -156,7 +160,7 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalized["signal_kind"], "none")
         self.assertEqual(normalized["message"], "")
 
-    async def test_urgent_deadline_is_silenced_without_urgent_due_tasks(self):
+    async def test_legacy_urgent_deadline_maps_to_temporal_attention_but_is_silenced_without_candidates(self):
         heart = self._make_heart()
         normalized = heart._normalize_heartbeat_result(
             {
@@ -167,6 +171,10 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
             {
                 "idle_poke_eligible": False,
                 "urgent_due_task_count": 0,
+                "pending_delivery_count": 0,
+                "awaiting_completion_count": 0,
+                "run_succeeded_pending_completion_count": 0,
+                "overdue_task_count": 0,
                 "last_user_activity_at": "2026-04-03T00:00:00Z",
                 "repeated_failure_tasks": [],
                 "scheduler_stalled": False,
@@ -178,6 +186,42 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(normalized["decision"], "ok")
         self.assertEqual(normalized["signal_kind"], "none")
+
+    async def test_temporal_attention_uses_pending_delivery_state(self):
+        heart = self._make_heart()
+        normalized = heart._normalize_heartbeat_result(
+            {
+                "decision": "notify",
+                "signal_kind": "temporal_attention",
+                "message": "这个提醒还没送达",
+            },
+            {
+                "idle_poke_eligible": False,
+                "pending_delivery_count": 1,
+                "awaiting_completion_count": 0,
+                "run_succeeded_pending_completion_count": 0,
+                "overdue_task_count": 0,
+                "last_user_activity_at": "2026-04-03T00:10:00Z",
+                "repeated_failure_tasks": [],
+                "scheduler_stalled": False,
+                "housekeeping_stalled": False,
+                "pending_consolidation_stale": False,
+                "last_housekeeping_error": "",
+                "delivery": {
+                    "pending_redelivery_tasks": [
+                        {
+                            "task_key": "task-1",
+                            "summary": "daily digest sync",
+                        }
+                    ]
+                },
+            },
+        )
+
+        self.assertEqual(normalized["decision"], "notify")
+        self.assertEqual(normalized["signal_kind"], "temporal_attention")
+        self.assertIn("daily digest sync", normalized["message"])
+        self.assertIn("waiting to be delivered", normalized["message"])
 
     async def test_identical_canonical_message_is_silenced_in_cooldown(self):
         heart = self._make_heart()
@@ -211,11 +255,15 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalized["signal_kind"], "none")
         self.assertEqual(normalized["message"], "")
 
-    async def test_task_oriented_heartbeat_signal_is_ignored_even_when_due_payload_exists(self):
+    async def test_due_only_temporal_signal_is_ignored_without_temporal_anomaly(self):
         heart = self._make_heart()
         background_status = {
             "idle_poke_eligible": False,
             "urgent_due_task_count": 1,
+            "pending_delivery_count": 0,
+            "awaiting_completion_count": 0,
+            "run_succeeded_pending_completion_count": 0,
+            "overdue_task_count": 0,
             "last_user_activity_at": "2026-04-03T00:10:00Z",
             "nearest_due_task": {
                 "task_key": "task-1",
@@ -234,7 +282,7 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         normalized = heart._normalize_heartbeat_result(
             {
                 "decision": "notify",
-                "signal_kind": "urgent_deadline",
+                "signal_kind": "temporal_attention",
                 "message": "这个任务快到期了",
             },
             background_status,
@@ -244,39 +292,45 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalized["signal_kind"], "none")
         self.assertEqual(normalized["message"], "")
 
-    async def test_urgent_deadline_is_silenced_for_auto_run_or_awaiting_completion_task(self):
+    async def test_temporal_attention_uses_awaiting_completion_state(self):
         heart = self._make_heart()
         normalized = heart._normalize_heartbeat_result(
             {
                 "decision": "notify",
-                "signal_kind": "urgent_deadline",
-                "message": "任务快到期了",
+                "signal_kind": "temporal_attention",
+                "message": "任务仍待完成确认",
             },
             {
                 "idle_poke_eligible": False,
-                "urgent_due_task_count": 1,
+                "urgent_due_task_count": 0,
+                "pending_delivery_count": 0,
+                "awaiting_completion_count": 1,
+                "run_succeeded_pending_completion_count": 1,
+                "overdue_task_count": 0,
                 "last_user_activity_at": "2026-04-03T00:10:00Z",
-                "nearest_due_task": {
-                    "task_key": "task-1",
-                    "summary": "daily digest sync",
-                    "due_at": "2026-04-03T00:30:00Z",
-                    "minutes_until_due": 10,
-                    "overdue": False,
-                    "auto_run": True,
-                    "awaiting_completion": True,
-                    "completion_state": "awaiting_completion",
-                },
                 "repeated_failure_tasks": [],
                 "scheduler_stalled": False,
                 "housekeeping_stalled": False,
                 "pending_consolidation_stale": False,
                 "last_housekeeping_error": "",
+                "execution": {
+                    "awaiting_completion_tasks": [
+                        {
+                            "task_key": "task-1",
+                            "summary": "daily digest sync",
+                            "auto_run": True,
+                            "awaiting_completion": True,
+                            "completion_state": "awaiting_completion",
+                        }
+                    ]
+                },
             },
         )
 
-        self.assertEqual(normalized["decision"], "ok")
-        self.assertEqual(normalized["signal_kind"], "none")
-        self.assertEqual(normalized["message"], "")
+        self.assertEqual(normalized["decision"], "notify")
+        self.assertEqual(normalized["signal_kind"], "temporal_attention")
+        self.assertIn("daily digest sync", normalized["message"])
+        self.assertIn("completion confirmation", normalized["message"])
 
     async def test_hallucinated_system_issue_message_is_replaced_with_structured_note(self):
         heart = self._make_heart()

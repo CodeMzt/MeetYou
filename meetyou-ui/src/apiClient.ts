@@ -11,7 +11,7 @@ export function getAccessToken(): string {
 }
 
 export async function resolveAccessToken(): Promise<string> {
-  if (cachedAccessToken !== null) {
+  if (cachedAccessToken) {
     return cachedAccessToken
   }
 
@@ -36,8 +36,7 @@ export async function resolveAccessToken(): Promise<string> {
     // Ignore IPC resolution failures and fall back to empty token.
   }
 
-  cachedAccessToken = ''
-  return cachedAccessToken
+  return ''
 }
 
 export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {

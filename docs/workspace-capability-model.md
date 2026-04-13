@@ -456,7 +456,12 @@ Tool 是最小执行单元，必须声明：
 
 MCP 是 Tool Provider，不是业务层独立能力模型。
 
-Core 或 Agent 可以挂载 MCP，但在 Capability 层只体现为能力来源。
+Core 或 Agent 都可以挂载 MCP，但必须显式区分两类边界：
+
+- `Core MCP`：服务端可安全运行、且不依赖终端在线的 MCP 与非端侧集成能力。
+- `Agent MCP`：依赖终端本机环境、本地进程、本地文件系统或端侧会话生命周期的 MCP。
+
+在 Capability 层，MCP 仍只体现为能力来源；但文档、配置、诊断与运行时治理必须保留上述边界，不得把端侧本地 MCP 重新塞回 Core 直执行。
 
 ## 7. Capability 命名
 

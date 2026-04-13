@@ -11,7 +11,11 @@ describe('attachmentObject', () => {
         mime_type: 'text/plain',
         size_bytes: 42,
         status: 'ready',
+        lifecycle_policy: 'ephemeral',
+        expires_at: '2026-04-13T00:00:00Z',
         download_url: 'http://127.0.0.1:8000/download',
+        fallback_download_url: 'http://127.0.0.1:8000/download?fallback=1',
+        download_strategy: 'presigned',
       }),
     ).toEqual({
       attachmentId: 'att_1',
@@ -20,7 +24,11 @@ describe('attachmentObject', () => {
       mimeType: 'text/plain',
       sizeBytes: 42,
       status: 'ready',
+      lifecyclePolicy: 'ephemeral',
+      expiresAt: '2026-04-13T00:00:00Z',
       downloadUrl: 'http://127.0.0.1:8000/download',
+      fallbackDownloadUrl: 'http://127.0.0.1:8000/download?fallback=1',
+      downloadStrategy: 'presigned',
     })
   })
 
@@ -42,7 +50,11 @@ describe('attachmentObject', () => {
         mimeType: 'image/png',
         sizeBytes: undefined,
         status: undefined,
+        lifecyclePolicy: undefined,
+        expiresAt: undefined,
         downloadUrl: undefined,
+        fallbackDownloadUrl: undefined,
+        downloadStrategy: undefined,
       },
     ])
   })

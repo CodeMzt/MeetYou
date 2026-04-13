@@ -232,6 +232,9 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(download_ticket_resp.status_code, 200)
         download_ticket = download_ticket_resp.json()
         self.assertTrue(download_ticket["download_url"])
+        self.assertEqual(download_ticket["download_strategy"], "proxy")
+        self.assertTrue(download_ticket["fallback_download_url"])
+        self.assertEqual(download_ticket["download_url"], download_ticket["fallback_download_url"])
 
         content_resp = self.client.get(
             f"/client/attachments/content/{ticket_payload['attachment_id']}?ticket_id={download_ticket['ticket_id']}",
@@ -239,6 +242,137 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         )
         self.assertEqual(content_resp.status_code, 200)
         self.assertEqual(content_resp.content, b"hello attachment")
+
+    def test_client_attachment_download_ticket_prefers_presigned_url_when_available(self):
+        class _FakePresignedStore:
+            def __init__(self):
+                self.objects = {}
+
+            def put_bytes(self, object_key: str, content: bytes):
+                self.objects[object_key] = bytes(content)
+                return type("Stored", (), {"object_key": object_key, "size_bytes": len(content)})()
+
+            def read_bytes(self, object_key: str) -> bytes:
+                return self.objects[object_key]
+
+            def delete_object(self, object_key: str) -> None:
+                self.objects.pop(object_key, None)
+
+            def generate_presigned_download_url(
+                self,
+                object_key: str,
+                *,
+                expires_in_seconds: int,
+                file_name: str = "",
+                mime_type: str = "",
+            ) -> str:
+                return (
+                    f"https://object-store.example.com/{object_key}"
+                    f"?expires={expires_in_seconds}&file_name={file_name}&mime_type={mime_type}"
+                )
+
+        self.core_domain.services.attachment._object_store = _FakePresignedStore()
+        thread_resp = self.client.post(
+            "/client/threads",
+            json={"workspace_id": "personal", "title": "Presigned attachment thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_resp.status_code, 200)
+        thread_id = thread_resp.json()["thread_id"]
+
+        ticket_resp = self.client.post(
+            "/client/attachments/upload-ticket",
+            json={
+                "owner_type": "thread",
+                "owner_id": thread_id,
+                "kind": "file",
+                "mime_type": "text/plain",
+                "file_name": "presigned.txt",
+                "client_id": "electron-main",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(ticket_resp.status_code, 200)
+        ticket_payload = ticket_resp.json()
+
+        upload_resp = self.client.put(
+            f"/client/attachments/upload/{ticket_payload['ticket_id']}",
+            content=b"hello presigned attachment",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(upload_resp.status_code, 200)
+
+        complete_resp = self.client.post(
+            f"/client/attachments/{ticket_payload['attachment_id']}/complete",
+            json={"ticket_id": ticket_payload["ticket_id"]},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(complete_resp.status_code, 200)
+
+        download_ticket_resp = self.client.get(
+            f"/client/attachments/{ticket_payload['attachment_id']}/download-ticket?client_id=electron-main",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(download_ticket_resp.status_code, 200)
+        download_ticket = download_ticket_resp.json()
+        self.assertEqual(download_ticket["download_strategy"], "presigned")
+        self.assertIn("https://object-store.example.com/", download_ticket["download_url"])
+        self.assertTrue(download_ticket["fallback_download_url"])
+
+    def test_client_attachment_content_supports_unicode_file_name(self):
+        thread_resp = self.client.post(
+            "/client/threads",
+            json={"workspace_id": "personal", "title": "Unicode attachment thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_resp.status_code, 200)
+        thread_id = thread_resp.json()["thread_id"]
+
+        ticket_resp = self.client.post(
+            "/client/attachments/upload-ticket",
+            json={
+                "owner_type": "thread",
+                "owner_id": thread_id,
+                "kind": "image",
+                "mime_type": "image/png",
+                "file_name": "大白LOGO.png",
+                "client_id": "electron-main",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(ticket_resp.status_code, 200)
+        ticket_payload = ticket_resp.json()
+
+        upload_resp = self.client.put(
+            f"/client/attachments/upload/{ticket_payload['ticket_id']}",
+            content=b"unicode-name-image",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(upload_resp.status_code, 200)
+
+        complete_resp = self.client.post(
+            f"/client/attachments/{ticket_payload['attachment_id']}/complete",
+            json={"ticket_id": ticket_payload["ticket_id"]},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(complete_resp.status_code, 200)
+
+        download_ticket_resp = self.client.get(
+            f"/client/attachments/{ticket_payload['attachment_id']}/download-ticket?client_id=electron-main",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(download_ticket_resp.status_code, 200)
+        download_ticket = download_ticket_resp.json()
+
+        content_resp = self.client.get(
+            f"/client/attachments/content/{ticket_payload['attachment_id']}?ticket_id={download_ticket['ticket_id']}",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(content_resp.status_code, 200)
+        self.assertEqual(content_resp.content, b"unicode-name-image")
+        disposition = content_resp.headers.get("content-disposition", "")
+        self.assertIn("filename=", disposition)
+        self.assertIn("filename*=UTF-8''", disposition)
 
     def test_operator_workspace_management_and_client_reads_dynamic_workspace(self):
         create_resp = self.client.post(

@@ -104,7 +104,11 @@ class BootStartupInjectionTests(unittest.IsolatedAsyncioTestCase):
             init_tools=AsyncMock(),
         )
         app.mode_manager = SimpleNamespace(set_source_catalog_backend=lambda *args, **kwargs: None)
-        app.heart = SimpleNamespace(init_heart=AsyncMock(), get_background_status=AsyncMock())
+        app.heart = SimpleNamespace(
+            init_heart=AsyncMock(),
+            get_background_status=AsyncMock(),
+            set_core_services=lambda services: None,
+        )
         app.speaker = SimpleNamespace(register_adapter=lambda *args, **kwargs: None)
         app._health_getter = None
         app._telemetry_recorder = None

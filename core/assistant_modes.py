@@ -770,6 +770,9 @@ _DEFAULT_MCP_CATALOG = {
         "auth_env": [],
         "fallback_tools": ["analyze_workspace", "read_local_documents"],
         "enabled_by_default": True,
+        "boundary": "agent_mcp",
+        "managed_by": "desktop_or_edge_agent",
+        "classification_reason": "本地文件、工作区与终端邻接能力仍由 Desktop Agent / Edge Agent 托管，不收口到 Core MCP。",
     },
     "tavily_web": {
         "title": "Tavily Web Search",
@@ -779,6 +782,9 @@ _DEFAULT_MCP_CATALOG = {
         "auth_env": ["TAVILY_API_KEY"],
         "fallback_tools": ["search_web", "read_web_page", "research_topic"],
         "enabled_by_default": False,
+        "boundary": "core_mcp",
+        "managed_by": "core",
+        "classification_reason": "服务端可安全托管的外部检索能力，应优先通过 Core MCP 暴露。",
     },
     "browser_automation": {
         "title": "Browser Automation",
@@ -788,6 +794,9 @@ _DEFAULT_MCP_CATALOG = {
         "auth_env": [],
         "fallback_tools": ["inspect_page", "read_web_page"],
         "enabled_by_default": False,
+        "boundary": "core_mcp",
+        "managed_by": "core",
+        "classification_reason": "非端侧网页观察能力可在服务端沙箱内运行，属于 Core MCP 收口范围。",
     },
     "notion_knowledge": {
         "title": "Notion Knowledge",
@@ -797,8 +806,69 @@ _DEFAULT_MCP_CATALOG = {
         "auth_env": ["NOTION_TOKEN"],
         "fallback_tools": ["search_knowledge", "search_memory", "organize_notes"],
         "enabled_by_default": False,
+        "boundary": "core_mcp",
+        "managed_by": "core",
+        "classification_reason": "远程知识库读取属于服务端集成能力，应通过 Core MCP 统一治理与诊断。",
     },
 }
+
+_DEFAULT_CORE_MCP_CLASSIFICATION_STANDARD = {
+    "core_mcp": {
+        "criteria": [
+            "能力不依赖本地文件、Shell 或端侧本地 MCP 生命周期。",
+            "能力可在服务端通过显式配置、鉴权与审计安全托管。",
+            "能力面向外部搜索、浏览、知识库等非端侧集成面。",
+        ],
+        "decision": "正式收口到 Core MCP。",
+    },
+    "agent_mcp": {
+        "criteria": [
+            "能力直接触达本地文件系统、终端或工作区运行时。",
+            "能力需要随端侧会话、权限与本地 MCP 生命周期一起托管。",
+        ],
+        "decision": "继续留在 Desktop Agent / Edge Agent，不纳入 Core MCP。",
+    },
+    "runtime_native_exception": {
+        "criteria": [
+            "能力是纯进程内轻量逻辑，不依赖外部集成或 MCP server。",
+            "能力主要做文本整理、状态读取或 Core 自身内存/任务编排。",
+        ],
+        "decision": "保留为 runtime-native tool，不一刀切迁为 MCP。",
+    },
+}
+
+_DEFAULT_RUNTIME_NATIVE_TOOL_EXCEPTIONS = [
+    {
+        "tool_name": "summarize_text",
+        "category": "lightweight_transform",
+        "reason": "纯进程内摘要整理，不依赖外部集成。",
+    },
+    {
+        "tool_name": "organize_notes",
+        "category": "lightweight_transform",
+        "reason": "纯进程内笔记结构化，不依赖外部集成。",
+    },
+    {
+        "tool_name": "extract_action_items",
+        "category": "lightweight_transform",
+        "reason": "纯进程内行动项提炼，不依赖外部集成。",
+    },
+    {
+        "tool_name": "manage_tasks",
+        "category": "core_state",
+        "reason": "直接管理 Core 自身任务状态，不是外部集成。",
+    },
+    {
+        "tool_name": "manage_scheduled_tasks",
+        "category": "core_state",
+        "reason": "直接管理 Core 自身调度状态，不是外部集成。",
+    },
+    {
+        "tool_name": "manage_procedures",
+        "category": "core_state",
+        "reason": "直接管理 Core procedure 目录与审批，不是外部集成。",
+    },
+]
 
 _DEFAULT_MODE_DEFINITIONS = {
     "normal": {
@@ -1204,6 +1274,57 @@ class AssistantModeManager:
             available_mcp_servers=available_mcp_servers,
             configured_mcp_servers=configured_mcp_servers,
         )
+
+    def get_core_mcp_boundary_diagnostics(
+        self,
+        *,
+        available_mcp_servers: list[str] | None = None,
+        configured_mcp_servers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        diagnostics = self.get_capability_diagnostics(
+            available_mcp_servers=available_mcp_servers,
+            configured_mcp_servers=configured_mcp_servers,
+        )
+        configured_set = set(_unique_strings(configured_mcp_servers))
+        core_mcp_servers: list[dict[str, Any]] = []
+        agent_managed_mcp_servers: list[dict[str, Any]] = []
+        for item in diagnostics.get("mcp_servers", []):
+            payload = dict(item or {})
+            if str(payload.get("boundary") or "core_mcp").strip() == "agent_mcp":
+                agent_managed_mcp_servers.append(payload)
+            else:
+                core_mcp_servers.append(payload)
+
+        configured_core_servers = [
+            item for item in core_mcp_servers
+            if str(item.get("server_name") or "").strip() in configured_set
+        ]
+        enabled_core_servers = [
+            item for item in configured_core_servers
+            if str(item.get("status") or "").strip() == "enabled"
+        ]
+        partial_failure_servers = [
+            item for item in configured_core_servers
+            if str(item.get("status") or "").strip() in {"requires_auth", "unavailable"}
+        ]
+        return {
+            "classification_standard": json.loads(json.dumps(_DEFAULT_CORE_MCP_CLASSIFICATION_STANDARD, ensure_ascii=False)),
+            "core_mcp_servers": core_mcp_servers,
+            "agent_managed_mcp_servers": agent_managed_mcp_servers,
+            "runtime_native_tools": json.loads(json.dumps(_DEFAULT_RUNTIME_NATIVE_TOOL_EXCEPTIONS, ensure_ascii=False)),
+            "summary": {
+                "configured_server_count": len(configured_core_servers),
+                "enabled_count": len(enabled_core_servers),
+                "partial_failure_count": len(partial_failure_servers),
+                "partial_failure_servers": [
+                    str(item.get("server_name") or "").strip()
+                    for item in partial_failure_servers
+                    if str(item.get("server_name") or "").strip()
+                ],
+                "agent_managed_server_count": len(agent_managed_mcp_servers),
+                "runtime_native_exception_count": len(_DEFAULT_RUNTIME_NATIVE_TOOL_EXCEPTIONS),
+            },
+        }
 
     def create_skill(
         self,

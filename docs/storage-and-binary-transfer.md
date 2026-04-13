@@ -9,6 +9,13 @@
 - Core 与 Agent 之间的大附件如何传输
 - 截图、图片、文档、音频等对象如何引用与下载
 
+## 1.1 当前兼容态与目标态
+
+- 当前兼容态：`client` / `agent` 已具备 upload ticket、内容上传、`attachment.complete` 与 download ticket 主链；对象存储 backend 已支持 `local/filesystem` 与 `s3_compatible`，但上传和下载内容仍主要通过 Core HTTP 路由代理完成。
+- 目标态：在保持 attachment metadata / ticket 主链不变的前提下，让下载优先切到预签名 URL，并补齐 MinIO / S3 部署说明与实际接入验收。
+- `F76` 负责把“可运行兼容态”收口到“对象存储产品化目标态”。
+- `F77` 负责把截图类附件的短生命周期、过期清理和 Agent 本地缓存回收收口为正式策略。
+
 ## 2. 存储分层
 
 V2 推荐四层存储：
@@ -100,8 +107,8 @@ Object Storage 用于保存：
 
 ### 6.2 推荐实现
 
-- S3-compatible storage
-- MinIO 或云对象存储都可
+- 当前兼容态：已支持 `local/filesystem` 与 `s3_compatible`
+- 目标态：以 S3-compatible storage 为主，MinIO 或云对象存储都可
 
 ### 6.3 当前不做的能力
 
@@ -142,7 +149,7 @@ Object Storage 用于保存：
 
 ### 8.1 Agent 上传大附件
 
-流程：
+目标态流程：
 
 1. Agent 向 Core 请求上传票据
 2. Core 创建附件元数据草稿，签发上传 ticket
@@ -150,24 +157,45 @@ Object Storage 用于保存：
 4. Agent 调用 `attachment.complete`
 5. Core 将附件挂到 operation / message / task
 
+当前已落地实现：
+
+1. Agent 向 Core 请求上传票据
+2. Core 创建附件元数据草稿，签发 upload ticket
+3. Agent 仍通过 Core 的 attachment upload 路由提交二进制内容
+4. Core 把内容写入当前 object store backend，并更新 attachment 状态
+5. Agent / Core 再调用 `attachment.complete` 收口 attachment reference
+
 ### 8.2 Client 上传附件
 
-流程相同，只是调用方从 Agent 换成 Client。
+目标态与 Agent 相同，只是调用方从 Agent 换成 Client。
+
+当前兼容实现也与 Agent 相同：Client 仍先拿 ticket，再把文件内容提交到 Core 路由，由 Core 写入 object store backend。
 
 ## 9. 下载流程
 
 ### 9.1 Client 下载
+
+目标态：
 
 1. Client 请求下载 ticket
 2. Core 校验权限
 3. Core 返回短时下载 URL
 4. Client 直接从对象存储拉取
 
+当前兼容实现：
+
+1. Client 请求下载 ticket
+2. Core 校验权限
+3. 支持预签名下载的对象存储后端时，Core 返回短时下载 URL，Client 直接从对象存储拉取
+4. 不支持直链时，Core 返回指向 `client/attachments/content/*` 的短时兼容下载 URL，Client 再通过 Core 路由读取 attachment 内容
+
 ### 9.2 Agent 下载
 
-Agent 需要下载输入附件时，同样先向 Core 请求短时下载票据。
+目标态下，Agent 需要下载输入附件时，同样先向 Core 请求短时下载票据，再直接访问对象存储。
 
-## 10. 截图回传示例
+当前已落地实现下，Agent 下载面仍保留 Core attachment content 路由兼容能力；后续如接入输入附件直链，可沿同一预签名模型扩展。
+
+## 10. 截图回传目标态示例
 
 ```text
 Feishu Client -> Core: 请求桌面截图
@@ -237,7 +265,7 @@ agent-data/
 - 项目文档：`normal`
 - 长期重要资料：`retained`
 
-截图类短期附件应启用更短生命周期。
+当前实现中，截图类短期附件已经默认启用更短生命周期。
 
 推荐：
 
@@ -247,9 +275,8 @@ agent-data/
 
 ### 12.2 清理策略
 
-- Core 定时清理过期上传草稿
-- 清理失效下载票据
-- Agent 清理已成功上传的本地缓存文件
+- 当前实现：Core 定时清理过期上传草稿、失效下载票据和已过期 attachment；Agent 清理已成功上传的 `ephemeral` / 截图类本地缓存文件。
+- 仍保留的扩展空间：如后续需要更强离线缓存治理，可继续补“已过期但尚未回传成功”的端侧清理细则。
 
 ## 13. 推荐落地顺序
 
@@ -269,12 +296,18 @@ agent-data/
 
 - `client` 侧 upload ticket / upload / complete / download ticket 已落地
 - 第二版第一批仍使用服务端本地 attachment store 作为对象存储占位实现
-- Desktop Agent uploader 与真正对象存储接入留待下一批
+- 这组批次记录对应的是早期阶段；当前仓库已经额外落地 Desktop Agent uploader、object store 抽象与 `s3_compatible` backend
 
 进一步进度补充：
 
 - 第二版后续批次已引入 object store 抽象与 `s3_compatible` 后端实现位点
-- 当前仍通过 Core 代理下载 attachment 内容；预签名 URL 将在后续批次评估
+- `agent` 侧 uploader 也已接入 upload ticket / upload / complete 主链
+- 当前下载已优先使用预签名 URL；当对象存储后端不支持直链时，再回退到 Core 代理内容，这部分即 `F76` 的兼容策略
+
+生命周期进度补充：
+
+- attachment 已带 `lifecycle_policy` 字段，可标注 `normal` / `ephemeral` 等策略意图
+- 截图短 TTL、后台过期清理与 Agent 本地缓存回收已由 `F77` 收口完成
 
 ### Phase 3
 

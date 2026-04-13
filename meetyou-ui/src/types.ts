@@ -373,7 +373,11 @@ export interface AttachmentObjectView {
   mimeType?: string
   sizeBytes?: number
   status?: string
+  lifecyclePolicy?: string
+  expiresAt?: string
   downloadUrl?: string
+  fallbackDownloadUrl?: string
+  downloadStrategy?: string
 }
 
 export interface ChatTurn {

@@ -223,6 +223,16 @@ class GatewayRuntimeApiTests(unittest.TestCase):
     def _auth_headers(self):
         return {"Authorization": f"Bearer {self.access_token}"}
 
+    def _assert_legacy_http_route_removed(self, response, *, legacy_path: str, replacement_path: str):
+        self.assertEqual(response.status_code, 410)
+        payload = response.json()
+        self.assertEqual(payload["schema"], "meetyou.http.v1")
+        self.assertEqual(payload["kind"], "error")
+        self.assertEqual(payload["error"]["code"], "legacy_http_path_removed")
+        self.assertEqual(payload["error"]["details"]["legacy_path"], legacy_path)
+        self.assertEqual(payload["error"]["details"]["replacement_path"], replacement_path)
+        self.assertEqual(payload["error"]["details"]["formal_surface"], "client/* + client/ws")
+
     def test_health_returns_structured_runtime_health(self):
         response = self.client.get("/health")
 
@@ -235,12 +245,23 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertTrue(payload["health"]["ready"])
         self.assertEqual(payload["health"]["components"][0]["name"], "session_execution")
 
-    def test_inputs_and_controls_routes_are_removed(self):
-        input_response = self.client.post("/inputs", json={"content": "hello"}, headers=self._auth_headers())
-        control_response = self.client.post("/controls", json={"action": "stop"}, headers=self._auth_headers())
+    def test_legacy_chat_http_routes_return_controlled_migration_errors(self):
+        response_specs = [
+            ("/inputs", self.client.post("/inputs", json={"content": "hello"}, headers=self._auth_headers()), "/client/messages"),
+            ("/controls", self.client.post("/controls", json={"action": "stop"}, headers=self._auth_headers()), "/client/*"),
+            ("/session", self.client.post("/session", json={"client_id": "legacy-client"}, headers=self._auth_headers()), "/client/sessions"),
+            ("/sessions", self.client.post("/sessions", json={"client_id": "legacy-client"}, headers=self._auth_headers()), "/client/sessions"),
+            ("/messages", self.client.post("/messages", json={"content": "legacy hello"}, headers=self._auth_headers()), "/client/messages"),
+        ]
 
-        self.assertEqual(input_response.status_code, 404)
-        self.assertEqual(control_response.status_code, 404)
+        for legacy_path, response, replacement_path in response_specs:
+            self._assert_legacy_http_route_removed(
+                response,
+                legacy_path=legacy_path,
+                replacement_path=replacement_path,
+            )
+
+        self.assertEqual(self.event_bus.inbound_queue.qsize(), 0)
 
     def test_get_runtime_state(self):
         response = self.client.get(

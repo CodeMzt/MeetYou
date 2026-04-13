@@ -50,7 +50,7 @@ function createDevtoolsWindow() {
     height: windowHeight,
     x: width / 2 - windowWidth / 2,
     y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC || '', 'icon.svg'),
+    icon: path.join(process.env.VITE_PUBLIC || '', 'icon.png'),
     transparent: true,
     frame: false,
     resizable: true,

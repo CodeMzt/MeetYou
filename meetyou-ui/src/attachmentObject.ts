@@ -42,7 +42,11 @@ export function normalizeAttachmentObject(value: unknown): AttachmentObjectView 
     mimeType: readString(record, 'mimeType', 'mime_type') || undefined,
     sizeBytes: readNumber(record, 'sizeBytes', 'size_bytes'),
     status: readString(record, 'status') || undefined,
+    lifecyclePolicy: readString(record, 'lifecyclePolicy', 'lifecycle_policy') || undefined,
+    expiresAt: readString(record, 'expiresAt', 'expires_at') || undefined,
     downloadUrl: readString(record, 'downloadUrl', 'download_url') || undefined,
+    fallbackDownloadUrl: readString(record, 'fallbackDownloadUrl', 'fallback_download_url') || undefined,
+    downloadStrategy: readString(record, 'downloadStrategy', 'download_strategy') || undefined,
   }
 }
 

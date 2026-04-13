@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import ValidationError
 
+from core.http_headers import build_attachment_content_disposition
 from service_runtime.models import RuntimeError
 
 
@@ -412,7 +413,7 @@ def build_agent_router(gateway) -> APIRouter:
         return Response(
             content=content,
             media_type=attachment.mime_type,
-            headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+            headers={"Content-Disposition": build_attachment_content_disposition(file_name)},
         )
 
     return router

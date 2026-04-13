@@ -64,26 +64,32 @@ V2 的最终目标是：
 当以下条件同时成立时，可认为“第一版基本可用产品”达到完成标准：
 
 1. `Core Service`
+
 - 可稳定启动并作为唯一真相源运行
 - `thread/session/operation/approval/workspace/agent/procedure` 资源主链可用
 
-2. `Client`
+1. `Client`
+
 - Electron 可通过 `client/* + client/ws` 完成聊天、审批、任务查看，并至少展示当前 workspace / operation / procedure 上下文
 - 主要交互 pending 已优先走资源语义入口
 
-3. `Agent`
+1. `Agent`
+
 - Desktop Agent 可完成 capability 上报、调用、结果回传
 - 本地文件/命令/MCP 已不再要求 Core 直接执行
 
-4. `Workspace 治理`
+1. `Workspace 治理`
+
 - 已具备默认 mode、默认执行目标、capability allowlist、agent routing policy、capability routing override
 - 这些治理字段确实参与主链，而不只是展示配置
 
-5. `后台任务`
+1. `后台任务`
+
 - scheduled task 和 scheduled reminder 已进入 operation 主链
 - task 快照可追踪最近一次 operation 标识与状态
 
-6. `可验证性`
+1. `可验证性`
+
 - 后端关键主链具备测试覆盖
 - 前端 `typecheck` 和测试可通过
 
@@ -163,9 +169,9 @@ Phase 10 清理旧路径与稳定化
 
 默认推进顺序如下；若用户当轮有明确目标，以用户目标优先：
 
-1. `F76` 对象存储产品化能力
-2. `F92` / `F93` Edge Agent transport 稳定化与能力扩展
-3. `F100` / `F101` 旧路径清理与稳定化文档收口
+1. `F92` / `F93` Edge Agent transport 稳定化与能力扩展
+2. `F100` / `F101` 旧路径清理与稳定化文档收口
+3. 继续收口附件与 workspace 相关文档尾差
 
 ## 5. 当前代码与目标代码的映射
 
@@ -242,8 +248,8 @@ Phase 10 清理旧路径与稳定化
 - `F73` Object store 抽象与可配置 backend。边界：`core/storage/object_store.py`、`core/config.py`、`core/app.py`。关联批次：`4.29`、`4.32`。状态：已完成。
 - `F74` S3-compatible object store 第一批。边界：`core/storage/object_store.py`、`core/services/attachment_service.py`。关联批次：`4.34`。状态：已完成。
 - `F75` Attachment 统一对象视图。边界：`core/services/attachment_service.py`、`meetyou-ui/src/types.ts`、`components/chat/`。状态：已完成。
-- `F76` 对象存储产品化能力。范围：预签名下载 URL、部署配置说明、MinIO / S3 实际接入验收。边界：`core/storage/`、`gateway/routes/client.py`、`docs/`。状态：待开始。
-- `F77` 短生命周期截图附件与清理策略。边界：`desktop_agent/`、`core/services/attachment_service.py`、后台清理任务。状态：待开始。
+- `F76` 对象存储产品化收口。已完成内容：`s3_compatible` backend 下 attachment 下载已优先返回预签名 URL，并保留 Core 代理下载作为兼容回退；部署配置说明与 S3-compatible 验收口径已同步收口。边界：`core/storage/`、`gateway/routes/client.py`、`docs/`。状态：已完成。
+- `F77` 短生命周期截图附件与清理策略。已完成内容：截图类 attachment 默认归入 `ephemeral` 生命周期，写入短 TTL，并由后台清理过期资源；Desktop Agent 对临时截图/`ephemeral` 附件上传成功后会清理本地缓存文件。边界：`desktop_agent/`、`core/services/attachment_service.py`、后台清理任务。状态：已完成。
 
 ##### Phase 8
 
@@ -260,7 +266,8 @@ Phase 10 清理旧路径与稳定化
 
 - `F84` Procedure 执行画像与 routing integration。范围：让 `procedure_call` 继承 procedure 的 capability ref、执行目标与 agent routing 偏好。边界：`core/services/procedure_service.py`、`gateway/routes/client.py`。关联批次：`4.20`。状态：已完成。
 - `F85` Task routing preference integration。范围：让 scheduled task 记录并输出 capability / routing 偏好。边界：`tools/task_manager.py`、`core/app.py`、`core/services/operation_service.py`。关联批次：`4.21`。状态：已完成。
-- `F86` Scheduler operation 审计主链。范围：让 scheduled task / reminder / scheduler 进入统一 operation 记录与状态流。边界：`core/heart.py`、`core/app.py`、`tools/task_manager.py`。关联批次：`4.22`、`4.23`、`4.25`。状态：已完成。
+- `F86` Scheduler operation 审计主链与 Heart 时间编排收口。范围：让 `Core Heart` 成为服务端时间编排中枢，明确 Heart 内部 `scheduler loop` 与 `heartbeat reasoning loop` 的职责边界；确保 scheduled task / reminder / scheduler 进入统一 operation 记录与状态流；让 heartbeat reasoning 显式消费 `pending_redelivery`、`awaiting_completion`、逾期 follow-up 等调度时间压力，而不是只保留 `system_issue` / `idle_poke`。边界：`core/heart.py`、`core/app.py`、`tools/task_manager.py`、`core/background_status.py`。关联批次：`4.22`、`4.23`、`4.25`。状态：已完成。
+- `F89` Task domain split and semantic isolation。范围：将 `manage_tasks` / `manage_scheduled_tasks` 明确分域为 `user_todo` / `assistant_schedule`，收口对象类型、持久化表示、完成语义、调度行为与后台统计，避免共享语义继续扩散。边界：`tools/task_manager.py`、相关测试、任务快照输出。关联批次：`4.24`、`4.25`。状态：已完成。
 - `F88` Procedure 自动推断与生命周期治理。范围：自动 procedure 推断、thread 级固化 / 取消固化、AI 发起的 Procedure create / update / delete 回调确认，以及只读 procedure catalog / 内容视图。边界：`core/db/models/procedure.py`、`core/db/models/thread.py`、`core/services/procedure_service.py`、`core/services/thread_service.py`、`core/interaction_response_service.py`、`core/services/approval_service.py`、`gateway/models.py`、`gateway/routes/client.py`、`core/brain.py`、`core/prompt_assembler.py`、Procedure 只读视图。状态：已完成。
   已交付：deterministic procedure 自动推断、thread 级 `latest_inferred_procedure` / `pinned_procedure` 上下文、AI 可通过 callback confirmation 驱动 `manage_procedures` 进行 create / update / delete、`GET /client/procedures` / `GET /client/procedures/{procedure_id}` / `GET /client/threads/{thread_id}/procedure-context` / `PUT|DELETE /client/threads/{thread_id}/pinned-procedure`、以及 Electron 独立“工作区与规程”窗口中的 procedure catalog / detail / pin / unpin 浏览与操作。
 
@@ -268,13 +275,13 @@ Phase 10 清理旧路径与稳定化
 
 - `F90` Edge Agent 协议骨架与统一 websocket transport。边界：`edge_agent/protocol.py`、`edge_agent/runtime.py`。关联批次：`4.30`。状态：已完成。
 - `F91` Edge Agent 正式运行目标。边界：`edge_agent/main.py`、`main.py`。关联批次：`4.33`。状态：已完成。
-- `F92` Edge Agent transport 稳定化。范围：统一 `WSS /agent/ws` 心跳、重连、注册与 capability call 基线。边界：`edge_agent/`、`gateway/routes/agent.py`、相关测试。状态：已完成。
+- `F92` Edge Agent transport 稳定化。范围：统一 `WSS /agent/ws` 心跳、重连、注册与 capability call 基线，并确保 `agent.hello.ack` 下发的新 heartbeat interval 能立即作用到当前连接。边界：`edge_agent/`、`gateway/routes/agent.py`、相关测试。状态：已完成。
 - `F93` Edge Agent 能力扩展与稳定性测试。边界：`tests/test_edge_agent_*`、边缘 capability 样例。状态：待开始。
 
 ##### Phase 10
 
-- `F100` Legacy path cleanup。范围：旧 `session + /inputs + /ws` 主路径、Core 直执行本地工具、过期兼容入口。边界：`gateway/`、`core/`、`desktop_agent/`。状态：待开始。
-- `F101` 稳定化与验收文档收口。范围：README、启动手册、手工验收、回归命令统一。边界：`README.md`、`docs/`、`scripts/`。状态：进行中。
+- `F100` Legacy path cleanup。范围：旧 `session + /inputs + /ws` 主路径、Core 直执行本地工具、过期兼容入口，以及非端侧 integration-style tools / MCP 到 `Core MCP` 的边界收口。边界：`gateway/`、`core/`、`desktop_agent/`、`docs/`。状态：已完成。
+- `F101` 稳定化与验收文档收口。范围：README、启动手册、手工验收、回归命令统一，以及以下三类边界同步到计划/设计/验收文档：1）Heart 时间编排与 Heart 时间感信号；2）agent heartbeat 协商与重排行为；3）`user_todo` / `assistant_schedule` 的术语、职责与实现边界。边界：`README.md`、`docs/`、`scripts/`。状态：进行中。
 
 ## 6. 阶段计划
 
@@ -352,7 +359,7 @@ Phase 10 清理旧路径与稳定化
    - clients
    - workspaces
    - agents
-   - workspace_agent_memberships
+   - workspace\_agent\_memberships
    - threads
    - sessions
    - operations
@@ -563,6 +570,13 @@ Phase 10 清理旧路径与稳定化
 - 附件脱离主消息流
 - 建立 upload ticket / complete / download ticket
 - 将当前主窗口附件入口占位升级为真实可上传、可回显、可下载的 attachment reference 主链
+
+### 当前状态补记
+
+- `client` 与 `agent` 两侧的 upload ticket / complete / download ticket 主链已经可用
+- object store 抽象与 `s3_compatible` backend 已落地，且 `F76` 已补齐预签名下载 URL 与兼容回退
+- attachment 下载当前优先走对象存储预签名 URL；不支持直链时回退到 Core 代理下载内容
+- 截图类 attachment 的短生命周期与清理策略已由 `F77` 收口，包含后台过期清理与 Desktop Agent 本地缓存回收
 
 ### 输入依赖
 

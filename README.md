@@ -162,13 +162,23 @@ MEETYOU_FEISHU_APP_SECRET=
 - `gateway_host` / `gateway_port`：网关监听地址
 - `gateway_cors_origins`：额外允许的浏览器来源
 - `gateway_access_token` / `MEETYOU_GATEWAY_ACCESS_TOKEN`：Gateway / WebSocket 访问令牌
+- `object_store_backend`：附件内容存储后端，当前兼容态支持 `local/filesystem` 与 `s3_compatible`
+- `attachment_storage_root`：`local/filesystem` 后端使用的附件根目录
+- `object_store_endpoint` / `object_store_bucket` / `object_store_region`：`s3_compatible` 后端配置
+- `object_store_access_key` / `object_store_secret_key`：`s3_compatible` 后端凭据
+
+对象存储补充说明：
+
+- 当前兼容态下，attachment upload/download 主链已经可用，且可切到 `s3_compatible` backend
+- `F76` / `F77` 已完成：支持对象存储预签名下载 URL，并在不支持直链时回退到 Core 代理下载；截图类 `ephemeral` 附件会写入短 TTL，并在上传完成后清理 Desktop Agent 本地临时文件
 
 ### MCP 配置边界
 
-- `user/core_mcp_servers.json`：仅供 Core 侧安全级、非终端依赖的服务端 MCP 使用
-- `user/mcp_servers.json`：仅供 PC 客户端本地后端使用，由 `desktop_agent/` 托管
+- `user/core_mcp_servers.json`：仅供 `Core MCP` 使用，承载服务端可安全运行、且不依赖终端在线的 MCP 与非端侧集成能力
+- `user/mcp_servers.json`：仅供 PC 客户端本地后端使用，由 `desktop_agent/` 托管本地 MCP 生命周期
 - 缺少 `core_mcp_servers.json` 只表示 Core 没有启用服务端 MCP，不代表 Desktop Agent 本地 MCP 配置缺失
 - `user/desktop_agent.json` 中的 `mcp_servers_path` 用来指向客户端本地 MCP 配置文件
+- 纯进程内轻量工具如摘要整理、记忆/任务状态管理仍可保留在 Core runtime-native tool，不需要一刀切迁成 MCP
 
 ## 启动方式
 
@@ -243,6 +253,7 @@ npm run dev
 - `GET /operator/config`、`GET /operator/memory`：运维 / 观察面接口
 - `GET /runtime/state`、`GET /runtime/usage`、`GET /developer/runtime/debug`：运行态与开发诊断接口
 - `GET /ws`：旧主聊天路径，现仅返回兼容性错误并提示迁移到 `/client/ws`
+- `POST /inputs`、`POST /controls`、旧根路径 `session/messages` 入口：现只返回受控迁移错误，不再触发真实聊天主链
 - `GET /config`、`GET /memory` 等根路径接口：迁移期兼容入口，不再是默认产品面
 
 正式目标架构见 [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)，workspace 模型见 [docs/workspace-capability-model.md](docs/workspace-capability-model.md)，API 面设计见 [docs/core-api-surfaces.md](docs/core-api-surfaces.md)，当前基线与缺口见 [docs/server-centric-migration-baseline.md](docs/server-centric-migration-baseline.md)。

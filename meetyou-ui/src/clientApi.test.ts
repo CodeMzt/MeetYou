@@ -5,6 +5,7 @@ import {
   getClientThreadProcedureContext,
   listOperatorSourceProfiles,
   listClientProcedures,
+  resolveClientAttachmentDownloadPlan,
   updateOperatorWorkspaceGovernance,
   pinClientThreadProcedure,
   unpinClientThreadProcedure,
@@ -344,8 +345,8 @@ describe('clientApi', () => {
       }),
     ) as typeof fetch
 
-    const { downloadClientAttachmentContent } = await import('./clientApi')
-    const blob = await downloadClientAttachmentContent('http://127.0.0.1:8000/client/attachments/content/att_1?ticket_id=down_1')
+    const { downloadClientAttachmentContent: downloadAttachment } = await import('./clientApi')
+    const blob = await downloadAttachment('http://127.0.0.1:8000/client/attachments/content/att_1?ticket_id=down_1')
 
     expect(await blob.text()).toBe('attachment-body')
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -357,5 +358,65 @@ describe('clientApi', () => {
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] || []
     const headers = init?.headers as Headers
     expect(headers.get('Authorization')).toBe('Bearer test-token')
+  })
+
+  it('prefers direct browser download for presigned attachment tickets', () => {
+    const plan = resolveClientAttachmentDownloadPlan({
+      attachment_id: 'att_1',
+      ticket_id: 'down_1',
+      download_url: 'https://minio.example.com/presigned/att_1',
+      fallback_download_url: 'http://127.0.0.1:8000/client/attachments/content/att_1?ticket_id=down_1',
+      download_strategy: 'presigned',
+      expires_at: '2026-04-13T00:00:00Z',
+      mime_type: 'image/png',
+      file_name: 'capture.png',
+      size_bytes: 1024,
+    })
+
+    expect(plan).toEqual({
+      mode: 'direct',
+      url: 'https://minio.example.com/presigned/att_1',
+      fileName: 'capture.png',
+    })
+  })
+
+  it('falls back to proxy download plan for non-presigned tickets', () => {
+    const plan = resolveClientAttachmentDownloadPlan({
+      attachment_id: 'att_2',
+      ticket_id: 'down_2',
+      download_url: 'http://127.0.0.1:8000/client/attachments/content/att_2?ticket_id=down_2',
+      fallback_download_url: 'http://127.0.0.1:8000/client/attachments/content/att_2?ticket_id=down_2',
+      download_strategy: 'proxy',
+      expires_at: '2026-04-13T00:00:00Z',
+      mime_type: 'application/pdf',
+      file_name: 'report.pdf',
+      size_bytes: 2048,
+    })
+
+    expect(plan).toEqual({
+      mode: 'proxy',
+      url: 'http://127.0.0.1:8000/client/attachments/content/att_2?ticket_id=down_2',
+      fileName: 'report.pdf',
+    })
+  })
+
+  it('treats non-proxy direct urls as direct download even without strategy', () => {
+    const plan = resolveClientAttachmentDownloadPlan({
+      attachment_id: 'att_3',
+      ticket_id: 'down_3',
+      download_url: 'https://minio.example.com/presigned/att_3?X-Amz-Signature=demo',
+      fallback_download_url: '',
+      download_strategy: '',
+      expires_at: '2026-04-13T00:00:00Z',
+      mime_type: 'image/jpeg',
+      file_name: 'photo.jpg',
+      size_bytes: 4096,
+    })
+
+    expect(plan).toEqual({
+      mode: 'direct',
+      url: 'https://minio.example.com/presigned/att_3?X-Amz-Signature=demo',
+      fileName: 'photo.jpg',
+    })
   })
 })

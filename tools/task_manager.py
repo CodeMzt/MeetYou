@@ -958,8 +958,12 @@ class TaskManager(TaskRepository):
         return None
 
     @staticmethod
-    def _task_object_type(task_domain: str) -> str:
-        return "scheduled_task" if task_domain == "assistant_schedule" else "task"
+    def _task_record_type(task_domain: str) -> str:
+        return "scheduled_task" if task_domain == "assistant_schedule" else "todo"
+
+    @classmethod
+    def _task_object_type(cls, task_domain: str) -> str:
+        return cls._task_record_type(task_domain)
 
     def _task_candidate_payload(self, record: dict[str, Any]) -> dict[str, Any]:
         compact = self._compact_task(record)
@@ -1446,13 +1450,15 @@ class TaskManager(TaskRepository):
         return job
 
     def _ensure_task_defaults(self, record: dict[str, Any]) -> None:
-        if record.get("type") != "task":
+        record_type = _normalize_text(record.get("type")).lower()
+        if record_type not in {"task", "todo", "scheduled_task"}:
             return
         record["schedule_kind"] = _normalize_schedule_kind(record.get("schedule_kind") or "none")
         record["task_domain"] = _normalize_task_domain(
             record.get("task_domain"),
             schedule_kind=record.get("schedule_kind") or "none",
         )
+        record["type"] = self._task_record_type(record["task_domain"])
         record["timezone"] = _resolve_timezone_name(record.get("timezone") or _DEFAULT_TIMEZONE)
         record["recurrence"] = _serialize_jsonish(_normalize_recurrence(record.get("recurrence")) if record.get("recurrence") not in (None, "") else None)
         record["due_at"] = _normalize_text(record.get("due_at")) or None
@@ -1538,7 +1544,7 @@ class TaskManager(TaskRepository):
         return {
             "record_id": _normalize_text(record.get("id")),
             "object_id": _normalize_text(record.get("task_key")),
-            "object_type": "scheduled_task" if record.get("task_domain") == "assistant_schedule" else "task",
+            "object_type": self._task_object_type(_normalize_text(record.get("task_domain"))),
             "task_key": _normalize_text(record.get("task_key")),
             "content": _normalize_text(record.get("content")),
             "summary": _normalize_text(record.get("content")),
@@ -1780,7 +1786,7 @@ class TaskManager(TaskRepository):
         embedding = await self._maybe_embed(normalized_summary)
         record = {
             "id": f"task_{task_key_value}_{now.replace(':', '').replace('-', '').replace('T', '_').replace('Z', '')}",
-            "type": "task",
+            "type": self._task_record_type(normalized_task_domain),
             "scope": self._memory._record_scope(user_id, "", "task"),
             "content": normalized_summary,
             "canonical_text": normalized_summary.lower(),

@@ -236,6 +236,23 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(failed.ok)
         self.assertIn("manage_tasks only manages user TODO items", failed.error.message)
 
+    async def test_user_todo_persists_as_todo_record_type(self):
+        manager = TaskManager(_FakeMemory())
+        created = json.loads(
+            await manager.manage_tasks(
+                action="create",
+                summary="整理发布清单",
+                source={"id": "desktop-user"},
+            )
+        )
+        task = created["tasks"][0]
+        record = manager._find_task_by_key_any_user(task["task_key"])
+
+        self.assertEqual(task["task_domain"], "user_todo")
+        self.assertEqual(task["object_type"], "todo")
+        self.assertIsNotNone(record)
+        self.assertEqual(record["type"], "todo")
+
     async def test_user_todo_with_time_language_is_not_claimed_by_scheduler(self):
         manager = TaskManager(_FakeMemory())
         created = json.loads(
@@ -249,6 +266,26 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["task_domain"], "user_todo")
         self.assertEqual(task["schedule_kind"], "none")
         self.assertEqual(await manager.claim_due_tasks(), [])
+
+    async def test_scheduled_task_persists_as_scheduled_task_record_type(self):
+        manager = TaskManager(_FakeMemory())
+        created = json.loads(
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="每天早上九点检查日报",
+                schedule_kind="recurring",
+                recurrence={"freq": "daily", "hour": 9, "minute": 0},
+                timezone="UTC",
+                source={"id": "desktop-user"},
+            )
+        )
+        task = created["tasks"][0]
+        record = manager._find_task_by_key_any_user(task["task_key"])
+
+        self.assertEqual(task["task_domain"], "assistant_schedule")
+        self.assertEqual(task["object_type"], "scheduled_task")
+        self.assertIsNotNone(record)
+        self.assertEqual(record["type"], "scheduled_task")
 
     async def test_once_task_run_success_requires_explicit_complete_to_finish(self):
         manager = TaskManager(_FakeMemory())
