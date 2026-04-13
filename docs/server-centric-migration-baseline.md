@@ -47,6 +47,8 @@
 
 当前第二版进度补充：第十批“Procedure 自动推断与生命周期治理”已经完成，后端自动推断 / 生命周期治理、只读 procedure detail/context surface、thread pin / unpin 资源面，以及 Electron 独立“工作区与规程”窗口已经落地。 
 
+当前附件链路补充：Phase 7 已从“可运行兼容态”进一步收口到正式产品态：`client` / `agent` 的 upload ticket / upload / complete / download ticket 已可用，`s3_compatible` backend 下下载优先返回预签名 URL；若后端不支持直链，则回退到 Core 代理 attachment 内容。截图类附件已纳入短生命周期清理，Desktop Agent 上传成功后会清理本地临时文件。
+
 当前第二版执行总结：
 
 - 第一批：`client` attachment 主链基础闭环已完成
@@ -57,7 +59,7 @@
 
 当前第二版进度补充：下一批进入 Edge Agent transport 语义与文档收口。
 
-当前第二版进度补充：下一批进入对象存储后端抽象，为 MinIO / S3 接入做准备。
+当前第二版进度补充：`F76` / `F77` 已完成，当前下一批重点转向 Edge Agent transport 语义与其余文档尾差收口。
 
 ## 2.1 当前执行批次
 
@@ -591,11 +593,17 @@
 - 先让 scheduler 在 claim due task 后预创建 operation
 - 继续保留 scheduler -> control event -> App 执行主链
 - 先让 App 复用预创建 operation，而不是立即重写整条后台调度架构
+- 明确 `Core Heart` 的两层职责：`scheduler loop` 负责确定性的时间触发与 control event 投递，`heartbeat reasoning loop` 负责根据后台结构化状态判断是否存在需要用户注意的时间压力
+- 明确 Heart 的“时间感”不等于 agent transport heartbeat；前者属于服务端后台编排，后者属于 `/agent/ws` 连接保活与在线状态更新
+- 明确 `manage_tasks` / `manage_scheduled_tasks` 并非同一语义的不同入口，而是分别对应 `user_todo` / `assistant_schedule` 两个域模型
 
 阶段出口：
 
 - Heart 调度器会在 claim 后创建 operation
 - App 处理 scheduled task / reminder 时会优先复用该 operation
+- 定时任务触发仍由 Heart 内 scheduler 主链负责，不依赖 LLM heartbeat 推断
+- Heart heartbeat reasoning 会消费调度时间压力，而不是只覆盖系统故障或空闲 poke
+- `user_todo` 与 `assistant_schedule` 在入口、对象类型、完成语义、调度行为与后台统计上可被一致解释
 
 当前状态：已完成。
 
@@ -604,6 +612,17 @@
 - Heart 调度器已在 claim due task 后预创建 operation
 - control event 已携带 `operation_id`
 - App 已会优先复用 Heart 预创建的 scheduled task / reminder operation
+- Heart heartbeat reasoning 现在与调度时间状态对齐：`pending_redelivery`、`awaiting_completion`、逾期 follow-up 等时间压力会进入结构化时间感信号面，而不再只剩 `system_issue` / `idle_poke`
+- `manage_tasks` 与 `manage_scheduled_tasks` 已明确分域为 `user_todo` / `assistant_schedule`：共享基础能力但隔离入口、语义、调度与后台统计；新写入记录也已显式收口为 `todo` / `scheduled_task` 对象类型
+
+职责说明：
+
+- `scheduler loop` 是 Heart 的确定性时间触发层：负责 claim due task、预创建 operation、投递 control event；这条链路决定“什么时候触发”
+- `heartbeat reasoning loop` 是 Heart 的时间感判断层：负责读取后台结构化状态并决定“当前是否存在值得主动提醒的时间压力”
+- `scheduled task` / `scheduled reminder` 的执行与送达仍走 App 主链，因此 Heart 的时间感是“编排与判断中枢”，不是另起一条后台执行链
+- `user_todo` 是用户自己的待办对象：可带 deadline 语义，但不会因自然语言时间描述而被 scheduler claim
+- `assistant_schedule` 是助手拥有的定时编排对象：必须具备 trigger 语义，并承担 delivery / completion / orchestration 状态
+- agent transport heartbeat 只负责 agent 在线状态、last seen 与 capability runtime 基线，不参与 Core Heart 的时间感判断
 
 下一批将进入：Electron 第一版产品化收口，以及其余 adapter/channel 服务化迁移评估。
 
@@ -635,10 +654,10 @@
 | --- | --- | --- |
 | 运行入口 | 正式入口已统一为 `python main.py service`，service 运行时内置 HTTP / WebSocket gateway | 已完成 |
 | 网关 surface | `gateway/routes/client.py`、`agent.py`、`operator.py`、`developer.py` 已拆分，`tests/test_gateway_surface_routes.py` 覆盖关键路由 | 部分完成 |
-| 旧聊天主路径 | `POST /inputs`、`POST /controls` 已返回 404；根路径 `/ws` 仅返回 `legacy_websocket_path_removed` | 已完成 |
+| 旧聊天主路径 | `POST /inputs`、`POST /controls`、旧 `session/messages` 根路径入口都会返回受控迁移错误；根路径 `/ws` 仅返回 `legacy_websocket_path_removed` | 已完成 |
 | 数据与持久化 | `core/db/` 下已具备 Alembic、engine、repository、bootstrap 与主资源模型 | 已完成 |
 | Client 主链 | `client/workspaces`、`threads`、`sessions`、`messages`、`operations`、`approvals` 与 `client/ws` 可闭环 | 部分完成 |
-| PC 客户端本地后端 | `desktop_agent/` 已具备配置、hello、heartbeat、capabilities snapshot 与 capability call 处理 | 已完成 |
+| PC 客户端本地后端 | `desktop_agent/` 已具备配置、hello、heartbeat、capabilities snapshot 与 capability call 处理，`agent.hello.ack` 还能重排实际 heartbeat 间隔 | 已完成 |
 | 本地能力边界 | `exec_sys_cmd`、文档读写、工作区分析与桌面 MCP 已通过 Agent capability 承接 | 已完成 |
 | 平台依赖边界 | `platform_layer/` 仅保留运行宿主机平台识别、系统生命体征与上下文感知 | 已完成 |
 | 业务状态后端 | memory、task、office、study、source catalog 已接入数据库或 state blob 后端 | 已完成 |
@@ -655,7 +674,7 @@
 | Phase 4 | PC 客户端内本地后端最小运行时 | 已完成 | `desktop_agent/runtime.py` 与相关测试 | 需要转入更完整的生产级能力治理 |
 | Phase 5 | 本地工具剥离到客户端内本地后端 | 已完成 | shell、文件、工作区分析与桌面 MCP 已走 capability 分发 | 仅剩安全级 Core MCP 的长期治理说明 |
 | Phase 6 | Frontend 迁移到 Client API | 部分完成 | `useMeetYou.ts` 已切到 `clientApi.ts` + `client/ws` 主链 | UI 仍带明显开发控制台姿态 |
-| Phase 7 | 附件通道与对象存储 | 部分完成 | `Attachment` 模型与 `AttachmentService` 已有骨架 | upload ticket、complete、download flow 未完成 |
+| Phase 7 | 附件通道与对象存储 | 部分完成 | `client` / `agent` upload ticket、upload、complete、download ticket 已可用，object store 抽象与 `s3_compatible` backend 已落地 | 下载仍通过 Core 代理内容；预签名 URL、MinIO / S3 产品化验收与截图短生命周期清理仍待完成 |
 | Phase 8 | Workspace / Memory / Procedure 收口 | 部分完成 | workspace 资源、agent 绑定、memory records 与 Procedure 已入库，F88 自动推断 / 生命周期治理已完成 | workspace 记忆排序仍待收口 |
 | Phase 9 | Edge Agent transport 收口 | 已完成 | `edge_agent/` 已统一到 `/agent/ws` + `meetyou.agent.v1` 主链，并具备最小运行时与测试 | 后续只剩边缘能力集扩充与治理 |
 | Phase 10 | 清理旧路径与稳定化 | 进行中 | 旧主聊天路径已退出，旧 spec 与兼容文档已开始清理 | 根路径兼容接口、双模型与旧语义仍待收口 |
@@ -672,9 +691,9 @@
 | 本地文件读写 | Core tool -> capability dispatch -> PC 客户端本地后端 | 操作审计在服务端，文件内容在终端本地 | 已迁移 | `read_local_documents`、`write_local_document`、`rewrite_local_document` 已走终端后端 |
 | 本地命令执行 | Core tool -> agent dispatcher -> `shell.exec` | 操作审计在服务端，命令执行在终端本地 | 已迁移 | Core 本地 fallback 默认关闭 |
 | 工作区分析 | Core tool -> agent dispatcher -> `workspace.analyze` | 操作审计在服务端，分析执行在终端本地 | 已迁移 | 结果已能回流主链 |
-| 本地 MCP | PC 客户端本地后端 MCP runtime + Core 安全级 MCP | 终端能力集 + Core 安全服务 | 已迁移 | `user/mcp_servers.json` 由 Desktop Agent 托管 |
+| 本地 MCP | PC 客户端本地后端 MCP runtime + Core MCP | 终端能力集 + Core 安全服务 | 已迁移 | `user/mcp_servers.json` 由 Desktop Agent 托管；`user/core_mcp_servers.json` 用于服务端安全级、非终端依赖的 MCP |
 | CIL | `clients/gateway_client.py` -> `client/* + client/ws` | 服务端主链 | 已迁移 | `cil/client.py` 已按 thread/session 方式接入 |
-| Feishu 输入输出 | `GatewayConversationClient` -> `client/* + client/ws` | 服务端主链 | 部分迁移 | 正式链路可用，但兼容事件总线分支仍未完全移除 |
+| Feishu 输入输出 | `GatewayConversationClient` -> `client/* + client/ws` | 服务端主链 | 部分迁移 | 正式链路可用，但兼容事件总线分支仍待进一步压缩 |
 | Task | `TaskManager` + 后台调度 | `task_store` state blob + 数据表骨架 | 已迁移 | 运行态主读写已不再依赖 `user/*.json` |
 | Office | `OfficeTools` | `office_state` state blob | 部分迁移 | 状态后端已切 DB，但尚未进入 workspace 一等模型 |
 | Study | `StudyTools` | `study_progress` state blob | 部分迁移 | 状态后端已切 DB，但尚未进入 workspace 一等模型 |
@@ -702,7 +721,7 @@
 | 关键枚举与术语分裂 | `mode`、`execution_target`、approval 语义在文档、种子数据和前端间仍不一致 | 容易继续在错误模型上叠加功能 | P1 | 立即收口 |
 | 前端仍偏开发壳 | 默认 localhost、自动创建 `Desktop Chat`、保留 `Agent Echo` 调试姿态、状态表达仍偏开发态 | 与真实 Client 产品角色不一致 | P2 | Phase 6 收口 |
 | 根路径兼容 surface 仍存在 | `/config`、`/memory`、`/runtime/*` 等根路径接口仍在 | 新开发者容易继续误用旧语义 | P2 | Phase 10 收口 |
-| 附件通道未闭环 | 只有入口和模型骨架，缺少 upload/download 主链 | 无法承接截图、文档等真实跨端对象流 | P2 | Phase 7 |
+| 附件产品化仍未收口 | attachment 主链已可运行，但下载仍依赖 Core 代理内容，截图短 TTL / 清理与对象存储部署说明未完成 | 会让对象存储能力停留在兼容态，难以作为正式产品能力交付 | P2 | Phase 7 |
 | Edge Agent 能力集仍偏骨架 | transport 已统一，但边缘专属 capability 与更完整运行治理仍较少 | 边缘设备场景仍偏最小样例 | P2 | Phase 9 |
 
 ## 6. 推荐后续顺序

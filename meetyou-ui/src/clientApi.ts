@@ -15,6 +15,37 @@ import type {
   ClientProcedure,
 } from './types'
 
+export interface ClientAttachmentDownloadTicket {
+  attachment_id: string
+  ticket_id: string
+  download_url: string
+  fallback_download_url: string
+  download_strategy: string
+  expires_at: string
+  mime_type: string
+  file_name: string
+  size_bytes: number
+}
+
+export interface ClientAttachmentDownloadPlan {
+  mode: 'direct' | 'proxy'
+  url: string
+  fileName: string
+}
+
+function isProxyAttachmentDownloadUrl(url: string): boolean {
+  const value = String(url || '').trim()
+  if (!value) {
+    return false
+  }
+  try {
+    const parsed = new URL(value, 'http://127.0.0.1')
+    return parsed.pathname.includes('/client/attachments/content/')
+  } catch {
+    return value.includes('/client/attachments/content/')
+  }
+}
+
 function toClientWsBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/^http/i, 'ws')
 }
@@ -299,6 +330,8 @@ export async function completeClientAttachment(
   mime_type: string
   object_key: string
   size_bytes: number
+  lifecycle_policy: string
+  expires_at: string
   sha256: string
   status: string
 }> {
@@ -314,18 +347,36 @@ export async function createClientAttachmentDownloadTicket(
   baseUrl: string,
   attachmentId: string,
   clientId?: string,
-): Promise<{
-  attachment_id: string
-  ticket_id: string
-  download_url: string
-  expires_at: string
-  mime_type: string
-  file_name: string
-  size_bytes: number
-}> {
+): Promise<ClientAttachmentDownloadTicket> {
   const query = clientId ? `?client_id=${encodeURIComponent(clientId)}` : ''
   const response = await fetchWithAuth(`${baseUrl}/client/attachments/${encodeURIComponent(attachmentId)}/download-ticket${query}`)
   return readJsonOrThrow(response, '创建附件下载票据失败')
+}
+
+export function resolveClientAttachmentDownloadPlan(ticket: ClientAttachmentDownloadTicket): ClientAttachmentDownloadPlan {
+  const directUrl = String(ticket.download_url || '').trim()
+  const fallbackUrl = String(ticket.fallback_download_url || '').trim()
+  const strategy = String(ticket.download_strategy || '').trim().toLowerCase()
+  const fileName = String(ticket.file_name || ticket.attachment_id || 'attachment.bin').trim() || 'attachment.bin'
+  const hasProxyStyleDirectUrl = isProxyAttachmentDownloadUrl(directUrl)
+  const shouldUseDirectUrl =
+    Boolean(directUrl) &&
+    (
+      strategy === 'presigned' ||
+      (!hasProxyStyleDirectUrl && (!fallbackUrl || directUrl !== fallbackUrl))
+    )
+  if (shouldUseDirectUrl) {
+    return {
+      mode: 'direct',
+      url: directUrl,
+      fileName,
+    }
+  }
+  return {
+    mode: 'proxy',
+    url: fallbackUrl || directUrl,
+    fileName,
+  }
 }
 
 export async function downloadClientAttachmentContent(downloadUrl: string): Promise<Blob> {

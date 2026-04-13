@@ -31,9 +31,10 @@
 
 MCP 文件边界：
 
-- `core_mcp_servers.json`：仅用于服务端可安全运行、且不依赖终端在线的 Core 级 MCP
+- `core_mcp_servers.json`：仅用于 `Core MCP`，承载服务端可安全运行、且不依赖终端在线的 MCP 与非端侧集成能力
 - `mcp_servers.json`：仅用于桌面端本地 MCP，由 Desktop Agent 托管并依赖本机环境
 - 如果日志提示缺少 `core_mcp_servers.json`，只表示 Core 侧未配置服务端 MCP，不代表 Desktop Agent 的 `mcp_servers.json` 缺失
+- 纯进程内轻量工具与 Core 自身状态管理能力仍保留为 runtime-native tool，不需要配置到 `core_mcp_servers.json`
 
 运行时会自动在 `user/` 下生成任务存储文件：
 

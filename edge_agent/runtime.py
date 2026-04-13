@@ -28,6 +28,8 @@ class EdgeAgentRuntime:
         self._capability_revision = 1
         self._handlers = build_capability_handlers(config.agent_id)
         self._active_ws = None
+        self._heartbeat_interval_seconds = max(1, int(config.heartbeat_interval_seconds))
+        self._heartbeat_interval_updated = asyncio.Event()
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -51,18 +53,17 @@ class EdgeAgentRuntime:
         async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             async with session.ws_connect(self.config.websocket_url) as ws:
                 self._active_ws = ws
-                heartbeat_interval = self.config.heartbeat_interval_seconds
+                self._set_heartbeat_interval(self.config.heartbeat_interval_seconds, notify=False)
                 ready_received = False
                 await ws.send_json(build_hello(self.config))
                 await ws.send_json(build_capabilities_snapshot(self.config, revision=self._capability_revision))
-                heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws, heartbeat_interval))
+                heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
                 try:
                     async for message in ws:
                         if message.type == aiohttp.WSMsgType.TEXT:
                             payload = message.json(loads=__import__("json").loads)
-                            heartbeat_interval, ready_received = await self._handle_server_message(
+                            ready_received = await self._handle_server_message(
                                 payload,
-                                heartbeat_interval,
                                 ready_received,
                                 ws,
                             )
@@ -75,27 +76,42 @@ class EdgeAgentRuntime:
                     if self._active_ws is ws:
                         self._active_ws = None
 
-    async def _heartbeat_loop(self, ws, interval: int) -> None:
+    def _set_heartbeat_interval(self, interval: int, *, notify: bool = True) -> int:
+        normalized = max(1, int(interval))
+        changed = normalized != self._heartbeat_interval_seconds
+        self._heartbeat_interval_seconds = normalized
+        if notify and changed:
+            self._heartbeat_interval_updated.set()
+        return normalized
+
+    async def _heartbeat_loop(self, ws) -> None:
         while True:
-            await asyncio.sleep(max(3, interval))
+            interval = max(3, self._heartbeat_interval_seconds)
+            try:
+                await asyncio.wait_for(self._heartbeat_interval_updated.wait(), timeout=interval)
+                self._heartbeat_interval_updated.clear()
+                continue
+            except asyncio.TimeoutError:
+                pass
             await ws.send_json(build_heartbeat(self.config, metrics={"workspace_count": len(self.config.workspace_ids)}))
 
-    async def _handle_server_message(self, payload: dict, heartbeat_interval: int, ready_received: bool, ws) -> tuple[int, bool]:
+    async def _handle_server_message(self, payload: dict, ready_received: bool, ws) -> bool:
         schema = str(payload.get("schema") or "")
         if schema != AGENT_SCHEMA:
-            return heartbeat_interval, ready_received
+            return ready_received
         message_type = str(payload.get("type") or "")
         if message_type == "agent.hello.ack":
-            next_interval = int(payload.get("payload", {}).get("heartbeat_interval_seconds") or heartbeat_interval)
+            next_interval = int(payload.get("payload", {}).get("heartbeat_interval_seconds") or self._heartbeat_interval_seconds)
+            self._set_heartbeat_interval(next_interval)
             logger.info("Edge Agent hello acknowledged: %s", payload.get("payload", {}))
-            return next_interval, ready_received
+            return ready_received
         if message_type == "agent.ready":
             logger.info("Edge Agent ready: %s", payload.get("payload", {}))
-            return heartbeat_interval, True
+            return True
         if message_type == "capability.call.request":
             await self._handle_call_request(ws, payload)
-            return heartbeat_interval, ready_received
-        return heartbeat_interval, ready_received
+            return ready_received
+        return ready_received
 
     async def _handle_call_request(self, ws, payload: dict) -> None:
         envelope_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}

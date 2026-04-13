@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from pydantic import ValidationError
 
 from agent_protocol import build_capability_call_request
+from core.http_headers import build_attachment_content_disposition
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import (
     EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE,
@@ -158,8 +159,11 @@ def _attachment_response(attachment) -> ClientAttachmentResponse:
         owner_id=attachment.owner_id,
         kind=attachment.kind,
         mime_type=attachment.mime_type,
+        file_name=str(metadata.get("file_name") or attachment.attachment_id),
         object_key=attachment.object_key,
         size_bytes=attachment.size_bytes,
+        lifecycle_policy=str(getattr(attachment, "lifecycle_policy", "") or "normal"),
+        expires_at=str(getattr(attachment, "expires_at", "") or ""),
         sha256=attachment.sha256,
         status=attachment.status,
     )
@@ -750,21 +754,32 @@ def build_client_router(gateway) -> APIRouter:
     async def create_attachment_download_ticket(attachment_id: str, http_request: Request, client_id: str = ""):
         gateway._require_http_auth(http_request)
         domain = gateway._require_core_domain()
+        fallback_download_url_base = str(http_request.base_url).rstrip("/") + f"/client/attachments/content/{attachment_id}?ticket_id="
         try:
             payload = domain.services.attachment.create_download_ticket(
                 attachment_id=attachment_id,
                 issuer_type="client",
                 issuer_ref=str(client_id or "client").strip() or "client",
+                fallback_download_url=fallback_download_url_base,
             )
         except ValueError as exc:
             gateway._raise_http_error(status_code=409, code=str(exc), message=str(exc))
         attachment = payload["attachment"]
         file_name = str((getattr(attachment, "meta", {}) or {}).get("file_name") or attachment.attachment_id)
-        download_url = str(http_request.base_url).rstrip("/") + f"/client/attachments/content/{attachment_id}?ticket_id={payload['ticket_id']}"
+        fallback_download_url = str(payload.get("fallback_download_url") or "").strip()
+        if fallback_download_url:
+            fallback_download_url = f"{fallback_download_url}{payload['ticket_id']}"
+        download_url = str(payload.get("download_url") or "").strip()
+        if str(payload.get("download_strategy") or "") == "proxy":
+            download_url = fallback_download_url
+        if not download_url:
+            download_url = fallback_download_url
         return ClientAttachmentDownloadTicketResponse(
             attachment_id=attachment.attachment_id,
             ticket_id=payload["ticket_id"],
             download_url=download_url,
+            fallback_download_url=fallback_download_url,
+            download_strategy=str(payload.get("download_strategy") or ""),
             expires_at=payload["expires_at"],
             mime_type=attachment.mime_type,
             file_name=file_name,
@@ -787,7 +802,7 @@ def build_client_router(gateway) -> APIRouter:
         return Response(
             content=content,
             media_type=attachment.mime_type,
-            headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+            headers={"Content-Disposition": build_attachment_content_disposition(file_name)},
         )
 
     @router.post("/threads", response_model=ClientThreadResponse)

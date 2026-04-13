@@ -328,6 +328,161 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
+    def test_runtime_deletes_local_ephemeral_attachment_after_upload(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            old_cwd = Path.cwd()
+            os.chdir(root)
+            try:
+                attachment_file = root / "capture.png"
+                attachment_file.write_bytes(b"png-bytes")
+                config = DesktopAgentConfig(
+                    core_base_url="http://127.0.0.1:8000",
+                    agent_id="desktop-main-agent",
+                    display_name="Desktop Main Agent",
+                    workspace_ids=["personal"],
+                    read_roots=["."],
+                )
+                runtime = DesktopAgentRuntime(config)
+
+                async def _ephemeral_handler(arguments):
+                    del arguments
+                    return {
+                        "summary": "done",
+                        "attachment_outputs": [
+                            {
+                                "local_path": str(attachment_file),
+                                "kind": "screenshot",
+                                "mime_type": "image/png",
+                                "file_name": "capture.png",
+                                "lifecycle_policy": "ephemeral",
+                            }
+                        ],
+                    }
+
+                runtime._handlers["agent.desktop-main-agent.utility.with_ephemeral_attachment"] = _ephemeral_handler
+
+                class _FakeWs:
+                    def __init__(self):
+                        self.sent = []
+
+                    async def send_json(self, payload):
+                        self.sent.append(payload)
+
+                class _FakeResponse:
+                    def __init__(self, status: int, payload: dict):
+                        self.status = status
+                        self._payload = payload
+
+                    async def json(self, content_type=None):
+                        del content_type
+                        return self._payload
+
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, exc_type, exc, tb):
+                        return False
+
+                class _FakeSession:
+                    def request(self, method, url, **kwargs):
+                        if method == "POST" and url.endswith("/agent/attachments/upload-ticket"):
+                            return _FakeResponse(200, {
+                                "attachment_id": "att_uploaded",
+                                "ticket_id": "att_ticket",
+                                "upload_url": "http://127.0.0.1:8000/agent/attachments/upload/att_ticket",
+                            })
+                        if method == "PUT" and url.endswith("/agent/attachments/upload/att_ticket"):
+                            return _FakeResponse(200, {
+                                "attachment_id": "att_uploaded",
+                                "ticket_id": "att_ticket",
+                                "status": "uploaded",
+                                "size_bytes": len(kwargs.get("data") or b""),
+                                "sha256": "abc",
+                            })
+                        if method == "POST" and url.endswith("/agent/attachments/att_uploaded/complete"):
+                            return _FakeResponse(200, {
+                                "attachment_id": "att_uploaded",
+                                "status": "ready",
+                                "mime_type": "image/png",
+                                "file_name": "capture.png",
+                                "size_bytes": len(b"png-bytes"),
+                                "sha256": "abc",
+                                "lifecycle_policy": "ephemeral",
+                                "expires_at": "2026-04-13T00:00:00Z",
+                            })
+                        raise AssertionError(f"Unexpected request: {method} {url}")
+
+                ws = _FakeWs()
+                asyncio.run(
+                    runtime._handle_call_request(
+                        ws,
+                        {
+                            "schema": "meetyou.agent.v1",
+                            "type": "capability.call.request",
+                            "message_id": "dispatch-ephemeral-attachment",
+                            "payload": {
+                                "operation_id": "op_attachment_ephemeral",
+                                "call_id": "call-ephemeral-attachment",
+                                "capability_id": "agent.desktop-main-agent.utility.with_ephemeral_attachment",
+                                "arguments": {},
+                            },
+                        },
+                        _FakeSession(),
+                    )
+                )
+                result_payload = ws.sent[-1]["payload"]
+                self.assertFalse(attachment_file.exists())
+                self.assertTrue(result_payload["attachment_outputs"][0]["local_file_deleted"])
+                self.assertEqual(result_payload["attachment_outputs"][0]["lifecycle_policy"], "ephemeral")
+            finally:
+                os.chdir(old_cwd)
+
+    def test_hello_ack_applies_heartbeat_interval_without_waiting_old_interval(self):
+        async def _run():
+            config = DesktopAgentConfig(
+                core_base_url="http://127.0.0.1:8000",
+                agent_id="desktop-main-agent",
+                display_name="Desktop Main Agent",
+                workspace_ids=["personal"],
+                heartbeat_interval_seconds=30,
+            )
+            runtime = DesktopAgentRuntime(config)
+
+            class _FakeWs:
+                def __init__(self):
+                    self.sent = []
+                    self.sent_event = asyncio.Event()
+
+                async def send_json(self, payload):
+                    self.sent.append(payload)
+                    self.sent_event.set()
+
+            ws = _FakeWs()
+            heartbeat_task = asyncio.create_task(runtime._heartbeat_loop(ws))
+            try:
+                await asyncio.sleep(0.05)
+                ready_received = await runtime._handle_server_message(
+                    {
+                        "schema": "meetyou.agent.v1",
+                        "type": "agent.hello.ack",
+                        "payload": {"heartbeat_interval_seconds": 1},
+                    },
+                    False,
+                    ws,
+                    object(),
+                )
+                self.assertFalse(ready_received)
+                self.assertEqual(runtime._heartbeat_interval_seconds, 1)
+                await asyncio.wait_for(ws.sent_event.wait(), timeout=3.5)
+                self.assertEqual(ws.sent[-1]["type"], "agent.heartbeat")
+            finally:
+                heartbeat_task.cancel()
+                with __import__("contextlib").suppress(asyncio.CancelledError):
+                    await heartbeat_task
+
+        asyncio.run(_run())
+
     @staticmethod
     def _build_attachment_handler(local_path: str):
         async def handler(arguments):
@@ -345,3 +500,26 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
             }
 
         return handler
+
+
+class DesktopAgentHeartbeatNegotiationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_hello_ack_updates_heartbeat_interval_and_wakes_loop(self):
+        config = load_desktop_agent_config()
+        runtime = DesktopAgentRuntime(config)
+        self.assertEqual(runtime._heartbeat_interval_seconds, config.heartbeat_interval_seconds)
+        self.assertFalse(runtime._heartbeat_interval_updated.is_set())
+
+        ready_received = await runtime._handle_server_message(
+            {
+                "schema": "meetyou.agent.v1",
+                "type": "agent.hello.ack",
+                "payload": {"heartbeat_interval_seconds": 5},
+            },
+            False,
+            object(),
+            object(),
+        )
+
+        self.assertFalse(ready_received)
+        self.assertEqual(runtime._heartbeat_interval_seconds, 5)
+        self.assertTrue(runtime._heartbeat_interval_updated.is_set())

@@ -16,6 +16,7 @@ import {
   getClientThreadProcedureContext,
   downloadClientAttachmentContent,
   createClientAttachmentDownloadTicket,
+  resolveClientAttachmentDownloadPlan,
   createClientAttachmentUploadTicket,
   uploadClientAttachmentContent,
 } from '../clientApi'
@@ -232,13 +233,24 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     try {
       const context = clientContext ?? (await initializeClientContext())
       const ticket = await createClientAttachmentDownloadTicket(baseUrl, attachmentId, context.clientId)
-      const blob = await downloadClientAttachmentContent(ticket.download_url)
-      const objectUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
-      link.href = objectUrl
-      link.download = ticket.file_name || attachmentId
       link.rel = 'noopener noreferrer'
       link.style.display = 'none'
+      const plan = resolveClientAttachmentDownloadPlan(ticket)
+      if (plan.mode === 'direct') {
+        link.href = plan.url
+        link.download = plan.fileName || attachmentId
+        link.target = '_blank'
+        link.referrerPolicy = 'no-referrer'
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        return ticket
+      }
+      const blob = await downloadClientAttachmentContent(plan.url)
+      const objectUrl = URL.createObjectURL(blob)
+      link.href = objectUrl
+      link.download = plan.fileName || attachmentId
       document.body.appendChild(link)
       link.click()
       link.remove()

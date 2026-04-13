@@ -44,6 +44,28 @@ from gateway.ws_manager import WebSocketManager, WebSocketOutputAdapter
 _HTTP_SCHEMA = "meetyou.http.v1"
 _WS_SCHEMA = "meetyou.ws.v1"
 _LOOPBACK_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$", re.IGNORECASE)
+_LEGACY_HTTP_SURFACE_HINTS = {
+    "/inputs": {
+        "replacement_path": "/client/messages",
+        "message": "旧聊天输入入口 /inputs 已停止承载聊天流，请改用 /client/messages。",
+    },
+    "/controls": {
+        "replacement_path": "/client/*",
+        "message": "旧控制入口 /controls 已停止承载聊天流，请改用 /client/messages、/client/operations 或 /client/sessions/{session_id}/*。",
+    },
+    "/session": {
+        "replacement_path": "/client/sessions",
+        "message": "旧会话入口 /session 已停止承载聊天流，请改用 /client/sessions。",
+    },
+    "/sessions": {
+        "replacement_path": "/client/sessions",
+        "message": "根路径 /sessions 已不再是正式会话入口，请改用 /client/sessions。",
+    },
+    "/messages": {
+        "replacement_path": "/client/messages",
+        "message": "根路径 /messages 已不再是正式消息入口，请改用 /client/messages。",
+    },
+}
 
 
 class GatewayHttpError(Exception):
@@ -225,6 +247,25 @@ class FastAPIGateway:
                 retryable=retryable,
                 details=details,
             ),
+        )
+
+    def _raise_legacy_http_surface_removed(
+        self,
+        *,
+        legacy_path: str,
+        replacement_path: str,
+        message: str,
+    ) -> None:
+        self._raise_http_error(
+            status_code=410,
+            code="legacy_http_path_removed",
+            category=RuntimeErrorCategory.VALIDATION.value,
+            message=message,
+            details={
+                "legacy_path": legacy_path,
+                "replacement_path": replacement_path,
+                "formal_surface": "client/* + client/ws",
+            },
         )
 
     def _require_core_domain(self):
@@ -560,6 +601,32 @@ class FastAPIGateway:
                     session_id=str(payload.get("session_id") or session_id),
                     debug=dict(payload or {}),
                 ),
+            )
+
+        def _legacy_http_route_handler(legacy_path: str):
+            async def handler(request: Request):
+                self._require_http_auth(request)
+                hint = _LEGACY_HTTP_SURFACE_HINTS[legacy_path]
+                self._raise_legacy_http_surface_removed(
+                    legacy_path=legacy_path,
+                    replacement_path=hint["replacement_path"],
+                    message=hint["message"],
+                )
+
+            return handler
+
+        for legacy_path, route_config in (
+            ("/inputs", {"methods": ["POST"]}),
+            ("/controls", {"methods": ["POST"]}),
+            ("/session", {"methods": ["GET", "POST"]}),
+            ("/sessions", {"methods": ["GET", "POST"]}),
+            ("/messages", {"methods": ["POST"]}),
+        ):
+            self.app.add_api_route(
+                legacy_path,
+                _legacy_http_route_handler(legacy_path),
+                methods=route_config["methods"],
+                include_in_schema=False,
             )
 
         @self.app.websocket("/ws")

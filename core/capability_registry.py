@@ -184,6 +184,9 @@ class MCPServerCapability:
     auth_env: list[str]
     fallback_tools: list[str]
     enabled_by_default: bool
+    boundary: str
+    managed_by: str
+    classification_reason: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -195,6 +198,9 @@ class MCPServerCapability:
             "auth_env": list(self.auth_env),
             "fallback_tools": list(self.fallback_tools),
             "enabled_by_default": self.enabled_by_default,
+            "boundary": self.boundary,
+            "managed_by": self.managed_by,
+            "classification_reason": self.classification_reason,
         }
 
 
@@ -390,6 +396,9 @@ class CapabilityRegistry:
             auth_env=auth_env,
             fallback_tools=_unique_strings(payload.get("fallback_tools")),
             enabled_by_default=bool(payload.get("enabled_by_default", True)),
+            boundary=str(payload.get("boundary") or "core_mcp").strip() or "core_mcp",
+            managed_by=str(payload.get("managed_by") or "core").strip() or "core",
+            classification_reason=str(payload.get("classification_reason") or "").strip(),
         )
 
     @staticmethod
@@ -561,6 +570,9 @@ class CapabilityRegistry:
                     "missing_auth": missing_auth,
                     "fallback_tools": fallback_tools,
                     "degraded": not usable and bool(fallback_tools),
+                    "boundary": str((capability.boundary if capability is not None else "core_mcp") or "core_mcp"),
+                    "managed_by": str((capability.managed_by if capability is not None else "core") or "core"),
+                    "classification_reason": str((capability.classification_reason if capability is not None else "") or ""),
                 }
             )
         return diagnostics

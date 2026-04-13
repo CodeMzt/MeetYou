@@ -520,8 +520,11 @@ class ClientAttachmentResponse(BaseModel):
     owner_id: str
     kind: str
     mime_type: str
+    file_name: str
     object_key: str
     size_bytes: int
+    lifecycle_policy: str = "normal"
+    expires_at: str = ""
     sha256: str
     status: str
 
@@ -530,6 +533,8 @@ class ClientAttachmentDownloadTicketResponse(BaseModel):
     attachment_id: str
     ticket_id: str
     download_url: str
+    fallback_download_url: str = ""
+    download_strategy: str = ""
     expires_at: str
     mime_type: str
     file_name: str

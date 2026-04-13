@@ -194,6 +194,10 @@ class ServiceRuntime:
             self.telemetry.observe_background_status(background_status)
             metrics = {**metrics, **self.telemetry.metrics_snapshot()}
             issue_snapshot = build_system_issue_snapshot(background_status)
+            get_core_mcp_diagnostics = getattr(self._app, "get_core_mcp_diagnostics", None)
+            core_mcp_diagnostics = get_core_mcp_diagnostics() if callable(get_core_mcp_diagnostics) else {}
+            core_mcp_summary = dict(core_mcp_diagnostics.get("summary") or {})
+            core_mcp_config = dict(core_mcp_diagnostics.get("config") or {})
             system_issue_candidates = issue_snapshot["system_issue_candidates"]
             delivery_degraded = bool(
                 int(background_status.get("pending_delivery_count", 0) or 0) > 0
@@ -201,6 +205,10 @@ class ServiceRuntime:
             )
             tool_degraded = int(metrics.get("tool_failures_total", 0) or 0) > 0
             background_degraded = bool(system_issue_candidates)
+            core_mcp_degraded = int(core_mcp_summary.get("partial_failure_count", 0) or 0) > 0
+            metrics["core_mcp_configured_count"] = int(core_mcp_summary.get("configured_server_count", 0) or 0)
+            metrics["core_mcp_enabled_count"] = int(core_mcp_summary.get("enabled_count", 0) or 0)
+            metrics["core_mcp_partial_failures_count"] = int(core_mcp_summary.get("partial_failure_count", 0) or 0)
 
             self._mark_component(
                 "background_jobs",
@@ -262,6 +270,21 @@ class ServiceRuntime:
                             "gateway_delivery_attempts_total": int(metrics.get("gateway_delivery_attempts_total", 0) or 0),
                             "gateway_delivery_failures_total": int(metrics.get("gateway_delivery_failures_total", 0) or 0),
                             "background_pending_delivery_count": int(metrics.get("background_pending_delivery_count", 0) or 0),
+                        },
+                    ),
+                    (
+                        "core_mcp",
+                        RuntimeHealthStatus.DEGRADED.value if core_mcp_degraded else RuntimeHealthStatus.READY.value,
+                        "存在 Core MCP 部分失败，需要检查配置、鉴权或 server 启动状态"
+                        if core_mcp_degraded
+                        else "Core MCP 诊断可见",
+                        {
+                            "config_status": str(core_mcp_config.get("status") or ""),
+                            "config_path": str(core_mcp_config.get("path") or ""),
+                            "configured_server_count": int(core_mcp_summary.get("configured_server_count", 0) or 0),
+                            "enabled_count": int(core_mcp_summary.get("enabled_count", 0) or 0),
+                            "partial_failure_count": int(core_mcp_summary.get("partial_failure_count", 0) or 0),
+                            "partial_failure_servers": list(core_mcp_summary.get("partial_failure_servers") or []),
                         },
                     ),
                 ]

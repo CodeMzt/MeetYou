@@ -40,6 +40,8 @@ class DesktopAgentRuntime:
         self._mcp_init_task: asyncio.Task | None = None
         self._mcp_ready = False
         self._active_ws = None
+        self._heartbeat_interval_seconds = max(1, int(config.heartbeat_interval_seconds))
+        self._heartbeat_interval_updated = asyncio.Event()
 
     async def run(self) -> None:
         try:
@@ -82,18 +84,17 @@ class DesktopAgentRuntime:
         async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             async with session.ws_connect(self.config.websocket_url) as ws:
                 self._active_ws = ws
-                heartbeat_interval = self.config.heartbeat_interval_seconds
+                self._set_heartbeat_interval(self.config.heartbeat_interval_seconds, notify=False)
                 ready_received = False
                 await ws.send_json(build_hello(self.config))
                 await self._send_capability_snapshot(ws)
-                heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws, heartbeat_interval))
+                heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
                 try:
                     async for message in ws:
                         if message.type == aiohttp.WSMsgType.TEXT:
                             payload = message.json(loads=__import__("json").loads)
-                            heartbeat_interval, ready_received = await self._handle_server_message(
+                            ready_received = await self._handle_server_message(
                                 payload,
-                                heartbeat_interval,
                                 ready_received,
                                 ws,
                                 session,
@@ -116,27 +117,42 @@ class DesktopAgentRuntime:
             )
         )
 
-    async def _heartbeat_loop(self, ws, interval: int) -> None:
+    def _set_heartbeat_interval(self, interval: int, *, notify: bool = True) -> int:
+        normalized = max(1, int(interval))
+        changed = normalized != self._heartbeat_interval_seconds
+        self._heartbeat_interval_seconds = normalized
+        if notify and changed:
+            self._heartbeat_interval_updated.set()
+        return normalized
+
+    async def _heartbeat_loop(self, ws) -> None:
         while True:
-            await asyncio.sleep(max(3, interval))
+            interval = max(3, self._heartbeat_interval_seconds)
+            try:
+                await asyncio.wait_for(self._heartbeat_interval_updated.wait(), timeout=interval)
+                self._heartbeat_interval_updated.clear()
+                continue
+            except asyncio.TimeoutError:
+                pass
             await ws.send_json(build_heartbeat(self.config, metrics=self._collect_metrics()))
 
-    async def _handle_server_message(self, payload: dict, heartbeat_interval: int, ready_received: bool, ws, session) -> tuple[int, bool]:
+    async def _handle_server_message(self, payload: dict, ready_received: bool, ws, session) -> bool:
         schema = str(payload.get("schema") or "")
         if schema != AGENT_SCHEMA:
-            return heartbeat_interval, ready_received
+            return ready_received
         message_type = str(payload.get("type") or "")
         if message_type == "agent.hello.ack":
-            next_interval = int(payload.get("payload", {}).get("heartbeat_interval_seconds") or heartbeat_interval)
+            next_interval = int(payload.get("payload", {}).get("heartbeat_interval_seconds") or self._heartbeat_interval_seconds)
+            self._set_heartbeat_interval(next_interval)
             logger.info("Desktop Agent hello acknowledged: %s", payload.get("payload", {}))
-            return next_interval, ready_received
+            return ready_received
         if message_type == "agent.ready":
             logger.info("Desktop Agent ready: %s", payload.get("payload", {}))
-            return heartbeat_interval, True
+            return True
         if message_type == "capability.call.request":
             await self._handle_call_request(ws, payload, session)
-            return heartbeat_interval, ready_received
-        return heartbeat_interval, ready_received
+            return ready_received
+        return ready_received
 
     @staticmethod
     def _split_result_payload(result: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -193,6 +209,18 @@ class DesktopAgentRuntime:
                     "ticket_id": ticket["ticket_id"],
                 },
             )
+            local_file_deleted = False
+            cleanup_requested = bool(item.get("cleanup_local")) or (
+                str(item.get("kind") or "").strip().lower() == "screenshot"
+            ) or (
+                str(item.get("lifecycle_policy") or "").strip().lower() == "ephemeral"
+            )
+            if cleanup_requested:
+                try:
+                    await asyncio.to_thread(local_path.unlink)
+                    local_file_deleted = True
+                except FileNotFoundError:
+                    local_file_deleted = True
             uploaded.append(
                 {
                     "attachment_id": complete.get("attachment_id"),
@@ -200,8 +228,11 @@ class DesktopAgentRuntime:
                     "mime_type": complete.get("mime_type"),
                     "file_name": complete.get("file_name"),
                     "size_bytes": complete.get("size_bytes"),
+                    "lifecycle_policy": complete.get("lifecycle_policy"),
+                    "expires_at": complete.get("expires_at"),
                     "sha256": complete.get("sha256"),
                     "status": complete.get("status"),
+                    "local_file_deleted": local_file_deleted,
                 }
             )
         return uploaded

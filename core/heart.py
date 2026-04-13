@@ -26,7 +26,12 @@ from core.background_jobs import (
     normalize_failure,
     normalize_job_record,
 )
-from core.background_status import build_system_issue_candidates, build_system_issue_snapshot
+from core.background_status import (
+    build_system_issue_candidates,
+    build_system_issue_snapshot,
+    build_temporal_attention_candidates,
+    build_temporal_attention_snapshot,
+)
 from core.io_protocol import EventTarget, EventType, InboundEvent, OutboundEvent, SourceKind, TargetKind, make_source
 from core.runtime_context import bind_event_context, reset_event_context
 
@@ -392,10 +397,15 @@ class Heart:
     def _build_system_issue_candidates(self, payload: dict[str, Any]) -> list[str]:
         return build_system_issue_candidates(payload)
 
+    def _build_temporal_attention_candidates(self, payload: dict[str, Any]) -> list[str]:
+        return build_temporal_attention_candidates(payload)
+
     @staticmethod
     def _normalize_signal_kind(value: Any) -> str:
         normalized = str(value or "none").strip().lower() or "none"
-        if normalized not in {"none", "system_issue", "idle_poke"}:
+        if normalized == "urgent_deadline":
+            normalized = "temporal_attention"
+        if normalized not in {"none", "system_issue", "temporal_attention", "idle_poke"}:
             return "none"
         return normalized
 
@@ -430,6 +440,28 @@ class Heart:
             if str(payload.get("last_housekeeping_error") or "").strip():
                 return "后台整理出现错误，可能影响任务执行或提醒。"
             return "后台出现了可能影响任务执行的异常，建议检查。"
+        if signal_kind == "temporal_attention":
+            pending_delivery_tasks = payload.get("delivery", {}).get("pending_redelivery_tasks") or payload.get(
+                "pending_redelivery_tasks"
+            ) or []
+            if pending_delivery_tasks:
+                task = pending_delivery_tasks[0]
+                summary = str(task.get("summary") or task.get("task_key") or "定时提醒").strip()
+                return f"已触发的事项“{summary}”仍在等待送达，可能需要尽快跟进。"
+            awaiting_completion_tasks = payload.get("execution", {}).get("awaiting_completion_tasks") or payload.get(
+                "awaiting_completion_tasks"
+            ) or []
+            if awaiting_completion_tasks:
+                task = awaiting_completion_tasks[0]
+                summary = str(task.get("summary") or task.get("task_key") or "定时任务").strip()
+                if task.get("auto_run"):
+                    return f"定时任务“{summary}”已执行，但仍等待完成确认。"
+                return f"定时事项“{summary}”已触发，但仍等待完成确认。"
+            nearest_due_task = payload.get("nearest_due_task") if isinstance(payload.get("nearest_due_task"), dict) else {}
+            if nearest_due_task and nearest_due_task.get("overdue"):
+                summary = str(nearest_due_task.get("summary") or nearest_due_task.get("task_key") or "定时事项").strip()
+                return f"定时事项“{summary}”已经逾期，可能需要尽快处理。"
+            return "后台存在需要时间关注的定时事项，建议尽快检查。"
         if signal_kind == "idle_poke":
             return "当前没有紧急事项，用户已沉默较久，可用一句自然短句确认是否需要帮助。"
         return ""
@@ -461,6 +493,43 @@ class Heart:
                 "There is a concrete background issue that may affect task execution or reminders. "
                 "Keep the follow-up short."
             )
+        if signal_kind == "temporal_attention":
+            pending_delivery_tasks = payload.get("delivery", {}).get("pending_redelivery_tasks") or payload.get(
+                "pending_redelivery_tasks"
+            ) or []
+            if pending_delivery_tasks:
+                task = pending_delivery_tasks[0]
+                summary = str(task.get("summary") or task.get("task_key") or "scheduled follow-up").strip()
+                return (
+                    f'Triggered follow-up "{summary}" is still waiting to be delivered. '
+                    "Keep the follow-up brief and practical."
+                )
+            awaiting_completion_tasks = payload.get("execution", {}).get("awaiting_completion_tasks") or payload.get(
+                "awaiting_completion_tasks"
+            ) or []
+            if awaiting_completion_tasks:
+                task = awaiting_completion_tasks[0]
+                summary = str(task.get("summary") or task.get("task_key") or "scheduled task").strip()
+                if task.get("auto_run"):
+                    return (
+                        f'Scheduled task "{summary}" has run and is still waiting for completion confirmation. '
+                        "Keep the follow-up brief and practical."
+                    )
+                return (
+                    f'Scheduled follow-up "{summary}" is still waiting for completion confirmation. '
+                    "Keep the follow-up brief and practical."
+                )
+            nearest_due_task = payload.get("nearest_due_task") if isinstance(payload.get("nearest_due_task"), dict) else {}
+            if nearest_due_task and nearest_due_task.get("overdue"):
+                summary = str(nearest_due_task.get("summary") or nearest_due_task.get("task_key") or "scheduled follow-up").strip()
+                return (
+                    f'Scheduled follow-up "{summary}" is overdue. '
+                    "Keep the follow-up brief and practical."
+                )
+            return (
+                "There is a time-sensitive scheduled follow-up that may need attention. "
+                "Keep the follow-up brief and practical."
+            )
         if signal_kind == "idle_poke":
             return "There is no critical system issue. A single short casual check-in is enough."
         return self._fallback_signal_message(signal_kind, payload)
@@ -491,6 +560,21 @@ class Heart:
                 issues.append("housekeeping_error")
             if issues:
                 return "system_issue:" + "|".join(issues)
+        if signal_kind == "temporal_attention":
+            issues: list[str] = []
+            if int(payload.get("pending_delivery_count") or 0) > 0:
+                issues.append(f"pending_delivery:{int(payload.get('pending_delivery_count') or 0)}")
+            if int(payload.get("awaiting_completion_count") or 0) > 0:
+                issues.append(f"awaiting_completion:{int(payload.get('awaiting_completion_count') or 0)}")
+            if int(payload.get("run_succeeded_pending_completion_count") or 0) > 0:
+                issues.append(
+                    "completion_confirmation_pending:"
+                    + str(int(payload.get("run_succeeded_pending_completion_count") or 0))
+                )
+            if int(payload.get("overdue_task_count") or 0) > 0:
+                issues.append(f"overdue:{int(payload.get('overdue_task_count') or 0)}")
+            if issues:
+                return "temporal_attention:" + "|".join(issues)
         if signal_kind == "idle_poke":
             session_id = str(payload.get("recent_user_session_id") or "").strip()
             last_user_activity_at = str(payload.get("last_user_activity_at") or "").strip()
@@ -527,10 +611,14 @@ class Heart:
             signal_kind = "none"
 
         system_issue_candidates = self._build_system_issue_candidates(background_status)
+        temporal_attention_candidates = self._build_temporal_attention_candidates(background_status)
         has_recent_user_session = bool(str(background_status.get("last_user_activity_at") or "").strip())
         idle_poke_eligible = bool(background_status.get("idle_poke_eligible"))
 
         if signal_kind == "system_issue" and not system_issue_candidates:
+            decision = "ok"
+            signal_kind = "none"
+        elif signal_kind == "temporal_attention" and not temporal_attention_candidates:
             decision = "ok"
             signal_kind = "none"
         elif signal_kind == "idle_poke" and not idle_poke_eligible:
@@ -618,12 +706,14 @@ class Heart:
             "last_housekeeping_error": self._last_housekeeping_error,
         }
         payload["system_issue_candidates"] = self._build_system_issue_candidates(issue_payload)
+        payload["temporal_attention_candidates"] = self._build_temporal_attention_candidates(issue_payload)
         payload["system"] = {
             **build_system_issue_snapshot(issue_payload),
             "jobs": job_snapshots,
             "job_status_counts": job_status_counts,
             "job_failures": job_failures,
         }
+        payload["temporal"] = build_temporal_attention_snapshot(issue_payload)
         payload["last_idle_poke_at"] = self._last_idle_poke_at
         payload["idle_poke_eligible"] = bool(
             has_recent_user_session
@@ -683,6 +773,17 @@ class Heart:
                         self._api_key,
                         self._model,
                     )
+                    attachment_cleanup_result = {
+                        "expired_download_tickets": 0,
+                        "expired_upload_tickets": 0,
+                        "expired_attachments": 0,
+                        "deleted_objects": 0,
+                    }
+                    attachment_service = getattr(self._core_services, "attachment", None) if self._core_services is not None else None
+                    if attachment_service is not None:
+                        cleanup_expired_resources = getattr(attachment_service, "cleanup_expired_resources", None)
+                        if callable(cleanup_expired_resources):
+                            attachment_cleanup_result = dict(cleanup_expired_resources() or attachment_cleanup_result)
                     self._last_housekeeping_at = _utcnow_iso()
                     self._last_housekeeping_error = ""
                     self._update_job(
@@ -694,7 +795,11 @@ class Heart:
                         next_retry_at=None,
                         retry_count=0,
                         last_failure=None,
-                        last_result={"status": "ok", "at": self._last_housekeeping_at},
+                        last_result={
+                            "status": "ok",
+                            "at": self._last_housekeeping_at,
+                            "attachments": attachment_cleanup_result,
+                        },
                         last_delivery=delivery_payload(state="not_applicable"),
                     )
                 except Exception as exc:

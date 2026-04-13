@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from core.exceptions import ConfigError
+from core.http_headers import build_attachment_content_disposition
 
 
 @dataclass(slots=True)
@@ -28,6 +29,17 @@ class ObjectStoreBackend(Protocol):
     def put_bytes(self, object_key: str, content: bytes) -> StoredObject: ...
 
     def read_bytes(self, object_key: str) -> bytes: ...
+
+    def delete_object(self, object_key: str) -> None: ...
+
+    def generate_presigned_download_url(
+        self,
+        object_key: str,
+        *,
+        expires_in_seconds: int,
+        file_name: str = "",
+        mime_type: str = "",
+    ) -> str: ...
 
 
 class LocalObjectStore:
@@ -57,6 +69,23 @@ class LocalObjectStore:
 
     def read_bytes(self, object_key: str) -> bytes:
         return self.resolve_path(object_key).read_bytes()
+
+    def delete_object(self, object_key: str) -> None:
+        target = self.root / self._to_relative_path(object_key)
+        if not target.exists():
+            return
+        target.unlink()
+
+    def generate_presigned_download_url(
+        self,
+        object_key: str,
+        *,
+        expires_in_seconds: int,
+        file_name: str = "",
+        mime_type: str = "",
+    ) -> str:
+        del object_key, expires_in_seconds, file_name, mime_type
+        return ""
 
 
 class S3CompatibleObjectStore:
@@ -106,6 +135,34 @@ class S3CompatibleObjectStore:
     def read_bytes(self, object_key: str) -> bytes:
         response = self.client.get_object(Bucket=self._bucket, Key=object_key)
         return bytes(response["Body"].read())
+
+    def delete_object(self, object_key: str) -> None:
+        self.client.delete_object(Bucket=self._bucket, Key=object_key)
+
+    def generate_presigned_download_url(
+        self,
+        object_key: str,
+        *,
+        expires_in_seconds: int,
+        file_name: str = "",
+        mime_type: str = "",
+    ) -> str:
+        params: dict[str, Any] = {
+            "Bucket": self._bucket,
+            "Key": object_key,
+        }
+        if mime_type:
+            params["ResponseContentType"] = mime_type
+        normalized_name = str(file_name or "").strip().replace('"', "")
+        if normalized_name:
+            params["ResponseContentDisposition"] = build_attachment_content_disposition(normalized_name)
+        return str(
+            self.client.generate_presigned_url(
+                "get_object",
+                Params=params,
+                ExpiresIn=max(int(expires_in_seconds or 0), 60),
+            )
+        )
 
 
 def resolve_object_store_settings(config: Any | None, *, storage_root_override: Path | None = None) -> ObjectStoreSettings:

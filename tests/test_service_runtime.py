@@ -25,6 +25,15 @@ class _FakeApp:
         "overdue_task_count": 0,
         "repeated_failure_tasks": [],
     }
+    core_mcp_diagnostics = {
+        "config": {"status": "missing", "path": "user/core_mcp_servers.json"},
+        "summary": {
+            "configured_server_count": 0,
+            "enabled_count": 0,
+            "partial_failure_count": 0,
+            "partial_failure_servers": [],
+        },
+    }
 
     def __init__(self, health_getter=None, telemetry_recorder=None):
         self.health_getter = health_getter
@@ -49,6 +58,9 @@ class _FakeApp:
 
     async def get_background_status(self):
         return dict(self.background_status)
+
+    def get_core_mcp_diagnostics(self):
+        return dict(self.core_mcp_diagnostics)
 
     async def _noop(self):
         return None
@@ -175,11 +187,37 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertEqual(checks["heartbeat_alignment"]["status"], RuntimeHealthStatus.DEGRADED.value)
         self.assertEqual(checks["tool_execution"]["status"], RuntimeHealthStatus.DEGRADED.value)
         self.assertEqual(checks["gateway_delivery"]["status"], RuntimeHealthStatus.DEGRADED.value)
+        self.assertEqual(checks["core_mcp"]["status"], RuntimeHealthStatus.READY.value)
+        self.assertEqual(checks["core_mcp"]["metadata"]["config_status"], "missing")
         tool_signal = next(item for item in snapshot["telemetry"] if item["code"] == "tool_builtin_failed")
         self.assertEqual(tool_signal["context"]["trace_id"], "trace-1")
         self.assertEqual(tool_signal["context"]["session_id"], "session-1")
         self.assertEqual(tool_signal["context"]["turn_id"], "turn-1")
         self.assertEqual(tool_signal["context"]["tool_call_id"], "tool-1")
+
+    def test_health_snapshot_marks_core_mcp_check_degraded_on_partial_failures(self):
+        class _CoreMcpDegradedApp(_FakeApp):
+            core_mcp_diagnostics = {
+                "config": {"status": "loaded", "path": "user/core_mcp_servers.json"},
+                "summary": {
+                    "configured_server_count": 2,
+                    "enabled_count": 1,
+                    "partial_failure_count": 1,
+                    "partial_failure_servers": ["notion_knowledge"],
+                },
+            }
+
+        runtime = ServiceRuntime(RuntimeCommand.service(), app_factory=_CoreMcpDegradedApp)
+        asyncio.run(runtime.run())
+        snapshot = asyncio.run(runtime.build_health_snapshot())
+
+        checks = {item["name"]: item for item in snapshot["checks"]}
+        self.assertEqual(checks["core_mcp"]["status"], RuntimeHealthStatus.DEGRADED.value)
+        self.assertEqual(checks["core_mcp"]["metadata"]["configured_server_count"], 2)
+        self.assertEqual(checks["core_mcp"]["metadata"]["enabled_count"], 1)
+        self.assertEqual(checks["core_mcp"]["metadata"]["partial_failure_count"], 1)
+        self.assertEqual(checks["core_mcp"]["metadata"]["partial_failure_servers"], ["notion_knowledge"])
+        self.assertEqual(snapshot["metrics"]["core_mcp_partial_failures_count"], 1)
 
     def test_structured_formatter_emits_correlation_context(self):
         formatter = StructuredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
