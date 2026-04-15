@@ -1,7 +1,11 @@
 {
   "core_base_url": "http://127.0.0.1:8000",
+  "agent_access_token": "",
   "agent_id": "desktop-main-agent",
   "display_name": "Desktop Main Agent",
+  "owner_client_id": "desktop-app",
+  "owner_client_type": "electron",
+  "owner_client_display_name": "Desktop App",
   "workspace_ids": ["personal", "desktop-main", "study"],
   "read_roots": ["."],
   "trusted_write_roots": ["."],

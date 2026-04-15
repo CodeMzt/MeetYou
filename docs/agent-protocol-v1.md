@@ -60,11 +60,14 @@ V1 同时覆盖两类 Agent：
 
 Agent 不使用 Client Token。
 
-建议：
+当前正式口径：
 
-- 注册期：`agent_registration_token`
-- 稳定运行期：`agent_access_token`
-- 后续增强：设备证书或 mTLS
+- Agent HTTP / WebSocket 与 Client 面分开鉴权，启用后接受 `Authorization: Bearer ...` 或 `X-API-Key`
+- WebSocket 额外兼容 `access_token` query 参数，便于非浏览器 runtime 连接
+- `desktop-agent` 默认优先读取 `MEETYOU_AGENT_ACCESS_TOKEN`，缺失时回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+- `edge-agent` 默认优先读取 `MEETYOU_EDGE_ACCESS_TOKEN`，再回退到 `MEETYOU_AGENT_ACCESS_TOKEN` 与 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+- base URL 也支持按 runtime 覆盖：`desktop-agent` 使用 `MEETYOU_AGENT_BASE_URL`，`edge-agent` 优先使用 `MEETYOU_EDGE_BASE_URL`，再回退到共享 base URL 或配置文件
+- 后续增强仍可考虑设备证书或 mTLS，但不属于当前正式主链要求
 
 ## 5. 会话与调用模型
 
@@ -179,6 +182,9 @@ Core -> Edge Agent: agent.ready
     "agent_type": "desktop",
     "display_name": "Desktop Main Agent",
     "transport_profile": "desktop_wss",
+    "owner_client_id": "desktop-app",
+    "owner_client_type": "electron",
+    "owner_client_display_name": "Desktop App",
     "workspace_ids": ["personal", "desktop-main", "study"],
     "host": {
       "hostname": "DESKTOP-01",
@@ -189,6 +195,11 @@ Core -> Edge Agent: agent.ready
   }
 }
 ```
+
+补充约定：
+
+- `desktop-agent` 通常会携带 `owner_client_*`，用于表达它归属于某个具体桌面 Client
+- `edge-agent` 一般不带这组字段，而是主要依赖 `agent_type=edge`、`transport_profile=edge_wss` 与 `workspace_ids`
 
 ### 9.2 `agent.hello.ack`
 
