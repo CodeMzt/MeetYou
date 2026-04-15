@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from psycopg import connect
 
 from core.db.bootstrap import bootstrap_core_domain
+from core.credential_transport import encrypt_json_payload
 from core.event_bus import EventBus
 from core.io_protocol import EventTarget, HumanInputRequestEvent, TargetKind, make_source
 from core.session_manager import SessionManager
 from gateway.api import FastAPIGateway
+from gateway.routes import client as client_routes
 
 
 TEST_DATABASE_NAME = "meetyou_gateway_surface_test"
@@ -216,6 +220,9 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         upload_payload = upload_resp.json()
         self.assertEqual(upload_payload["attachment_id"], ticket_payload["attachment_id"])
         self.assertEqual(upload_payload["status"], "uploaded")
+        self.assertTrue(upload_payload["created_at"])
+        self.assertTrue(upload_payload["updated_at"])
+        self.assertTrue(upload_payload["uploaded_at"])
 
         complete_resp = self.client.post(
             f"/client/attachments/{ticket_payload['attachment_id']}/complete",
@@ -223,7 +230,12 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
             headers=self._auth_headers(),
         )
         self.assertEqual(complete_resp.status_code, 200)
-        self.assertEqual(complete_resp.json()["status"], "ready")
+        complete_payload = complete_resp.json()
+        self.assertEqual(complete_payload["status"], "ready")
+        self.assertTrue(complete_payload["created_at"])
+        self.assertTrue(complete_payload["updated_at"])
+        self.assertEqual(complete_payload["uploaded_at"], upload_payload["uploaded_at"])
+        self.assertTrue(complete_payload["completed_at"])
 
         download_ticket_resp = self.client.get(
             f"/client/attachments/{ticket_payload['attachment_id']}/download-ticket?client_id=electron-main",
@@ -242,6 +254,264 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         )
         self.assertEqual(content_resp.status_code, 200)
         self.assertEqual(content_resp.content, b"hello attachment")
+
+        detail_resp = self.client.get(
+            f"/client/attachments/{ticket_payload['attachment_id']}",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(detail_resp.status_code, 200)
+        detail_payload = detail_resp.json()
+        self.assertEqual(detail_payload["attachment_id"], ticket_payload["attachment_id"])
+        self.assertEqual(detail_payload["status"], "ready")
+        self.assertTrue(detail_payload["created_at"])
+        self.assertTrue(detail_payload["completed_at"])
+        list_resp = self.client.get(
+            f"/client/attachments?owner_type=thread&owner_id={thread_id}",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(list_resp.status_code, 200)
+        list_payload = list_resp.json()
+        self.assertEqual(len(list_payload), 1)
+        self.assertEqual(list_payload[0]["attachment_id"], ticket_payload["attachment_id"])
+
+        delete_resp = self.client.delete(
+            f"/client/attachments/{ticket_payload['attachment_id']}",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(delete_resp.status_code, 200)
+        delete_payload = delete_resp.json()
+        self.assertEqual(delete_payload["status"], "deleted")
+        self.assertTrue(delete_payload["deleted_at"])
+
+        list_after_delete_resp = self.client.get(
+            f"/client/attachments?owner_type=thread&owner_id={thread_id}",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(list_after_delete_resp.status_code, 200)
+        self.assertEqual(list_after_delete_resp.json(), [])
+
+        list_deleted_resp = self.client.get(
+            f"/client/attachments?owner_type=thread&owner_id={thread_id}&include_deleted=true",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(list_deleted_resp.status_code, 200)
+        list_deleted_payload = list_deleted_resp.json()
+        self.assertEqual(len(list_deleted_payload), 1)
+        self.assertEqual(list_deleted_payload[0]["status"], "deleted")
+
+    def test_client_danxi_routes_use_gateway_facade(self):
+        calls: dict[str, dict] = {}
+        with patch.object(
+            client_routes,
+            "_DANXI_TOOLS",
+            new=type(
+                "_FakeDanxiTools",
+                (),
+                {
+                    "danxi_login": lambda self, **kwargs: (
+                        calls.setdefault("login", dict(kwargs)),
+                        {
+                            "session_key": "default",
+                            "email": "user@example.com",
+                            "transport": "webvpn",
+                            "webvpn_enabled": True,
+                            "has_webvpn_cookie": True,
+                            "token": {"has_access_token": True, "has_refresh_token": False, "raw_keys": ["access"]},
+                            "user_profile": {"user_id": 1},
+                        },
+                    )[1],
+                    "danxi_get_session_status": lambda self, session_key="": {
+                        "session_key": session_key or "default",
+                        "email": "user@example.com",
+                        "transport": "webvpn",
+                        "webvpn_enabled": True,
+                        "has_webvpn_cookie": True,
+                        "webvpn_required": True,
+                        "direct_connect_available": False,
+                        "logged_in": True,
+                        "user_profile": {"user_id": 1},
+                    },
+                    "danxi_get_user_profile": lambda self, **_: {
+                        "session_key": "default",
+                        "logged_in": True,
+                        "transport": "webvpn",
+                        "webvpn_enabled": True,
+                        "has_webvpn_cookie": True,
+                        "webvpn_required": True,
+                        "direct_connect_available": False,
+                        "profile": {"user_id": 1, "nickname": "阿明"},
+                    },
+                    "danxi_set_webvpn_cookie": lambda self, cookie_header, **kwargs: (
+                        calls.setdefault("cookie", {"cookie_header": cookie_header, **dict(kwargs)}),
+                        {
+                            "session_key": "default",
+                            "email": "user@example.com",
+                            "transport": "webvpn",
+                            "webvpn_enabled": True,
+                            "has_webvpn_cookie": True,
+                            "webvpn_required": True,
+                            "direct_connect_available": False,
+                            "logged_in": True,
+                            "user_profile": {"user_id": 1},
+                        },
+                    )[1],
+                    "danxi_list_divisions": lambda self, **_: {"count": 1, "items": [{"division_id": 2, "name": "综合"}]},
+                    "danxi_list_posts": lambda self, **_: {"scope": "homepage", "count": 1, "items": [{"hole_id": 10, "content": "hello"}]},
+                    "danxi_get_post": lambda self, hole_id, **_: {"hole": {"hole_id": hole_id, "content": "hello"}},
+                    "danxi_list_floors": lambda self, hole_id, **_: {"count": 1, "items": [{"hole_id": hole_id, "floor_id": 1, "content": "reply"}]},
+                    "danxi_reply_post": lambda self, hole_id, content, **_: {"ok": True, "status_code": 201, "hole_id": hole_id, "floor_id": 77},
+                    "danxi_edit_reply": lambda self, floor_id, content, **_: {"ok": True, "status_code": 200, "floor_id": floor_id},
+                    "danxi_delete_reply": lambda self, floor_id, **_: {"ok": True, "status_code": 200, "floor_id": floor_id},
+                    "danxi_summarize_post": lambda self, hole_id, **_: {
+                        "hole_id": hole_id,
+                        "title": f"帖子 #{hole_id}",
+                        "summary": "这里是结构化摘要。",
+                        "key_points": ["主贴说明了问题背景。"],
+                        "reply_highlights": ["匿名: 提供了解决办法。"],
+                        "floor_count": 1,
+                        "participant_count": 1,
+                        "generated_at": "2026-04-14T00:00:00Z",
+                    },
+                    "danxi_search_posts": lambda self, query, **_: {"query": query, "floor_hits": 1, "hole_ids": [10], "hits_by_hole": {10: [{"hole_id": 10}]}, "items": [{"hole_id": 10}]},
+                    "danxi_list_messages": lambda self, **_: {"count": 1, "items": [{"message_id": 9, "content": "ping"}]},
+                    "_can_connect_directly": lambda self: False,
+                },
+            )(),
+        ):
+            with patch.dict(os.environ, {"MEETYOU_CREDENTIAL_SECRET": "gateway-test-secret"}, clear=False):
+                login_resp = self.client.post(
+                    "/client/danxi/session/login",
+                    json={
+                        "session_key": "default",
+                        "encrypted_credentials": encrypt_json_payload(
+                            {
+                                "email": "user@example.com",
+                                "password": "secret",
+                                "session_key": "default",
+                                "use_webvpn": True,
+                            },
+                            purpose="danxi.client.login.v1",
+                        ),
+                    },
+                    headers=self._auth_headers(),
+                )
+                self.assertEqual(login_resp.status_code, 200)
+                self.assertEqual(login_resp.json()["transport"], "webvpn")
+
+                session_resp = self.client.get("/client/danxi/session", headers=self._auth_headers())
+                self.assertEqual(session_resp.status_code, 200)
+                self.assertTrue(session_resp.json()["has_webvpn_cookie"])
+
+                cookie_resp = self.client.patch(
+                    "/client/danxi/session/webvpn-cookie",
+                    json={
+                        "session_key": "default",
+                        "encrypted_credentials": encrypt_json_payload(
+                            {
+                                "session_key": "default",
+                                "cookie_header": "vpn=ok",
+                                "enable_webvpn": True,
+                            },
+                            purpose="danxi.client.webvpn_cookie.v1",
+                        ),
+                    },
+                    headers=self._auth_headers(),
+                )
+                self.assertEqual(cookie_resp.status_code, 200)
+
+            profile_resp = self.client.get("/client/danxi/profile?refresh=true", headers=self._auth_headers())
+            self.assertEqual(profile_resp.status_code, 200)
+            self.assertEqual(profile_resp.json()["profile"]["nickname"], "阿明")
+
+            self.assertEqual(self.client.get("/client/danxi/divisions", headers=self._auth_headers()).json()["count"], 1)
+            self.assertEqual(self.client.get("/client/danxi/posts", headers=self._auth_headers()).json()["items"][0]["hole_id"], 10)
+            self.assertEqual(self.client.get("/client/danxi/posts/10", headers=self._auth_headers()).json()["hole"]["hole_id"], 10)
+            self.assertEqual(self.client.get("/client/danxi/posts/10/floors", headers=self._auth_headers()).json()["count"], 1)
+            self.assertTrue(
+                self.client.post(
+                    "/client/danxi/posts/10/replies",
+                    json={"content": "hello reply"},
+                    headers=self._auth_headers(),
+                ).json()["ok"]
+            )
+            self.assertEqual(
+                self.client.patch(
+                    "/client/danxi/floors/77",
+                    json={"content": "edited reply"},
+                    headers=self._auth_headers(),
+                ).json()["floor_id"],
+                77,
+            )
+            self.assertEqual(
+                self.client.delete("/client/danxi/floors/77?confirm=true", headers=self._auth_headers()).json()["floor_id"],
+                77,
+            )
+            self.assertEqual(
+                self.client.get("/client/danxi/posts/10/summary", headers=self._auth_headers()).json()["hole_id"],
+                10,
+            )
+            self.assertEqual(self.client.get("/client/danxi/search?query=test", headers=self._auth_headers()).json()["query"], "test")
+            self.assertEqual(self.client.get("/client/danxi/messages", headers=self._auth_headers()).json()["count"], 1)
+        self.assertEqual(calls["login"]["email"], "user@example.com")
+        self.assertEqual(calls["login"]["password"], "secret")
+        self.assertTrue(calls["login"]["use_webvpn"])
+        self.assertEqual(calls["cookie"]["cookie_header"], "vpn=ok")
+
+    def test_client_danxi_login_rejects_when_credential_secret_is_missing(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MEETYOU_CREDENTIAL_SECRET": "",
+                "MEETYOU_GATEWAY_ACCESS_TOKEN": "",
+                "MEETYOU_AGENT_ACCESS_TOKEN": "",
+            },
+            clear=False,
+        ):
+            response = self.client.post(
+                "/client/danxi/session/login",
+                json={
+                    "session_key": "default",
+                    "encrypted_credentials": {
+                        "version": "v1",
+                        "alg": "aes-256-gcm",
+                        "purpose": "danxi.client.login.v1",
+                        "iv": "AA==",
+                        "ciphertext": "AA==",
+                        "tag": "AA==",
+                    },
+                },
+                headers=self._auth_headers(),
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "danxi_credential_key_unavailable")
+
+    def test_client_danxi_login_rejects_plaintext_credentials(self):
+        response = self.client.post(
+            "/client/danxi/session/login",
+            json={
+                "session_key": "default",
+                "email": "user@example.com",
+                "password": "secret",
+                "use_webvpn": True,
+                "webvpn_cookie": "vpn=ok",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "danxi_encrypted_credentials_required")
+
+    def test_client_danxi_webvpn_cookie_rejects_plaintext_credentials(self):
+        response = self.client.patch(
+            "/client/danxi/session/webvpn-cookie",
+            json={
+                "session_key": "default",
+                "cookie_header": "vpn=ok",
+                "enable_webvpn": True,
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "danxi_encrypted_credentials_required")
 
     def test_client_attachment_download_ticket_prefers_presigned_url_when_available(self):
         class _FakePresignedStore:
@@ -373,6 +643,84 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         disposition = content_resp.headers.get("content-disposition", "")
         self.assertIn("filename=", disposition)
         self.assertIn("filename*=UTF-8''", disposition)
+
+    def test_client_attachment_list_and_delete_flow(self):
+        thread_resp = self.client.post(
+            "/client/threads",
+            json={"workspace_id": "personal", "title": "Attachment manage thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_resp.status_code, 200)
+        thread_id = thread_resp.json()["thread_id"]
+
+        ticket_resp = self.client.post(
+            "/client/attachments/upload-ticket",
+            json={
+                "owner_type": "thread",
+                "owner_id": thread_id,
+                "kind": "file",
+                "mime_type": "text/plain",
+                "file_name": "manage.txt",
+                "client_id": "electron-main",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(ticket_resp.status_code, 200)
+        ticket_payload = ticket_resp.json()
+
+        upload_resp = self.client.put(
+            f"/client/attachments/upload/{ticket_payload['ticket_id']}",
+            content=b"attachment-for-listing",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(upload_resp.status_code, 200)
+
+        complete_resp = self.client.post(
+            f"/client/attachments/{ticket_payload['attachment_id']}/complete",
+            json={"ticket_id": ticket_payload["ticket_id"]},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(complete_resp.status_code, 200)
+
+        list_resp = self.client.get(
+            f"/client/threads/{thread_id}/attachments",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(list_resp.status_code, 200)
+        attachments = list_resp.json()
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0]["file_name"], "manage.txt")
+        self.assertEqual(attachments[0]["status"], "ready")
+        self.assertTrue(attachments[0]["created_at"])
+        self.assertTrue(attachments[0]["updated_at"])
+
+        delete_resp = self.client.delete(
+            f"/client/attachments/{ticket_payload['attachment_id']}",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(delete_resp.status_code, 200)
+        self.assertEqual(delete_resp.json()["status"], "deleted")
+
+        list_after_delete_resp = self.client.get(
+            f"/client/threads/{thread_id}/attachments",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(list_after_delete_resp.status_code, 200)
+        self.assertEqual(list_after_delete_resp.json(), [])
+
+    def test_client_attachment_delete_accepts_browser_cors_preflight(self):
+        response = self.client.options(
+            "/client/attachments/att_delete_cors_probe",
+            headers={
+                "Origin": "http://127.0.0.1:5173",
+                "Access-Control-Request-Method": "DELETE",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("access-control-allow-origin"), "http://127.0.0.1:5173")
+        allowed_methods = str(response.headers.get("access-control-allow-methods", ""))
+        self.assertIn("DELETE", allowed_methods)
 
     def test_operator_workspace_management_and_client_reads_dynamic_workspace(self):
         create_resp = self.client.post(
@@ -515,6 +863,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         patch_resp = self.client.patch(
             "/operator/workspaces/policy-lab",
             json={
+                "base_mode": "danxi",
                 "preferred_source_profiles": ["policy_global", "workspace_local"],
                 "memory_ranking_policy": "workspace_first",
             },
@@ -525,11 +874,13 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
             patch_resp.json()["preferred_source_profiles"],
             ["policy_global", "workspace_local"],
         )
+        self.assertEqual(patch_resp.json()["base_mode"], "danxi")
         self.assertEqual(patch_resp.json()["memory_ranking_policy"], "workspace_first")
 
         workspaces_resp = self.client.get("/client/workspaces", headers=self._auth_headers())
         self.assertEqual(workspaces_resp.status_code, 200)
         policy_workspace = {item["workspace_id"]: item for item in workspaces_resp.json()}["policy-lab"]
+        self.assertEqual(policy_workspace["base_mode"], "danxi")
         self.assertEqual(policy_workspace["preferred_source_profiles"], ["policy_global", "workspace_local"])
         self.assertEqual(policy_workspace["memory_ranking_policy"], "workspace_first")
 
@@ -537,6 +888,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         resp = self.client.get("/operator/source-profiles", headers=self._auth_headers())
         self.assertEqual(resp.status_code, 200)
         profiles = {item["profile_name"]: item for item in resp.json()}
+        self.assertIn("campus_forum", profiles)
         self.assertIn("workspace_local", profiles)
         self.assertIn("study_materials", profiles)
         self.assertTrue(profiles["tech_updates"]["official_only"])

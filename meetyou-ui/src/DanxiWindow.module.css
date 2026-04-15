@@ -1,0 +1,72 @@
+.windowOverride {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.layout {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.06), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 12%),
+    var(--bg-app);
+}
+
+.main {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.feedShell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.feedListMode {
+  padding: 24px 24px 0;
+}
+
+.feedDetailMode {
+  padding: 0;
+}
+
+.feedListMode > *,
+.feedDetailMode > * {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 1180px) {
+  .layout {
+    grid-template-columns: 244px minmax(0, 1fr);
+  }
+
+  .feedListMode {
+    padding: 18px 18px 0;
+  }
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .feedListMode {
+    padding: 14px 14px 0;
+  }
+}

@@ -14,6 +14,30 @@ from core.tools_manager import (
 
 
 class ToolsManagerExposureTests(unittest.TestCase):
+    def test_tools_example_schema_does_not_repeat_tool_names(self):
+        with open(
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "user", "tools.example.json"),
+            "r",
+            encoding="utf-8",
+        ) as fh:
+            payload = json.load(fh)
+
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for section in payload.values():
+            if not isinstance(section, list):
+                continue
+            for tool in section:
+                tool_name = str(tool.get("function", {}).get("name") or "").strip()
+                if not tool_name:
+                    continue
+                if tool_name in seen:
+                    duplicates.add(tool_name)
+                    continue
+                seen.add(tool_name)
+
+        self.assertEqual(duplicates, set())
+
     def test_browser_tools_use_longer_timeout(self):
         self.assertEqual(_get_mcp_timeout_seconds("browser_navigate"), 30.0)
         self.assertEqual(_get_mcp_timeout_seconds("read_file"), 10.0)
@@ -65,6 +89,9 @@ class ToolsManagerExposureTests(unittest.TestCase):
         self.assertIn("list_skills", visible_names)
         self.assertIn("load_skill", visible_names)
         self.assertIn("create_skill", visible_names)
+        self.assertIn("list_attachments", visible_names)
+        self.assertIn("read_attachment", visible_names)
+        self.assertIn("delete_attachment", visible_names)
         self.assertIn("remember_knowledge", visible_names)
         self.assertNotIn("search_memory", visible_names)
         self.assertNotIn("search_web", visible_names)
@@ -174,6 +201,39 @@ class ToolsManagerExposureTests(unittest.TestCase):
             visible_names,
             {"get_background_status", "get_current_system_time", "get_sys_vitals"},
         )
+
+    def test_duplicate_mcp_tool_names_are_exposed_once(self):
+        memory = SimpleNamespace(
+            save_memory=None,
+            recall_memory=None,
+            recall_memory_structured=None,
+        )
+        context_manager = SimpleNamespace(update_context=None)
+        mcp_manager = SimpleNamespace(tool_map={"shared_tool": "server_b"})
+        system_tools = SimpleNamespace(
+            exec_sys_cmd=None,
+            get_current_system_time=None,
+            get_sys_vitals=None,
+        )
+        manager = ToolsManager(memory, context_manager, mcp_manager, system_tools)
+        manager.tools_schema_dict = {
+            "common_tools": [],
+            "chain_tools": [],
+            "memory_tools": [],
+            "background_tools": [],
+            "web_tools": [],
+            "mcp_tools": [
+                {"type": "function", "function": {"name": "shared_tool", "description": "from a"}},
+                {"type": "function", "function": {"name": "shared_tool", "description": "from b"}},
+            ],
+        }
+
+        visible_names = [
+            tool["function"]["name"]
+            for tool in manager.get_all_tools()
+        ]
+
+        self.assertEqual(visible_names.count("shared_tool"), 1)
 
 
 if __name__ == "__main__":

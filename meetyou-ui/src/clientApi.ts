@@ -1,7 +1,16 @@
 import { fetchWithAuth, readErrorMessage, resolveAccessToken } from './apiClient'
 import { parseRuntimeUsageEnvelope } from './protocolClient'
 import type {
+  AssistantMode,
+  ClientAttachmentRecord,
   ClientAvailableAgent,
+  DanxiActionResponse,
+  DanxiListResponse,
+  DanxiPostResponse,
+  DanxiSearchResponse,
+  DanxiSessionStatus,
+  DanxiSummaryResponse,
+  DanxiUserProfileResponse,
   ClientMessage,
   ClientMessageCreatePayload,
   ClientOperation,
@@ -50,6 +59,17 @@ function toClientWsBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/^http/i, 'ws')
 }
 
+async function encryptDanxiCredentials(
+  purpose: 'danxi.client.login.v1' | 'danxi.client.webvpn_cookie.v1',
+  data: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const encryptor = window?.ipcRenderer?.invoke
+  if (typeof encryptor !== 'function') {
+    throw new Error('当前环境不支持加密发送 Danxi 凭证，请在 Electron 桌面端中使用。')
+  }
+  return (await encryptor('encrypt-danxi-credentials', { purpose, data })) as Record<string, unknown>
+}
+
 async function readJsonOrThrow<T>(response: Response, fallback: string): Promise<T> {
   if (response.ok) {
     return (await response.json()) as T
@@ -63,10 +83,246 @@ export async function listClientWorkspaces(baseUrl: string): Promise<ClientWorks
   return readJsonOrThrow<ClientWorkspace[]>(response, '加载工作空间失败')
 }
 
+export async function loginDanxiSession(
+  baseUrl: string,
+  payload: {
+    email: string
+    password: string
+    session_key?: string
+    use_webvpn?: boolean
+    webvpn_cookie?: string
+  },
+): Promise<DanxiSessionStatus> {
+  const encryptedCredentials = await encryptDanxiCredentials('danxi.client.login.v1', payload)
+  const response = await fetchWithAuth(`${baseUrl}/client/danxi/session/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_key: payload.session_key || 'default',
+      encrypted_credentials: encryptedCredentials,
+    }),
+  })
+  return readJsonOrThrow<DanxiSessionStatus>(response, 'Danxi 登录失败')
+}
+
+export async function getDanxiSessionStatus(baseUrl: string, sessionKey = 'default'): Promise<DanxiSessionStatus> {
+  const response = await fetchWithAuth(
+    `${baseUrl}/client/danxi/session?session_key=${encodeURIComponent(sessionKey)}`,
+  )
+  return readJsonOrThrow<DanxiSessionStatus>(response, '读取 Danxi 会话状态失败')
+}
+
+export async function updateDanxiWebvpnCookie(
+  baseUrl: string,
+  payload: {
+    session_key?: string
+    cookie_header: string
+    enable_webvpn?: boolean
+  },
+): Promise<DanxiSessionStatus> {
+  const encryptedCredentials = await encryptDanxiCredentials('danxi.client.webvpn_cookie.v1', payload)
+  const response = await fetchWithAuth(`${baseUrl}/client/danxi/session/webvpn-cookie`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_key: payload.session_key || 'default',
+      encrypted_credentials: encryptedCredentials,
+    }),
+  })
+  return readJsonOrThrow<DanxiSessionStatus>(response, '更新 Danxi WebVPN 登录态失败')
+}
+
+export async function getDanxiProfile(
+  baseUrl: string,
+  payload: {
+    session_key?: string
+    refresh?: boolean
+  } = {},
+): Promise<DanxiUserProfileResponse> {
+  const url = new URL(`${baseUrl}/client/danxi/profile`)
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<DanxiUserProfileResponse>(response, '读取 Danxi 用户信息失败')
+}
+
+export async function listDanxiDivisions(baseUrl: string, sessionKey = 'default'): Promise<DanxiListResponse> {
+  const response = await fetchWithAuth(
+    `${baseUrl}/client/danxi/divisions?session_key=${encodeURIComponent(sessionKey)}`,
+  )
+  return readJsonOrThrow<DanxiListResponse>(response, '加载 Danxi 分区失败')
+}
+
+export async function listDanxiPosts(
+  baseUrl: string,
+  payload: {
+    session_key?: string
+    division_id?: number
+    start_time?: string
+    length?: number
+    offset?: number
+    tag?: string
+    order?: string
+  } = {},
+): Promise<DanxiListResponse> {
+  const url = new URL(`${baseUrl}/client/danxi/posts`)
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<DanxiListResponse>(response, '加载 Danxi 帖子失败')
+}
+
+export async function getDanxiPost(
+  baseUrl: string,
+  holeId: number,
+  sessionKey = 'default',
+): Promise<DanxiPostResponse> {
+  const response = await fetchWithAuth(
+    `${baseUrl}/client/danxi/posts/${holeId}?session_key=${encodeURIComponent(sessionKey)}`,
+  )
+  return readJsonOrThrow<DanxiPostResponse>(response, '加载 Danxi 帖子详情失败')
+}
+
+export async function listDanxiFloors(
+  baseUrl: string,
+  holeId: number,
+  payload: {
+    session_key?: string
+    offset?: number
+    size?: number
+    include_all?: boolean
+  } = {},
+): Promise<DanxiListResponse> {
+  const url = new URL(`${baseUrl}/client/danxi/posts/${holeId}/floors`)
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<DanxiListResponse>(response, '加载 Danxi 楼层失败')
+}
+
+export async function createDanxiReply(
+  baseUrl: string,
+  holeId: number,
+  payload: {
+    session_key?: string
+    content: string
+  },
+): Promise<DanxiActionResponse> {
+  const response = await fetchWithAuth(`${baseUrl}/client/danxi/posts/${holeId}/replies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<DanxiActionResponse>(response, '发布 Danxi 回复失败')
+}
+
+export async function updateDanxiReply(
+  baseUrl: string,
+  floorId: number,
+  payload: {
+    session_key?: string
+    content: string
+  },
+): Promise<DanxiActionResponse> {
+  const response = await fetchWithAuth(`${baseUrl}/client/danxi/floors/${floorId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<DanxiActionResponse>(response, '编辑 Danxi 回复失败')
+}
+
+export async function deleteDanxiReply(
+  baseUrl: string,
+  floorId: number,
+  payload: {
+    session_key?: string
+    confirm?: boolean
+  } = {},
+): Promise<DanxiActionResponse> {
+  const url = new URL(`${baseUrl}/client/danxi/floors/${floorId}`)
+  url.searchParams.set('confirm', String(payload.confirm ?? true))
+  if (payload.session_key) {
+    url.searchParams.set('session_key', payload.session_key)
+  }
+  const response = await fetchWithAuth(url.toString(), {
+    method: 'DELETE',
+  })
+  return readJsonOrThrow<DanxiActionResponse>(response, '删除 Danxi 回复失败')
+}
+
+export async function getDanxiPostSummary(
+  baseUrl: string,
+  holeId: number,
+  payload: {
+    session_key?: string
+    floor_limit?: number
+  } = {},
+): Promise<DanxiSummaryResponse> {
+  const url = new URL(`${baseUrl}/client/danxi/posts/${holeId}/summary`)
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<DanxiSummaryResponse>(response, '生成 Danxi AI 摘要失败')
+}
+
+export async function searchDanxiPosts(
+  baseUrl: string,
+  payload: {
+    query: string
+    session_key?: string
+    accurate?: boolean
+    length?: number
+    start_floor?: number
+    start_time?: string
+    end_time?: string
+  },
+): Promise<DanxiSearchResponse> {
+  const url = new URL(`${baseUrl}/client/danxi/search`)
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<DanxiSearchResponse>(response, '搜索 Danxi 帖子失败')
+}
+
+export async function listDanxiMessages(
+  baseUrl: string,
+  payload: {
+    session_key?: string
+    unread_only?: boolean
+    start_time?: string
+  } = {},
+): Promise<DanxiListResponse> {
+  const url = new URL(`${baseUrl}/client/danxi/messages`)
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<DanxiListResponse>(response, '加载 Danxi 消息失败')
+}
+
 export async function updateOperatorWorkspaceGovernance(
   baseUrl: string,
   workspaceId: string,
   payload: {
+    base_mode?: AssistantMode
     preferred_source_profiles?: string[]
     memory_ranking_policy?: string
   },
@@ -322,25 +578,31 @@ export async function completeClientAttachment(
   baseUrl: string,
   attachmentId: string,
   payload: { ticket_id?: string; sha256?: string; size_bytes?: number },
-): Promise<{
-  attachment_id: string
-  owner_type: string
-  owner_id: string
-  kind: string
-  mime_type: string
-  object_key: string
-  size_bytes: number
-  lifecycle_policy: string
-  expires_at: string
-  sha256: string
-  status: string
-}> {
+): Promise<ClientAttachmentRecord> {
   const response = await fetchWithAuth(`${baseUrl}/client/attachments/${encodeURIComponent(attachmentId)}/complete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow(response, '完成附件上传失败')
+  return readJsonOrThrow<ClientAttachmentRecord>(response, '完成附件上传失败')
+}
+
+export async function listClientThreadAttachments(
+  baseUrl: string,
+  threadId: string,
+): Promise<ClientAttachmentRecord[]> {
+  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/attachments`)
+  return readJsonOrThrow<ClientAttachmentRecord[]>(response, '加载附件列表失败')
+}
+
+export async function deleteClientAttachment(
+  baseUrl: string,
+  attachmentId: string,
+): Promise<ClientAttachmentRecord> {
+  const response = await fetchWithAuth(`${baseUrl}/client/attachments/${encodeURIComponent(attachmentId)}`, {
+    method: 'DELETE',
+  })
+  return readJsonOrThrow<ClientAttachmentRecord>(response, '删除附件失败')
 }
 
 export async function createClientAttachmentDownloadTicket(

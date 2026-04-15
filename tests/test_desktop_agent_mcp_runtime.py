@@ -20,6 +20,14 @@ class _FakeMCPManager:
                         "description": "Read a file from MCP",
                         "parameters": {"type": "object"},
                     },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "description": "Write a file through MCP",
+                        "parameters": {"type": "object"},
+                    },
                 }
             ]
         }
@@ -44,9 +52,18 @@ class DesktopAgentMCPRuntimeTests(unittest.TestCase):
         asyncio.run(runtime.initialize())
         capabilities = runtime.capability_definitions()
 
-        self.assertEqual(len(capabilities), 1)
-        self.assertEqual(capabilities[0]["capability_id"], "agent.desktop-main-agent.mcp.filesystem_tools.read_file")
-        self.assertEqual(capabilities[0]["workspace_ids"], ["personal"])
+        capability_map = {item["tool_name"]: item for item in capabilities}
+
+        self.assertEqual(len(capabilities), 2)
+        self.assertEqual(
+            capability_map["read_file"]["capability_id"],
+            "agent.desktop-main-agent.mcp.filesystem_tools.read_file",
+        )
+        self.assertEqual(capability_map["read_file"]["workspace_ids"], ["personal"])
+        self.assertEqual(capability_map["read_file"]["risk_level"], "read")
+        self.assertFalse(capability_map["read_file"]["requires_confirmation"])
+        self.assertEqual(capability_map["write_file"]["risk_level"], "local_write")
+        self.assertTrue(capability_map["write_file"]["requires_confirmation"])
 
     def test_mcp_runtime_calls_underlying_tool(self):
         config = DesktopAgentConfig(agent_id="desktop-main-agent", workspace_ids=["personal"])
@@ -73,3 +90,4 @@ class DesktopAgentMCPRuntimeTests(unittest.TestCase):
 
         capability_ids = {item["capability_id"] for item in snapshot["payload"]["capabilities"]}
         self.assertIn("agent.desktop-main-agent.mcp.filesystem_tools.read_file", capability_ids)
+        self.assertIn("agent.desktop-main-agent.mcp.filesystem_tools.write_file", capability_ids)

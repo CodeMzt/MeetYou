@@ -56,7 +56,8 @@ V2 推荐的核心资源：
 - 查看 operation 进度、结果、附件
 - 提交审批结果
 - 切换 workspace
-- 查看任务和记忆结果
+- 查看 `user_todo` 与 `assistant_schedule` 两类任务结果
+- 获取管理页所需的 workspace / procedure / operation / approval / pending human input 聚合数据
 
 ### 3.4 建议端点轮廓
 
@@ -75,6 +76,19 @@ V2 推荐的核心资源：
 - `GET /client/workspaces/{workspace_id}/agents`
 - `GET /client/tasks`
 - `GET /client/memory/search`
+- `POST /client/danxi/session/login`
+- `GET /client/danxi/session`
+- `PATCH /client/danxi/session/webvpn-cookie`
+- `GET /client/danxi/profile`
+- `GET /client/danxi/divisions`
+- `GET /client/danxi/posts`
+- `GET /client/danxi/posts/{hole_id}`
+- `GET /client/danxi/posts/{hole_id}/floors`
+- `POST /client/danxi/posts/{hole_id}/replies`
+- `PATCH /client/danxi/floors/{floor_id}`
+- `DELETE /client/danxi/floors/{floor_id}`
+- `GET /client/danxi/posts/{hole_id}/summary`
+- `GET /client/danxi/messages`
 - `GET /client/ws`
 
 ### 3.5 关键原则
@@ -146,6 +160,35 @@ V2 推荐的核心资源：
 - 当 workspace 配置 `preferred_source_profiles` 时，Core 会把这些来源偏好注入消息路由治理；procedure 的推荐来源仍优先于 workspace 偏好
 - 当前 `memory_ranking_policy` 已公开为 workspace surface 字段；V1 仅支持 `workspace_first`
 - 当 workspace 配置 `capability_routing_overrides` 时，Core 会对特定 capability ref/abstract key 优先应用 capability 级 override
+- Electron 独立“工作区与规程”管理页应复用这些字段作为真源，不应在前端维护第二套 workspace 治理状态
+
+### 3.8 Task Surface And Heart Semantics
+
+`task` 资源当前需要显式区分两个域：
+
+- `user_todo`：用户自己的待办对象，可携带 deadline/priority 等语义，但不会因自然语言时间描述被 `Core Heart` 自动 claim
+- `assistant_schedule`：助手拥有的定时编排对象，必须带 trigger 语义，会进入 `Core Heart` 的 `scheduler loop`，并在触发时创建或复用正式 operation
+
+补充原则：
+
+- `Core Heart` 是服务端时间编排中枢，不属于 Client 或 Agent transport surface
+- `scheduler loop` 负责确定性的 claim / pre-create operation / control event
+- `heartbeat reasoning loop` 负责根据 `pending_redelivery`、`awaiting_completion`、逾期 follow-up 等结构化状态判断是否存在时间压力
+- `/agent/ws` 上的 `agent.heartbeat` 只负责 agent 在线状态与运行指标，不等同于上述 Heart 时间编排
+
+### 3.9 Danxi Surface
+
+Danxi 二阶段仍归属 `Client API`，但作为一组有明确安全边界的子域资源存在。
+
+当前约定：
+
+- Danxi 登录、会话状态、WebVPN cookie 更新、用户信息、帖子/楼层读取、回复编辑删除、AI 摘要与站内消息统一收口在 `/client/danxi/*`
+- Danxi 独立窗口与 `danxi` mode 助手共享同一服务端 Danxi 会话，不允许前端和助手各自维护独立登录态真相源
+- 非校园网访问按“先 1 秒直连探测，失败后 WebVPN URL 代理”执行；是否走 `webvpn` 由会话状态返回给 UI，而不是让前端自行猜测
+- `POST /client/danxi/session/login` 与 `PATCH /client/danxi/session/webvpn-cookie` 只接受 `encrypted_credentials`；Electron main 在本地使用共享密钥和 purpose 派生 key 做 `aes-256-gcm` 加密封装，Gateway 缺少密文字段时直接拒绝请求，并且只在 purpose 匹配时解密
+- 加密 purpose 当前固定为 `danxi.client.login.v1` 与 `danxi.client.webvpn_cookie.v1`；前后端不得随意复用或混用 purpose
+- Danxi JWT、refresh token、WebVPN cookie 与必要用户资料会在服务端通过加密封装写入状态后端；恢复后的会话在首次读取时必须做一次低风险有效性校验，若确认过期、撤销或损坏则立即清理
+- 日志、错误对象与调试输出不得暴露 email、password、cookie、token 等明文字段；测试与文档也应沿用 `encrypted_credentials` 口径，而不是示例化明文跨边界传输
 
 ## 4. 跨会话协作
 
@@ -340,6 +383,9 @@ V2 允许：
 
 ### 9.3 建议端点轮廓
 
+- `GET /client/attachments?owner_type=...&owner_id=...`
+- `GET /client/attachments/{attachment_id}`
+- `DELETE /client/attachments/{attachment_id}`
 - `POST /client/attachments/upload-ticket`
 - `PUT /client/attachments/upload/{ticket_id}`
 - `POST /client/attachments/{attachment_id}/complete`
@@ -349,9 +395,71 @@ V2 允许：
 当前实现状态：
 
 - `client` 侧 attachment 主链已落地
-- `agent` 侧 attachment uploader 仍属于下一批
+- `client` 侧已支持按 owner 列出、读取 metadata、删除 attachment，并返回 `created_at` / `updated_at` / `uploaded_at` / `completed_at` / `deleted_at` 等关键时间戳
+- `agent` 侧 attachment uploader 已落地
+- Core 已把 `list_attachments`、`read_attachment`、`delete_attachment` 作为助手工具暴露；工具应面向 attachment domain，而不是直接操作 object store 路径
+- tool / capability 产出的附件应先进入 `attachment_outputs`，再由 Core 归一化为统一 attachment object view；Client UI 不应直接消费 Agent 原始 `local_path` 或临时下载链接
+- Electron 独立“附件管理”页应复用同一套 attachment domain API、时间戳字段与 download ticket 逻辑
 
-## 10. UI 覆盖原则
+### 9.4 Attachment Object View
+
+当前用户面在 message、operation 与管理页中应复用统一附件对象视图，而不是依赖 surface-specific payload。
+
+建议字段：
+
+- `attachmentId`
+- `fileName`
+- `kind`
+- `mimeType`
+- `sizeBytes`
+- `downloadUrl`
+- `lifecyclePolicy`
+
+原则：
+
+- `attachment` 资源是真相源，attachment object view 是给 Client UI 的稳定投影视图
+- 同一个对象视图可被 message、operation、管理页复用，避免每个面各自拼装下载逻辑
+- 下载仍必须通过 download ticket / 权限校验，而不是把对象存储路径直接暴露给 UI
+
+## 10. 管理页与状态反馈
+
+### 10.1 管理页职责
+
+当前 Electron 独立“工作区与规程”窗口属于 Client 正式产品面的一部分，其职责包括：
+
+- 展示当前 workspace 概览与治理字段
+- 承接受控的 workspace 治理编辑，例如 source profile 偏好与 memory ranking policy
+- 展示 procedure catalog、detail 与 thread 当前 procedure context
+- 聚合当前 thread / workspace 下的运行中 operation、待审批与待补充输入状态
+
+当前 Electron 独立“附件管理”页同样属于 Client 正式产品面的一部分，其职责包括：
+
+- 按 owner 列出 attachment
+- 展示 `created_at`、`uploaded_at`、`completed_at`、`deleted_at` 等关键时间戳
+- 复用 download ticket / delete attachment 主链，而不是直接拼接对象存储地址
+
+原则：
+
+- 管理页是用户面，不是 operator / developer 面
+- 它消费的仍然是 `client/*` 与必要的 `operator` 受控目录接口，不应回退到 `/runtime/debug`
+- 管理页展示的状态必须与主窗口共享同一套 operation / approval / human input 真相源
+
+### 10.2 状态反馈模型
+
+当前前端状态反馈采用双层模型：
+
+- 顶层反馈：`StatusIsland` 负责展示连接状态、思考中 / 工具调用中等全局即时反馈
+- 执行态反馈：operation 列表负责展示 `status`、`phase`、`detail`、`tone`、`summary` 与 attachment object view
+- 附件反馈：上传成功/失败等瞬时反馈由状态区承接，不再默认向聊天流插入“上传成功”类系统消息
+
+原则：
+
+- `StatusIsland` 只负责“当前系统大致在做什么”，不替代 operation 细节面
+- operation 的 `tone/summary` 应来自服务端状态和归一化结果，而不是仅靠前端本地猜测
+- 当附件尚未完成 upload / complete 时，反馈应停留在 operation 状态层，不应提前生成可下载 UI
+- 独立附件管理页应复用同一套 attachment object view 与下载票据逻辑，而不是复制另一条附件模型
+
+## 11. UI 覆盖原则
 
 主 UI 需要覆盖的产品能力：
 
@@ -362,6 +470,7 @@ V2 允许：
 - tasks
 - citations / attachments
 - agent 在线状态摘要
+- 独立管理页中的 workspace / procedure / pending state 聚合视图
 
 主 UI 不需要默认覆盖：
 
@@ -369,13 +478,16 @@ V2 允许：
 - developer diagnostics
 - 原始 capability 矩阵
 
-## 11. 对当前仓库的指导
+## 12. 对当前仓库的指导
 
 - 现有 `gateway/api.py` 应逐步拆成四类 router，而不是继续堆在一份 API 文件里。
+- 旧 `/inputs`、`/controls`、根 `/ws` 等迁移错误 surface 应单独放在 legacy 模块，不应继续混入正式 router 装配层。
 - 前端 `useMeetYou` 应只消费 Client API。
 - 配置中心、debug、runtime diagnostics 应从默认聊天路径中分离。
+- 附件显示层应统一消费 attachment object view，而不是在 message / operation / 管理页各自定义不同下载结构。
+- 管理页和主窗口的状态反馈应复用同一套 operation / approval / human input 数据模型。
 
-## 12. 待决问题
+## 13. 待决问题
 
 - 是否要把 `thread event stream` 和 `operation event stream` 分成两条 WS 订阅。
 - 飞书是否需要单独的审批摘要格式，以适配弱交互界面。

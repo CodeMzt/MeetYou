@@ -35,6 +35,7 @@ MCP 文件边界：
 - `mcp_servers.json`：仅用于桌面端本地 MCP，由 Desktop Agent 托管并依赖本机环境
 - 如果日志提示缺少 `core_mcp_servers.json`，只表示 Core 侧未配置服务端 MCP，不代表 Desktop Agent 的 `mcp_servers.json` 缺失
 - 纯进程内轻量工具与 Core 自身状态管理能力仍保留为 runtime-native tool，不需要配置到 `core_mcp_servers.json`
+- 模板边界已对齐当前架构：`core_mcp_servers.example.json` 预留 `tavily_web` 与 `browser_automation`，`mcp_servers.example.json` 仅保留本地文件类 MCP 示例
 
 运行时会自动在 `user/` 下生成任务存储文件：
 

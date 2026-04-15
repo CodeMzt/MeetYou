@@ -32,6 +32,7 @@ describe('WorkspaceGovernanceEditor', () => {
     )
 
     expect(markup).toContain('来源偏好与记忆排序')
+    expect(markup).toContain('Base Mode')
     expect(markup).toContain('学习资料')
     expect(markup).toContain('工作区/本地知识')
     expect(markup).toContain('当前工作区优先')

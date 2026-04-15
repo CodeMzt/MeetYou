@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 AGENT_PROTOCOL_SCHEMA = "meetyou.agent.v1"
 AGENT_SCHEMA = AGENT_PROTOCOL_SCHEMA
 AGENT_WS_SCHEMA = AGENT_PROTOCOL_SCHEMA
+AGENT_ARGUMENTS_PURPOSE = "agent.capability.arguments.v1"
 
 
 def utcnow_iso() -> str:
@@ -232,6 +233,7 @@ def build_capability_call_request(
     workspace_id: str,
     capability_id: str,
     arguments: dict[str, Any],
+    encrypted_arguments: dict[str, Any] | None = None,
     approval: dict[str, Any] | None = None,
     timeout_seconds: int = 60,
     audit_context: dict[str, Any] | None = None,
@@ -246,8 +248,34 @@ def build_capability_call_request(
             "workspace_id": workspace_id,
             "capability_id": capability_id,
             "arguments": dict(arguments or {}),
+            "encrypted_arguments": dict(encrypted_arguments or {}) if encrypted_arguments else {},
             "approval": dict(approval or {}),
             "timeout_seconds": timeout_seconds,
             "audit_context": dict(audit_context or {}),
+        },
+    )
+
+
+def build_agent_message(
+    *,
+    agent_id: str,
+    session_id: str,
+    content: Any,
+    role: str = "assistant",
+    event_type: str = "message",
+    stream_id: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return build_agent_envelope(
+        envelope_type="agent.message",
+        agent_id=agent_id,
+        message_id=f"msg_{uuid4().hex}",
+        payload={
+            "session_id": str(session_id or "").strip(),
+            "event_type": str(event_type or "message").strip() or "message",
+            "role": str(role or "assistant").strip() or "assistant",
+            "content": content,
+            "stream_id": str(stream_id or "").strip(),
+            "metadata": dict(metadata or {}),
         },
     )

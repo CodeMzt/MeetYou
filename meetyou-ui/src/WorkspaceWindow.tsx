@@ -10,11 +10,11 @@ import type {
 } from './types'
 import './dashboard.css'
 import styles from './WorkspaceWindow.module.css'
-import { getClientThreadProcedureContext } from './clientApi'
 import WorkspaceGovernanceEditor from './components/workspace/WorkspaceGovernanceEditor'
 import ProcedureCatalogPanel from './components/workspace/ProcedureCatalogPanel'
 import WorkspacePanel from './components/workspace/WorkspacePanel'
 import SubWindow from './components/layout/SubWindow'
+import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from './windowBridge'
 
 type WorkspaceWindowPayload = {
   baseUrl: string
@@ -29,7 +29,7 @@ type WorkspaceWindowPayload = {
 }
 
 const EMPTY_PAYLOAD: WorkspaceWindowPayload = {
-  baseUrl: 'http://127.0.0.1:8000',
+  baseUrl: DEFAULT_BASE_URL,
   threadId: '',
   workspace: null,
   procedureContext: null,
@@ -45,28 +45,8 @@ export default function WorkspaceWindow() {
   const [procedureContext, setProcedureContext] = useState<ClientThreadProcedureContext | null>(null)
 
   useEffect(() => {
-    if (!payload.threadId) {
-      setProcedureContext(payload.procedureContext)
-      return
-    }
-    let cancelled = false
-    const loadContext = async () => {
-      try {
-        const nextContext = await getClientThreadProcedureContext(payload.baseUrl, payload.threadId)
-        if (!cancelled) {
-          setProcedureContext(nextContext)
-        }
-      } catch {
-        if (!cancelled) {
-          setProcedureContext(payload.procedureContext)
-        }
-      }
-    }
-    void loadContext()
-    return () => {
-      cancelled = true
-    }
-  }, [payload.baseUrl, payload.procedureContext, payload.threadId])
+    setProcedureContext(payload.procedureContext)
+  }, [payload.procedureContext])
 
   useEffect(() => {
     const handleWorkspaceUpdated = (_event: unknown, data: WorkspaceWindowPayload | null) => {
@@ -80,11 +60,11 @@ export default function WorkspaceWindow() {
       })
     }
 
-    window.ipcRenderer?.on('workspace-panel-updated', handleWorkspaceUpdated)
-    window.ipcRenderer?.send('request-workspace-panel')
+    window.ipcRenderer?.on(WINDOW_SYNC_CHANNEL.workspace.update, handleWorkspaceUpdated)
+    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.workspace.request)
 
     return () => {
-      window.ipcRenderer?.off('workspace-panel-updated', handleWorkspaceUpdated)
+      window.ipcRenderer?.off(WINDOW_SYNC_CHANNEL.workspace.update, handleWorkspaceUpdated)
     }
   }, [])
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from desktop_agent.config import DesktopAgentConfig
+from core.tool_runtime.risk import ToolRiskClassifier
 from tools.mcp import MCPManager
 
 
@@ -18,6 +19,7 @@ class DesktopAgentMCPRuntime:
     def __init__(self, config: DesktopAgentConfig, manager: MCPManager | None = None):
         self._config = config
         self._manager = manager or MCPManager()
+        self._risk_classifier = ToolRiskClassifier()
         self._initialized = False
         self._capability_map: dict[str, dict[str, Any]] = {}
 
@@ -82,14 +84,15 @@ class DesktopAgentMCPRuntime:
                 tool_name = str(function.get("name") or "").strip()
                 if not tool_name:
                     continue
+                risk_level = self._risk_classifier.get_tool_action_risk(tool_name)
                 capability_id = f"agent.{self._config.agent_id}.mcp.{_slug(server_name)}.{_slug(tool_name)}"
                 mapping[capability_id] = {
                     "capability_id": capability_id,
                     "kind": "tool",
                     "title": str(function.get("description") or tool_name),
                     "tags": ["desktop", "mcp", _slug(server_name)],
-                    "risk_level": "read",
-                    "requires_confirmation": False,
+                    "risk_level": risk_level,
+                    "requires_confirmation": risk_level != "read",
                     "workspace_ids": list(self._config.workspace_ids),
                     "server_name": server_name,
                     "tool_name": tool_name,

@@ -17,27 +17,27 @@
   display: flex;
   align-items: center;
   min-height: 24px;
+  gap: 8px;
+}
+
+.mainControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  -webkit-app-region: no-drag;
 }
 
 .titleContent {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   font-size: 12px;
   color: var(--text-secondary);
   -webkit-app-region: no-drag;
   min-width: 0;
-}
-
-.appIcon {
-  width: 16px;
-  height: 16px;
-  object-fit: contain;
-}
-
-.titleText {
-  white-space: nowrap;
-  font-weight: 500;
+  height: 24px;
+  flex-shrink: 0;
 }
 
 .envPill {
@@ -48,7 +48,6 @@
   border-radius: 12px;
   background: rgba(128, 128, 128, 0.08);
   border: 1px solid var(--border-subtle);
-  margin-left: 4px;
   transition: background 0.2s;
 }
 
@@ -71,6 +70,7 @@
   border-radius: 50%;
   background: var(--text-tertiary);
   transition: background 0.3s;
+  flex-shrink: 0;
 }
 
 .statusDot.connected {
@@ -94,14 +94,16 @@
 
 .dragRegion {
   flex: 1;
-  height: 100%;
+  height: 24px;
+  min-width: 8px;
 }
 
 .tools {
   display: flex;
   align-items: center;
   gap: 4px;
-  -webkit-app-region: no-drag;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .iconBtn {
@@ -116,6 +118,7 @@
   border: none;
   cursor: pointer;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 
 .iconBtn:hover {
@@ -161,6 +164,10 @@
 }
 
 @media (max-width: 520px) {
+  .mainControls {
+    gap: 6px;
+  }
+
   .envWorkspaceName {
     max-width: 80px;
   }
@@ -183,6 +190,6 @@
   }
 
   .dragRegion {
-    min-width: 8px;
+    min-width: 12px;
   }
 }

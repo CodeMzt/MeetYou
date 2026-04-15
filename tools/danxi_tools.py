@@ -1,0 +1,915 @@
+from __future__ import annotations
+
+import logging
+import os
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+from urllib.parse import urlparse
+
+import requests
+from Crypto.Cipher import AES
+
+from core.credential_transport import CredentialTransportError, decrypt_json_payload, encrypt_json_payload
+
+
+class DanxiError(RuntimeError):
+    pass
+
+
+_SHARED_DANXI_TOOLS: "DanxiTools | None" = None
+_DANXI_PERSISTENCE_PURPOSE = "danxi.session.persistence.v1"
+logger = logging.getLogger("meetyou.danxi")
+
+
+def _compact_dict(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if value is not None and value != ""}
+
+
+def _normalize_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\r", "\n")
+    lines = [line.strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        normalized = _normalize_text(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _collapse_inline(value: Any, limit: int = 120) -> str:
+    text = " ".join(_normalize_text(value).split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(limit - 1, 0)].rstrip()}..."
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _coerce_datetime(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _iso8601_utc(value: str | None) -> str | None:
+    parsed = _coerce_datetime(value)
+    if parsed is None:
+        return None
+    return parsed.isoformat().replace("+00:00", "Z")
+
+
+def _unix_seconds(value: str | None) -> int | None:
+    parsed = _coerce_datetime(value)
+    if parsed is None:
+        return None
+    return int(parsed.timestamp())
+
+
+@dataclass
+class _DanxiSessionState:
+    session_key: str
+    email: str
+    password: str
+    use_webvpn: bool
+    webvpn_cookie: str
+    http: requests.Session = field(default_factory=requests.Session)
+    access_token: str = ""
+    refresh_token: str = ""
+    user_profile: dict[str, Any] | None = None
+    restored_from_persistence: bool = False
+    restore_validated: bool = False
+
+
+class DanxiTools:
+    API_BASE = "https://forum.fduhole.com/api"
+    AUTH_BASE = "https://auth.fduhole.com/api"
+    DIRECT_CONNECT_TEST_URL = "https://forum.fduhole.com"
+    WEBVPN_HOST = "webvpn.fudan.edu.cn"
+    WEBVPN_LOGIN_PREFIX = f"https://{WEBVPN_HOST}/login"
+    WEBVPN_LOGIN_URL = f"{WEBVPN_LOGIN_PREFIX}?cas_login=true"
+    _WEBVPN_KEY = b"wrdvpnisthebest!"
+    _WEBVPN_ALLOWED_HOSTS = {
+        "www.fduhole.com",
+        "auth.fduhole.com",
+        "danke.fduhole.com",
+        "forum.fduhole.com",
+        "image.fduhole.com",
+        "yjsxk.fudan.edu.cn",
+        "10.64.130.6",
+    }
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, _DanxiSessionState] = {}
+        self._active_session_key: str = ""
+        self._host_cache: dict[str, str] = {}
+        self._direct_connect_available: bool | None = None
+        self._lock = threading.RLock()
+        self._state_backend = None
+
+    def set_state_backend(self, backend) -> None:
+        self._state_backend = backend
+        self._restore_persisted_sessions()
+
+    def danxi_login(
+        self,
+        email: str = "",
+        password: str = "",
+        *,
+        session_key: str = "default",
+        use_webvpn: bool | None = None,
+        webvpn_cookie: str = "",
+    ) -> dict[str, Any]:
+        resolved_email = str(email or os.getenv("MEETYOU_DANXI_EMAIL", "")).strip()
+        resolved_password = str(password or os.getenv("MEETYOU_DANXI_PASSWORD", "")).strip()
+        if not resolved_email or not resolved_password:
+            raise DanxiError("Danxi 登录需要 email 和 password，或对应环境变量。")
+        if use_webvpn is None:
+            use_webvpn = _env_bool("MEETYOU_DANXI_USE_WEBVPN", default=False)
+        resolved_webvpn_cookie = str(webvpn_cookie or os.getenv("MEETYOU_DANXI_WEBVPN_COOKIE", "")).strip()
+        state = _DanxiSessionState(
+            session_key=str(session_key or "default").strip() or "default",
+            email=resolved_email,
+            password=resolved_password,
+            use_webvpn=bool(use_webvpn),
+            webvpn_cookie=resolved_webvpn_cookie,
+        )
+        state.http.headers.update({"Accept": "application/json", "User-Agent": "MeetYou-Danxi/1.0"})
+        payload = self._post_auth_login(state)
+        with self._lock:
+            self._sessions[state.session_key] = state
+            self._active_session_key = state.session_key
+        profile = self._safe_load_profile(state)
+        self._mark_session_validated(state)
+        self._persist_sessions()
+        return {
+            "session_key": state.session_key,
+            "email": state.email,
+            "transport": self._transport_label(state),
+            "webvpn_enabled": state.use_webvpn,
+            "has_webvpn_cookie": bool(state.webvpn_cookie),
+            "logged_in": bool(state.access_token),
+            "token": {
+                "has_access_token": bool(state.access_token),
+                "has_refresh_token": bool(state.refresh_token),
+                "raw_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
+            },
+            "user_profile": profile,
+        }
+
+    def danxi_logout(self, session_key: str = "") -> dict[str, Any]:
+        with self._lock:
+            resolved_key = self._resolve_session_key(session_key, required=False)
+            if not resolved_key:
+                return {"logged_out": False, "reason": "no_active_session"}
+            state = self._sessions.pop(resolved_key, None)
+            if state is not None:
+                state.http.close()
+            if self._active_session_key == resolved_key:
+                self._active_session_key = next(iter(self._sessions.keys()), "")
+        self._persist_sessions()
+        return {"logged_out": state is not None, "session_key": resolved_key}
+
+    def danxi_set_webvpn_cookie(self, cookie_header: str, *, session_key: str = "", enable_webvpn: bool = True) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        resolved_cookie = str(cookie_header or "").strip()
+        if not resolved_cookie:
+            raise DanxiError("设置 WebVPN cookie 时 cookie_header 不能为空。")
+        state.webvpn_cookie = resolved_cookie
+        if enable_webvpn:
+            state.use_webvpn = True
+        self._persist_sessions()
+        return self.danxi_get_session_status(state.session_key)
+
+    def danxi_clear_webvpn_cookie(self, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        state.webvpn_cookie = ""
+        self._persist_sessions()
+        return self.danxi_get_session_status(state.session_key)
+
+    def danxi_get_session_status(self, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        self._ensure_restored_session_is_valid(state)
+        direct_connect_available = self._can_connect_directly()
+        webvpn_required = bool(state.use_webvpn and not direct_connect_available)
+        return {
+            "session_key": state.session_key,
+            "email": state.email,
+            "transport": self._transport_label(state),
+            "webvpn_enabled": state.use_webvpn,
+            "has_webvpn_cookie": bool(state.webvpn_cookie),
+            "webvpn_required": webvpn_required,
+            "direct_connect_available": direct_connect_available,
+            "logged_in": bool(state.access_token),
+            "user_profile": state.user_profile,
+        }
+
+    def danxi_get_user_profile(self, *, session_key: str = "", refresh: bool = False) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        self._ensure_restored_session_is_valid(state)
+        if refresh or state.user_profile is None:
+            profile = self._safe_load_profile(state)
+            if profile is None:
+                raise DanxiError("当前会话暂时无法读取 Danxi 用户信息。")
+        status = self.danxi_get_session_status(state.session_key)
+        return {
+            "session_key": state.session_key,
+            "logged_in": bool(status.get("logged_in")),
+            "transport": str(status.get("transport") or ""),
+            "webvpn_enabled": bool(status.get("webvpn_enabled")),
+            "has_webvpn_cookie": bool(status.get("has_webvpn_cookie")),
+            "webvpn_required": bool(status.get("webvpn_required")),
+            "direct_connect_available": bool(status.get("direct_connect_available")),
+            "profile": state.user_profile or {},
+        }
+
+    def danxi_list_divisions(self, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        data = self._request_json("GET", f"{self.API_BASE}/divisions", state=state)
+        return {"count": len(data) if isinstance(data, list) else 0, "items": data}
+
+    def danxi_list_tags(self, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        data = self._request_json("GET", f"{self.API_BASE}/tags", state=state)
+        return {"count": len(data) if isinstance(data, list) else 0, "items": data}
+
+    def danxi_list_posts(
+        self,
+        *,
+        division_id: int | None = None,
+        start_time: str = "",
+        length: int = 20,
+        offset: int = 0,
+        tag: str = "",
+        order: str = "time_created",
+        session_key: str = "",
+    ) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        normalized_length = max(1, min(int(length or 20), 10))
+        
+        # Determine the start time for fetching
+        # If start_time is not provided, use current time
+        # Note: API uses ISO8601 strings for time-based pagination
+        current_time_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        time_to_fetch = _iso8601_utc(start_time) or current_time_iso
+
+        if division_id is None:
+            params = {
+                "offset": time_to_fetch,
+                "size": normalized_length,
+                "order": order or "time_created",
+            }
+            data = self._request_json("GET", f"{self.API_BASE}/holes/_homepage", state=state, params=params)
+            scope = "homepage"
+        else:
+            params = _compact_dict(
+                {
+                    "offset": time_to_fetch,
+                    "division_id": int(division_id),
+                    "length": normalized_length,
+                    "tag": str(tag or "").strip() or None,
+                    "order": order or "time_created",
+                }
+            )
+            data = self._request_json("GET", f"{self.API_BASE}/holes", state=state, params=params)
+            scope = f"division:{division_id}"
+        return {"scope": scope, "count": len(data) if isinstance(data, list) else 0, "items": data}
+
+    def danxi_get_post(self, hole_id: int, *, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        data = self._request_json("GET", f"{self.API_BASE}/holes/{int(hole_id)}", state=state)
+        return {"hole": data}
+
+    def danxi_list_floors(
+        self,
+        hole_id: int,
+        *,
+        offset: int = 0,
+        size: int = 20,
+        include_all: bool = False,
+        session_key: str = "",
+    ) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        if include_all:
+            params = {"start_floor": 0, "length": 0, "hole_id": int(hole_id)}
+            data = self._request_json("GET", f"{self.API_BASE}/floors", state=state, params=params)
+        else:
+            params = {"offset": max(0, int(offset or 0)), "size": max(1, min(int(size or 20), 100))}
+            data = self._request_json("GET", f"{self.API_BASE}/holes/{int(hole_id)}/floors", state=state, params=params)
+        return {"hole_id": int(hole_id), "count": len(data) if isinstance(data, list) else 0, "items": data}
+
+    def danxi_search_posts(
+        self,
+        query: str,
+        *,
+        accurate: bool = False,
+        length: int = 20,
+        start_floor: int | None = None,
+        start_time: str = "",
+        end_time: str = "",
+        session_key: str = "",
+    ) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        params = _compact_dict(
+            {
+                "search": str(query or "").strip(),
+                "accurate": bool(accurate),
+                "size": max(1, min(int(length or 20), 10)),
+                "offset": int(start_floor) if start_floor is not None else None,
+                "start_time": _unix_seconds(start_time),
+                "end_time": _unix_seconds(end_time),
+            }
+        )
+        if not params.get("search"):
+            raise DanxiError("Danxi 搜索需要 query。")
+        floors = self._request_json("GET", f"{self.API_BASE}/floors/search", state=state, params=params)
+        holes: list[int] = []
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        if isinstance(floors, list):
+            for item in floors:
+                if not isinstance(item, dict):
+                    continue
+                hole_id = item.get("hole_id")
+                if isinstance(hole_id, int):
+                    if hole_id not in holes:
+                        holes.append(hole_id)
+                    grouped.setdefault(hole_id, []).append(item)
+        return {
+            "query": params["search"],
+            "floor_hits": len(floors) if isinstance(floors, list) else 0,
+            "hole_ids": holes,
+            "hits_by_hole": grouped,
+            "items": floors,
+        }
+
+    def danxi_create_post(
+        self,
+        division_id: int,
+        content: str,
+        *,
+        tag_ids: list[int] | None = None,
+        tag_names: list[str] | None = None,
+        session_key: str = "",
+    ) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        body = {
+            "content": str(content or "").strip(),
+            "tags": self._build_tags_payload(tag_ids or [], tag_names or []),
+        }
+        if not body["content"]:
+            raise DanxiError("发帖内容不能为空。")
+        response = self._request(
+            "POST",
+            f"{self.API_BASE}/divisions/{int(division_id)}/holes",
+            state=state,
+            json_body=body,
+        )
+        return {"status_code": response.status_code, "ok": response.ok, "division_id": int(division_id)}
+
+    def danxi_reply_post(self, hole_id: int, content: str, *, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        body = {"content": str(content or "").strip()}
+        if not body["content"]:
+            raise DanxiError("回复内容不能为空。")
+        response = self._request("POST", f"{self.API_BASE}/holes/{int(hole_id)}/floors", state=state, json_body=body)
+        return {"status_code": response.status_code, "ok": response.ok, "hole_id": int(hole_id)}
+
+    def danxi_edit_reply(self, floor_id: int, content: str, *, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        body = {"content": str(content or "").strip()}
+        if not body["content"]:
+            raise DanxiError("编辑后的回复内容不能为空。")
+        response = self._request("PATCH", f"{self.API_BASE}/floors/{int(floor_id)}/_webvpn", state=state, json_body=body)
+        return {"status_code": response.status_code, "ok": response.ok, "floor_id": int(floor_id)}
+
+    def danxi_delete_reply(self, floor_id: int, *, confirm: bool = False, session_key: str = "") -> dict[str, Any]:
+        if not confirm:
+            raise DanxiError("删除回复前必须显式传入 confirm=true。")
+        state = self._get_session(session_key)
+        response = self._request("DELETE", f"{self.API_BASE}/floors/{int(floor_id)}", state=state)
+        return {"status_code": response.status_code, "ok": response.ok, "floor_id": int(floor_id)}
+
+    def danxi_delete_post(self, hole_id: int, *, confirm: bool = False, session_key: str = "") -> dict[str, Any]:
+        if not confirm:
+            raise DanxiError("删除帖子前必须显式传入 confirm=true。")
+        state = self._get_session(session_key)
+        response = self._request("DELETE", f"{self.API_BASE}/holes/{int(hole_id)}", state=state)
+        return {"status_code": response.status_code, "ok": response.ok, "hole_id": int(hole_id)}
+
+    def danxi_manage_favorite(
+        self,
+        action: str,
+        *,
+        hole_id: int | None = None,
+        length: int = 20,
+        prefetch_length: int = 20,
+        session_key: str = "",
+    ) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action == "list":
+            params = {"length": max(1, min(int(length or 20), 100)), "prefetch_length": max(1, min(int(prefetch_length or 20), 100))}
+            data = self._request_json("GET", f"{self.API_BASE}/user/favorites", state=state, params=params)
+            return {"action": "list", "count": len(data) if isinstance(data, list) else 0, "items": data}
+        if hole_id is None:
+            raise DanxiError("收藏或取消收藏需要 hole_id。")
+        if normalized_action == "add":
+            response = self._request("POST", f"{self.API_BASE}/user/favorites", state=state, json_body={"hole_id": int(hole_id)})
+        elif normalized_action == "remove":
+            response = self._request("DELETE", f"{self.API_BASE}/user/favorites", state=state, json_body={"hole_id": int(hole_id)})
+        else:
+            raise DanxiError("收藏操作 action 仅支持 list / add / remove。")
+        return {"action": normalized_action, "status_code": response.status_code, "ok": response.ok, "hole_id": int(hole_id)}
+
+    def danxi_manage_subscription(
+        self,
+        action: str,
+        *,
+        hole_id: int | None = None,
+        length: int = 20,
+        prefetch_length: int = 20,
+        session_key: str = "",
+    ) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action == "list":
+            params = {"length": max(1, min(int(length or 20), 100)), "prefetch_length": max(1, min(int(prefetch_length or 20), 100))}
+            data = self._request_json("GET", f"{self.API_BASE}/users/subscriptions", state=state, params=params)
+            return {"action": "list", "count": len(data) if isinstance(data, list) else 0, "items": data}
+        if hole_id is None:
+            raise DanxiError("订阅或取消订阅需要 hole_id。")
+        if normalized_action == "add":
+            response = self._request("POST", f"{self.API_BASE}/users/subscriptions", state=state, json_body={"hole_id": int(hole_id)})
+        elif normalized_action == "remove":
+            response = self._request("DELETE", f"{self.API_BASE}/users/subscriptions", state=state, json_body={"hole_id": int(hole_id)})
+        else:
+            raise DanxiError("订阅操作 action 仅支持 list / add / remove。")
+        return {"action": normalized_action, "status_code": response.status_code, "ok": response.ok, "hole_id": int(hole_id)}
+
+    def danxi_list_messages(
+        self,
+        *,
+        unread_only: bool = False,
+        start_time: str = "",
+        session_key: str = "",
+    ) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        params = _compact_dict({"not_read": bool(unread_only), "start_time": _iso8601_utc(start_time)})
+        data = self._request_json("GET", f"{self.API_BASE}/messages", state=state, params=params)
+        return {"count": len(data) if isinstance(data, list) else 0, "items": data}
+
+    def danxi_mark_message_read(
+        self,
+        message_id: int,
+        *,
+        has_read: bool = True,
+        session_key: str = "",
+    ) -> dict[str, Any]:
+        state = self._get_session(session_key)
+        response = self._request(
+            "PATCH",
+            f"{self.API_BASE}/messages/{int(message_id)}",
+            state=state,
+            json_body={"has_read": bool(has_read)},
+        )
+        return {"status_code": response.status_code, "ok": response.ok, "message_id": int(message_id), "has_read": bool(has_read)}
+
+    def danxi_summarize_post(self, hole_id: int, *, session_key: str = "", floor_limit: int = 50) -> dict[str, Any]:
+        post_payload = self.danxi_get_post(hole_id, session_key=session_key)
+        floors_payload = self.danxi_list_floors(
+            hole_id,
+            session_key=session_key,
+            offset=0,
+            size=max(1, min(int(floor_limit or 50), 100)),
+        )
+        hole = post_payload.get("hole") if isinstance(post_payload, dict) else {}
+        floors = floors_payload.get("items") if isinstance(floors_payload, dict) else []
+        if not isinstance(hole, dict):
+            hole = {}
+        if not isinstance(floors, list):
+            floors = []
+
+        original_text = _first_non_empty(
+            (hole.get("floors") or {}).get("first_floor", {}).get("content") if isinstance(hole.get("floors"), dict) else None,
+            hole.get("content"),
+            hole.get("text"),
+            hole.get("title"),
+        )
+        key_points: list[str] = []
+        if original_text:
+            key_points.append(_collapse_inline(original_text, limit=96))
+        division_label = _first_non_empty(hole.get("division"), hole.get("division_name"), hole.get("division_id"))
+        if division_label:
+            key_points.append(f"分区信息: {division_label}")
+        if isinstance(hole.get("reply"), int):
+            key_points.append(f"当前帖子显示 {int(hole['reply'])} 条回复。")
+
+        reply_highlights: list[str] = []
+        participants: set[str] = set()
+        for item in floors:
+            if not isinstance(item, dict):
+                continue
+            author = _first_non_empty(
+                item.get("anonyname"),
+                item.get("nickname"),
+                item.get("name"),
+                item.get("user_name"),
+                item.get("author"),
+            ) or "匿名"
+            if author:
+                participants.add(author)
+            content = _first_non_empty(item.get("content"), item.get("text"), item.get("description"))
+            if not content:
+                continue
+            snippet = _collapse_inline(content, limit=84)
+            if snippet and snippet not in reply_highlights:
+                reply_highlights.append(f"{author}: {snippet}")
+            if len(reply_highlights) >= 3:
+                break
+
+        if not key_points:
+            key_points.append(f"帖子 #{int(hole_id)} 暂无可提炼的正文信息。")
+
+        summary_parts = [
+            _collapse_inline(original_text, limit=110) or f"帖子 #{int(hole_id)} 已加载。",
+            f"共整理到 {len(floors)} 条楼层，参与者约 {max(len(participants), 1)} 位。",
+        ]
+        if reply_highlights:
+            summary_parts.append("讨论集中在：" + "；".join(reply_highlights[:2]))
+
+        return {
+            "hole_id": int(hole_id),
+            "title": _first_non_empty(hole.get("title"), f"帖子 #{int(hole_id)}"),
+            "summary": " ".join(part for part in summary_parts if part).strip(),
+            "key_points": key_points[:4],
+            "reply_highlights": reply_highlights,
+            "floor_count": len(floors),
+            "participant_count": len(participants),
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+
+    def _resolve_session_key(self, session_key: str, *, required: bool = True) -> str:
+        normalized = str(session_key or "").strip() or self._active_session_key
+        if normalized:
+            return normalized
+        if required:
+            raise DanxiError("还没有活跃的 Danxi 会话，请先调用 danxi_login。")
+        return ""
+
+    def _get_session(self, session_key: str) -> _DanxiSessionState:
+        resolved = self._resolve_session_key(session_key)
+        state = self._sessions.get(resolved)
+        if state is None:
+            raise DanxiError(f"找不到 Danxi 会话: {resolved}")
+        return state
+
+    def _ensure_restored_session_is_valid(self, state: _DanxiSessionState) -> None:
+        if not state.restored_from_persistence or state.restore_validated:
+            return
+        try:
+            profile = self._request_json("GET", f"{self.API_BASE}/users/me", state=state)
+        except Exception as exc:
+            message = str(exc) or "Danxi 会话恢复失败"
+            lowered = message.lower()
+            if any(token in lowered for token in ("401", "token", "webvpn", "cookie", "撤销", "过期")):
+                self._invalidate_session(
+                    state.session_key,
+                    message="已保存的 Danxi/WebVPN 登录态已失效，系统已清理，请重新登录。",
+                )
+                raise DanxiError("已保存的 Danxi/WebVPN 登录态已失效，系统已清理，请重新登录。") from exc
+            raise DanxiError("恢复的 Danxi 会话暂时无法验证，请稍后重试。") from exc
+        if isinstance(profile, dict):
+            state.user_profile = profile
+        self._mark_session_validated(state)
+        self._persist_sessions()
+
+    def _mark_session_validated(self, state: _DanxiSessionState) -> None:
+        state.restored_from_persistence = False
+        state.restore_validated = True
+
+    def _restore_persisted_sessions(self) -> None:
+        if self._state_backend is None:
+            return
+        try:
+            payload = self._state_backend.load()
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Failed to load Danxi persistence state: %s", exc)
+            return
+        if not isinstance(payload, dict):
+            return
+        restored_sessions: dict[str, _DanxiSessionState] = {}
+        for item in list(payload.get("sessions") or []):
+            if not isinstance(item, dict):
+                continue
+            session_key = str(item.get("session_key") or "").strip()
+            sealed_state = item.get("sealed_state")
+            if not session_key or not isinstance(sealed_state, dict):
+                continue
+            try:
+                session_payload = decrypt_json_payload(sealed_state, purpose=_DANXI_PERSISTENCE_PURPOSE)
+            except CredentialTransportError as exc:
+                logger.warning("Discarding persisted Danxi session %s: %s", session_key, exc.message)
+                continue
+            restored_state = self._build_state_from_persistence(session_key, session_payload)
+            if restored_state is not None:
+                restored_sessions[session_key] = restored_state
+        with self._lock:
+            if restored_sessions:
+                self._sessions.update(restored_sessions)
+                restored_active_key = str(payload.get("active_session_key") or "").strip()
+                if restored_active_key in restored_sessions:
+                    self._active_session_key = restored_active_key
+                elif not self._active_session_key:
+                    self._active_session_key = next(iter(restored_sessions.keys()), "")
+            elif self._state_backend is not None and (payload.get("sessions") or payload.get("active_session_key")):
+                self._state_backend.save({"active_session_key": "", "sessions": []})
+
+    def _build_state_from_persistence(self, session_key: str, payload: dict[str, Any]) -> _DanxiSessionState | None:
+        email = str(payload.get("email") or "").strip()
+        password = str(payload.get("password") or "").strip()
+        access_token = str(payload.get("access_token") or "").strip()
+        if not email or not password or not access_token:
+            return None
+        state = _DanxiSessionState(
+            session_key=session_key,
+            email=email,
+            password=password,
+            use_webvpn=bool(payload.get("use_webvpn")),
+            webvpn_cookie=str(payload.get("webvpn_cookie") or "").strip(),
+            access_token=access_token,
+            refresh_token=str(payload.get("refresh_token") or "").strip(),
+            user_profile=payload.get("user_profile") if isinstance(payload.get("user_profile"), dict) else None,
+            restored_from_persistence=True,
+            restore_validated=False,
+        )
+        state.http.headers.update({"Accept": "application/json", "User-Agent": "MeetYou-Danxi/1.0"})
+        return state
+
+    def _persist_sessions(self) -> None:
+        if self._state_backend is None:
+            return
+        sessions_payload = []
+        for session_key, state in self._sessions.items():
+            try:
+                sessions_payload.append(
+                    {
+                        "session_key": session_key,
+                        "sealed_state": encrypt_json_payload(self._serialize_state_for_persistence(state), purpose=_DANXI_PERSISTENCE_PURPOSE),
+                    }
+                )
+            except CredentialTransportError as exc:
+                raise DanxiError(f"无法安全持久化 Danxi/WebVPN 登录态：{exc.message}") from exc
+        self._state_backend.save(
+            {
+                "active_session_key": self._active_session_key,
+                "sessions": sessions_payload,
+            }
+        )
+
+    def _serialize_state_for_persistence(self, state: _DanxiSessionState) -> dict[str, Any]:
+        return {
+            "email": state.email,
+            "password": state.password,
+            "use_webvpn": state.use_webvpn,
+            "webvpn_cookie": state.webvpn_cookie,
+            "access_token": state.access_token,
+            "refresh_token": state.refresh_token,
+            "user_profile": state.user_profile or {},
+        }
+
+    def _invalidate_session(self, session_key: str, *, message: str = "") -> None:
+        with self._lock:
+            state = self._sessions.pop(session_key, None)
+            if state is not None:
+                state.http.close()
+            if self._active_session_key == session_key:
+                self._active_session_key = next(iter(self._sessions.keys()), "")
+        self._persist_sessions()
+        if message:
+            logger.info("Danxi session invalidated for %s: %s", session_key, message)
+
+    def _post_auth_login(self, state: _DanxiSessionState) -> dict[str, Any]:
+        payload = self._request_json(
+            "POST",
+            f"{self.AUTH_BASE}/login",
+            state=state,
+            json_body={"email": state.email, "password": state.password},
+            include_auth=False,
+            retry_on_unauthorized=False,
+        )
+        if not isinstance(payload, dict):
+            raise DanxiError("Danxi 登录返回格式异常。")
+        self._update_tokens(state, payload)
+        return payload
+
+    def _safe_load_profile(self, state: _DanxiSessionState) -> dict[str, Any] | None:
+        try:
+            profile = self._request_json("GET", f"{self.API_BASE}/users/me", state=state)
+        except Exception:
+            return None
+        if isinstance(profile, dict):
+            state.user_profile = profile
+            return profile
+        return None
+
+    def _update_tokens(self, state: _DanxiSessionState, payload: dict[str, Any]) -> None:
+        access = str(payload.get("access") or payload.get("access_token") or "").strip()
+        refresh = str(payload.get("refresh") or payload.get("refresh_token") or "").strip()
+        token_payload = payload.get("data")
+        if not access and isinstance(token_payload, dict):
+            access = str(token_payload.get("access") or token_payload.get("access_token") or "").strip()
+            refresh = str(token_payload.get("refresh") or token_payload.get("refresh_token") or "").strip()
+        if not access:
+            raise DanxiError("Danxi 登录成功但未返回 access token。")
+        state.access_token = access
+        state.refresh_token = refresh
+
+    def _transport_label(self, state: _DanxiSessionState) -> str:
+        if state.use_webvpn and not self._can_connect_directly():
+            return "webvpn"
+        return "direct"
+
+    def _can_connect_directly(self) -> bool:
+        with self._lock:
+            if self._direct_connect_available is not None:
+                return self._direct_connect_available
+        try:
+            response = requests.get(self.DIRECT_CONNECT_TEST_URL, timeout=(1, 1))
+            direct_available = response.status_code > 0
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
+            direct_available = False
+        except requests.RequestException:
+            direct_available = False
+        with self._lock:
+            self._direct_connect_available = direct_available
+        return direct_available
+
+    def _should_use_webvpn_proxy(self, state: _DanxiSessionState, url: str) -> bool:
+        return bool(state.use_webvpn and not self._can_connect_directly() and self._translate_url_to_webvpn(url))
+
+    def _translate_url_to_webvpn(self, url: str) -> str | None:
+        parsed = urlparse(url)
+        scheme = parsed.scheme or "http"
+        if scheme not in {"http", "https"}:
+            return None
+        if parsed.hostname not in self._WEBVPN_ALLOWED_HOSTS:
+            return None
+        formatted_host = parsed.hostname if ":" not in parsed.hostname else f"[{parsed.hostname}]"
+        if parsed.hostname in self._host_cache:
+            encoded_host = self._host_cache[parsed.hostname]
+        else:
+            padded = formatted_host
+            remainder = len(padded) % 16
+            if remainder:
+                padded += "0" * (16 - remainder)
+            cipher = AES.new(self._WEBVPN_KEY, AES.MODE_CFB, iv=self._WEBVPN_KEY, segment_size=128)
+            encrypted = cipher.encrypt(padded.encode("utf-8")).hex()
+            encoded_host = self._WEBVPN_KEY.hex() + encrypted[: 2 * len(formatted_host)]
+            self._host_cache[parsed.hostname] = encoded_host
+        segment = f"{scheme}-{parsed.port}" if parsed.port else scheme
+        path = parsed.path or ""
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        if parsed.fragment:
+            path = f"{path}#{parsed.fragment}"
+        return f"https://{self.WEBVPN_HOST}/{segment}/{encoded_host}{path}"
+
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        state: _DanxiSessionState,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        include_auth: bool = True,
+        retry_on_unauthorized: bool = True,
+    ) -> Any:
+        response = self._request(
+            method,
+            url,
+            state=state,
+            params=params,
+            json_body=json_body,
+            include_auth=include_auth,
+            retry_on_unauthorized=retry_on_unauthorized,
+        )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise DanxiError(f"Danxi 返回了非 JSON 响应: {response.text[:200]}") from exc
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        state: _DanxiSessionState,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        include_auth: bool = True,
+        retry_on_unauthorized: bool = True,
+    ) -> requests.Response:
+        target_url = url
+        headers = {"Accept": "application/json"}
+        proxied = self._should_use_webvpn_proxy(state, url)
+        if proxied:
+            translated = self._translate_url_to_webvpn(url)
+            if translated is None:
+                raise DanxiError(f"当前 URL 不支持通过 WebVPN 代理: {url}")
+            target_url = translated
+            if state.webvpn_cookie:
+                headers["Cookie"] = state.webvpn_cookie
+        if include_auth:
+            if not state.access_token:
+                raise DanxiError("Danxi 会话缺少 access token，请先登录。")
+            headers["Authorization"] = f"Bearer {state.access_token}"
+        try:
+            response = state.http.request(
+                method.upper(),
+                target_url,
+                params=params,
+                json=json_body,
+                headers=headers,
+                timeout=(5, 20),
+                allow_redirects=True,
+            )
+        except requests.RequestException as exc:
+            raise DanxiError(f"Danxi 请求失败: {exc}") from exc
+        if proxied and self._response_requires_webvpn_login(response):
+            raise DanxiError("Danxi 已切到 WebVPN 路由，但当前没有有效的 WebVPN 登录态。请提供可用的 WebVPN cookie。")
+        if response.status_code == 401 and include_auth and retry_on_unauthorized:
+            try:
+                self._post_auth_login(state)
+                self._persist_sessions()
+            except Exception as exc:
+                self._invalidate_session(
+                    state.session_key,
+                    message="Danxi token 已失效且重新登录失败。",
+                )
+                raise DanxiError("Danxi 登录态已失效，请重新登录。") from exc
+            return self._request(
+                method,
+                url,
+                state=state,
+                params=params,
+                json_body=json_body,
+                include_auth=include_auth,
+                retry_on_unauthorized=False,
+            )
+        if response.status_code >= 400:
+            detail = self._extract_error_detail(response)
+            raise DanxiError(f"Danxi API {response.status_code}: {detail}")
+        return response
+
+    def _response_requires_webvpn_login(self, response: requests.Response) -> bool:
+        final_url = str(response.url or "")
+        return final_url.startswith(self.WEBVPN_LOGIN_PREFIX) or "id.fudan.edu.cn" in final_url
+
+    def _extract_error_detail(self, response: requests.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            return response.text[:200] or response.reason
+        if isinstance(payload, dict):
+            for key in ("message", "detail", "error"):
+                value = payload.get(key)
+                if value:
+                    return str(value)
+        return str(payload)[:200]
+
+    def _build_tags_payload(self, tag_ids: list[int], tag_names: list[str]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for index, tag_id in enumerate(tag_ids):
+            result.append(
+                {
+                    "tag_id": int(tag_id),
+                    "temperature": 0,
+                    "name": tag_names[index] if index < len(tag_names) else "",
+                }
+            )
+        return result
+
+
+def get_shared_danxi_tools() -> DanxiTools:
+    global _SHARED_DANXI_TOOLS
+    if _SHARED_DANXI_TOOLS is None:
+        _SHARED_DANXI_TOOLS = DanxiTools()
+    return _SHARED_DANXI_TOOLS

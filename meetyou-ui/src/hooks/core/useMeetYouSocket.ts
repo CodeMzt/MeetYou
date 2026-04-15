@@ -110,6 +110,16 @@ export function useMeetYouSocket(
   }, [connectClientWs])
 
   useEffect(() => {
+    void refreshHealth()
+    const timer = window.setInterval(() => {
+      void refreshHealth()
+    }, 10000)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [refreshHealth])
+
+  useEffect(() => {
     return () => {
       clearTimeout(clientReconnectTimeoutRef.current)
       const clientWs = clientWsRef.current

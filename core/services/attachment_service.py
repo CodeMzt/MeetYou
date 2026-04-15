@@ -34,6 +34,12 @@ class AttachmentService(ServiceBase):
         return self._object_store.root
 
     @staticmethod
+    def _optional_iso(value: datetime | None) -> str:
+        if value is None:
+            return ""
+        return _iso(value)
+
+    @staticmethod
     def _sanitize_name(file_name: str) -> str:
         text = str(file_name or "").strip().replace("\\", "_").replace("/", "_")
         return text or "blob.bin"
@@ -52,6 +58,20 @@ class AttachmentService(ServiceBase):
 
     def _attachment_file_name(self, attachment) -> str:
         return self._sanitize_name(str((getattr(attachment, "meta", {}) or {}).get("file_name") or attachment.attachment_id))
+
+    @staticmethod
+    def _attachment_is_deleted(attachment) -> bool:
+        return str(getattr(attachment, "status", "") or "").strip().lower() == "deleted"
+
+    def _attachment_timestamp_view(self, attachment) -> dict[str, str]:
+        metadata = dict(getattr(attachment, "meta", {}) or {})
+        return {
+            "created_at": self._optional_iso(getattr(attachment, "created_at", None)),
+            "updated_at": self._optional_iso(getattr(attachment, "updated_at", None)),
+            "uploaded_at": str(metadata.get("uploaded_at") or "").strip(),
+            "completed_at": str(metadata.get("completed_at") or "").strip(),
+            "deleted_at": str(metadata.get("deleted_at") or "").strip(),
+        }
 
     @staticmethod
     def _read_iso_datetime(value: str) -> datetime:
@@ -184,7 +204,7 @@ class AttachmentService(ServiceBase):
         fallback_download_url: str = "",
         download_strategy: str = "",
     ) -> dict[str, object]:
-        return {
+        view = {
             "attachment_id": attachment.attachment_id,
             "kind": attachment.kind,
             "mime_type": attachment.mime_type,
@@ -197,6 +217,22 @@ class AttachmentService(ServiceBase):
             "fallback_download_url": str(fallback_download_url or "").strip(),
             "download_strategy": str(download_strategy or "").strip(),
         }
+        view.update(self._attachment_timestamp_view(attachment))
+        return view
+
+    def build_attachment_record_view(self, attachment) -> dict[str, object]:
+        metadata = dict(getattr(attachment, "meta", {}) or {})
+        view = self.build_attachment_object_view(attachment)
+        view.update(
+            {
+                "owner_type": str(getattr(attachment, "owner_type", "") or ""),
+                "owner_id": str(getattr(attachment, "owner_id", "") or ""),
+                "object_key": str(getattr(attachment, "object_key", "") or ""),
+                "sha256": str(getattr(attachment, "sha256", "") or ""),
+                "deleted_object": bool(metadata.get("deleted_object", False)),
+            }
+        )
+        return view
 
     def normalize_attachment_object_view(self, payload: dict | None) -> dict[str, object] | None:
         if not isinstance(payload, dict):
@@ -237,6 +273,57 @@ class AttachmentService(ServiceBase):
                 normalized.append(view)
         return normalized
 
+    def list_attachments(
+        self,
+        *,
+        owner_type: str,
+        owner_id: str,
+        include_deleted: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        normalized_owner_type = str(owner_type or "").strip()
+        normalized_owner_id = str(owner_id or "").strip()
+        if not normalized_owner_type or not normalized_owner_id:
+            raise ValueError("attachment_owner_required")
+        with self.session_scope() as session:
+            rows = AttachmentRepository(session).list_by_owner(
+                owner_type=normalized_owner_type,
+                owner_id=normalized_owner_id,
+                include_deleted=include_deleted,
+                limit=max(int(limit or 0), 1),
+            )
+            return [self.build_attachment_record_view(item) for item in rows]
+
+    def get_attachment_record(self, attachment_id: str, *, include_deleted: bool = False) -> dict[str, object]:
+        attachment = self.get_by_attachment_id(attachment_id)
+        if attachment is None:
+            raise ValueError("attachment_not_found")
+        if self._attachment_is_deleted(attachment) and not include_deleted:
+            raise ValueError("attachment_not_found")
+        return self.build_attachment_record_view(attachment)
+
+    def delete_attachment(self, attachment_id: str) -> dict[str, object]:
+        now = _utcnow()
+        with self.session_scope() as session:
+            attachment_repo = AttachmentRepository(session)
+            attachment = attachment_repo.get_by_attachment_id(attachment_id)
+            if attachment is None:
+                raise ValueError("attachment_not_found")
+            if self._attachment_is_deleted(attachment):
+                return self.build_attachment_record_view(attachment)
+            deleted_object = self._delete_attachment_object(str(getattr(attachment, "object_key", "") or ""))
+            updated = attachment_repo.update_attachment(
+                attachment_id,
+                status="deleted",
+                metadata={
+                    "deleted_at": _iso(now),
+                    "deleted_object": deleted_object,
+                },
+            )
+            if updated is None:
+                raise ValueError("attachment_not_found")
+            return self.build_attachment_record_view(updated)
+
     def store_upload_content(self, ticket_id: str, content: bytes):
         now = _utcnow()
         with self.session_scope() as session:
@@ -252,6 +339,8 @@ class AttachmentService(ServiceBase):
             attachment = attachment_repo.get_by_id(ticket.attachment_id)
             if attachment is None:
                 raise ValueError("attachment_not_found")
+            if self._attachment_is_deleted(attachment):
+                raise ValueError("attachment_deleted")
             if self._attachment_is_expired(attachment, now=now):
                 raise ValueError("attachment_expired")
 
@@ -283,6 +372,8 @@ class AttachmentService(ServiceBase):
             attachment = attachment_repo.get_by_attachment_id(attachment_id)
             if attachment is None:
                 raise ValueError("attachment_not_found")
+            if self._attachment_is_deleted(attachment):
+                raise ValueError("attachment_deleted")
             if self._attachment_is_expired(attachment, now=now):
                 raise ValueError("attachment_expired")
             if ticket_id:
@@ -315,6 +406,8 @@ class AttachmentService(ServiceBase):
         attachment = self.get_by_attachment_id(attachment_id)
         if attachment is None:
             raise ValueError("attachment_not_found")
+        if self._attachment_is_deleted(attachment):
+            raise ValueError("attachment_deleted")
         if attachment.status != "ready":
             raise ValueError("attachment_not_ready")
         if self._attachment_is_expired(attachment):
@@ -357,6 +450,8 @@ class AttachmentService(ServiceBase):
         attachment = self.get_by_attachment_id(attachment_id)
         if attachment is None:
             raise ValueError("attachment_not_found")
+        if self._attachment_is_deleted(attachment):
+            raise ValueError("attachment_deleted")
         if self._attachment_is_expired(attachment):
             raise ValueError("attachment_expired")
         return attachment
@@ -365,6 +460,8 @@ class AttachmentService(ServiceBase):
         attachment = self.get_by_attachment_id(attachment_id)
         if attachment is None:
             raise ValueError("attachment_not_found")
+        if self._attachment_is_deleted(attachment):
+            raise ValueError("attachment_deleted")
         if self._attachment_is_expired(attachment):
             raise ValueError("attachment_expired")
         resolver = getattr(self._object_store, "resolve_path", None)
@@ -379,6 +476,8 @@ class AttachmentService(ServiceBase):
         attachment = self.get_by_attachment_id(attachment_id)
         if attachment is None:
             raise ValueError("attachment_not_found")
+        if self._attachment_is_deleted(attachment):
+            raise ValueError("attachment_deleted")
         if self._attachment_is_expired(attachment):
             raise ValueError("attachment_expired")
         reader = getattr(self._object_store, "read_bytes", None)

@@ -66,6 +66,23 @@ class _FakeApp:
         return None
 
 
+class _ManagedRunApp(_FakeApp):
+    def __init__(self, health_getter=None, telemetry_recorder=None):
+        super().__init__(health_getter=health_getter, telemetry_recorder=telemetry_recorder)
+        self.run_called = False
+        self.ready_callback_called = False
+        self.stopping_callback_called = False
+
+    async def run(self, *, on_ready=None, on_stopping=None):
+        self.run_called = True
+        if on_ready is not None:
+            await on_ready()
+            self.ready_callback_called = True
+        if on_stopping is not None:
+            await on_stopping()
+            self.stopping_callback_called = True
+
+
 class ServiceRuntimeTests(unittest.TestCase):
     def test_default_runtime_boundaries_cover_service_layers(self):
         boundaries = build_default_runtime_boundaries()
@@ -122,6 +139,20 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertIn("terminal_shell_execution", delegated_names)
         self.assertTrue(runtime._app.setup_called)
         self.assertTrue(runtime._app.shutdown_called)
+
+    def test_service_runtime_prefers_app_run_as_single_authoritative_entry(self):
+        runtime = ServiceRuntime(RuntimeCommand.service(), app_factory=_ManagedRunApp)
+
+        asyncio.run(runtime.run())
+
+        self.assertTrue(runtime._app.run_called)
+        self.assertTrue(runtime._app.ready_callback_called)
+        self.assertTrue(runtime._app.stopping_callback_called)
+        self.assertFalse(runtime._app.setup_called)
+        self.assertFalse(runtime._app.shutdown_called)
+        health_events = [event for event in runtime.events if event.kind == RuntimeEventKind.HEALTH.value]
+        self.assertEqual(len(health_events), 1)
+        self.assertEqual(health_events[0].action, "service.ready")
 
     def test_health_snapshot_reports_degraded_background_and_telemetry_metrics(self):
         class _DegradedApp(_FakeApp):
@@ -218,6 +249,25 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertEqual(checks["core_mcp"]["metadata"]["partial_failure_count"], 1)
         self.assertEqual(checks["core_mcp"]["metadata"]["partial_failure_servers"], ["notion_knowledge"])
         self.assertEqual(snapshot["metrics"]["core_mcp_partial_failures_count"], 1)
+
+    def test_health_snapshot_keeps_service_ready_for_pending_redelivery_without_delivery_failures(self):
+        class _PendingRedeliveryApp(_FakeApp):
+            background_status = {
+                **_FakeApp.background_status,
+                "pending_delivery_count": 1,
+            }
+
+        runtime = ServiceRuntime(RuntimeCommand.service(), app_factory=_PendingRedeliveryApp)
+        asyncio.run(runtime.run())
+        snapshot = asyncio.run(runtime.build_health_snapshot())
+
+        self.assertEqual(snapshot["status"], RuntimeHealthStatus.READY.value)
+        self.assertTrue(snapshot["ready"])
+        self.assertFalse(snapshot["degraded"])
+        checks = {item["name"]: item for item in snapshot["checks"]}
+        self.assertEqual(checks["gateway_delivery"]["status"], RuntimeHealthStatus.READY.value)
+        self.assertEqual(checks["gateway_delivery"]["metadata"]["background_pending_delivery_count"], 1)
+        self.assertEqual(checks["gateway_delivery"]["detail"], "存在待补发消息，但服务仍可用")
 
     def test_structured_formatter_emits_correlation_context(self):
         formatter = StructuredFormatter(datefmt="%Y-%m-%d %H:%M:%S")

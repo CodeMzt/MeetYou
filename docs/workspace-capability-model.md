@@ -364,11 +364,12 @@ Mode 不负责：
 - `documents`
 - `study`
 - `automation`
+- `danxi`
 
 兼容说明：
 
 - `normal`、`auto`、`office` 视为 legacy mode 名称，不再作为公开产品枚举继续扩散
-- 当前代码在迁移期允许把公开 mode 映射到 legacy 内核，但对外只返回上述 5 个 mode
+- 当前代码在迁移期允许把公开 mode 映射到 legacy 内核，但对外只返回上述 6 个 mode
 
 ### 6.2 Procedure
 

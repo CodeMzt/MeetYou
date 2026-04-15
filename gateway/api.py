@@ -13,12 +13,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from agent_protocol import build_agent_message
 from core.exceptions import ConfigError
 from core.interaction_response_service import InteractionResponseService
 from core.protocol_schema import build_ui_protocol_schema
 from gateway.client_ws import ClientWebSocketManager
 from gateway.agent_ws_manager import AgentConnectionManager
 from gateway.dependencies import GatewayDependencies
+from gateway.legacy_surface import register_legacy_gateway_surface
 from gateway.models import (
     ConfigEntryResponse,
     ConfigPatchRequest,
@@ -38,36 +40,12 @@ from gateway.models import (
 )
 from gateway.routes import build_agent_router, build_client_router, build_developer_router, build_operator_router
 from service_runtime.models import RuntimeError, RuntimeErrorCategory
-from gateway.ws_manager import WebSocketManager, WebSocketOutputAdapter
+from gateway.ws_manager import AgentOutputAdapter, WebSocketManager, WebSocketOutputAdapter
 
 
 _HTTP_SCHEMA = "meetyou.http.v1"
 _WS_SCHEMA = "meetyou.ws.v1"
 _LOOPBACK_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$", re.IGNORECASE)
-_LEGACY_HTTP_SURFACE_HINTS = {
-    "/inputs": {
-        "replacement_path": "/client/messages",
-        "message": "旧聊天输入入口 /inputs 已停止承载聊天流，请改用 /client/messages。",
-    },
-    "/controls": {
-        "replacement_path": "/client/*",
-        "message": "旧控制入口 /controls 已停止承载聊天流，请改用 /client/messages、/client/operations 或 /client/sessions/{session_id}/*。",
-    },
-    "/session": {
-        "replacement_path": "/client/sessions",
-        "message": "旧会话入口 /session 已停止承载聊天流，请改用 /client/sessions。",
-    },
-    "/sessions": {
-        "replacement_path": "/client/sessions",
-        "message": "根路径 /sessions 已不再是正式会话入口，请改用 /client/sessions。",
-    },
-    "/messages": {
-        "replacement_path": "/client/messages",
-        "message": "根路径 /messages 已不再是正式消息入口，请改用 /client/messages。",
-    },
-}
-
-
 class GatewayHttpError(Exception):
     def __init__(self, status_code: int, error: RuntimeError):
         super().__init__(error.message)
@@ -91,6 +69,8 @@ class FastAPIGateway:
         health_getter=None,
         ws_delivery_observer=None,
         core_domain=None,
+        agent_connection_prompt_getter=None,
+        agent_connection_event_handler=None,
         agent_access_token: str = "",
         access_token: str = "",
         cors_origins: list[str] | tuple[str, ...] | None = None,
@@ -122,6 +102,8 @@ class FastAPIGateway:
         self._runtime_usage_getter = runtime_usage_getter
         self._runtime_debug_getter = runtime_debug_getter
         self._health_getter = health_getter
+        self._agent_connection_prompt_getter = agent_connection_prompt_getter
+        self._agent_connection_event_handler = agent_connection_event_handler
         self._agent_access_token = str(agent_access_token or "").strip() or str(access_token or "").strip()
         self._access_token = str(access_token or "").strip()
         self._cors_origins = tuple(
@@ -136,13 +118,14 @@ class FastAPIGateway:
         self.client_ws_manager = ClientWebSocketManager()
         self.agent_ws_manager = AgentConnectionManager()
         self.output_adapter = WebSocketOutputAdapter(self.ws_manager)
+        self.agent_output_adapter = AgentOutputAdapter(self.agent_ws_manager, build_agent_message)
         self.app = FastAPI(title="MeetYou Gateway")
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=list(self._cors_origins),
             allow_origin_regex=_LOOPBACK_ORIGIN_RE.pattern,
             allow_credentials=False,
-            allow_methods=["GET", "POST", "PATCH", "PUT"],
+            allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
             allow_headers=["Authorization", "Content-Type", "X-API-Key"],
         )
         self._server = None
@@ -283,6 +266,51 @@ class FastAPIGateway:
 
     async def dispatch_agent_call(self, *, agent_id: str, payload: dict) -> bool:
         return await self.agent_ws_manager.send_to_agent(agent_id, payload)
+
+    async def build_agent_connection_prompt(
+        self,
+        *,
+        agent_id: str,
+        agent_type: str,
+        display_name: str,
+        transport_profile: str,
+        workspace_ids: list[str] | tuple[str, ...] | None = None,
+    ) -> dict | None:
+        getter = self._agent_connection_prompt_getter
+        if getter is None:
+            return None
+        payload = await self._resolve(
+            getter,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            display_name=display_name,
+            transport_profile=transport_profile,
+            workspace_ids=list(workspace_ids or []),
+        )
+        return dict(payload or {}) if isinstance(payload, dict) else None
+
+    async def notify_agent_connected(
+        self,
+        *,
+        agent_id: str,
+        agent_type: str,
+        display_name: str,
+        transport_profile: str,
+        workspace_ids: list[str] | tuple[str, ...] | None = None,
+        connection_prompt: dict | None = None,
+    ) -> None:
+        handler = self._agent_connection_event_handler
+        if handler is None:
+            return
+        await self._resolve(
+            handler,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            display_name=display_name,
+            transport_profile=transport_profile,
+            workspace_ids=list(workspace_ids or []),
+            connection_prompt=dict(connection_prompt or {}) if isinstance(connection_prompt, dict) else None,
+        )
 
     def _extract_bearer_token(self, authorization: str) -> str:
         scheme, _, token = str(authorization or "").partition(" ")
@@ -435,6 +463,7 @@ class FastAPIGateway:
         self.app.include_router(build_client_router(self))
         self.app.include_router(build_operator_router(self))
         self.app.include_router(build_developer_router(self))
+        register_legacy_gateway_surface(self.app, self)
 
         @self.app.get("/health", response_model=HealthEnvelopeResponse)
         async def health():
@@ -601,49 +630,6 @@ class FastAPIGateway:
                     session_id=str(payload.get("session_id") or session_id),
                     debug=dict(payload or {}),
                 ),
-            )
-
-        def _legacy_http_route_handler(legacy_path: str):
-            async def handler(request: Request):
-                self._require_http_auth(request)
-                hint = _LEGACY_HTTP_SURFACE_HINTS[legacy_path]
-                self._raise_legacy_http_surface_removed(
-                    legacy_path=legacy_path,
-                    replacement_path=hint["replacement_path"],
-                    message=hint["message"],
-                )
-
-            return handler
-
-        for legacy_path, route_config in (
-            ("/inputs", {"methods": ["POST"]}),
-            ("/controls", {"methods": ["POST"]}),
-            ("/session", {"methods": ["GET", "POST"]}),
-            ("/sessions", {"methods": ["GET", "POST"]}),
-            ("/messages", {"methods": ["POST"]}),
-        ):
-            self.app.add_api_route(
-                legacy_path,
-                _legacy_http_route_handler(legacy_path),
-                methods=route_config["methods"],
-                include_in_schema=False,
-            )
-
-        @self.app.websocket("/ws")
-        async def websocket_endpoint(websocket: WebSocket):
-            if not await self._authorize_websocket(websocket):
-                return
-            await self._send_ws_error_and_close(
-                websocket,
-                code="legacy_websocket_path_removed",
-                category=RuntimeErrorCategory.VALIDATION.value,
-                message="根路径 /ws 已停止承载聊天流，请改用 /client/ws。",
-                details={
-                    "legacy_path": "/ws",
-                    "replacement_path": "/client/ws",
-                    "required_query": ["thread_id"],
-                },
-                close_code=4404,
             )
 
     async def start(self, host: str = "127.0.0.1", port: int = 8000):

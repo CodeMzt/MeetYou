@@ -1,0 +1,151 @@
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.modal {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px var(--shadow-color), 0 0 0 1px var(--glass-border);
+  width: 100%;
+  max-width: 400px;
+  overflow: hidden;
+  z-index: 1001;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  gap: 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.iconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.destructiveIcon {
+  background: rgba(211, 47, 47, 0.1);
+  color: var(--text-error);
+}
+
+.primaryIcon {
+  background: rgba(0, 102, 204, 0.1);
+  color: var(--accent-color);
+}
+
+.title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.closeBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+
+.closeBtn:hover {
+  background: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.body {
+  padding: 20px;
+}
+
+.message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 14px 20px;
+  gap: 10px;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--glass-border);
+}
+
+.cancelBtn,
+.confirmBtn {
+  min-height: 32px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.cancelBtn {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.cancelBtn:hover {
+  background: var(--border-subtle);
+}
+
+.destructiveBtn {
+  background: var(--bg-error);
+  color: var(--text-error);
+  border-color: var(--border-error);
+}
+
+.destructiveBtn:hover {
+  filter: brightness(0.95);
+}
+
+.primaryBtn {
+  background: var(--text-accent);
+  color: var(--text-inverse);
+}
+
+.primaryBtn:hover {
+  filter: brightness(1.1);
+}

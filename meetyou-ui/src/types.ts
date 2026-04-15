@@ -2,7 +2,7 @@ export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
-export type AssistantMode = 'general' | 'research' | 'documents' | 'study' | 'automation'
+export type AssistantMode = 'general' | 'research' | 'documents' | 'study' | 'automation' | 'danxi'
 
 export type RuntimeStatus = string
 
@@ -29,7 +29,7 @@ export interface ClientWorkspace {
   workspace_id: string
   title: string
   status: string
-  base_mode: string
+  base_mode: AssistantMode
   description: string
   prompt_overlay: string
   default_execution_target: string
@@ -148,6 +148,66 @@ export interface OperatorSourceProfile {
   description: string
   official_only: boolean
   default_freshness: string
+}
+
+export interface DanxiSessionStatus {
+  session_key: string
+  email: string
+  transport: string
+  webvpn_enabled: boolean
+  has_webvpn_cookie: boolean
+  webvpn_required: boolean
+  direct_connect_available: boolean
+  logged_in: boolean
+  user_profile: Record<string, unknown> | null
+}
+
+export interface DanxiListResponse<T = Record<string, unknown>> {
+  count: number
+  items: T[]
+  scope?: string
+}
+
+export interface DanxiPostResponse {
+  hole: Record<string, unknown>
+}
+
+export interface DanxiSearchResponse {
+  query: string
+  floor_hits: number
+  hole_ids: number[]
+  hits_by_hole: Record<string, Record<string, unknown>[]>
+  items: Record<string, unknown>[]
+}
+
+export interface DanxiUserProfileResponse {
+  session_key: string
+  logged_in: boolean
+  transport: string
+  webvpn_enabled: boolean
+  has_webvpn_cookie: boolean
+  webvpn_required: boolean
+  direct_connect_available: boolean
+  profile: Record<string, unknown> | null
+}
+
+export interface DanxiActionResponse {
+  ok: boolean
+  status_code: number
+  message: string
+  hole_id?: number | null
+  floor_id?: number | null
+}
+
+export interface DanxiSummaryResponse {
+  hole_id: number
+  title: string
+  summary: string
+  key_points: string[]
+  reply_highlights: string[]
+  floor_count: number
+  participant_count: number
+  generated_at: string
 }
 
 export interface ClientMessage {
@@ -368,6 +428,8 @@ export interface TurnActivity {
 
 export interface AttachmentObjectView {
   attachmentId: string
+  ownerType?: string
+  ownerId?: string
   kind?: string
   fileName: string
   mimeType?: string
@@ -375,9 +437,35 @@ export interface AttachmentObjectView {
   status?: string
   lifecyclePolicy?: string
   expiresAt?: string
+  createdAt?: string
+  updatedAt?: string
   downloadUrl?: string
   fallbackDownloadUrl?: string
   downloadStrategy?: string
+}
+
+export interface ClientAttachmentRecord {
+  attachment_id: string
+  owner_type: string
+  owner_id: string
+  kind: string
+  mime_type: string
+  file_name: string
+  object_key: string
+  size_bytes: number
+  lifecycle_policy: string
+  expires_at: string
+  sha256: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface StatusFeedback {
+  id: string
+  text: string
+  tone: 'neutral' | 'success' | 'error'
+  createdAt: number
 }
 
 export interface ChatTurn {

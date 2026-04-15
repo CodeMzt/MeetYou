@@ -51,6 +51,21 @@ class AttachmentRepository(RepositoryBase):
     def get_by_attachment_id(self, attachment_id: str) -> Attachment | None:
         return self.session.query(Attachment).filter_by(attachment_id=attachment_id).one_or_none()
 
+    def list_by_owner(
+        self,
+        *,
+        owner_type: str,
+        owner_id: str,
+        include_deleted: bool = False,
+        limit: int = 100,
+    ) -> list[Attachment]:
+        query = self.session.query(Attachment).filter_by(owner_type=owner_type, owner_id=owner_id)
+        if not include_deleted:
+            query = query.filter(Attachment.status != "deleted")
+        return list(
+            query.order_by(Attachment.created_at.desc(), Attachment.id.desc()).limit(max(int(limit or 0), 1)).all()
+        )
+
     def update_attachment(
         self,
         attachment_id: str,

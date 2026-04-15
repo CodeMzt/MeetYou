@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from core.credential_transport import encrypt_json_payload
 from desktop_agent.config import DesktopAgentConfig, load_desktop_agent_config
 from desktop_agent.protocol import build_capabilities_snapshot, build_heartbeat, build_hello, build_static_capabilities
 from desktop_agent.runtime import DesktopAgentRuntime
@@ -94,6 +95,86 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
             "capability.call.result",
         ])
         self.assertEqual(ws.sent[-1]["payload"]["result"]["echo"], "hello-agent")
+
+    def test_runtime_decrypts_encrypted_call_arguments(self):
+        config = load_desktop_agent_config()
+        runtime = DesktopAgentRuntime(config)
+
+        class _FakeWs:
+            def __init__(self):
+                self.sent = []
+
+            async def send_json(self, payload):
+                self.sent.append(payload)
+
+        ws = _FakeWs()
+        old_secret = os.environ.get("MEETYOU_CREDENTIAL_SECRET")
+        os.environ["MEETYOU_CREDENTIAL_SECRET"] = "desktop-agent-test-secret"
+        try:
+            asyncio.run(
+                runtime._handle_call_request(
+                    ws,
+                    {
+                        "schema": "meetyou.agent.v1",
+                        "type": "capability.call.request",
+                        "message_id": "dispatch-encrypted",
+                        "payload": {
+                            "call_id": "call-encrypted",
+                            "capability_id": f"agent.{config.agent_id}.utility.echo",
+                            "arguments": {"token": "[REDACTED]"},
+                            "encrypted_arguments": encrypt_json_payload(
+                                {"text": "hello-encrypted", "token": "secret-token"},
+                                purpose="agent.capability.arguments.v1",
+                            ),
+                        },
+                    },
+                    object(),
+                )
+            )
+        finally:
+            if old_secret is None:
+                os.environ.pop("MEETYOU_CREDENTIAL_SECRET", None)
+            else:
+                os.environ["MEETYOU_CREDENTIAL_SECRET"] = old_secret
+
+        self.assertEqual(ws.sent[-1]["payload"]["result"]["echo"], "hello-encrypted")
+
+    def test_runtime_accepts_agent_message_from_core(self):
+        config = load_desktop_agent_config()
+        runtime = DesktopAgentRuntime(config)
+
+        class _FakeWs:
+            def __init__(self):
+                self.sent = []
+
+            async def send_json(self, payload):
+                self.sent.append(payload)
+
+        ws = _FakeWs()
+        ready_received = asyncio.run(
+            runtime._handle_server_message(
+                {
+                    "schema": "meetyou.agent.v1",
+                    "type": "agent.message",
+                    "message_id": "core-message-1",
+                    "agent_id": config.agent_id,
+                    "payload": {
+                        "session_id": "system:agent:desktop-main-agent",
+                        "event_type": "message",
+                        "role": "assistant",
+                        "content": "欢迎接入，我这边已准备好后续协作。",
+                        "stream_id": "",
+                        "metadata": {"trigger": "agent_connected"},
+                    },
+                },
+                False,
+                ws,
+                object(),
+            )
+        )
+
+        self.assertFalse(ready_received)
+        self.assertEqual(ws.sent, [])
 
     def test_runtime_handles_file_read_write_and_shell_exec(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

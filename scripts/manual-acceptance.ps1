@@ -15,6 +15,7 @@ $MainPy = Join-Path $RepoRoot "main.py"
 $UiDir = Join-Path $RepoRoot "meetyou-ui"
 $DesktopAgentConfig = Join-Path $RepoRoot "user\desktop_agent.json"
 $UserConfig = Join-Path $RepoRoot "user\config.json"
+$DotEnvPath = Join-Path $RepoRoot ".env"
 
 function Write-Section([string]$Text) {
     Write-Host "`n== $Text ==" -ForegroundColor Cyan
@@ -30,6 +31,33 @@ function Write-Warn([string]$Text) {
 
 function Write-Fail([string]$Text) {
     Write-Host "[FAIL] $Text" -ForegroundColor Red
+}
+
+function Import-DotEnv {
+    if (-not (Test-Path $DotEnvPath)) {
+        return
+    }
+    Get-Content $DotEnvPath | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith("#")) {
+            return
+        }
+        $parts = $line -split "=", 2
+        if ($parts.Count -ne 2) {
+            return
+        }
+        $name = $parts[0].Trim()
+        $value = $parts[1].Trim()
+        if (-not $name) {
+            return
+        }
+        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        if (-not [Environment]::GetEnvironmentVariable($name, "Process")) {
+            [Environment]::SetEnvironmentVariable($name, $value, "Process")
+        }
+    }
 }
 
 function Get-AuthHeaders {
@@ -78,6 +106,7 @@ function Show-Help {
 
 function Validate-Environment {
     Write-Section "Environment"
+    Import-DotEnv
 
     if (-not (Test-Path $PythonExe)) {
         throw "Python virtual environment not found: $PythonExe"

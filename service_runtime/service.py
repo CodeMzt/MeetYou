@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from typing import Any
 
@@ -109,7 +110,33 @@ class ServiceRuntime:
 
     async def _run_service(self) -> None:
         self._app = self._build_app()
+        runner = getattr(self._app, "run", None)
+        if callable(runner):
+            run_params = inspect.signature(runner).parameters
+            if "on_ready" in run_params and "on_stopping" in run_params:
+                await runner(
+                    on_ready=self._on_service_ready,
+                    on_stopping=self._on_service_stopping,
+                )
+                return
+        await self._run_service_compat()
+
+    async def _run_service_compat(self) -> None:
         await self._app.setup()
+        await self._on_service_ready()
+        try:
+            await asyncio.gather(
+                self._app.brain_processor(),
+                self._app.heart.scheduler_processor(),
+                self._app.heart.housekeeping_processor(),
+                self._app.heart.heartbeat_processor(),
+                self._app.proprioceptor.run(),
+            )
+        finally:
+            await self._on_service_stopping()
+            await self._app.shutdown()
+
+    async def _on_service_ready(self) -> None:
         self._mark_all_components(
             RuntimeHealthStatus.READY,
             "Service runtime active",
@@ -121,21 +148,13 @@ class ServiceRuntime:
             status=self.health.status,
             payload=await self.build_health_snapshot(),
         )
-        try:
-            await asyncio.gather(
-                self._app.brain_processor(),
-                self._app.heart.scheduler_processor(),
-                self._app.heart.housekeeping_processor(),
-                self._app.heart.heartbeat_processor(),
-                self._app.proprioceptor.run(),
-            )
-        finally:
-            self._mark_all_components(
-                RuntimeHealthStatus.STOPPING,
-                "Runtime stopping",
-                "service.stop",
-            )
-            await self._app.shutdown()
+
+    async def _on_service_stopping(self) -> None:
+        self._mark_all_components(
+            RuntimeHealthStatus.STOPPING,
+            "Runtime stopping",
+            "service.stop",
+        )
 
     def _build_app(self) -> App:
         try:
@@ -199,10 +218,9 @@ class ServiceRuntime:
             core_mcp_summary = dict(core_mcp_diagnostics.get("summary") or {})
             core_mcp_config = dict(core_mcp_diagnostics.get("config") or {})
             system_issue_candidates = issue_snapshot["system_issue_candidates"]
-            delivery_degraded = bool(
-                int(background_status.get("pending_delivery_count", 0) or 0) > 0
-                or int(metrics.get("gateway_delivery_failures_total", 0) or 0) > 0
-            )
+            pending_delivery_count = int(background_status.get("pending_delivery_count", 0) or 0)
+            gateway_delivery_failures = int(metrics.get("gateway_delivery_failures_total", 0) or 0)
+            delivery_degraded = gateway_delivery_failures > 0
             tool_degraded = int(metrics.get("tool_failures_total", 0) or 0) > 0
             background_degraded = bool(system_issue_candidates)
             core_mcp_degraded = int(core_mcp_summary.get("partial_failure_count", 0) or 0) > 0
@@ -221,9 +239,13 @@ class ServiceRuntime:
             self._mark_component(
                 "delivery",
                 RuntimeHealthStatus.DEGRADED if delivery_degraded else RuntimeHealthStatus.READY,
-                "Gateway delivery pending or failed"
+                "Gateway delivery failures detected"
                 if delivery_degraded
-                else "Gateway delivery healthy",
+                else (
+                    "Gateway delivery has pending redelivery work"
+                    if pending_delivery_count > 0
+                    else "Gateway delivery healthy"
+                ),
                 "delivery.health.refresh",
             )
             self._mark_component(
@@ -265,10 +287,14 @@ class ServiceRuntime:
                     (
                         "gateway_delivery",
                         RuntimeHealthStatus.DEGRADED.value if delivery_degraded else RuntimeHealthStatus.READY.value,
-                        "存在网关投递失败或待补发消息" if delivery_degraded else "网关投递正常",
+                        (
+                            "存在网关投递失败"
+                            if delivery_degraded
+                            else ("存在待补发消息，但服务仍可用" if pending_delivery_count > 0 else "网关投递正常")
+                        ),
                         {
                             "gateway_delivery_attempts_total": int(metrics.get("gateway_delivery_attempts_total", 0) or 0),
-                            "gateway_delivery_failures_total": int(metrics.get("gateway_delivery_failures_total", 0) or 0),
+                            "gateway_delivery_failures_total": gateway_delivery_failures,
                             "background_pending_delivery_count": int(metrics.get("background_pending_delivery_count", 0) or 0),
                         },
                     ),

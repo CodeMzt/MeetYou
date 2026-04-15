@@ -23,8 +23,16 @@ from core.assistant_modes import AssistantModeManager
 from core.brain import Brain, BrainOutputEvent
 from core.config import ConfigManager
 from core.context import ContextManager
-from core.db.bootstrap import bootstrap_core_domain
-from core.db.importers import import_config_state, import_memory_state, import_source_catalog_state, import_task_state
+from core.app_lifecycle import (
+    run_app_runtime,
+    setup_app_runtime,
+    shutdown_app_runtime,
+    sync_config_state_to_db,
+    sync_memory_state_to_db,
+    sync_source_catalog_state_to_db,
+    sync_task_state_to_db,
+)
+from core.client_thread_bridge import ClientThreadBridge
 from core.event_bus import EventBus
 from core.exceptions import ConfigError, ExceptionRouter, MeetYouError
 from core.heart import Heart
@@ -38,14 +46,13 @@ from core.io_protocol import (
     StreamEventType,
     TargetKind,
     make_source,
+    make_target,
 )
 from core.logger import setup_logger
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.session_actor import SessionActorRuntime
 from core.session_manager import SessionManager
 from core.speaker import Speaker
-from core.source_catalog import SOURCE_CATALOG_STATE_KEY
-from core.state_backends import RuntimeStateBlobBackend
 from core.status import RuntimeStatus, StatusManager, utcnow_iso
 from core.tools_manager import ToolsManager
 from gateway.api import FastAPIGateway
@@ -169,7 +176,7 @@ _RESTART_REQUIRED_KEYS = {
 
 class App:
     def __init__(self, health_getter=None, telemetry_recorder=None):
-        setup_logger(enable_console=True, component="gateway")
+        setup_logger(enable_console=True, component="service")
 
         self.event_bus = EventBus()
         self.exception_router = ExceptionRouter()
@@ -247,6 +254,10 @@ class App:
         self._session_execution_runtime = SessionActorRuntime(self._process_session_execution)
         self._confirm_approval_requests: dict[str, dict[str, Any]] = {}
         self._interaction_responses = InteractionResponseService(self.event_bus)
+        self._client_thread_bridge = ClientThreadBridge(
+            gateway_getter=lambda: getattr(self, "gateway", None),
+            core_services_getter=lambda: getattr(self, "core_services", None),
+        )
 
         self.exception_router.on_system_error(self._log_error)
         self.exception_router.on_user_error(self._display_error)
@@ -256,6 +267,17 @@ class App:
         self.event_bus.subscribe(self.event_bus.HUMAN_INPUT_RESPONSE, self._handle_human_input_response)
 
         logger.info("Service runtime dependencies initialized")
+
+    def _get_client_thread_bridge(self) -> ClientThreadBridge:
+        bridge = getattr(self, "_client_thread_bridge", None)
+        if isinstance(bridge, ClientThreadBridge):
+            return bridge
+        bridge = ClientThreadBridge(
+            gateway_getter=lambda: getattr(self, "gateway", None),
+            core_services_getter=lambda: getattr(self, "core_services", None),
+        )
+        self._client_thread_bridge = bridge
+        return bridge
 
     def _get_main_provider(self) -> str:
         return self.config.get("api_provider") or "openai"
@@ -329,7 +351,7 @@ class App:
                 metadata=metadata,
             )
         )
-        await self._publish_client_runtime_state(session_id, snapshot, turn_id=metadata["turn_id"])
+        await self._get_client_thread_bridge().publish_runtime_state(session_id, snapshot, turn_id=metadata["turn_id"])
 
     async def _emit_usage_event(
         self,
@@ -349,7 +371,7 @@ class App:
                 metadata={"turn_id": turn_id},
             )
         )
-        await self._publish_client_runtime_usage(session_id, payload)
+        await self._get_client_thread_bridge().publish_runtime_usage(session_id, payload)
 
     async def _emit_reasoning_stream_event(
         self,
@@ -376,7 +398,7 @@ class App:
                 },
             )
         )
-        await self._publish_client_reasoning_event(
+        await self._get_client_thread_bridge().publish_reasoning_event(
             session_id,
             stream_id=stream_id,
             turn_id=turn_id,
@@ -401,7 +423,7 @@ class App:
             snapshot.get("turn_id", ""),
         )
         await self.speaker.emit(event)
-        await self._publish_client_confirm_request(event, approval_context=approval_context)
+        await self._get_client_thread_bridge().publish_confirm_request(event, approval_context=approval_context)
 
     async def _handle_confirm_response(self, payload):
         if not isinstance(payload, dict):
@@ -437,7 +459,7 @@ class App:
             EventTarget(kind=TargetKind.CURRENT_SESSION.value),
             snapshot.get("turn_id", ""),
         )
-        await self._publish_client_confirm_resolution(payload, approval_context=approval_context)
+        await self._get_client_thread_bridge().publish_confirm_resolution(payload, approval_context=approval_context)
         if request_id:
             self._confirm_approval_requests.pop(request_id, None)
 
@@ -594,7 +616,7 @@ class App:
             snapshot.get("turn_id", ""),
         )
         await self.speaker.emit(event)
-        await self._publish_client_human_input_request(event)
+        await self._get_client_thread_bridge().publish_human_input_request(event)
 
     async def _handle_human_input_response(self, payload):
         if not isinstance(payload, dict):
@@ -616,7 +638,7 @@ class App:
             EventTarget(kind=TargetKind.CURRENT_SESSION.value),
             snapshot.get("turn_id", ""),
         )
-        await self._publish_client_human_input_resolution(payload)
+        await self._get_client_thread_bridge().publish_human_input_resolution(payload)
 
     async def _update_heartbeat_status(self, status: str, detail: str = ""):
         snapshot = self.status_manager.set_heartbeat(status, detail)
@@ -738,28 +760,12 @@ class App:
         detail: str = "",
         error: dict[str, Any] | None = None,
     ) -> None:
-        gateway = getattr(self, "gateway", None)
-        if gateway is None or not thread_id:
-            return
-        metadata = dict(getattr(operation, "meta", {}) or {})
-        await gateway.publish_client_thread_event(
-            thread_id,
-            event_type="operation.updated",
-            payload={
-                "thread_id": thread_id,
-                "workspace_id": str(metadata.get("workspace_id") or ""),
-                "operation_id": operation.operation_id,
-                "title": operation.title,
-                "operation_type": operation.operation_type,
-                "execution_target": operation.execution_target,
-                "target_agent_id": str(metadata.get("target_agent_key") or ""),
-                "capability_id": str(metadata.get("preferred_capability_ref") or metadata.get("capability_id") or ""),
-                "status": operation.status,
-                "phase": phase,
-                "detail": detail,
-                "routing_reason": str(metadata.get("routing_reason") or ""),
-                **({"error": dict(error)} if isinstance(error, dict) else {}),
-            },
+        await self._get_client_thread_bridge().publish_task_operation_update(
+            operation,
+            thread_id=thread_id,
+            phase=phase,
+            detail=detail,
+            error=error,
         )
 
     async def _create_scheduled_task_operation(self, task_record: dict[str, Any], *, operation_type: str, title: str):
@@ -1243,45 +1249,16 @@ class App:
         )
 
     async def _sync_config_state_to_db(self) -> None:
-        core_services = getattr(self, "core_services", None)
-        if core_services is None:
-            return
-        import_config_state(self.config, core_services)
+        await sync_config_state_to_db(self)
 
     async def _sync_memory_state_to_db(self) -> None:
-        core_services = getattr(self, "core_services", None)
-        core_domain = getattr(self, "core_domain", None)
-        if core_services is None or core_domain is None:
-            return
-        import_memory_state(
-            self.config.get("memory_file_path") or "user/memory_graph.json",
-            principal_id=core_domain.principal.id,
-            workspaces=core_domain.workspaces,
-            services=core_services,
-        )
+        await sync_memory_state_to_db(self)
 
     async def _sync_task_state_to_db(self) -> None:
-        core_services = getattr(self, "core_services", None)
-        core_domain = getattr(self, "core_domain", None)
-        if core_services is None or core_domain is None:
-            return
-        import_task_state(
-            self.config.get("task_file_path") or "user/memory_tasks.json",
-            principal_id=core_domain.principal.id,
-            workspaces=core_domain.workspaces,
-            services=core_services,
-        )
+        await sync_task_state_to_db(self)
 
     async def _sync_source_catalog_state_to_db(self) -> None:
-        core_services = getattr(self, "core_services", None)
-        core_domain = getattr(self, "core_domain", None)
-        if core_services is None or core_domain is None:
-            return
-        import_source_catalog_state(
-            self.config.get("source_catalog_path") or "user/source_catalog.json",
-            principal_id=core_domain.principal.id,
-            services=core_services,
-        )
+        await sync_source_catalog_state_to_db(self)
 
     def get_runtime_state(self, session_id: str = "") -> dict[str, Any]:
         return {
@@ -1448,7 +1425,7 @@ class App:
                 metadata={"turn_id": turn_id},
             )
         )
-        await self._publish_client_control_event(session_id, dict(payload or {}), turn_id=turn_id)
+        await self._get_client_thread_bridge().publish_control_event(session_id, dict(payload or {}), turn_id=turn_id)
 
     async def _submit_reply_control_replay(
         self,
@@ -1710,25 +1687,121 @@ class App:
             reloaded_components.add("mode_manager")
         return sorted(reloaded_components)
 
-    @staticmethod
-    def _build_boot_event(start_prompt: str, source) -> InboundEvent:
-        return InboundEvent(
-            session_id="system:boot",
+    def build_agent_connection_prompt(
+        self,
+        *,
+        agent_id: str,
+        agent_type: str,
+        display_name: str,
+        transport_profile: str,
+        workspace_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            base_prompt = str(
+                self.config.get_prompt("agent_connected")
+                or self.config.get_prompt("agent_connection")
+                or ""
+            ).strip()
+        except Exception:
+            base_prompt = ""
+        workspace_list = [str(item).strip() for item in (workspace_ids or []) if str(item).strip()]
+        context = {
+            "trigger": "agent_connected",
+            "agent_id": str(agent_id or "").strip(),
+            "agent_type": str(agent_type or "").strip(),
+            "display_name": str(display_name or "").strip(),
+            "transport_profile": str(transport_profile or "").strip(),
+            "workspace_ids": workspace_list,
+        }
+        workspace_text = "、".join(workspace_list) if workspace_list else "未声明工作区"
+        prompt_parts = []
+        if base_prompt:
+            prompt_parts.append(base_prompt)
+        prompt_parts.append(
+            "现在有一个新的 Agent 刚刚接入系统。\n"
+            "请你像真实协作中的助手一样，主动发出第一条简短、自然、不生硬的连接消息，语气友好、专业，像在和一个刚上线的同事说话。\n"
+            "这条消息需要做到三件事：1）表明你已经感知到它已连接；2）结合它的身份和工作区给出贴合上下文的欢迎或协作提示；3）说明你会等待它的能力快照或后续任务。\n"
+            "不要输出 JSON、字段名清单、程序化枚举或过度模板化措辞。\n\n"
+            f"本次接入的是 {context['display_name'] or context['agent_id'] or '未知 Agent'}"
+            f"（agent_id={context['agent_id'] or 'unknown'}，类型={context['agent_type'] or 'unknown'}，"
+            f"传输={context['transport_profile'] or 'unknown'}），当前声明的工作区有：{workspace_text}。"
+        )
+        prompt = "\n\n".join(prompt_parts).strip()
+        return {
+            "prompt_name": "agent_connected",
+            "prompt": prompt,
+            "context": context,
+        }
+
+    async def inject_agent_connection_event(
+        self,
+        *,
+        agent_id: str,
+        agent_type: str,
+        display_name: str,
+        transport_profile: str,
+        workspace_ids: list[str] | None = None,
+        connection_prompt: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = (
+            dict(connection_prompt)
+            if isinstance(connection_prompt, dict) and connection_prompt
+            else self.build_agent_connection_prompt(
+                agent_id=agent_id,
+                agent_type=agent_type,
+                display_name=display_name,
+                transport_profile=transport_profile,
+                workspace_ids=workspace_ids,
+            )
+        )
+        prompt_text = str(payload.get("prompt") or "").strip()
+        if not prompt_text:
+            return payload
+        event = InboundEvent(
+            session_id=f"system:agent:{str(agent_id or '').strip() or 'unknown'}",
             type=EventType.MESSAGE.value,
             role="user",
-            content=start_prompt,
-            source=source,
-            target=EventTarget(kind=TargetKind.BROADCAST.value),
-            metadata={"transient": True, "boot_event": True},
+            content=prompt_text,
+            source=make_source(
+                SourceKind.SYSTEM.value,
+                "agent_connection",
+                display_name="Agent Connection",
+                agent_id=str(agent_id or "").strip(),
+            ),
+            target=make_target(
+                TargetKind.INTERNAL.value,
+                target_id=str(agent_id or "").strip(),
+                trigger="agent_connected",
+            ),
+            metadata={
+                "prompt_name": str(payload.get("prompt_name") or "agent_connected"),
+                "trigger": "agent_connected",
+                "agent_id": str(agent_id or "").strip(),
+                "agent_type": str(agent_type or "").strip(),
+                "display_name": str(display_name or "").strip(),
+                "transport_profile": str(transport_profile or "").strip(),
+                "workspace_ids": [str(item).strip() for item in (workspace_ids or []) if str(item).strip()],
+                "transient": True,
+                "connection_prompt": payload,
+            },
         )
-
-    async def _inject_core_startup_boot_event(self) -> None:
-        start_prompt = self.config.get_prompt("start")
-        boot_source = make_source(SourceKind.SYSTEM.value, "boot")
-        await self.event_bus.inbound_queue.put(self._build_boot_event(start_prompt, boot_source))
+        await self.event_bus.inbound_queue.put(event)
+        logger.info(
+            "Injected agent connection event into Core",
+            extra={
+                "context": {
+                    "agent_id": str(agent_id or "").strip(),
+                    "agent_type": str(agent_type or "").strip(),
+                    "workspace_ids": [str(item).strip() for item in (workspace_ids or []) if str(item).strip()],
+                    "trigger": "agent_connected",
+                }
+            },
+        )
+        return payload
 
     def _resolve_session_execution_request(self, event: InboundEvent) -> SessionExecutionRequest | None:
         effective_session_id = event.session_id
+        is_agent_connection_reply = False
         if event.type == EventType.SIGNAL.value:
             if self._is_heartbeat_signal(event):
                 delivery = self._recent_user_delivery()
@@ -1740,14 +1813,21 @@ class App:
                 target = EventTarget(kind=TargetKind.CURRENT_SESSION.value)
             input_info = self._build_signal_input(event)
         else:
+            event_metadata = dict(getattr(event, "metadata", {}) or {})
+            is_agent_connection_reply = bool(
+                event_metadata.get("trigger") == "agent_connected"
+                and str(effective_session_id or "").strip().startswith("system:agent:")
+            )
             input_info = {
                 "role": event.role,
                 "content": event.content,
-                "metadata": dict(getattr(event, "metadata", {}) or {}),
+                "metadata": event_metadata,
             }
             target = (
                 EventTarget(kind=TargetKind.BROADCAST.value)
                 if effective_session_id == "system:boot"
+                else EventTarget(kind=TargetKind.INTERNAL.value, id=event_metadata.get("agent_id"))
+                if is_agent_connection_reply
                 else EventTarget(kind=TargetKind.CURRENT_SESSION.value)
             )
         return SessionExecutionRequest(
@@ -1755,7 +1835,7 @@ class App:
             event=event,
             input_info=input_info,
             target=target,
-            is_boot=effective_session_id == "system:boot",
+            is_boot=effective_session_id == "system:boot" or is_agent_connection_reply,
         )
 
     def _enrich_request_procedure_context(self, request: SessionExecutionRequest) -> None:
@@ -1854,7 +1934,7 @@ class App:
                         **metadata,
                     },
                 )
-                await self._publish_client_activity_event(
+                await self._get_client_thread_bridge().publish_activity_event(
                     request.session_id,
                     activity={
                         "turn_id": turn_id,
@@ -1942,7 +2022,7 @@ class App:
                         reasoning_ended = True
                 elif output.type == "answer_text" and output.text:
                     answer_chunks.append(output.text)
-                    await self._publish_client_message_delta(
+                    await self._get_client_thread_bridge().publish_message_delta(
                         request.session_id,
                         stream_id=stream_id,
                         turn_id=turn_id,
@@ -1998,7 +2078,7 @@ class App:
                 stream_channel="answer",
                 metadata={"turn_id": turn_id, "finish_reason": finish_reason},
             )
-            await self._persist_and_publish_assistant_message(
+            await self._get_client_thread_bridge().persist_and_publish_assistant_message(
                 request.session_id,
                 content="".join(answer_chunks),
                 stream_id=stream_id,
@@ -2095,302 +2175,6 @@ class App:
             if request.is_boot:
                 await self.brain.close_session(request.session_id)
 
-    async def _publish_client_message_delta(self, session_id: str, *, stream_id: str, turn_id: str, delta: str) -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if not delta or gateway is None or core_services is None:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="message.delta",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "stream_id": stream_id,
-                "turn_id": turn_id,
-                "delta": delta,
-            },
-        )
-
-    async def _publish_client_runtime_state(self, session_id: str, snapshot: dict[str, Any], *, turn_id: str = "") -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if gateway is None or core_services is None:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="runtime.state",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "turn_id": turn_id or str(snapshot.get("turn_id") or ""),
-                "snapshot": dict(snapshot or {}),
-            },
-        )
-
-    async def _publish_client_runtime_usage(self, session_id: str, payload: dict[str, Any]) -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if gateway is None or core_services is None:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="runtime.usage",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "snapshot": dict(payload or {}),
-            },
-        )
-
-    async def _publish_client_reasoning_event(
-        self,
-        session_id: str,
-        *,
-        stream_id: str,
-        turn_id: str,
-        phase: str,
-        content: str,
-    ) -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if gateway is None or core_services is None:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="reasoning.delta",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "stream_id": stream_id,
-                "turn_id": turn_id,
-                "phase": phase,
-                "delta": content,
-            },
-        )
-
-    async def _publish_client_activity_event(self, session_id: str, *, activity: dict[str, Any], turn_id: str = "") -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if gateway is None or core_services is None:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        metadata = dict(activity.get("metadata") or {}) if isinstance(activity.get("metadata"), dict) else {}
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="activity.status",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "turn_id": turn_id or str(activity.get("turn_id") or ""),
-                "stream_id": str(activity.get("stream_id") or ""),
-                "phase": str(activity.get("phase") or "status"),
-                "content": str(activity.get("content") or ""),
-                "activity_kind": str(activity.get("activity_kind") or metadata.get("activity_kind") or "tool_chain"),
-                "tool_names": list(activity.get("tool_names") or metadata.get("tool_names") or []),
-                "metadata": metadata,
-                "event_id": str(activity.get("event_id") or ""),
-            },
-        )
-
-    async def _persist_and_publish_assistant_message(self, session_id: str, *, content: str, stream_id: str, turn_id: str) -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if not content or gateway is None or core_services is None:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        workspace_row = core_services.workspace.get_by_id(thread_row.workspace_id)
-        message = core_services.message.create_message(
-            thread_id=thread_row.id,
-            session_id=session_row.id,
-            role="assistant",
-            content=content,
-            status="completed",
-            meta={"turn_id": turn_id, "stream_id": stream_id},
-        )
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="message.completed",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "message": {
-                    "message_id": message.message_id,
-                    "thread_id": thread_row.thread_id,
-                    "session_id": session_id,
-                    "workspace_id": getattr(workspace_row, "workspace_id", ""),
-                    "client_id": "",
-                    "role": message.role,
-                    "content": message.content,
-                    "status": message.status,
-                    "channel": message.channel,
-                    "created_at": message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
-                },
-                "stream_id": stream_id,
-                "turn_id": turn_id,
-            },
-        )
-
-    async def _publish_client_confirm_request(self, event, *, approval_context: dict[str, Any] | None = None) -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if gateway is None or core_services is None:
-            return
-        session_row = core_services.session.get_by_session_id(event.session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="confirm.requested",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": event.session_id,
-                "request_id": event.request_id,
-                "content": str(event.content or ""),
-                "timeout": float(getattr(event, "timeout", 0.0) or 0.0),
-                "default_decision": bool(getattr(event, "default_decision", False)),
-                "approval_id": str((approval_context or {}).get("approval_id") or ""),
-                "approval_status": str((approval_context or {}).get("approval_status") or ""),
-                "approval_type": str((approval_context or {}).get("approval_type") or ""),
-                "risk_level": str((approval_context or {}).get("risk_level") or ""),
-                "operation_id": str((approval_context or {}).get("operation_id") or ""),
-            },
-        )
-
-    async def _publish_client_confirm_resolution(self, payload: dict[str, Any], *, approval_context: dict[str, Any] | None = None) -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        session_id = str((payload or {}).get("session_id") or "")
-        if gateway is None or core_services is None or not session_id:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="confirm.resolved",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "request_id": str((payload or {}).get("request_id") or ""),
-                "accepted": bool((payload or {}).get("accepted")),
-                "approval_id": str((approval_context or {}).get("approval_id") or ""),
-                "approval_status": str((approval_context or {}).get("approval_status") or ""),
-                "operation_id": str((approval_context or {}).get("operation_id") or ""),
-            },
-        )
-
-    async def _publish_client_human_input_request(self, event) -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if gateway is None or core_services is None:
-            return
-        session_row = core_services.session.get_by_session_id(event.session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="human_input.requested",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": event.session_id,
-                "request_id": event.request_id,
-                "question": str(getattr(event, "question", "") or event.content or ""),
-                "options": list(getattr(event, "options", []) or []),
-                "placeholder": str(getattr(event, "placeholder", "") or ""),
-                "timeout": float(getattr(event, "timeout", 0.0) or 0.0),
-            },
-        )
-
-    async def _publish_client_human_input_resolution(self, payload: dict[str, Any]) -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        session_id = str((payload or {}).get("session_id") or "")
-        if gateway is None or core_services is None or not session_id:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="human_input.resolved",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "request_id": str((payload or {}).get("request_id") or ""),
-                "answer_text": str((payload or {}).get("answer_text") or ""),
-                "selected_option": (payload or {}).get("selected_option"),
-            },
-        )
-
-    async def _publish_client_control_event(self, session_id: str, payload: dict[str, Any], *, turn_id: str = "") -> None:
-        gateway = getattr(self, "gateway", None)
-        core_services = getattr(self, "core_services", None)
-        if gateway is None or core_services is None or not session_id:
-            return
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        if thread_row is None:
-            return
-        await gateway.publish_client_thread_event(
-            thread_row.thread_id,
-            event_type="control.updated",
-            payload={
-                "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "turn_id": turn_id,
-                "control": dict(payload or {}),
-            },
-        )
-
     async def brain_processor(self):
         shutdown = self.event_bus.shutdown_event
         queue = self.event_bus.inbound_queue
@@ -2440,162 +2224,10 @@ class App:
             await self._session_execution_runtime.shutdown()
 
     async def setup(self):
-        tools_schema_path = self.config.get("tools_schema_path") or "user/tools.json"
-        mcp_servers = self.config.get_mcp_servers()
-        mcp_config_diagnostic = self.config.get_mcp_server_config_diagnostic()
+        await setup_app_runtime(self)
 
-        self.status_manager.set_global(RuntimeStatus.INITIALIZING.value, "Starting up")
-        self.core_domain = bootstrap_core_domain(self.config)
-        self.db_engine = self.core_domain.engine
-        self.db_session_factory = self.core_domain.session_factory
-        self.core_services = self.core_domain.services
-        self.heart.set_core_services(self.core_services)
-        state_blob_service = self.core_services.state_blob
-        await self.memory.init_memory(self.config)
-        self.memory.set_store_backend(
-            RuntimeStateBlobBackend(
-                state_blob_service,
-                principal_id=self.core_domain.principal.id,
-                state_key="memory_graph",
-                default_factory=self.memory._store_layer.empty_store,
-            ),
-            migrate_current=True,
-        )
-        self.task_manager.set_store_backend(
-            RuntimeStateBlobBackend(
-                state_blob_service,
-                principal_id=self.core_domain.principal.id,
-                state_key="task_store",
-                default_factory=self.task_manager._empty_store,
-            ),
-            migrate_current=True,
-        )
-        self.tools_manager.set_state_backends(
-            office_backend=RuntimeStateBlobBackend(
-                state_blob_service,
-                principal_id=self.core_domain.principal.id,
-                state_key="office_state",
-                default_factory=dict,
-            ),
-            study_backend=RuntimeStateBlobBackend(
-                state_blob_service,
-                principal_id=self.core_domain.principal.id,
-                state_key="study_progress",
-                default_factory=dict,
-            ),
-        )
-        self.mode_manager.set_source_catalog_backend(
-            RuntimeStateBlobBackend(
-                state_blob_service,
-                principal_id=self.core_domain.principal.id,
-                state_key=SOURCE_CATALOG_STATE_KEY,
-                default_factory=dict,
-            ),
-            migrate_current=True,
-        )
-        system_tools.set_agent_dispatcher(self.core_domain.agent_dispatch)
-        self.tools_manager.set_core_domain(self.core_domain)
-        self.tools_manager.set_agent_dispatcher(self.core_domain.agent_dispatch)
-        await self._sync_config_state_to_db()
-        logger.info(
-            "Core MCP 边界: %s",
-            mcp_config_diagnostic.get("message") or "未提供 Core MCP 配置诊断。",
-        )
-        await self.tools_manager.init_tools(tools_schema_path, mcp_servers)
-        core_mcp_diagnostics = self.get_core_mcp_diagnostics()
-        core_mcp_summary = core_mcp_diagnostics.get("summary") or {}
-        logger.info(
-            "Core MCP 运行态: configured=%s enabled=%s partial_failures=%s",
-            int(core_mcp_summary.get("configured_server_count", 0) or 0),
-            int(core_mcp_summary.get("enabled_count", 0) or 0),
-            int(core_mcp_summary.get("partial_failure_count", 0) or 0),
-        )
-        await self._refresh_brain_runtime()
-        await self.heart.init_heart()
-        system_tools.set_background_status_provider(self.heart.get_background_status)
-
-        host = self.config.get("gateway_host") or "127.0.0.1"
-        port = int(self.config.get("gateway_port") or 8000)
-        gateway_access_token = str(self.config.get("gateway_access_token") or "").strip()
-        agent_access_token = str(self.config.get("agent_access_token") or "").strip()
-        if host not in {"127.0.0.1", "localhost", "::1"} and not gateway_access_token:
-            raise ConfigError("非本地 gateway_host 必须配置 gateway_access_token")
-        self.gateway = FastAPIGateway(
-            self.event_bus,
-            self.session_manager,
-            config_snapshot_getter=self.get_config_snapshot,
-            config_item_getter=self.get_config_entry,
-            config_updater=self.apply_config_updates,
-            memory_snapshot_getter=self.get_memory_snapshot,
-            memory_graph_getter=self.get_memory_graph,
-            runtime_state_getter=self.get_runtime_state,
-            runtime_usage_getter=self.get_runtime_usage,
-            runtime_debug_getter=self.get_runtime_debug,
-            health_getter=self._health_getter,
-            ws_delivery_observer=(
-                self._telemetry_recorder.observe_gateway_delivery
-                if self._telemetry_recorder is not None
-                else None
-            ),
-            core_domain=self.core_domain,
-            agent_access_token=agent_access_token,
-            access_token=gateway_access_token,
-            cors_origins=self.config.get("gateway_cors_origins") or [],
-        )
-        self.core_domain.agent_dispatch.set_transport(self.gateway.dispatch_agent_call)
-        self.speaker.register_adapter(TargetKind.WEB.value, self.gateway.output_adapter)
-        await self.gateway.start(host=host, port=port)
-
-        if self.config.get_bool("enable_feishu_bot"):
-            self.feishu_output = FeishuOutputAdapter(self.config)
-            await self.feishu_output.init()
-            self.feishu_input = FeishuInputAdapter(
-                self.event_bus,
-                self.session_manager,
-                self.config,
-                output_adapter=self.feishu_output,
-            )
-            self._register_feishu_broadcast_targets()
-            await self.feishu_input.run()
-            logger.info("Feishu Bot 已通过 Client API + client/ws 正式主链接入。")
-
-        self.status_manager.set_global(RuntimeStatus.IDLE.value, "")
-        logger.info("Service runtime initialized")
-
-        try:
-            await self._inject_core_startup_boot_event()
-            logger.info("Core startup boot wake-up event injected")
-        except Exception as exc:
-            logger.warning("Failed to inject core startup boot wake-up event (non-fatal): %s", exc)
-
-    async def run(self):
-        await self.setup()
-        try:
-            await asyncio.gather(
-                self.brain_processor(),
-                self.heart.scheduler_processor(),
-                self.heart.housekeeping_processor(),
-                self.heart.heartbeat_processor(),
-                self.proprioceptor.run(),
-            )
-        finally:
-            await self.shutdown()
+    async def run(self, *, on_ready=None, on_stopping=None):
+        await run_app_runtime(self, on_ready=on_ready, on_stopping=on_stopping)
 
     async def shutdown(self):
-        logger.info("Shutting down...")
-        self.status_manager.set_global(RuntimeStatus.SHUTTING_DOWN.value, "Shutting down")
-        self.event_bus.request_shutdown()
-        await self._session_execution_runtime.shutdown()
-        if self.gateway is not None:
-            await self.gateway.stop()
-        if self.feishu_input is not None:
-            await self.feishu_input.close()
-        if self.feishu_output is not None:
-            await self.feishu_output.close()
-        await self.mcp_manager.close_mcp_servers()
-        await self.brain.close_brain()
-        await self.heart.close_heart()
-        await self.memory.close_memory()
-        if self.db_engine is not None:
-            self.db_engine.dispose()
-        logger.info("All resources released")
+        await shutdown_app_runtime(self)

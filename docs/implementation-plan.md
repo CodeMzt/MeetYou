@@ -1,4 +1,4 @@
-# MeetYou V2 Implementation Plan
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿# MeetYou V2 Implementation Plan
 
 ## 1. 目的
 
@@ -24,10 +24,6 @@
 - `docs/agent-protocol-v1.md`
 - `docs/core-api-surfaces.md`
 - `docs/storage-and-binary-transfer.md`
-
-现状盘点、旧功能映射与后续阶段安排，补充见：
-
-- `docs/server-centric-migration-baseline.md`
 
 阅读顺序建议：
 
@@ -71,6 +67,8 @@ V2 的最终目标是：
 1. `Client`
 
 - Electron 可通过 `client/* + client/ws` 完成聊天、审批、任务查看，并至少展示当前 workspace / operation / procedure 上下文
+- Electron 已提供独立“工作区与规程”管理页，用于承接 workspace 治理编辑、procedure 上下文浏览，以及运行中 operation / approval / human input 聚合状态
+- 主窗口状态反馈已收口为 `StatusIsland` 顶层连接/思考态 + operation `tone/summary` 细粒度执行态的双层模型
 - 主要交互 pending 已优先走资源语义入口
 
 1. `Agent`
@@ -85,7 +83,8 @@ V2 的最终目标是：
 
 1. `后台任务`
 
-- scheduled task 和 scheduled reminder 已进入 operation 主链
+- `Core Heart` 已成为服务端时间编排中枢：`scheduler loop` 负责 claim / pre-create operation / control event，`heartbeat reasoning loop` 负责判断时间压力并驱动后台提醒推理
+- `assistant_schedule` 域下的 scheduled task / scheduled reminder 已进入 operation 主链；`user_todo` 继续作为用户待办域，不参与 Heart 的自动 claim
 - task 快照可追踪最近一次 operation 标识与状态
 
 1. `可验证性`
@@ -151,7 +150,7 @@ Phase 10 清理旧路径与稳定化
 
 当前实施阶段已经冻结以下公开语义，后续开发默认按此执行：
 
-- 用户态 mode 固定为：`general`、`research`、`documents`、`study`、`automation`
+- 用户态 mode 固定为：`general`、`research`、`documents`、`study`、`automation`、`danxi`
 - `auto`、`normal`、`office` 不再作为公开产品枚举继续扩散；现阶段仅允许作为内部 legacy 映射存在
 - `execution_target` 固定为：`core_only`、`specific_agent`、`workspace_any_agent`、`prefer_agent_fallback_core`
 - `assistant`、`core`、`desktop` 不再作为正式执行目标枚举继续扩散；仅允许在兼容层做一次性映射
@@ -161,7 +160,7 @@ Phase 10 清理旧路径与稳定化
 ### 4.4 执行说明
 
 - 本文档现在只保留稳定的 `Phase -> Feature -> Task` 计划结构，不再展开历史“当前执行批次”正文
-- 已完成工作的判断，以 feature 状态、Phase 验收条件与 `server-centric-migration-baseline.md` 为准
+- 已完成工作的判断，以 feature 状态、Phase 验收条件与当前实现/测试为准
 - Feature 清单中的 `关联批次` 仅作为历史回溯标签，便于对照旧提交脉络；正文不再要求保留同编号批次段落
 - 如果后续需要再次记录短周期执行节奏，只保留“当前批次”或“下一批”两类简短说明，不再把全文写成施工日志
 
@@ -169,9 +168,10 @@ Phase 10 清理旧路径与稳定化
 
 默认推进顺序如下；若用户当轮有明确目标，以用户目标优先：
 
-1. `F92` / `F93` Edge Agent transport 稳定化与能力扩展
-2. `F100` / `F101` 旧路径清理与稳定化文档收口
-3. 继续收口附件与 workspace 相关文档尾差
+1. `F102` Danxi 二阶段收口：正式子页面、自动恢复登录态、凭证加密与验证口径
+2. `F92` / `F93` Edge Agent transport 稳定化与能力扩展
+3. `F100` / `F101` 旧路径清理与稳定化文档收口
+4. 继续收口附件与 workspace 相关文档尾差
 
 ## 5. 当前代码与目标代码的映射
 
@@ -248,8 +248,10 @@ Phase 10 清理旧路径与稳定化
 - `F73` Object store 抽象与可配置 backend。边界：`core/storage/object_store.py`、`core/config.py`、`core/app.py`。关联批次：`4.29`、`4.32`。状态：已完成。
 - `F74` S3-compatible object store 第一批。边界：`core/storage/object_store.py`、`core/services/attachment_service.py`。关联批次：`4.34`。状态：已完成。
 - `F75` Attachment 统一对象视图。边界：`core/services/attachment_service.py`、`meetyou-ui/src/types.ts`、`components/chat/`。状态：已完成。
+- `F78` Attachment 工具化与统一对象回传模型。范围：Agent / Tool 通过 `attachment_outputs` 声明附件产物，Desktop Agent 负责 upload-ticket / upload / complete 收口，Core 统一归一化为 attachment object view 并挂接到 operation / message。边界：`desktop_agent/runtime.py`、`gateway/routes/agent.py`、`core/services/attachment_service.py`、`meetyou-ui/src/hooks/core/useOperations.ts`。状态：已完成。
 - `F76` 对象存储产品化收口。已完成内容：`s3_compatible` backend 下 attachment 下载已优先返回预签名 URL，并保留 Core 代理下载作为兼容回退；部署配置说明与 S3-compatible 验收口径已同步收口。边界：`core/storage/`、`gateway/routes/client.py`、`docs/`。状态：已完成。
 - `F77` 短生命周期截图附件与清理策略。已完成内容：截图类 attachment 默认归入 `ephemeral` 生命周期，写入短 TTL，并由后台清理过期资源；Desktop Agent 对临时截图/`ephemeral` 附件上传成功后会清理本地缓存文件。边界：`desktop_agent/`、`core/services/attachment_service.py`、后台清理任务。状态：已完成。
+- `F79` Attachment 治理入口与用户面收口。已完成内容：Core 提供附件列出/读取/删除能力及对应助手工具；前端上传成功反馈移出聊天流并收口到状态反馈区；新增独立“附件管理”页面，支持查看关键时间戳、下载和删除。边界：`core/services/attachment_service.py`、`gateway/routes/client.py`、`tools/attachment_tools.py`、`meetyou-ui/src/App.tsx`、`meetyou-ui/src/AttachmentsWindow.tsx`、`components/status/`。状态：已完成。
 
 ##### Phase 8
 
@@ -261,6 +263,7 @@ Phase 10 清理旧路径与稳定化
 - `F83` Workspace capability 级 routing policy。范围：抽象 capability key、capability routing override、workspace 全局 routing preference 的统一决策。边界：`core/services/workspace_service.py`、`core/services/capability_service.py`、`gateway/routes/client.py`。关联批次：`4.13`、`4.15`。状态：已完成。
 - `F87` Workspace memory ranking 与 source-profile policy。范围：workspace 记忆排序、来源标记、source profile 偏好进入统一治理层。边界：`core/memory/`、workspace 查询服务、相关前端 workspace 视图。状态：已完成。
   已交付：workspace `preferred_source_profiles` / `memory_ranking_policy` 正式进入 governance surface、消息 metadata 与 route context；procedure 推荐来源优先于 workspace 偏好；`GET /operator/source-profiles` 与 `PATCH /operator/workspaces/{workspace_id}` 已提供受控目录与校验；Electron 独立“工作区与规程”窗口已提供只读展示与受控编辑 UI。
+- `F94` 管理页与状态反馈模型收口。范围：独立“工作区与规程”窗口承接 workspace 概览、治理编辑、procedure catalog/detail、运行中 operation / approval / human input 聚合状态；主窗口状态反馈统一为 `StatusIsland` 顶层状态 + operation `tone/summary` 细粒度状态。边界：`meetyou-ui/src/WorkspaceWindow.tsx`、`components/workspace/`、`components/status/`、`hooks/core/useOperations.ts`、`docs/`。状态：已完成。
 
 ###### Procedure / Task / Scheduler Integration
 
@@ -276,12 +279,13 @@ Phase 10 清理旧路径与稳定化
 - `F90` Edge Agent 协议骨架与统一 websocket transport。边界：`edge_agent/protocol.py`、`edge_agent/runtime.py`。关联批次：`4.30`。状态：已完成。
 - `F91` Edge Agent 正式运行目标。边界：`edge_agent/main.py`、`main.py`。关联批次：`4.33`。状态：已完成。
 - `F92` Edge Agent transport 稳定化。范围：统一 `WSS /agent/ws` 心跳、重连、注册与 capability call 基线，并确保 `agent.hello.ack` 下发的新 heartbeat interval 能立即作用到当前连接。边界：`edge_agent/`、`gateway/routes/agent.py`、相关测试。状态：已完成。
-- `F93` Edge Agent 能力扩展与稳定性测试。边界：`tests/test_edge_agent_*`、边缘 capability 样例。状态：待开始。
+- `F93` Edge Agent 能力扩展与稳定性测试。范围：补齐 Edge Agent 的协议/运行时稳定性测试、heartbeat 协商回归、最小 capability 样例与验证路径文档；当前 `tests/test_edge_agent_protocol.py`、`tests/test_edge_agent_runtime.py` 已覆盖 schema、`agent.hello.ack` 心跳重排与最小 echo capability，`tests/test_gateway_agent_api.py` 可补 Gateway 侧注册/调用联调。边界：`edge_agent/`、`tests/test_edge_agent_*`、边缘 capability 样例、`docs/`。状态：进行中。
 
 ##### Phase 10
 
 - `F100` Legacy path cleanup。范围：旧 `session + /inputs + /ws` 主路径、Core 直执行本地工具、过期兼容入口，以及非端侧 integration-style tools / MCP 到 `Core MCP` 的边界收口。边界：`gateway/`、`core/`、`desktop_agent/`、`docs/`。状态：已完成。
-- `F101` 稳定化与验收文档收口。范围：README、启动手册、手工验收、回归命令统一，以及以下三类边界同步到计划/设计/验收文档：1）Heart 时间编排与 Heart 时间感信号；2）agent heartbeat 协商与重排行为；3）`user_todo` / `assistant_schedule` 的术语、职责与实现边界。边界：`README.md`、`docs/`、`scripts/`。状态：进行中。
+- `F101` 稳定化与验收文档收口。范围：README、启动手册、手工验收、回归命令统一，以及以下四类边界同步到计划/设计/验收文档：1）Heart 时间编排与 Heart 时间感信号；2）agent heartbeat 协商与重排行为；3）`user_todo` / `assistant_schedule` 的术语、职责与实现边界；4）附件工具化、独立管理页与双层状态反馈模型。边界：`README.md`、`docs/`、`scripts/`。状态：已完成。
+- `F102` Danxi 模式与工具套件。范围：新增公开 `danxi` 模式与“旦夕”前端文案；引入 Danxi 普通用户工具套件（论坛浏览、帖子/楼层搜索、发帖、回帖、编辑、删除、收藏/订阅、消息读取）；通过可选 WebVPN 路由支持非校园网访问；同步前端模式枚举、workspace `base_mode` 治理编辑、计划/设计/验收文档与 `AGENTS.md`；新增 Electron 内嵌 WebVPN 登录窗与 Danxi 独立面板，并在二阶段把该面板从只读原型收口为紧凑三栏正式子页面，补齐用户信息、回复/编辑/删除回复、AI 摘要与状态反馈；Danxi JWT / WebVPN cookie 会经加密后持久化到服务端状态后端并在重启后自动恢复，会话失效时自动清理；Electron main 进程会在 `client/danxi/session/login` 与 `client/danxi/session/webvpn-cookie` 两条入口前使用共享密钥对敏感载荷做 `aes-256-gcm` 加密封装，Gateway 仅在对应 purpose 下解密。边界：`core/public_contract.py`、`core/assistant_modes.py`、`core/credential_transport.py`、`tools/danxi_tools.py`、`gateway/routes/client.py`、`gateway/routes/operator.py`、`meetyou-ui/src/`、`meetyou-ui/electron/`、`docs/`。状态：进行中（实现与文档已落地，待最终回归与人工验收）。
 
 ## 6. 阶段计划
 
@@ -324,7 +328,7 @@ Phase 10 清理旧路径与稳定化
 
 ### 主要任务
 
-1. 固定公开 mode 枚举为 `general | research | documents | study | automation`
+1. 固定公开 mode 枚举为 `general | research | documents | study | automation | danxi`
 2. 固定 `execution_target` 枚举为 `core_only | specific_agent | workspace_any_agent | prefer_agent_fallback_core`
 3. 清理 Procedure、前端类型、API 请求响应中的旧枚举值
 4. 在 Core 输入侧增加 public-to-legacy 过渡映射
@@ -335,7 +339,38 @@ Phase 10 清理旧路径与稳定化
 - Client API 输出的 Procedure 和 Operation 枚举为新值
 - 旧内核仍可通过过渡映射运行
 
-当前状态：已完成。
+## 6. Danxi Feature 说明
+
+### 6.1 范围
+
+- 新增公开模式 `danxi`，前端产品文案显示为“旦夕”
+- Danxi 工具只在 `danxi` 模式下暴露；其他模式保持不可见
+- 首批 Danxi 工具只覆盖普通用户、低风险论坛能力：登录、浏览、检索、发帖、回帖、编辑、删除、收藏、订阅、消息读取
+- 非校园网场景下，Danxi 客户端支持按 PDF 文档口径进行 1 秒直连探测，失败后通过 WebVPN URL 代理访问论坛 API
+- Danxi 独立窗口二阶段目标是“正式可用子系统”，不再停留在只读面板：保留三栏信息架构，同时收口为更紧凑的桌面布局，并补齐用户信息、回复、编辑回复、删除回复、AI 摘要与明确的成功/失败状态反馈
+- Danxi 会话二阶段需要支持安全自动恢复：Danxi JWT、refresh token、WebVPN cookie 与必要用户信息会以加密封装形式写入状态后端，下次启动时自动尝试恢复；恢复态必须先做一次低风险有效性校验，再决定保留或清理
+- Danxi 凭证跨进程链路二阶段需要默认加密：Electron main 负责在发起 Danxi 登录与 WebVPN cookie 更新前，使用共享密钥与 purpose 派生 key 对 email/password/cookie 等敏感字段做 `aes-256-gcm` 封装；Gateway 只接受对应 `encrypted_credentials`，缺少时直接拒绝，不再保留明文跨边界 fallback，并且只在 purpose 匹配时解密
+
+### 6.2 非范围
+
+- 不接入管理员接口、批量删改、审计/封禁、敏感内容治理等高权限能力
+- 不做高并发压测、批量回灌或其他可能影响论坛稳定性的测试
+- 当前已支持 Electron 内嵌 WebVPN 登录窗，由用户手动完成 WebVPN/CAS 登录后自动提取 cookie；仍不做高脆弱度的自动表单提交
+- 不在日志、调试输出、测试快照或错误对象中保留明文 Danxi/WebVPN 凭证；文档与实现都不应再鼓励通过未加密 payload 直接跨边界传输这些字段，Danxi 登录与 WebVPN 更新接口也不再接受这类明文请求
+- Danxi 前端虽然已具备独立窗口中的普通用户操作，但仍不追求替代全部聊天工作流；复杂写作、组合任务和高风险操作仍以助手工具与顺序化人工校验为主
+
+### 6.3 验收约束
+
+- 真实验收必须低频、顺序化，行为节奏应接近正常用户
+- 写操作只做最小必要验证，优先选择可控测试内容并避免破坏性删改
+- 若在校外网络联调，必须明确记录是否走直连或 WebVPN 路由
+- 二阶段最小回归顺序固定为：`tests/test_danxi_tools.py`、`tests/test_assistant_modes.py`、`tests/test_gateway_surface_routes.py`，然后执行前端 `npm run typecheck` 与 `npm run test`
+- 二阶段人工验收至少覆盖：子页面布局在窄窗/常规窗/宽窗下无异常；自动恢复登录成功或会话失效后自动清理；帖子回复、编辑回复、删除回复、AI 摘要与状态反馈闭环可用；若使用 WebVPN，记录登录窗提取 cookie 是否成功
+
+### 6.4 当前阶段目标与状态
+
+- 当前阶段目标：把 Danxi 从“模式 + 工具 + 只读面板”推进到“正式桌面子页面 + 安全会话恢复 + 默认加密传输 + 明确验证口径”
+- 当前状态：二阶段实现与文档口径已收口，尚待执行最小相关回归与低风险人工验收
 
 ## Phase 1 Core 数据模型与持久化骨架
 
@@ -532,6 +567,8 @@ Phase 10 清理旧路径与稳定化
 - `useMeetYou` 已通过 `clientApi.ts` 走 `workspace / thread / session / message / client/ws` 正式主链
 - 主窗口已通过 `fetchRuntimeUsageSnapshot` 完成 usage / context 初始 hydration
 - richer Client 本阶段已补齐 connection / session / operation 状态分层、approval / human input 一等 UI、附件入口占位以及 devtools debug 迁移；Procedure 不再作为主路径执行入口
+- 当前产品化信息架构已收口为“主窗口 + 独立管理页”双面：主窗口负责聊天和即时反馈，独立“工作区与规程”窗口负责 workspace / procedure 管理和状态聚合
+- 状态反馈采用双层模型：`StatusIsland` 负责连接/思考中的顶层反馈，operation 列表负责 `tone/summary` 级别的执行态反馈
 - `/runtime/debug` 的迁移目标是独立 devtools 调试面；上下文 / token 用量面仍保持独立 stats / usage 窗口，不应被折叠进 workspace / procedure 面板
 - 下一步重点改为 Phase 7 的附件闭环，而不是继续在主窗口补零散占位
 
@@ -547,7 +584,8 @@ Phase 10 清理旧路径与稳定化
 2. 重构 `useMeetYou` 为多 store / 多 hook 结构
 3. 引入 thread/session/operation 概念到 UI 状态
 4. 把审批与附件入口做成一等 UI 对象，并为 Procedure 预留只读状态 / 内容展示位
-5. 将 `/runtime/debug` 移到 devtools 面
+5. 把 workspace / procedure 治理与状态聚合收口到独立管理页，而不是继续堆叠在主聊天面
+6. 将 `/runtime/debug` 移到 devtools 面
 
 ### 测试
 
@@ -560,6 +598,8 @@ Phase 10 清理旧路径与稳定化
 - 前端主路径只依赖 Client API
 - 跨 session operation 可在 UI 中正常展示
 - approval / human input / attachment 入口已作为主路径显式对象出现；Procedure 不要求主路径可执行，只需能承接状态展示
+- “工作区与规程”管理页可展示 workspace 概览、治理编辑、procedure catalog/detail，以及运行中 operation / approval / human input 聚合状态
+- 主窗口状态反馈已区分顶层连接/思考态与 operation 细粒度执行态，避免只剩开发态日志式反馈
 - `/runtime/debug` 已迁到独立 devtools 面
 - 上下文 / token 用量面保留独立窗口入口，不与 workspace / procedure 面板混用
 
@@ -577,6 +617,9 @@ Phase 10 清理旧路径与稳定化
 - object store 抽象与 `s3_compatible` backend 已落地，且 `F76` 已补齐预签名下载 URL 与兼容回退
 - attachment 下载当前优先走对象存储预签名 URL；不支持直链时回退到 Core 代理下载内容
 - 截图类 attachment 的短生命周期与清理策略已由 `F77` 收口，包含后台过期清理与 Desktop Agent 本地缓存回收
+- Agent 侧附件输出已收口为工具化模型：tool / capability 只声明 `attachment_outputs`，由 Desktop Agent 完成上传，再由 Core 统一归一化为 attachment object view 挂到 operation / message
+- Core 与助手现已支持附件列出、读取、删除三类治理能力，返回带关键时间戳的结构化附件记录
+- 主窗口上传成功反馈已移出聊天流，改由状态反馈区承接；独立“附件管理”页负责查看、下载、删除附件
 
 ### 输入依赖
 
@@ -587,8 +630,8 @@ Phase 10 清理旧路径与稳定化
 ### 主要任务
 
 1. Core 中实现附件元数据与 ticket 服务
-2. 在客户端内本地后端实现 attachment uploader
-3. 前端中实现 attachment download flow
+2. 在客户端内本地后端实现 attachment uploader，并把 tool / capability 的 `attachment_outputs` 收口为统一 attachment object
+3. 前端中实现 attachment download flow 与统一对象视图回显
 4. 支持截图类短生命周期附件
 
 ### 测试
@@ -602,6 +645,7 @@ Phase 10 清理旧路径与稳定化
 
 - 桌面截图可上传并回传 attachment reference
 - 飞书或前端可下载查看
+- tool / capability 产生的附件可通过 `attachment_outputs -> attachment object view` 主链在 operation / message 中稳定回显
 
 ## Phase 8 Workspace / Memory / Procedure 收口
 
@@ -660,15 +704,29 @@ Phase 10 清理旧路径与稳定化
 2. 补齐 edge agent 最小运行时与 capability call 基线
 3. 更新文档、测试与配置模板
 
+### 当前状态补记
+
+- `F92` 已完成：`agent.hello.ack` 下发的 `heartbeat_interval_seconds` 会立即重排当前 heartbeat loop，而不是等旧间隔耗尽
+- `F93` 当前为进行中：仓库已具备 Edge Agent protocol/runtime 测试与最小 `utility.echo` capability 样例，但边缘能力集、样例覆盖面与人工验收口径仍需继续扩展
+- transport heartbeat 只负责 agent 在线状态与运行指标协商，不等同于 `Core Heart` 的服务端时间编排
+
 ### 测试
 
 - edge agent 运行时测试
 - hello / heartbeat / capability call 测试
 - 边缘 capability 样例测试
 
+当前推荐验证路径：
+
+1. 最小协议与运行时回归：`.venv\Scripts\python.exe -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime`
+2. Gateway 侧注册与调用联调：`.venv\Scripts\python.exe -m unittest tests.test_gateway_agent_api`
+3. 人工链路验收：按 `docs/manual-startup-acceptance.md` 的 Edge Agent / F93 验收步骤，手动启动 `python main.py edge-agent` 并检查 `/operator/agents`、`agent.hello.ack` heartbeat 协商与最小 capability 调用
+
 ### 验收
 
 - Edge Agent 与 Desktop Agent 使用同一套 transport 与协议主链
+- `agent.hello.ack` 的 heartbeat interval 协商可立即作用到当前连接
+- 最小边缘 capability 样例与相关稳定性测试可重复通过
 
 ## Phase 10 清理旧路径与稳定化
 
@@ -787,6 +845,7 @@ Phase 9 -> Phase 10
 
 - Electron / Client -> Core -> Desktop Agent -> Attachment -> Client
 - Feishu -> Core -> Desktop Agent -> Screenshot -> Feishu
+- Edge Agent -> Core -> `/agent/ws` heartbeat 协商与最小 capability call
 
 ## 9.2 前端测试层次
 
@@ -820,6 +879,9 @@ Phase 9 -> Phase 10
 
 - 建议新增独立测试目录与命令，例如：
   - `.venv\Scripts\python.exe -m unittest discover -s tests_agent -p "test_*.py"`
+- 当前 Edge Agent 最小验证已落在主 `tests/`：
+  - `.venv\Scripts\python.exe -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime`
+  - `.venv\Scripts\python.exe -m unittest tests.test_gateway_agent_api`
 
 ## 11. 里程碑
 

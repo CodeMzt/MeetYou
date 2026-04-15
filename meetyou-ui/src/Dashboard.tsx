@@ -1,12 +1,13 @@
-import React, { useEffect } from 'react'
+import React, { Suspense, useEffect } from 'react'
 import { Clock, Network, FileText, LayoutDashboard, Database } from 'lucide-react'
 import './dashboard.css'
 import { useMemory } from './hooks/useMemory'
 import OverviewView from './views/OverviewView'
 import RecordsView from './views/RecordsView'
 import TimelineView from './views/TimelineView'
-import GraphView from './views/GraphView'
 import SubWindow from './components/layout/SubWindow'
+
+const GraphView = React.lazy(() => import('./views/GraphView'))
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = React.useState('overview')
@@ -55,10 +56,13 @@ export default function Dashboard() {
           {activeTab === 'overview' && <OverviewView snapshot={snapshot} />}
           {activeTab === 'records' && <RecordsView snapshot={snapshot} />}
           {activeTab === 'timeline' && <TimelineView snapshot={snapshot} />}
-          {activeTab === 'graph' && <GraphView graph={graph} />}
+          {activeTab === 'graph' && (
+            <Suspense fallback={<div className="card graph-loading">图谱视图加载中...</div>}>
+              <GraphView graph={graph} />
+            </Suspense>
+          )}
         </div>
       </div>
     </SubWindow>
   )
 }
-

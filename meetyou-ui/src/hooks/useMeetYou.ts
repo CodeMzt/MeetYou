@@ -1,6 +1,7 @@
-import { startTransition, useCallback, useEffect, useMemo, useState } from 'react'
-import { normalizeAttachmentObject } from '../attachmentObject'
-import type { ClientThreadProcedureContext } from '../types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { triggerAttachmentDownload } from '../attachmentTransfers'
+import type { ClientThreadProcedureContext, StatusFeedback } from '../types'
+import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
 import {
   DESKTOP_AGENT_REFRESH_INTERVAL_MS,
   useClientContext,
@@ -10,19 +11,64 @@ import {
   useProcedures,
 } from './core'
 import { parseClientWsPayload } from '../protocolClient'
-import { createSystemTurn } from '../chatState'
 import {
   completeClientAttachment,
   getClientThreadProcedureContext,
-  downloadClientAttachmentContent,
-  createClientAttachmentDownloadTicket,
-  resolveClientAttachmentDownloadPlan,
   createClientAttachmentUploadTicket,
-  uploadClientAttachmentContent,
+  uploadClientAttachmentContent
 } from '../clientApi'
 
-export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
+const STATUS_FEEDBACK_TTL_MS = 6000
+
+function procedureDetailSignature(procedure: ClientThreadProcedureContext['effective_procedure']): string {
+  if (!procedure) {
+    return ''
+  }
+  return JSON.stringify({
+    procedure_id: procedure.procedure_id,
+    title: procedure.title,
+    description: procedure.description,
+    applicable_modes: procedure.applicable_modes,
+    recommended_capabilities: procedure.recommended_capabilities,
+    preferred_capability_ref: procedure.preferred_capability_ref,
+    preferred_agent_ids: procedure.preferred_agent_ids,
+    preferred_agent_types: procedure.preferred_agent_types,
+    agent_routing_policy: procedure.agent_routing_policy,
+    default_execution_target: procedure.default_execution_target,
+    risk_profile: procedure.risk_profile,
+    status: procedure.status,
+    prompt_overlay: procedure.prompt_overlay,
+    recommended_source_profiles: procedure.recommended_source_profiles,
+    infer_keywords: procedure.infer_keywords,
+  })
+}
+
+function sameProcedureContext(
+  current: ClientThreadProcedureContext | null,
+  next: ClientThreadProcedureContext | null,
+): boolean {
+  if (current === next) {
+    return true
+  }
+  if (!current || !next) {
+    return false
+  }
+  return (
+    current.source === next.source &&
+    current.latest_inferred_reason === next.latest_inferred_reason &&
+    current.latest_inferred_score === next.latest_inferred_score &&
+    current.latest_inferred_at === next.latest_inferred_at &&
+    procedureDetailSignature(current.pinned_procedure) === procedureDetailSignature(next.pinned_procedure) &&
+    procedureDetailSignature(current.latest_inferred_procedure) === procedureDetailSignature(next.latest_inferred_procedure) &&
+    procedureDetailSignature(current.effective_procedure) === procedureDetailSignature(next.effective_procedure)
+  )
+}
+
+export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
+  const autoInitializeAttemptedRef = useRef(false)
   const [procedureContext, setProcedureContext] = useState<ClientThreadProcedureContext | null>(null)
+  const [statusFeedback, setStatusFeedback] = useState<StatusFeedback | null>(null)
+  const [attachmentInventoryVersion, setAttachmentInventoryVersion] = useState(0)
 
   const {
     clientContext,
@@ -75,13 +121,11 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
 
   const {
     operations,
-    sendAgentEchoOperation,
     decideOperationApproval,
     processWsUpdateForOperations,
   } = useOperations(
     baseUrl,
     clientContext,
-    desktopAgentId,
     initializeClientContext,
     dispatchChat
   )
@@ -107,7 +151,7 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     try {
       const nextContext = await getClientThreadProcedureContext(baseUrl, threadId)
       setProcedureContext((current) => {
-        if (JSON.stringify(current) === JSON.stringify(nextContext)) {
+        if (sameProcedureContext(current, nextContext)) {
           return current
         }
         return nextContext
@@ -118,6 +162,25 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
       return null
     }
   }, [baseUrl, clientContext?.threadId])
+
+  useEffect(() => {
+    if (!statusFeedback) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      setStatusFeedback((current) => current?.id === statusFeedback.id ? null : current)
+    }, STATUS_FEEDBACK_TTL_MS)
+    return () => window.clearTimeout(timer)
+  }, [statusFeedback])
+
+  const publishStatusFeedback = useCallback((text: string, tone: StatusFeedback['tone']) => {
+    setStatusFeedback({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text,
+      tone,
+      createdAt: Date.now(),
+    })
+  }, [])
 
   const applyClientWsUpdate = useCallback((rawPayload: unknown) => {
     const update = parseClientWsPayload(rawPayload)
@@ -148,6 +211,10 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
   }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, reloadProcedureContext])
 
   useEffect(() => {
+    if (autoInitializeAttemptedRef.current) {
+      return
+    }
+    autoInitializeAttemptedRef.current = true
     void initializeClientContext()
   }, [initializeClientContext])
 
@@ -198,74 +265,69 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
         sha256: uploadResult.sha256,
         size_bytes: uploadResult.size_bytes,
       })
-      const downloadTicket = await createClientAttachmentDownloadTicket(baseUrl, attachment.attachment_id, context.clientId)
-      const attachmentView = normalizeAttachmentObject({
-        ...attachment,
-        file_name: file.name,
-        download_url: downloadTicket.download_url,
-      })
-      if (!attachmentView) {
-        throw new Error('附件对象视图构建失败')
-      }
-      startTransition(() => {
-        dispatchChat({
-          type: 'append_system_turn',
-          turn: createSystemTurn(
-            `附件已上传：${file.name}`,
-            false,
-            [attachmentView],
-          ),
-        })
-      })
+      setAttachmentInventoryVersion((current) => current + 1)
+      publishStatusFeedback(`附件上传成功：${file.name}`, 'success')
       return attachment
     } catch (error) {
-      startTransition(() => {
-        dispatchChat({
-          type: 'append_system_turn',
-          turn: createSystemTurn(`附件上传失败：${error instanceof Error ? error.message : 'unknown error'}`, true),
-        })
-      })
+      publishStatusFeedback(`附件上传失败：${error instanceof Error ? error.message : 'unknown error'}`, 'error')
       return null
     }
-  }, [baseUrl, clientContext, dispatchChat, initializeClientContext])
+  }, [baseUrl, clientContext, initializeClientContext, publishStatusFeedback])
 
   const downloadAttachment = useCallback(async (attachmentId: string) => {
     try {
       const context = clientContext ?? (await initializeClientContext())
-      const ticket = await createClientAttachmentDownloadTicket(baseUrl, attachmentId, context.clientId)
-      const link = document.createElement('a')
-      link.rel = 'noopener noreferrer'
-      link.style.display = 'none'
-      const plan = resolveClientAttachmentDownloadPlan(ticket)
-      if (plan.mode === 'direct') {
-        link.href = plan.url
-        link.download = plan.fileName || attachmentId
-        link.target = '_blank'
-        link.referrerPolicy = 'no-referrer'
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        return ticket
-      }
-      const blob = await downloadClientAttachmentContent(plan.url)
-      const objectUrl = URL.createObjectURL(blob)
-      link.href = objectUrl
-      link.download = plan.fileName || attachmentId
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
-      return ticket
+      await triggerAttachmentDownload(baseUrl, attachmentId, context.clientId)
+      return true
     } catch (error) {
-      startTransition(() => {
-        dispatchChat({
-          type: 'append_system_turn',
-          turn: createSystemTurn(`附件下载失败：${error instanceof Error ? error.message : 'unknown error'}`, true),
-        })
-      })
+      publishStatusFeedback(`附件下载失败：${error instanceof Error ? error.message : 'unknown error'}`, 'error')
       return null
     }
-  }, [baseUrl, clientContext, dispatchChat, initializeClientContext])
+  }, [baseUrl, clientContext, initializeClientContext, publishStatusFeedback])
+
+  useEffect(() => {
+    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.runtimeDebug.update, { sessionId, baseUrl })
+  }, [baseUrl, sessionId])
+
+  useEffect(() => {
+    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.context.update, {
+      usageSnapshot: chatState.usageSnapshot,
+    })
+  }, [chatState.usageSnapshot])
+
+  useEffect(() => {
+    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.workspace.update, {
+      baseUrl,
+      threadId: clientContext?.threadId || '',
+      workspace: clientContext?.workspace || null,
+      procedureContext,
+      connectionState: effectiveConnectionState,
+      desktopAgentConnected: Boolean(desktopAgentId),
+      operations,
+      approvalDisplay,
+      pendingHumanInput,
+    })
+  }, [
+    approvalDisplay,
+    baseUrl,
+    clientContext?.threadId,
+    clientContext?.workspace,
+    desktopAgentId,
+    effectiveConnectionState,
+    operations,
+    pendingHumanInput,
+    procedureContext,
+  ])
+
+  useEffect(() => {
+    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.attachments.update, {
+      baseUrl,
+      threadId: clientContext?.threadId || '',
+      clientId,
+      workspaceTitle: clientContext?.workspace?.title || clientContext?.workspace?.workspace_id || '',
+      attachmentInventoryVersion,
+    })
+  }, [attachmentInventoryVersion, baseUrl, clientContext?.threadId, clientContext?.workspace, clientId])
 
   return {
     messages: chatState.messages,
@@ -289,8 +351,9 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     lastAck: transportState.lastAck,
     lastError: transportState.lastError,
     archivedTurnCount: chatState.archivedTurnCount,
+    statusFeedback,
+    attachmentInventoryVersion,
     sendMessage,
-    sendAgentEchoOperation,
     decideOperationApproval,
     executeProcedure,
     reloadProcedures,
@@ -302,6 +365,7 @@ export function useMeetYou(baseUrl: string = 'http://127.0.0.1:8000') {
     downloadAttachment,
     refreshHealth,
     refreshWorkspace,
+    setStatusFeedback,
     baseUrl,
     clientId,
   }

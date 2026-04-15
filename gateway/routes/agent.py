@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from agent_protocol import (
     AGENT_WS_SCHEMA,
     AgentCapabilitiesSnapshotPayload,
@@ -18,6 +20,8 @@ from pydantic import ValidationError
 
 from core.http_headers import build_attachment_content_disposition
 from service_runtime.models import RuntimeError
+
+logger = logging.getLogger("meetyou.gateway.agent_ws")
 
 
 def _workspace_title(workspace_id: str) -> str:
@@ -128,204 +132,242 @@ def build_agent_router(gateway) -> APIRouter:
                         break
                     continue
 
-                if envelope.type == "agent.hello":
-                    payload = AgentHelloPayload.model_validate(envelope.payload)
-                    bound_agent_id = envelope.agent_id
-                    owner_client = None
-                    if payload.owner_client_id:
-                        owner_client = domain.services.client.ensure_client(
-                            client_id=payload.owner_client_id,
-                            principal_id=domain.principal.id,
-                            client_type=payload.owner_client_type or "electron",
-                            display_name=payload.owner_client_display_name or payload.owner_client_id,
-                        )
-                    workspace_rows = []
-                    for workspace_id in payload.workspace_ids:
-                        workspace_rows.append(
-                            domain.services.workspace.ensure_workspace(
-                                workspace_id=workspace_id,
+                try:
+                    if envelope.type == "agent.hello":
+                        payload = AgentHelloPayload.model_validate(envelope.payload)
+                        bound_agent_id = envelope.agent_id
+                        owner_client = None
+                        if payload.owner_client_id:
+                            owner_client = domain.services.client.ensure_client(
+                                client_id=payload.owner_client_id,
                                 principal_id=domain.principal.id,
-                                title=_workspace_title(workspace_id),
-                                base_mode="automation" if workspace_id == "desktop-main" else "general",
+                                client_type=payload.owner_client_type or "electron",
+                                display_name=payload.owner_client_display_name or payload.owner_client_id,
                             )
-                        )
-                    current_agent = domain.services.agent.register_agent(
-                        principal_id=domain.principal.id,
-                        agent_id=envelope.agent_id,
-                        agent_type=payload.agent_type,
-                        display_name=payload.display_name,
-                        transport_profile=payload.transport_profile,
-                        workspace_rows=workspace_rows,
-                        host_name=str(payload.host.get("hostname") or ""),
-                        host_os=str(payload.host.get("os") or ""),
-                        host_arch=str(payload.host.get("arch") or ""),
-                        supports_offline_cache=payload.supports_offline_cache,
-                        owner_client_id=getattr(owner_client, "id", None),
-                        meta={"last_hello": envelope.model_dump()},
-                    )
-                    await gateway.agent_ws_manager.connect(current_agent.agent_id, websocket)
-                    sent = await gateway._safe_send_json(
-                        websocket,
-                        build_agent_envelope(
-                            envelope_type="agent.hello.ack",
+                        workspace_rows = []
+                        for workspace_id in payload.workspace_ids:
+                            workspace_rows.append(
+                                domain.services.workspace.ensure_workspace(
+                                    workspace_id=workspace_id,
+                                    principal_id=domain.principal.id,
+                                    title=_workspace_title(workspace_id),
+                                    base_mode="automation" if workspace_id == "desktop-main" else "general",
+                                )
+                            )
+                        current_agent = domain.services.agent.register_agent(
+                            principal_id=domain.principal.id,
                             agent_id=envelope.agent_id,
-                            message_id=f"ack-{envelope.message_id}",
-                            correlation_id=envelope.message_id,
-                            payload={
-                                "accepted": True,
-                                "registered_agent_id": envelope.agent_id,
-                                "requires_capability_snapshot": True,
-                                "heartbeat_interval_seconds": 20,
-                            },
-                        ),
-                    )
-                    if not sent:
-                        break
-                    continue
-
-                if envelope.type == "agent.capabilities.snapshot":
-                    payload = AgentCapabilitiesSnapshotPayload.model_validate(envelope.payload)
-                    current_agent = current_agent or domain.services.agent.get_by_agent_id(envelope.agent_id)
-                    if current_agent is None:
+                            agent_type=payload.agent_type,
+                            display_name=payload.display_name,
+                            transport_profile=payload.transport_profile,
+                            workspace_rows=workspace_rows,
+                            host_name=str(payload.host.get("hostname") or ""),
+                            host_os=str(payload.host.get("os") or ""),
+                            host_arch=str(payload.host.get("arch") or ""),
+                            supports_offline_cache=payload.supports_offline_cache,
+                            owner_client_id=getattr(owner_client, "id", None),
+                            meta={"last_hello": envelope.model_dump()},
+                        )
+                        connection_prompt = await gateway.build_agent_connection_prompt(
+                            agent_id=envelope.agent_id,
+                            agent_type=payload.agent_type,
+                            display_name=payload.display_name,
+                            transport_profile=payload.transport_profile,
+                            workspace_ids=payload.workspace_ids,
+                        )
+                        await gateway.agent_ws_manager.connect(current_agent.agent_id, websocket)
+                        ack_payload = {
+                            "accepted": True,
+                            "registered_agent_id": envelope.agent_id,
+                            "requires_capability_snapshot": True,
+                            "heartbeat_interval_seconds": 20,
+                        }
+                        if connection_prompt:
+                            ack_payload["connection_prompt"] = connection_prompt
                         sent = await gateway._safe_send_json(
                             websocket,
-                            {
-                                "schema": AGENT_WS_SCHEMA,
-                                "kind": "error",
-                                "error": RuntimeError(
-                                    code="agent_not_registered",
-                                    message=f"未知 agent: {envelope.agent_id}",
-                                ).model_dump(),
-                            },
+                            build_agent_envelope(
+                                envelope_type="agent.hello.ack",
+                                agent_id=envelope.agent_id,
+                                message_id=f"ack-{envelope.message_id}",
+                                correlation_id=envelope.message_id,
+                                payload=ack_payload,
+                            ),
+                        )
+                        if not sent:
+                            break
+                        try:
+                            await gateway.notify_agent_connected(
+                                agent_id=envelope.agent_id,
+                                agent_type=payload.agent_type,
+                                display_name=payload.display_name,
+                                transport_profile=payload.transport_profile,
+                                workspace_ids=payload.workspace_ids,
+                                connection_prompt=connection_prompt,
+                            )
+                        except Exception as exc:
+                            logger.exception("Failed to inject agent connection event: %s", exc)
+                        continue
+
+                    if envelope.type == "agent.capabilities.snapshot":
+                        payload = AgentCapabilitiesSnapshotPayload.model_validate(envelope.payload)
+                        current_agent = current_agent or domain.services.agent.get_by_agent_id(envelope.agent_id)
+                        if current_agent is None:
+                            sent = await gateway._safe_send_json(
+                                websocket,
+                                {
+                                    "schema": AGENT_WS_SCHEMA,
+                                    "kind": "error",
+                                    "error": RuntimeError(
+                                        code="agent_not_registered",
+                                        message=f"未知 agent: {envelope.agent_id}",
+                                    ).model_dump(),
+                                },
+                            )
+                            if not sent:
+                                break
+                            continue
+                        workspace_bindings = domain.services.agent.list_workspaces(envelope.agent_id)
+                        domain.services.capability.replace_agent_capabilities(
+                            agent=current_agent,
+                            capabilities=payload.capabilities,
+                            workspace_rows=workspace_bindings,
+                            revision=payload.revision,
+                        )
+                        domain.services.agent.store_capability_snapshot(
+                            agent=current_agent,
+                            revision=payload.revision,
+                            status="active",
+                            snapshot={"capabilities": payload.capabilities},
+                        )
+                        sent = await gateway._safe_send_json(
+                            websocket,
+                            build_agent_envelope(
+                                envelope_type="agent.ready",
+                                agent_id=envelope.agent_id,
+                                message_id=f"ready-{envelope.message_id}",
+                                correlation_id=envelope.message_id,
+                                payload={
+                                    "accepted": True,
+                                    "registered_agent_id": envelope.agent_id,
+                                    "capability_count": len(payload.capabilities),
+                                    "revision": payload.revision,
+                                },
+                            ),
                         )
                         if not sent:
                             break
                         continue
-                    workspace_bindings = domain.services.agent.list_workspaces(envelope.agent_id)
-                    domain.services.capability.replace_agent_capabilities(
-                        agent=current_agent,
-                        capabilities=payload.capabilities,
-                        workspace_rows=workspace_bindings,
-                        revision=payload.revision,
-                    )
-                    domain.services.agent.store_capability_snapshot(
-                        agent=current_agent,
-                        revision=payload.revision,
-                        status="active",
-                        snapshot={"capabilities": payload.capabilities},
-                    )
+
+                    if envelope.type == "agent.heartbeat":
+                        payload = AgentHeartbeatPayload.model_validate(envelope.payload)
+                        domain.services.agent.record_heartbeat(
+                            agent_id=envelope.agent_id,
+                            status=payload.status,
+                            metrics=payload.metrics,
+                        )
+                        continue
+
+                    if envelope.type == "capability.call.accepted":
+                        payload = CapabilityCallAcceptedPayload.model_validate(envelope.payload)
+                        call_row = domain.services.operation_call.mark_accepted(call_id=payload.call_id)
+                        if call_row is not None:
+                            await publish_operation_update(
+                                domain,
+                                call_row,
+                                event_type="operation.updated",
+                                payload={"call_id": payload.call_id, "status": "running", "phase": "accepted"},
+                            )
+                        continue
+
+                    if envelope.type == "capability.call.progress":
+                        payload = CapabilityCallProgressPayload.model_validate(envelope.payload)
+                        call_row = domain.services.operation_call.mark_progress(
+                            call_id=payload.call_id,
+                            detail=payload.detail,
+                            metadata={"phase": payload.phase},
+                        )
+                        if call_row is not None:
+                            await publish_operation_update(
+                                domain,
+                                call_row,
+                                event_type="operation.updated",
+                                payload={
+                                    "call_id": payload.call_id,
+                                    "status": "running",
+                                    "phase": payload.phase,
+                                    "detail": payload.detail,
+                                },
+                            )
+                        continue
+
+                    if envelope.type == "capability.call.result":
+                        payload = CapabilityCallResultPayload.model_validate(envelope.payload)
+                        result_payload = dict(payload.result or {})
+                        if payload.attachment_outputs:
+                            result_payload["attachment_outputs"] = domain.services.attachment.normalize_attachment_object_views(payload.attachment_outputs)
+                        call_row = domain.services.operation_call.mark_succeeded(call_id=payload.call_id, result=result_payload)
+                        await domain.agent_dispatch.notify_call_result(call_id=payload.call_id, result=result_payload)
+                        if call_row is not None:
+                            await publish_operation_update(
+                                domain,
+                                call_row,
+                                event_type="operation.updated",
+                                payload={
+                                    "call_id": payload.call_id,
+                                    "status": payload.status,
+                                    "result": result_payload,
+                                },
+                            )
+                        continue
+
+                    if envelope.type == "capability.call.error":
+                        payload = CapabilityCallErrorPayload.model_validate(envelope.payload)
+                        call_row = domain.services.operation_call.mark_failed(call_id=payload.call_id, error=payload.error)
+                        await domain.agent_dispatch.notify_call_error(call_id=payload.call_id, error=payload.error)
+                        if call_row is not None:
+                            await publish_operation_update(
+                                domain,
+                                call_row,
+                                event_type="operation.updated",
+                                payload={
+                                    "call_id": payload.call_id,
+                                    "status": payload.status,
+                                    "error": payload.error,
+                                },
+                            )
+                        continue
+
                     sent = await gateway._safe_send_json(
                         websocket,
-                        build_agent_envelope(
-                            envelope_type="agent.ready",
-                            agent_id=envelope.agent_id,
-                            message_id=f"ready-{envelope.message_id}",
-                            correlation_id=envelope.message_id,
-                            payload={
-                                "accepted": True,
-                                "registered_agent_id": envelope.agent_id,
-                                "capability_count": len(payload.capabilities),
-                                "revision": payload.revision,
-                            },
-                        ),
+                        {
+                            "schema": AGENT_WS_SCHEMA,
+                            "kind": "error",
+                            "error": RuntimeError(
+                                code="unsupported_agent_message",
+                                category="validation",
+                                message=f"不支持的 agent message type: {envelope.type}",
+                            ).model_dump(),
+                        },
                     )
                     if not sent:
                         break
-                    continue
-
-                if envelope.type == "agent.heartbeat":
-                    payload = AgentHeartbeatPayload.model_validate(envelope.payload)
-                    domain.services.agent.record_heartbeat(
-                        agent_id=envelope.agent_id,
-                        status=payload.status,
-                        metrics=payload.metrics,
+                except Exception as exc:
+                    logger.exception("Agent websocket envelope handling failed: %s", exc)
+                    sent = await gateway._safe_send_json(
+                        websocket,
+                        {
+                            "schema": AGENT_WS_SCHEMA,
+                            "kind": "error",
+                            "error": RuntimeError(
+                                code="agent_runtime_error",
+                                category="runtime",
+                                message=str(exc),
+                            ).model_dump(),
+                        },
                     )
-                    continue
-
-                if envelope.type == "capability.call.accepted":
-                    payload = CapabilityCallAcceptedPayload.model_validate(envelope.payload)
-                    call_row = domain.services.operation_call.mark_accepted(call_id=payload.call_id)
-                    if call_row is not None:
-                        await publish_operation_update(
-                            domain,
-                            call_row,
-                            event_type="operation.updated",
-                            payload={"call_id": payload.call_id, "status": "running", "phase": "accepted"},
-                        )
-                    continue
-
-                if envelope.type == "capability.call.progress":
-                    payload = CapabilityCallProgressPayload.model_validate(envelope.payload)
-                    call_row = domain.services.operation_call.mark_progress(
-                        call_id=payload.call_id,
-                        detail=payload.detail,
-                        metadata={"phase": payload.phase},
-                    )
-                    if call_row is not None:
-                        await publish_operation_update(
-                            domain,
-                            call_row,
-                            event_type="operation.updated",
-                            payload={
-                                "call_id": payload.call_id,
-                                "status": "running",
-                                "phase": payload.phase,
-                                "detail": payload.detail,
-                            },
-                        )
-                    continue
-
-                if envelope.type == "capability.call.result":
-                    payload = CapabilityCallResultPayload.model_validate(envelope.payload)
-                    result_payload = dict(payload.result or {})
-                    if payload.attachment_outputs:
-                        result_payload["attachment_outputs"] = domain.services.attachment.normalize_attachment_object_views(payload.attachment_outputs)
-                    call_row = domain.services.operation_call.mark_succeeded(call_id=payload.call_id, result=result_payload)
-                    await domain.agent_dispatch.notify_call_result(call_id=payload.call_id, result=result_payload)
-                    if call_row is not None:
-                        await publish_operation_update(
-                            domain,
-                            call_row,
-                            event_type="operation.updated",
-                            payload={
-                                "call_id": payload.call_id,
-                                "status": payload.status,
-                                "result": result_payload,
-                            },
-                        )
-                    continue
-
-                if envelope.type == "capability.call.error":
-                    payload = CapabilityCallErrorPayload.model_validate(envelope.payload)
-                    call_row = domain.services.operation_call.mark_failed(call_id=payload.call_id, error=payload.error)
-                    await domain.agent_dispatch.notify_call_error(call_id=payload.call_id, error=payload.error)
-                    if call_row is not None:
-                        await publish_operation_update(
-                            domain,
-                            call_row,
-                            event_type="operation.updated",
-                            payload={
-                                "call_id": payload.call_id,
-                                "status": payload.status,
-                                "error": payload.error,
-                            },
-                        )
-                    continue
-
-                sent = await gateway._safe_send_json(
-                    websocket,
-                    {
-                        "schema": AGENT_WS_SCHEMA,
-                        "kind": "error",
-                        "error": RuntimeError(
-                            code="unsupported_agent_message",
-                            category="validation",
-                            message=f"不支持的 agent message type: {envelope.type}",
-                        ).model_dump(),
-                    },
-                )
-                if not sent:
-                    break
+                    if not sent:
+                        break
         finally:
             if current_agent is not None:
                 await gateway.agent_ws_manager.disconnect(current_agent.agent_id, websocket)

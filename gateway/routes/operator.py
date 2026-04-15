@@ -318,6 +318,7 @@ def build_operator_router(gateway) -> APIRouter:
             metadata["memory_ranking_policy"] = _validate_memory_ranking_policy(gateway, payload.memory_ranking_policy)
         updated = domain.services.workspace.update_workspace(
             workspace_id=workspace_id,
+            base_mode=payload.base_mode,
             metadata=metadata if metadata else None,
         )
         return _workspace_response(updated or workspace)

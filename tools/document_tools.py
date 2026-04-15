@@ -228,8 +228,36 @@ class DocumentTools:
     def set_agent_dispatcher(self, dispatcher) -> None:
         self._agent_dispatcher = dispatcher
 
+    def set_capability_dispatcher(self, dispatcher) -> None:
+        self.set_agent_dispatcher(dispatcher)
+
     def set_local_fallback_enabled(self, enabled: bool) -> None:
         self._allow_local_fallback = bool(enabled)
+
+    async def _dispatch_capability(
+        self,
+        *,
+        capability_suffix: str,
+        arguments: dict[str, Any],
+        session_id: str,
+        title: str,
+        operation_type: str,
+    ) -> dict[str, Any]:
+        dispatcher = self._agent_dispatcher
+        if dispatcher is None:
+            raise RuntimeError("Capability dispatcher is not configured")
+        dispatch = getattr(dispatcher, "dispatch_agent_capability", None)
+        if not callable(dispatch):
+            dispatch = getattr(dispatcher, "dispatch_local_capability", None)
+        if not callable(dispatch):
+            raise RuntimeError("Capability dispatcher does not support capability dispatch")
+        return await dispatch(
+            capability_suffix=capability_suffix,
+            arguments=arguments,
+            session_id=session_id,
+            title=title,
+            operation_type=operation_type,
+        )
 
     def _ensure_local_capability_available(
         self,
@@ -512,7 +540,7 @@ class DocumentTools:
         max_total_chars = int(config.get("max_total_chars", 24_000) or 24_000)
         max_chunks = int(config.get("max_chunks_per_document", 12) or 12)
         try:
-            result = await self._agent_dispatcher.dispatch_local_capability(
+            result = await self._dispatch_capability(
                 capability_suffix="file.read",
                 arguments={"path": str(path), "max_chars": max_total_chars},
                 session_id=session_id,
@@ -565,7 +593,7 @@ class DocumentTools:
         if self._agent_dispatcher is None:
             payload = build_workspace_analysis_payload(root, depth=depth, include_hidden=include_hidden, focus=focus)
         else:
-            payload = await self._agent_dispatcher.dispatch_local_capability(
+            payload = await self._dispatch_capability(
                 capability_suffix="workspace.analyze",
                 arguments={
                     "path": str(root),
@@ -663,7 +691,7 @@ class DocumentTools:
             path=str(target),
         )
         if self._agent_dispatcher is not None:
-            result = await self._agent_dispatcher.dispatch_local_capability(
+            result = await self._dispatch_capability(
                 capability_suffix="file.write",
                 arguments={"path": str(target), "content": str(content or ""), "mode": normalized_mode},
                 session_id=session_id,
@@ -758,7 +786,7 @@ class DocumentTools:
             original = self._read_text_file(target)
         else:
             try:
-                read_result = await self._agent_dispatcher.dispatch_local_capability(
+                read_result = await self._dispatch_capability(
                     capability_suffix="file.read",
                     arguments={"path": str(target), "max_chars": 200000},
                     session_id=session_id,
@@ -819,7 +847,7 @@ class DocumentTools:
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         if self._agent_dispatcher is not None:
-            await self._agent_dispatcher.dispatch_local_capability(
+            await self._dispatch_capability(
                 capability_suffix="file.write",
                 arguments={"path": str(target), "content": rewritten, "mode": "overwrite"},
                 session_id=session_id,

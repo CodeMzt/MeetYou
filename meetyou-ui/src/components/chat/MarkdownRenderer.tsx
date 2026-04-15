@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -51,17 +51,21 @@ const CodeBlock = ({ inline, className, children, ...props }: any) => {
   );
 };
 
-export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
+const markdownComponents = {
+  code: CodeBlock as any,
+};
+
+function MarkdownRenderer({ content }: MarkdownRendererProps) {
   return (
     <div className={styles.markdownBody}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{
-          code: CodeBlock as any,
-        }}
+        components={markdownComponents}
       >
         {content}
       </ReactMarkdown>
     </div>
   );
 }
+
+export default memo(MarkdownRenderer);

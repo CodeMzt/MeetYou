@@ -53,7 +53,24 @@ class LocalObjectStore:
 
     @staticmethod
     def _to_relative_path(object_key: str) -> Path:
-        return Path(str(object_key).replace("/", "\\"))
+        normalized = str(object_key or "").strip().replace("\\", "/").lstrip("/")
+        if normalized.startswith("attachments/"):
+            normalized = normalized[len("attachments/") :]
+        return Path(normalized.replace("/", "\\"))
+
+    @staticmethod
+    def _to_legacy_relative_path(object_key: str) -> Path:
+        normalized = str(object_key or "").strip().replace("/", "\\").lstrip("\\")
+        return Path(normalized)
+
+    def _resolve_existing_path(self, object_key: str) -> Path:
+        primary = self.root / self._to_relative_path(object_key)
+        if primary.exists():
+            return primary
+        legacy = self.root / self._to_legacy_relative_path(object_key)
+        if legacy.exists():
+            return legacy
+        raise FileNotFoundError(object_key)
 
     def put_bytes(self, object_key: str, content: bytes) -> StoredObject:
         target = self.root / self._to_relative_path(object_key)
@@ -62,17 +79,15 @@ class LocalObjectStore:
         return StoredObject(object_key=object_key, size_bytes=len(content))
 
     def resolve_path(self, object_key: str) -> Path:
-        target = self.root / self._to_relative_path(object_key)
-        if not target.exists():
-            raise FileNotFoundError(object_key)
-        return target
+        return self._resolve_existing_path(object_key)
 
     def read_bytes(self, object_key: str) -> bytes:
         return self.resolve_path(object_key).read_bytes()
 
     def delete_object(self, object_key: str) -> None:
-        target = self.root / self._to_relative_path(object_key)
-        if not target.exists():
+        try:
+            target = self._resolve_existing_path(object_key)
+        except FileNotFoundError:
             return
         target.unlink()
 

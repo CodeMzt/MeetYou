@@ -18,6 +18,7 @@ const MODE_OPTIONS: Array<{ label: string; value: AssistantMode }> = [
   { label: '文档', value: 'documents' },
   { label: '学习', value: 'study' },
   { label: '自动化', value: 'automation' },
+  { label: '旦夕', value: 'danxi' },
 ]
 
 interface ChatInputProps {

@@ -7,6 +7,42 @@ from typing import Any
 logger = logging.getLogger("meetyou.tools_manager")
 
 
+def _tool_name(tool: dict[str, Any] | None) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        return ""
+    return str(function.get("name") or "").strip()
+
+
+def _deduplicate_tools(
+    tools: list[dict[str, Any]] | None,
+    *,
+    source_label: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    deduplicated: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for tool in tools or []:
+        name = _tool_name(tool)
+        if not name:
+            deduplicated.append(tool)
+            continue
+        if name in seen:
+            duplicates.append(name)
+            continue
+        seen.add(name)
+        deduplicated.append(tool)
+    if duplicates:
+        logger.warning(
+            "Duplicate tool schemas ignored in %s: %s",
+            source_label,
+            ", ".join(sorted(set(duplicates))),
+        )
+    return deduplicated, duplicates
+
+
 class ToolRegistry:
     def __init__(self, mcp_manager, *, supported_funcs: dict[str, Any] | None = None):
         self.tools_schema_dict: dict[str, Any] = {}
@@ -16,13 +52,33 @@ class ToolRegistry:
     async def init_tools(self, tools_schema_path: str, mcp_servers: dict[str, Any]) -> None:
         with open(tools_schema_path, "r", encoding="utf-8") as handle:
             self.tools_schema_dict = json.load(handle)
+        for key in ("common_tools", "chain_tools", "memory_tools", "background_tools", "web_tools"):
+            tools, _ = _deduplicate_tools(
+                self.tools_schema_dict.get(key, []),
+                source_label=f"tools schema section [{key}]",
+            )
+            self.tools_schema_dict[key] = tools
 
         await self._mcp_manager.init_mcp_servers(mcp_servers)
         self.tools_schema_dict["mcp_tools"] = []
+        seen_mcp_tool_names: set[str] = set()
         for server_name in getattr(self._mcp_manager, "mcp_servers_list", []):
-            self.tools_schema_dict["mcp_tools"].extend(
-                self._mcp_manager.mcp_tools.get(server_name, [])
+            tools, _ = _deduplicate_tools(
+                self._mcp_manager.mcp_tools.get(server_name, []),
+                source_label=f"MCP server [{server_name}]",
             )
+            for tool in tools:
+                tool_name = _tool_name(tool)
+                if tool_name and tool_name in seen_mcp_tool_names:
+                    logger.warning(
+                        "Duplicate MCP tool schema ignored across servers: %s (server=%s)",
+                        tool_name,
+                        server_name,
+                    )
+                    continue
+                if tool_name:
+                    seen_mcp_tool_names.add(tool_name)
+                self.tools_schema_dict["mcp_tools"].append(tool)
 
         logger.info(
             "Tools initialized: built-in=%s, mcp=%s",
@@ -99,15 +155,24 @@ class ToolRegistry:
                 continue
             visible_tools.append(tool)
 
+        visible_tool_names = {
+            str(tool.get("function", {}).get("name", "")).strip()
+            for tool in visible_tools
+            if str(tool.get("function", {}).get("name", "")).strip()
+        }
         for tool in self.tools_schema_dict.get("mcp_tools", []):
             function = tool.get("function", {})
             tool_name = function.get("name", "")
             server_name = self.get_mcp_server(tool_name)
+            if tool_name in visible_tool_names:
+                continue
             if not should_expose_mcp_tool(tool_name, server_name):
                 continue
             if allowed_mcp_servers and server_name not in allowed_mcp_servers and tool_name not in allowed_tool_names:
                 continue
             visible_tools.append(tool)
+            if tool_name:
+                visible_tool_names.add(tool_name)
         return visible_tools
 
     def get_heartbeat_tools(self) -> list[dict]:

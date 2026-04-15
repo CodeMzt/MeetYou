@@ -63,6 +63,8 @@ class ObjectStoreTests(unittest.TestCase):
             written = store.put_bytes("attachments/test.txt", b"hello")
             self.assertEqual(written.size_bytes, 5)
             self.assertEqual(store.resolve_path("attachments/test.txt").read_bytes(), b"hello")
+            self.assertFalse((Path(tmp_dir) / "attachments" / "test.txt").exists())
+            self.assertEqual((Path(tmp_dir) / "test.txt").read_bytes(), b"hello")
             self.assertEqual(
                 store.generate_presigned_download_url(
                     "attachments/test.txt",
@@ -75,6 +77,17 @@ class ObjectStoreTests(unittest.TestCase):
             store.delete_object("attachments/test.txt")
             with self.assertRaises(FileNotFoundError):
                 store.resolve_path("attachments/test.txt")
+
+    def test_local_object_store_reads_legacy_double_attachments_path(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            legacy_path = Path(tmp_dir) / "attachments" / "legacy.txt"
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_path.write_bytes(b"legacy")
+
+            store = build_object_store(_FakeConfig({"attachment_storage_root": tmp_dir}))
+            self.assertEqual(store.read_bytes("attachments/legacy.txt"), b"legacy")
+            store.delete_object("attachments/legacy.txt")
+            self.assertFalse(legacy_path.exists())
 
     def test_unsupported_object_store_backend_raises(self):
         with self.assertRaises(ConfigError):
