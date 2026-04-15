@@ -3,6 +3,8 @@ from __future__ import annotations
 from core.db.models.capability import Capability, CapabilityWorkspaceBinding
 from core.db.repositories.base import RepositoryBase
 
+_CAPABILITY_TITLE_MAX_LENGTH = 255
+
 
 class CapabilityRepository(RepositoryBase):
     def get_by_capability_id(self, capability_id: str) -> Capability | None:
@@ -46,16 +48,22 @@ class CapabilityRepository(RepositoryBase):
         if capability is None:
             capability = Capability(capability_id=capability_id)
             self.session.add(capability)
+        normalized_meta = dict(meta or {})
+        full_title = str(title or "")
+        normalized_title = full_title.strip()
+        if len(normalized_title) > _CAPABILITY_TITLE_MAX_LENGTH:
+            normalized_meta["full_title"] = full_title
+            normalized_title = normalized_title[:_CAPABILITY_TITLE_MAX_LENGTH]
         capability.provider_type = provider_type
         capability.provider_ref = provider_ref
         capability.kind = kind
-        capability.title = title
+        capability.title = normalized_title
         capability.risk_level = risk_level
         capability.requires_confirmation = requires_confirmation
         capability.availability = availability
         capability.input_schema = dict(input_schema or {})
         capability.output_schema = dict(output_schema or {})
-        capability.meta = dict(meta or {})
+        capability.meta = normalized_meta
         self.session.flush()
         return capability
 

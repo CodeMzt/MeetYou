@@ -1,14 +1,12 @@
 import { MemorySnapshot } from '../hooks/useMemory';
+import { sortMemoryRecordsByTimeline } from './memoryTimeline';
 
 export default function OverviewView({ snapshot }: { snapshot: MemorySnapshot | null }) {
   if (!snapshot) return <div>正在加载概览...</div>;
 
   const { working_summaries, stats, records } = snapshot;
 
-  const recentEvents = records
-    .filter(r => r.type === 'episode')
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 5);
+  const recentEvents = sortMemoryRecordsByTimeline(records.filter(r => r.type === 'episode')).slice(0, 5);
 
   return (
     <div className="overview-view" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>

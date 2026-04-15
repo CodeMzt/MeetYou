@@ -165,7 +165,7 @@ class _FakeSessionService:
 
 class _FakeThreadService:
     def __init__(self):
-        self.row = type("ThreadRow", (), {"id": "thread-row-1", "thread_id": "thread-1"})()
+        self.row = type("ThreadRow", (), {"id": "thread-row-1", "thread_id": "thread-1", "workspace_id": "workspace-row-1"})()
 
     def get_by_id(self, row_id):
         return self.row if row_id == "thread-row-1" else None
@@ -179,9 +179,25 @@ class _FakeWorkspaceService:
         return self.row if row_id == "workspace-row-1" else None
 
 
+class _FakeWsManager:
+    def has_session(self, session_id: str):
+        del session_id
+        return False
+
+
+class _FakeClientWsManager:
+    def __init__(self, threads=None):
+        self._threads = set(threads or [])
+
+    def has_connections(self, thread_id: str):
+        return thread_id in self._threads
+
+
 class _FakeGateway:
-    def __init__(self):
+    def __init__(self, *, threads=None):
         self.events = []
+        self.ws_manager = _FakeWsManager()
+        self.client_ws_manager = _FakeClientWsManager(threads=threads)
 
     async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict):
         self.events.append({"thread_id": thread_id, "event_type": event_type, "payload": dict(payload)})
@@ -282,6 +298,74 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(app.core_services.operation.rows[0].operation_type, "scheduled_reminder_run")
         self.assertEqual(app.core_services.operation.rows[0].status, "succeeded")
         self.assertEqual(app.task_manager.remembered_operations[-1]["status"], "succeeded")
+
+    async def test_emit_task_update_falls_back_to_recent_active_thread_and_publishes_message(self):
+        task_record = {
+            "task_key": "daily-review",
+            "content": "Review the daily digest",
+            "notify_policy": "on_due",
+            "delivery_target": {
+                "kind": "current_session",
+                "id": "",
+                "session_id": "web:offline",
+                "source_kind": "web",
+                "source_id": "browser-offline",
+            },
+            "origin_session_id": "web:offline",
+            "scope": {"user_id": "user-1"},
+        }
+        app = self._make_app(task_record, {"status": "ok", "content": "unused"})
+
+        from core.session_manager import SessionManager
+
+        manager = SessionManager()
+        manager.bind_runtime_session(
+            make_source(SourceKind.WEB.value, "browser-active"),
+            "web:session-1",
+            default_target=EventTarget(kind=TargetKind.WEB.value, id="browser-active"),
+            metadata={
+                "thread_id": "thread-1",
+                "workspace_id": "desktop-main",
+                "client_id": "desktop-app",
+            },
+        )
+        app.session_manager = manager
+        app.gateway = _FakeGateway(threads={"thread-1"})
+        app.core_services.message = type(
+            "MessageServiceStub",
+            (),
+            {
+                "__init__": lambda self: setattr(self, "created", []),
+                "create_message": lambda self, **kwargs: (
+                    self.created.append(dict(kwargs))
+                    or type(
+                        "MessageRecord",
+                        (),
+                        {
+                            "message_id": "msg-task-1",
+                            "role": kwargs.get("role", "assistant"),
+                            "content": kwargs.get("content", ""),
+                            "status": kwargs.get("status", "completed"),
+                            "channel": "message",
+                            "created_at": None,
+                        },
+                    )()
+                ),
+            },
+        )()
+
+        delivered = await App._emit_task_update(app, task_record, "Scheduled reminder: Review the daily digest")
+
+        self.assertTrue(delivered)
+        self.assertEqual(len(app.gateway.events), 1)
+        self.assertEqual(app.gateway.events[0]["thread_id"], "thread-1")
+        self.assertEqual(app.gateway.events[0]["event_type"], "message.completed")
+        self.assertEqual(app.gateway.events[0]["payload"]["session_id"], "web:session-1")
+        self.assertEqual(
+            app.gateway.events[0]["payload"]["message"]["content"],
+            "Scheduled reminder: Review the daily digest",
+        )
+        self.assertEqual(app.core_services.message.created[0]["session_id"], "session-row-1")
 
     async def test_scheduled_task_control_uses_allowlisted_tools_and_reports_brain_completion(self):
         task_record = {

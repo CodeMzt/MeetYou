@@ -1,13 +1,12 @@
 import { MemorySnapshot } from '../hooks/useMemory'
+import { sortMemoryRecordsByTimeline } from './memoryTimeline'
 
 export default function TimelineView({ snapshot }: { snapshot: MemorySnapshot | null }) {
   if (!snapshot) {
     return <div>正在加载时间线...</div>
   }
 
-  const events = [...snapshot.records].sort((left, right) => {
-    return new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
-  })
+  const events = sortMemoryRecordsByTimeline(snapshot.records)
 
   return (
     <div className="card scroll-surface" style={{ height: '100%', overflowY: 'auto', padding: 'var(--spacing-lg)' }}>

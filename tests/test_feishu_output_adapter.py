@@ -155,6 +155,26 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(adapter._session.calls, [])
 
+    async def test_suppresses_plain_status_messages(self):
+        adapter = self._build_adapter([])
+
+        event = type(
+            "Evt",
+            (),
+            {
+                "type": EventType.STATUS.value,
+                "target": EventTarget(kind="feishu", id="oc_test"),
+                "source": make_source("system", "runtime"),
+                "metadata": {},
+                "stream_id": "",
+                "content": "[系统] 正在路由",
+            },
+        )()
+
+        await adapter.send(event)
+
+        self.assertEqual(adapter._session.calls, [])
+
     async def test_keeps_streaming_end_delivery_for_real_assistant_reply(self):
         adapter = self._build_adapter(
             [
@@ -266,12 +286,9 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("确认编号: req-1", message_calls[0]["json"]["content"])
         self.assertEqual(adapter.get_pending_confirm_request("oc_test"), "req-1")
 
-    async def test_client_event_operation_update_renders_status(self):
+    async def test_client_event_operation_update_is_suppressed(self):
         adapter = self._build_adapter(
-            [
-                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
-                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
-            ]
+            []
         )
 
         await adapter.send_client_event(
@@ -289,8 +306,25 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
-        self.assertEqual(len(message_calls), 1)
-        self.assertIn("[操作] op-1 running: desktop agent accepted", message_calls[0]["json"]["content"])
+        self.assertEqual(message_calls, [])
+
+    async def test_client_event_activity_status_is_suppressed(self):
+        adapter = self._build_adapter([])
+
+        await adapter.send_client_event(
+            "oc_test",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "activity.status",
+                    "content": "正在路由到桌面端",
+                },
+            },
+        )
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(message_calls, [])
 
     async def test_client_event_stream_renders_completed_answer(self):
         adapter = self._build_adapter(

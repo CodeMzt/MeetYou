@@ -2612,6 +2612,9 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                         "strength": 0.72,
                         "importance": 0.9,
                         "confidence": 0.95,
+                        "created_at": "2026-04-10T09:30:00Z",
+                        "last_accessed_at": "2026-04-10T09:31:00Z",
+                        "last_updated_at": "2026-04-10T09:32:00Z",
                         "tags": [],
                         "entity_keys": [],
                         "source_record_ids": [],
@@ -2637,6 +2640,9 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(memory_resp.json()["records"][0]["fact_value"], "阿明")
         self.assertEqual(memory_resp.json()["records"][0]["workspace_tags"], ["personal"])
         self.assertEqual(memory_resp.json()["records"][0]["source_label"], "工作区:personal")
+        self.assertEqual(memory_resp.json()["records"][0]["created_at"], "2026-04-10T09:30:00Z")
+        self.assertEqual(memory_resp.json()["records"][0]["last_accessed_at"], "2026-04-10T09:31:00Z")
+        self.assertEqual(memory_resp.json()["records"][0]["last_updated_at"], "2026-04-10T09:32:00Z")
 
     def test_operator_memory_routes_reflect_runtime_state_blob_sync(self):
         self.core_domain.services.state_blob.save_state(

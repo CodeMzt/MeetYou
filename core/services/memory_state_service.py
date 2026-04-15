@@ -4,6 +4,13 @@ from core.db.repositories import MemoryRecordRepository, WorkspaceRepository
 from core.services.base import ServiceBase
 
 
+def _string_timestamp(value) -> str:
+    if value is None:
+        return ""
+    normalized = str(value).strip()
+    return normalized
+
+
 class MemoryStateService(ServiceBase):
     def replace_records(self, *, principal_id, records: list[dict]) -> int:
         with self.session_scope() as session:
@@ -45,6 +52,14 @@ class MemoryStateService(ServiceBase):
                 record_type = str(row.record_type or "episode")
                 by_type[record_type] = by_type.get(record_type, 0) + 1
                 raw = dict(row.raw_record or {})
+                record_created_at = _string_timestamp(raw.get("created_at")) or (
+                    row.created_at.isoformat() if row.created_at is not None else ""
+                )
+                record_last_updated_at = (
+                    _string_timestamp(raw.get("last_updated_at"))
+                    or _string_timestamp(raw.get("updated_at"))
+                    or (row.updated_at.isoformat() if row.updated_at is not None else "")
+                )
                 scope = raw.get("scope") if isinstance(raw.get("scope"), dict) else {}
                 workspace_ids = [
                     workspace_keys_by_id.get(tag.workspace_id, "")
@@ -69,9 +84,9 @@ class MemoryStateService(ServiceBase):
                         "strength": float(raw.get("strength") or 0.0),
                         "importance": float(raw.get("importance") or 0.0),
                         "confidence": float(raw.get("confidence") or 0.0),
-                        "created_at": row.created_at.isoformat() if row.created_at is not None else "",
-                        "last_accessed_at": str(raw.get("last_accessed_at") or ""),
-                        "last_updated_at": row.updated_at.isoformat() if row.updated_at is not None else "",
+                        "created_at": record_created_at,
+                        "last_accessed_at": _string_timestamp(raw.get("last_accessed_at")),
+                        "last_updated_at": record_last_updated_at,
                         "access_count": int(raw.get("access_count") or 0),
                         "status": row.status,
                         "tags": list(raw.get("tags") or []),
