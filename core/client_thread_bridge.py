@@ -4,7 +4,9 @@ Bridge Core runtime events to client thread surfaces.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Callable
+from uuid import uuid4
 
 
 class ClientThreadBridge:
@@ -17,18 +19,42 @@ class ClientThreadBridge:
         self._gateway_getter = gateway_getter
         self._core_services_getter = core_services_getter
 
-    def _resolve_thread_context(self, session_id: str) -> tuple[Any | None, Any | None, Any | None]:
+    def _resolve_thread_context(
+        self,
+        session_id: str,
+    ) -> tuple[Any | None, Any | None, Any | None, Any | None, dict[str, Any], str]:
         gateway = self._gateway_getter()
         core_services = self._core_services_getter()
         if gateway is None or core_services is None:
-            return None, None, None
+            return None, None, None, None, {}, ""
         session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return gateway, None, None
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        if session_row is not None:
+            thread_row = core_services.thread.get_by_id(session_row.thread_id)
+            if thread_row is not None:
+                return gateway, core_services, thread_row, session_row, {}, str(getattr(session_row, "session_id", "") or session_id)
+        session_manager = getattr(gateway, "_session_manager", None)
+        if session_manager is None:
+            return gateway, core_services, None, session_row, {}, session_id
+        binding = session_manager.get_binding(session_id)
+        binding_metadata = dict(getattr(binding, "metadata", {}) or {}) if binding is not None else {}
+        bridged_session_id = str(binding_metadata.get("bridged_session_id") or "").strip()
+        bridged_session_row = (
+            core_services.session.get_by_session_id(bridged_session_id)
+            if bridged_session_id
+            else None
+        )
+        resolved_session_row = bridged_session_row or session_row
+        if bridged_session_row is not None:
+            thread_row = core_services.thread.get_by_id(bridged_session_row.thread_id)
+            if thread_row is not None:
+                return gateway, core_services, thread_row, bridged_session_row, binding_metadata, bridged_session_id
+        bridged_thread_id = str(binding_metadata.get("thread_id") or "").strip()
+        if not bridged_thread_id:
+            return gateway, core_services, None, resolved_session_row, binding_metadata, bridged_session_id or session_id
+        thread_row = core_services.thread.get_by_thread_id(bridged_thread_id)
         if thread_row is None:
-            return gateway, None, None
-        return gateway, core_services, thread_row
+            return gateway, core_services, None, resolved_session_row, binding_metadata, bridged_session_id or session_id
+        return gateway, core_services, thread_row, resolved_session_row, binding_metadata, bridged_session_id or session_id
 
     async def publish_task_operation_update(
         self,
@@ -66,7 +92,7 @@ class ClientThreadBridge:
     async def publish_message_delta(self, session_id: str, *, stream_id: str, turn_id: str, delta: str) -> None:
         if not delta:
             return
-        gateway, _, thread_row = self._resolve_thread_context(session_id)
+        gateway, _, thread_row, _, _, publish_session_id = self._resolve_thread_context(session_id)
         if gateway is None or thread_row is None:
             return
         await gateway.publish_client_thread_event(
@@ -74,7 +100,7 @@ class ClientThreadBridge:
             event_type="message.delta",
             payload={
                 "thread_id": thread_row.thread_id,
-                "session_id": session_id,
+                "session_id": publish_session_id or session_id,
                 "stream_id": stream_id,
                 "turn_id": turn_id,
                 "delta": delta,
@@ -82,7 +108,7 @@ class ClientThreadBridge:
         )
 
     async def publish_runtime_state(self, session_id: str, snapshot: dict[str, Any], *, turn_id: str = "") -> None:
-        gateway, _, thread_row = self._resolve_thread_context(session_id)
+        gateway, _, thread_row, _, _, _ = self._resolve_thread_context(session_id)
         if gateway is None or thread_row is None:
             return
         await gateway.publish_client_thread_event(
@@ -97,7 +123,7 @@ class ClientThreadBridge:
         )
 
     async def publish_runtime_usage(self, session_id: str, payload: dict[str, Any]) -> None:
-        gateway, _, thread_row = self._resolve_thread_context(session_id)
+        gateway, _, thread_row, _, _, _ = self._resolve_thread_context(session_id)
         if gateway is None or thread_row is None:
             return
         await gateway.publish_client_thread_event(
@@ -119,7 +145,7 @@ class ClientThreadBridge:
         phase: str,
         content: str,
     ) -> None:
-        gateway, _, thread_row = self._resolve_thread_context(session_id)
+        gateway, _, thread_row, _, _, _ = self._resolve_thread_context(session_id)
         if gateway is None or thread_row is None:
             return
         await gateway.publish_client_thread_event(
@@ -136,7 +162,7 @@ class ClientThreadBridge:
         )
 
     async def publish_activity_event(self, session_id: str, *, activity: dict[str, Any], turn_id: str = "") -> None:
-        gateway, _, thread_row = self._resolve_thread_context(session_id)
+        gateway, _, thread_row, _, _, _ = self._resolve_thread_context(session_id)
         if gateway is None or thread_row is None:
             return
         metadata = dict(activity.get("metadata") or {}) if isinstance(activity.get("metadata"), dict) else {}
@@ -167,44 +193,60 @@ class ClientThreadBridge:
     ) -> None:
         if not content:
             return
-        gateway, core_services, thread_row = self._resolve_thread_context(session_id)
+        gateway, core_services, thread_row, session_row, binding_metadata, publish_session_id = self._resolve_thread_context(
+            session_id
+        )
         if gateway is None or core_services is None or thread_row is None:
             return
-        session_row = core_services.session.get_by_session_id(session_id)
         workspace_row = core_services.workspace.get_by_id(thread_row.workspace_id)
-        message = core_services.message.create_message(
-            thread_id=thread_row.id,
-            session_id=session_row.id,
-            role="assistant",
-            content=content,
-            status="completed",
-            meta={"turn_id": turn_id, "stream_id": stream_id},
-        )
+        if session_row is not None:
+            message = core_services.message.create_message(
+                thread_id=thread_row.id,
+                session_id=session_row.id,
+                role="assistant",
+                content=content,
+                status="completed",
+                meta={"turn_id": turn_id, "stream_id": stream_id},
+            )
+            message_payload = {
+                "message_id": message.message_id,
+                "thread_id": thread_row.thread_id,
+                "session_id": publish_session_id or session_id,
+                "workspace_id": getattr(workspace_row, "workspace_id", ""),
+                "client_id": "",
+                "role": message.role,
+                "content": message.content,
+                "status": message.status,
+                "channel": message.channel,
+                "created_at": message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
+            }
+        else:
+            message_payload = {
+                "message_id": f"msg_transient_{uuid4().hex}",
+                "thread_id": thread_row.thread_id,
+                "session_id": publish_session_id or session_id,
+                "workspace_id": getattr(workspace_row, "workspace_id", ""),
+                "client_id": str(binding_metadata.get("client_id") or ""),
+                "role": "assistant",
+                "content": content,
+                "status": "completed",
+                "channel": "message",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
         await gateway.publish_client_thread_event(
             thread_row.thread_id,
             event_type="message.completed",
             payload={
                 "thread_id": thread_row.thread_id,
-                "session_id": session_id,
-                "message": {
-                    "message_id": message.message_id,
-                    "thread_id": thread_row.thread_id,
-                    "session_id": session_id,
-                    "workspace_id": getattr(workspace_row, "workspace_id", ""),
-                    "client_id": "",
-                    "role": message.role,
-                    "content": message.content,
-                    "status": message.status,
-                    "channel": message.channel,
-                    "created_at": message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
-                },
+                "session_id": publish_session_id or session_id,
+                "message": message_payload,
                 "stream_id": stream_id,
                 "turn_id": turn_id,
             },
         )
 
     async def publish_confirm_request(self, event, *, approval_context: dict[str, Any] | None = None) -> None:
-        gateway, core_services, thread_row = self._resolve_thread_context(event.session_id)
+        gateway, core_services, thread_row, _, _, _ = self._resolve_thread_context(event.session_id)
         if gateway is None or core_services is None or thread_row is None:
             return
         await gateway.publish_client_thread_event(
@@ -232,7 +274,7 @@ class ClientThreadBridge:
         approval_context: dict[str, Any] | None = None,
     ) -> None:
         session_id = str((payload or {}).get("session_id") or "")
-        gateway, _, thread_row = self._resolve_thread_context(session_id)
+        gateway, _, thread_row, _, _, _ = self._resolve_thread_context(session_id)
         if gateway is None or thread_row is None or not session_id:
             return
         await gateway.publish_client_thread_event(
@@ -250,7 +292,7 @@ class ClientThreadBridge:
         )
 
     async def publish_human_input_request(self, event) -> None:
-        gateway, _, thread_row = self._resolve_thread_context(event.session_id)
+        gateway, _, thread_row, _, _, _ = self._resolve_thread_context(event.session_id)
         if gateway is None or thread_row is None:
             return
         await gateway.publish_client_thread_event(
@@ -269,7 +311,7 @@ class ClientThreadBridge:
 
     async def publish_human_input_resolution(self, payload: dict[str, Any]) -> None:
         session_id = str((payload or {}).get("session_id") or "")
-        gateway, _, thread_row = self._resolve_thread_context(session_id)
+        gateway, _, thread_row, _, _, _ = self._resolve_thread_context(session_id)
         if gateway is None or thread_row is None or not session_id:
             return
         await gateway.publish_client_thread_event(
@@ -285,7 +327,7 @@ class ClientThreadBridge:
         )
 
     async def publish_control_event(self, session_id: str, payload: dict[str, Any], *, turn_id: str = "") -> None:
-        gateway, _, thread_row = self._resolve_thread_context(session_id)
+        gateway, _, thread_row, _, _, _ = self._resolve_thread_context(session_id)
         if gateway is None or thread_row is None or not session_id:
             return
         await gateway.publish_client_thread_event(

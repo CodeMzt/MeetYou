@@ -72,6 +72,14 @@ function toClientMessage(value: unknown): ClientMessage | null {
   }
 }
 
+function resolveEventThreadId(event: Record<string, unknown>): string {
+  return toString(event.thread_id) || toString(toRecord(event.message).thread_id)
+}
+
+function resolveEventSessionId(event: Record<string, unknown>): string {
+  return toString(event.session_id) || toString(toRecord(event.message).session_id)
+}
+
 function toAckPayload(value: unknown): AckPayload | null {
   const record = toRecord(value)
   if (!record.action) {
@@ -645,8 +653,8 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
 
   const event = toRecord(record.event)
   const eventType = toString(event.type)
-  const threadId = toString(event.thread_id)
-  const sessionId = toString(event.session_id)
+  const threadId = resolveEventThreadId(event)
+  const sessionId = resolveEventSessionId(event)
 
   if (eventType === 'message.created') {
     const message = toClientMessage(event.message)
@@ -762,7 +770,7 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
       sessionId,
       streamId: toString(event.stream_id),
       turnId: toString(event.turn_id),
-      delta: toString(event.delta),
+      delta: toString(event.delta) || normalizeContent(event.content),
       channel: 'answer',
       phase: 'chunk',
     }
@@ -775,7 +783,7 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
       sessionId,
       streamId: toString(event.stream_id),
       turnId: toString(event.turn_id),
-      delta: toString(event.delta),
+      delta: toString(event.delta) || normalizeContent(event.content),
       channel: 'reasoning',
       phase: toString(event.phase) || 'chunk',
     }

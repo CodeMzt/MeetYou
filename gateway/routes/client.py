@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
@@ -67,6 +68,11 @@ _APPROVAL_RISK_LEVELS = {"write", "system", "device", "destructive", "local_writ
 _DANXI_TOOLS = get_shared_danxi_tools()
 _DANXI_LOGIN_PURPOSE = "danxi.client.login.v1"
 _DANXI_WEBVPN_PURPOSE = "danxi.client.webvpn_cookie.v1"
+logger = logging.getLogger("meetyou.gateway.client")
+
+
+def _is_agent_available_status(status: str) -> bool:
+    return str(status or "").strip().lower() in {"online", "ready"}
 
 
 def _danxi_raise_http_error(gateway, exc: Exception) -> None:
@@ -491,6 +497,32 @@ def _bind_runtime_session(gateway, *, session_id: str, source, metadata: dict | 
     )
 
 
+async def _replay_connected_workspace_agents(
+    gateway,
+    *,
+    domain,
+    workspace,
+) -> None:
+    workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+    if not workspace_id:
+        return
+    for agent in domain.services.agent.list_agents_for_workspace(workspace.id):
+        if not _is_agent_available_status(getattr(agent, "status", "")):
+            continue
+        if not await gateway.agent_ws_manager.is_connected(agent.agent_id):
+            continue
+        try:
+            await gateway.notify_agent_connected(
+                agent_id=agent.agent_id,
+                agent_type=str(getattr(agent, "agent_type", "") or ""),
+                display_name=str(getattr(agent, "display_name", "") or agent.agent_id),
+                transport_profile=str(getattr(agent, "transport_profile", "") or ""),
+                workspace_ids=[workspace_id],
+            )
+        except Exception:
+            logger.exception("Failed to replay connected agent event for workspace session bootstrap: %s", agent.agent_id)
+
+
 def _capability_requires_approval(capability) -> bool:
     if capability is None:
         return False
@@ -759,7 +791,7 @@ def build_client_router(gateway) -> APIRouter:
             gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"未知 workspace: {workspace_id}")
         rows = []
         for agent in domain.services.agent.list_agents():
-            if agent.status != "online":
+            if not _is_agent_available_status(agent.status):
                 continue
             bindings = domain.services.agent.list_workspace_bindings(agent.agent_id)
             if not any(binding.enabled and binding.workspace_id == workspace.id for binding in bindings):
@@ -1289,6 +1321,23 @@ def build_client_router(gateway) -> APIRouter:
             thread_id=thread.id,
             client_id=client.id,
             workspace_id=workspace.id,
+        )
+        source = make_source(SourceKind.WEB.value, payload.client_id, client_id=payload.client_id)
+        _bind_runtime_session(
+            gateway,
+            session_id=session.session_id,
+            source=source,
+            metadata={
+                "thread_id": payload.thread_id,
+                "workspace_id": payload.workspace_id,
+                "client_id": payload.client_id,
+                "session_row_id": str(getattr(session, "id", "") or ""),
+            },
+        )
+        await _replay_connected_workspace_agents(
+            gateway,
+            domain=domain,
+            workspace=workspace,
         )
         return ClientSessionResponse(
             session_id=session.session_id,

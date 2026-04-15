@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 from core.app import App
 from core.event_bus import EventBus
 from core.io_protocol import InboundEvent, SourceKind, TargetKind
+from core.session_manager import SessionManager
+from core.io_protocol import make_source
 
 
 class _PromptConfig:
@@ -45,6 +47,16 @@ class AgentConnectionPromptTests(unittest.IsolatedAsyncioTestCase):
         app = App.__new__(App)
         app.config = _PromptConfig("agent connect prompt")
         app.event_bus = EventBus()
+        app.session_manager = SessionManager()
+        app.session_manager.bind_runtime_session(
+            make_source(SourceKind.WEB.value, "desktop-app", client_id="desktop-app"),
+            session_id="client-session-1",
+            metadata={
+                "thread_id": "thr_recent",
+                "workspace_id": "desktop-main",
+                "client_id": "desktop-app",
+            },
+        )
 
         payload = await App.inject_agent_connection_event(
             app,
@@ -63,8 +75,14 @@ class AgentConnectionPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.target.id, "desktop-main-agent")
         self.assertEqual(event.metadata["trigger"], "agent_connected")
         self.assertEqual(event.metadata["connection_prompt"]["prompt_name"], "agent_connected")
+        self.assertEqual(event.metadata["bridge_thread_id"], "thr_recent")
         self.assertIn("desktop-main-agent", event.content)
         self.assertEqual(payload["prompt_name"], "agent_connected")
+        bridge_binding = app.session_manager.get_binding("system:agent:desktop-main-agent")
+        self.assertIsNotNone(bridge_binding)
+        self.assertEqual(bridge_binding.metadata["thread_id"], "thr_recent")
+        self.assertEqual(bridge_binding.metadata["workspace_id"], "desktop-main")
+        self.assertEqual(bridge_binding.metadata["bridged_session_id"], "client-session-1")
 
     def test_agent_connection_event_resolves_as_transient_internal_reply(self):
         app = App.__new__(App)

@@ -311,6 +311,48 @@ describe('protocolClient', () => {
     expect(completed.kind === 'message_completed' ? completed.message.content : '').toBe('done')
   })
 
+  it('parses bridged client websocket message events with nested message fallback', () => {
+    const delta = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'message.delta',
+        thread_id: 'thr_1',
+        session_id: 'system:agent:desktop-main-agent',
+        stream_id: 'stream_1',
+        turn_id: 'turn_1',
+        content: 'partial-from-content',
+      },
+    })
+    const completed = parseClientWsPayload({
+      schema: 'meetyou.client.ws.v1',
+      kind: 'event',
+      event: {
+        type: 'message.completed',
+        stream_id: 'stream_1',
+        turn_id: 'turn_1',
+        message: {
+          message_id: 'msg_transient_1',
+          thread_id: 'thr_1',
+          session_id: 'system:agent:desktop-main-agent',
+          workspace_id: 'desktop-main',
+          client_id: 'desktop-app',
+          role: 'assistant',
+          content: 'done',
+          status: 'completed',
+          channel: 'message',
+          created_at: '2026-04-08T00:00:03Z',
+        },
+      },
+    })
+
+    expect(delta.kind).toBe('message_delta')
+    expect(delta.kind === 'message_delta' ? delta.delta : '').toBe('partial-from-content')
+    expect(completed.kind).toBe('message_completed')
+    expect(completed.kind === 'message_completed' ? completed.threadId : '').toBe('thr_1')
+    expect(completed.kind === 'message_completed' ? completed.sessionId : '').toBe('system:agent:desktop-main-agent')
+  })
+
   it('parses client websocket interactive events', () => {
     const confirm = parseClientWsPayload({
       schema: 'meetyou.client.ws.v1',
