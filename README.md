@@ -1,42 +1,64 @@
 # MeetYou
 
-MeetYou 是一个以 LLM 为核心的个人智能体系统，当前目标形态是“私人服务器本体 + 多客户端（部分客户端内含本地后端）+ workspace 驱动的边缘节点治理”。它围绕统一事件协议组织 `Brain`、`Heart`、`Memory`、`Tools`、`Speaker` 等模块，支持：
+MeetYou 是一个以 LLM 为核心的个人智能体系统，目标形态是“私人服务器本体 + 多客户端 + workspace 驱动的 Agent / 边缘节点治理”。当前最推荐的部署方式是：
 
-- `FastAPI` 服务端本体
-- `CIL` 终端客户端
-- `Electron + React` 桌面客户端
-- 可选 `Feishu Bot`
-- 记忆图谱、运行态快照、配置热更新、工具链调用与确认机制
+- Linux 云服务器运行 Core Service
+- Windows PC 运行桌面客户端与 `desktop-agent`
+- 需要时在额外节点运行 `edge-agent`
 
-## 当前形态
+这份 README 以“Linux 云服务器部署 + Core / Agent 接入”为主线，面向首轮落地和生产化部署。
 
-项目当前默认形态是：
+## 部署拓扑
 
 ```text
-PC Client(UI + Local Backend) ----\
-Feishu Client ---------------------> Core Service
-Mobile Client(UI + Local Backend)-/      |
-                                         |
-                                  Memory / Tools / MCP / Heart
-                                         |
-                                  workspace / operation / approval
-                                         |
-                           Edge / Bridge Nodes via workspace
+Desktop UI --------------\
+Desktop Agent ------------> Core Service (Linux / Tencent Cloud)
+Feishu Client ------------/        |
+                                   |
+                            Memory / Tools / MCP / Heart
+                                   |
+                         workspace / operation / approval
+                                   |
+                           Edge Agents via /agent/ws
 ```
 
-核心能力包括：
+角色边界：
 
-- 统一输入输出协议，便于同时接入 UI、CLI、Bot 与未来移动端
-- 多模型适配，当前代码中已接入 OpenAI、Anthropic、Gemini、Ollama
-- 长时记忆与记忆图谱查询接口
-- 会话级运行状态、推理摘要、token/context 使用量透出
-- Assistant Modes 路由机制，支持不同场景下的工具束与策略切换
-- 配置中心与热更新接口
-- `Core Heart` 时间编排能力，区分 `scheduler loop` 的确定性触发与 `heartbeat reasoning loop` 的时间压力判断
-- 任务域已分为 `user_todo` 与 `assistant_schedule`，分别承接用户待办与助手定时编排
-- agent transport heartbeat 协商、后台运行状态与运行宿主机感知能力
-- 客户端本地后端 / 边缘节点承接本地文件、Shell、本地 MCP 与设备能力
-- Core 仅保留运行所需的平台识别、时间、系统生命体征与少量上下文感知
+- `Core Service`：服务端主链，负责会话、路由、记忆、任务、工具调度、Gateway 与运行时状态
+- `desktop-agent`：运行在用户自己的设备上，承接本地文件、Shell、本地 MCP 与桌面能力
+- `edge-agent`：运行在远端边缘节点上，按 workspace 接入并提供该节点的能力
+- `meetyou-ui/`：桌面客户端前端，不建议部署到 Linux 服务器上作为生产主链
+
+关键原则：
+
+- 客户端正式实时入口是 `GET /client/ws`
+- Agent 正式实时入口是 `WSS /agent/ws`
+- 根路径 `GET /ws` 只保留兼容性错误，不再承载正式聊天流
+- 本地文件、Shell、本地 MCP 生命周期属于 Agent 边界，不要重新塞回 Core
+
+## 适用平台
+
+- Core Service：推荐 `Linux`，也可运行在 `Windows` / `macOS`
+- Desktop UI / `desktop-agent`：当前体验明显偏向 `Windows`
+- `edge-agent`：适合运行在 Linux 小主机、树莓派、远端工作机等节点
+
+当前仓库仍保留一些 Windows 优先能力，例如 `uiautomation`、PowerShell launcher、`.cmd` 脚本和 Electron 的部分窗口行为；但 `requirements.txt` 中相关依赖已改为按平台条件安装，Linux 部署 Core 时不会再因 `uiautomation`、`pywin32` 被直接阻塞。
+
+## 环境要求
+
+Linux 云服务器至少需要：
+
+- Python `3.10+`
+- PostgreSQL `14+` 或兼容版本
+- Node.js `18+` 仅在你要构建桌面端或运行某些 Node MCP 时需要
+- 可访问的大模型服务与对应 API Key
+
+推荐的腾讯云服务器基础：
+
+- `2C4G` 起步
+- Ubuntu `22.04 LTS` 或同等级发行版
+- 独立 PostgreSQL 实例或同机安装 PostgreSQL
+- 安全组仅开放必须端口，例如 `80`、`443`、必要时内网数据库端口
 
 ## 目录结构
 
@@ -48,70 +70,64 @@ adapters/        大模型与外部服务适配器
 sensors/         输入/输出适配层与系统感知
 tools/           工具集合，含 memory、mcp、documents、web_search 等
 platform_layer/  Core 运行宿主机感知抽象，不承载终端 shell / 文件能力
-prompt/          系统提示词、模式提示词、技能提示词（统一位于 prompt/SKILL）
+prompt/          系统提示词、模式提示词、技能提示词
+desktop_agent/   PC 客户端本地后端
+edge_agent/      边缘 Agent 运行时
 meetyou-ui/      Electron + React 桌面端
 docs/            协议与补充文档
 tests/           自动化回归测试
-user/            本地配置、工具 schema、记忆数据、MCP 配置等
+user/            本地配置模板与运行态数据目录
 ```
 
-## 环境要求
+## Linux 服务器部署
 
-- Python `3.10+`
-- Node.js `18+`（桌面端开发/构建）
-- 可用的大模型服务与 API Key
-- Windows 优先
-
-说明：
-
-- 当前仓库包含 `uiautomation`、PowerShell launcher、`.cmd` 脚本，以及 Electron Windows 窗口特性，整体体验明显偏向 Windows。
-- 后端代码保留了 `platform_layer/linux.py`、`platform_layer/macos.py`，但如果要在非 Windows 环境完整跑通，需要自行验证系统工具链与依赖。
-- `platform_layer/` 现在只服务于 Core 运行宿主机感知；本地文件、Shell、本地 MCP 生命周期等终端能力必须通过客户端内本地后端承接。
-
-## 安装
-
-### 1. 安装 Python 依赖
+### 1. 克隆仓库并创建虚拟环境
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
+git clone <your-repo-url>
+cd MeetYou
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 2. 安装桌面端依赖
+说明：
+
+- Windows 下激活命令是 `.venv\Scripts\activate`
+- `requirements.txt` 中的 Windows 专属依赖只会在 Windows 上安装
+- 如果服务器只运行 Core，不需要先安装桌面端依赖
+
+### 2. 初始化配置文件
+
+复制模板：
 
 ```bash
-cd meetyou-ui
-npm install
+cp .env.example .env
+cp user/config.example.json user/config.json
+cp user/tools.example.json user/tools.json
+cp user/cmd_policy.example.json user/cmd_policy.json
+cp user/source_catalog.example.json user/source_catalog.json
+cp user/memory_graph.example.json user/memory_graph.json
 ```
 
-## 配置
-
-配置分两层：
-
-- `user/config.json`：非敏感业务配置
-- `.env`：密钥与敏感令牌
-
-`user/` 下常用模板已随仓库提供，可参考 [user/README.md](user/README.md) 复制初始化：
-
-- `user/config.example.json` -> `user/config.json`
-- `user/tools.example.json` -> `user/tools.json`
-- `user/mcp_servers.example.json` -> `user/mcp_servers.json`
-- `user/core_mcp_servers.example.json` -> `user/core_mcp_servers.json`
-- `user/cmd_policy.example.json` -> `user/cmd_policy.json`
-- `user/source_catalog.example.json` -> `user/source_catalog.json`
-- `user/memory_graph.example.json` -> `user/memory_graph.json`
-- `user/feishu_chat_ids.example.json` -> `user/feishu_chat_ids.json`
-- `user/desktop_agent.example.json` -> `user/desktop_agent.json`
-- `user/edge_agent.example.json` -> `user/edge_agent.json`
-
-可以先复制环境变量模板：
+按需复制：
 
 ```bash
-copy .env.example .env
+cp user/core_mcp_servers.example.json user/core_mcp_servers.json
+cp user/edge_agent.example.json user/edge_agent.json
+cp user/desktop_agent.example.json user/desktop_agent.json
 ```
 
-### 最小 `user/config.json` 示例
+说明：
+
+- `user/config.json` 不是可选文件，缺失时启动会直接报错
+- `.env` 放敏感密钥，`user/*.json` 放非敏感业务配置
+- 真实运行态文件不要提交回仓库
+
+### 3. 配置 `user/config.json`
+
+最小示例：
 
 ```json
 {
@@ -131,95 +147,277 @@ copy .env.example .env
   "heartbeat_path": "prompt/heartbeat",
   "memory_file_path": "user/memory_graph.json",
   "source_catalog_path": "user/source_catalog.json",
-  "gateway_cors_origins": ["http://127.0.0.1:5173"],
   "gateway_host": "127.0.0.1",
   "gateway_port": 8000,
   "enable_feishu_bot": false
 }
 ```
 
-### `.env` 中常见变量
+公网部署时建议至少关注这些字段：
+
+- `gateway_host` / `gateway_port`：Gateway 监听地址和端口
+- `gateway_access_token`：公网或非本地监听时必须配置
+- `assistant_modes` / `mode_router`：模式与工具路由
+- `object_store_backend`：附件存储后端，推荐生产环境接入对象存储
+- `source_catalog_path`：研究来源目录
+
+重要限制：
+
+- 当 `gateway_host` 不是 `127.0.0.1`、`localhost`、`::1` 时，必须配置 `gateway_access_token`
+- 这是当前代码里的安全边界，不建议为了“省事”删除
+
+### 4. 配置 `.env`
+
+常见变量：
 
 ```env
 MEETYOU_API_KEY=
 MEETYOU_HEARTBEAT_API_KEY=
 MEETYOU_EMBEDDING_API_KEY=
 MEETYOU_GATEWAY_ACCESS_TOKEN=
+MEETYOU_AGENT_ACCESS_TOKEN=
+MEETYOU_EDGE_ACCESS_TOKEN=
+MEETYOU_DATABASE_URL=postgresql+psycopg://postgres:password@127.0.0.1:5432/meetyou
 TAVILY_API_KEY=
 NOTION_TOKEN=
 MEETYOU_FEISHU_APP_ID=
 MEETYOU_FEISHU_APP_SECRET=
 ```
 
-### 常用配置项
+说明：
 
-- `api_provider` / `api_url` / `model`：主对话模型
-- `heartbeat_api_provider` / `heartbeat_api_url` / `heart_model`：后台心跳模型
-- `Core Heart` 的“心跳”用于服务端时间编排与时间压力判断，不等同于 `/agent/ws` 上的 agent transport heartbeat
-- `embedding_api_url` / `embedding_model`：向量化与记忆能力
-- `thinking_enabled` / `thinking_effort` / `thinking_budget_tokens`：默认推理参数
-- `assistant_modes` / `mode_router`：模式路由与工具策略
-- `tools_schema_path`：工具 schema
-- `source_catalog_path`：研究来源目录
-- `enable_feishu_bot`：是否启用飞书
-- `gateway_host` / `gateway_port`：网关监听地址
-- `gateway_cors_origins`：额外允许的浏览器来源
-- `gateway_access_token` / `MEETYOU_GATEWAY_ACCESS_TOKEN`：Gateway / WebSocket 访问令牌
-- `object_store_backend`：附件内容存储后端，当前兼容态支持 `local/filesystem` 与 `s3_compatible`
-- `attachment_storage_root`：`local/filesystem` 后端使用的附件根目录
-- `object_store_endpoint` / `object_store_bucket` / `object_store_region`：`s3_compatible` 后端配置
-- `object_store_access_key` / `object_store_secret_key`：`s3_compatible` 后端凭据
+- `MEETYOU_GATEWAY_ACCESS_TOKEN`：Gateway / WebSocket 访问令牌
+- `MEETYOU_AGENT_ACCESS_TOKEN`：共享 Agent 访问令牌；`desktop-agent` 与 `edge-agent` 都可回退到它
+- `MEETYOU_EDGE_ACCESS_TOKEN`：仅给 `edge-agent` 的专用覆盖令牌
+- `MEETYOU_DATABASE_URL`：正式持久化数据库连接串
 
-对象存储补充说明：
+如果使用 Danxi / WebVPN 凭证加密链路，还建议单独配置：
 
-- 当前兼容态下，attachment upload/download 主链已经可用，且可切到 `s3_compatible` backend
-- `F76` / `F77` 已完成：支持对象存储预签名下载 URL，并在不支持直链时回退到 Core 代理下载；截图类 `ephemeral` 附件会写入短 TTL，并在上传完成后清理 Desktop Agent 本地临时文件
-
-### MCP 配置边界
-
-- `user/core_mcp_servers.json`：仅供 `Core MCP` 使用，承载服务端可安全运行、且不依赖终端在线的 MCP 与非端侧集成能力
-- `user/mcp_servers.json`：仅供 PC 客户端本地后端使用，由 `desktop_agent/` 托管本地 MCP 生命周期
-- 缺少 `core_mcp_servers.json` 只表示 Core 没有启用服务端 MCP，不代表 Desktop Agent 本地 MCP 配置缺失
-- `user/desktop_agent.json` 中的 `mcp_servers_path` 用来指向客户端本地 MCP 配置文件
-- 纯进程内轻量工具如摘要整理、记忆/任务状态管理仍可保留在 Core runtime-native tool，不需要一刀切迁成 MCP
-
-## 启动方式
-
-### 1. 默认启动 Launcher
-
-```bash
-python main.py
+```env
+MEETYOU_CREDENTIAL_SECRET=
 ```
 
-等价于：
+### 5. 准备 PostgreSQL
 
-```bash
-python main.py launcher
-```
+当前正式持久化已经切到 PostgreSQL。服务启动时会尝试执行 Alembic migration，因此在启动前要确保：
 
-Launcher 当前支持：
+- 数据库已创建
+- `MEETYOU_DATABASE_URL` 正确
+- 运行用户对目标数据库有建表和迁移权限
 
-- `start service`
-- `start cil`
-- `start ui`
-- `status`
-- `exit`
+建议：
 
-迁移旧脚本时，请同步将 `start gateway` / `python main.py gateway` 替换为新的 service 入口，详见 [docs/runtime-migration.md](docs/runtime-migration.md)。
+- 生产环境不要继续依赖 `user/*.json` 作为唯一真相源
+- 开发环境可先用本机 PostgreSQL，生产环境建议独立实例或云数据库
 
-### 2. 只启动服务运行时
+### 6. 启动 Core Service
+
+Linux 服务器请显式使用：
 
 ```bash
 python main.py service
 ```
 
-启动后默认监听：
+不要用：
+
+```bash
+python main.py
+```
+
+原因：
+
+- `python main.py` 会进入 launcher
+- launcher 当前偏向 Windows / PowerShell 使用场景
+- 服务器部署应该直接运行 `service` 主入口
+
+启动成功后默认地址通常是：
 
 ```text
 http://127.0.0.1:8000
 ```
 
-### 3. 启动终端客户端 CIL
+### 7. 健康检查
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+如果启用了鉴权，也请为其他 HTTP / WebSocket 调用带上：
+
+- `Authorization: Bearer <token>`
+- 或 `X-API-Key: <token>`
+
+## Core 与 Agent 连接
+
+### 正式连接口径
+
+- 客户端实时链路：`GET /client/ws`
+- Agent 实时链路：`WSS /agent/ws`
+- Agent 协议 schema：`meetyou.agent.v1`
+
+Agent 握手顺序：
+
+```text
+agent.hello
+agent.hello.ack
+agent.capabilities.snapshot
+agent.ready
+```
+
+需要特别区分两类 heartbeat：
+
+- `Core Heart`：服务端内部时间编排
+- `agent heartbeat`：`/agent/ws` 上的在线状态与运行指标上报
+
+二者不是同一件事。
+
+### `desktop-agent` 与 `edge-agent` 的差异
+
+- `desktop-agent`：主要运行在用户设备侧，代表本机能力
+- `edge-agent`：运行在远端节点侧，代表该边缘节点能力
+- 两者都走同一条 `WSS /agent/ws` 主链
+- 两者的差异主要由 `agent_type`、`transport_profile`、`workspace_ids` 和本地能力边界决定
+
+不要再按旧 MQTT 方案理解当前 Agent 主链。
+
+### Agent 鉴权优先级
+
+`desktop-agent`：
+
+- 优先读取 `MEETYOU_AGENT_ACCESS_TOKEN`
+- 可回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+
+`edge-agent`：
+
+- 优先读取 `MEETYOU_EDGE_ACCESS_TOKEN`
+- 再回退到 `MEETYOU_AGENT_ACCESS_TOKEN`
+- 最后回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+
+WebSocket / HTTP 都支持：
+
+- `Authorization: Bearer ...`
+- `X-API-Key`
+
+Agent WebSocket 还兼容 `access_token` query。
+
+### 公网部署建议
+
+如果 Core 部署在腾讯云公网服务器：
+
+- `core_base_url` 配成公网 HTTPS 地址，例如 `https://your-domain.example`
+- 通过反向代理把外部 `443` 转发到内部 `127.0.0.1:8000`
+- Agent 使用 `wss://your-domain.example/agent/ws`
+- 客户端使用 `https://your-domain.example` + `GET /client/ws`
+
+### `desktop-agent` 示例
+
+`user/desktop_agent.json`：
+
+```json
+{
+  "core_base_url": "https://your-domain.example",
+  "agent_access_token": "replace-with-agent-token",
+  "agent_id": "desktop-main-agent",
+  "display_name": "Desktop Main Agent",
+  "owner_client_id": "desktop-app",
+  "owner_client_type": "electron",
+  "owner_client_display_name": "Desktop App",
+  "workspace_ids": ["personal", "desktop-main", "study"],
+  "read_roots": ["."],
+  "trusted_write_roots": ["."],
+  "cmd_policy_path": "user/cmd_policy.json",
+  "mcp_servers_path": "user/mcp_servers.json",
+  "heartbeat_interval_seconds": 20,
+  "transport_profile": "desktop_wss"
+}
+```
+
+说明：
+
+- `desktop-agent` 应部署在用户自己的 Windows 电脑，而不是 Linux Core 服务器上
+- `mcp_servers_path` 指向的是本地 MCP 配置，不属于服务端 MCP
+
+### `edge-agent` 示例
+
+`user/edge_agent.json`：
+
+```json
+{
+  "core_base_url": "https://your-domain.example",
+  "agent_access_token": "replace-with-edge-token",
+  "agent_id": "edge-home-lab-agent",
+  "display_name": "Home Lab Edge Agent",
+  "agent_type": "edge",
+  "workspace_ids": ["home-lab"],
+  "heartbeat_interval_seconds": 20,
+  "transport_profile": "edge_wss"
+}
+```
+
+启动命令：
+
+```bash
+python main.py edge-agent
+```
+
+## MCP 配置边界
+
+- `user/core_mcp_servers.json`：只给 Core Service 使用
+- `user/mcp_servers.json`：只给 `desktop-agent` 本地 MCP 使用
+- 缺少 `core_mcp_servers.json` 不代表 `desktop-agent` 本地 MCP 缺失
+- 服务端 MCP 应优先选择可在 Linux 服务器稳定运行、且不依赖桌面环境的能力
+
+`user/core_mcp_servers.example.json` 已改成跨平台基线示例，不再默认写死：
+
+- `npx.cmd`
+- `msedge`
+- Windows 盘符路径
+
+如果你想保留 Windows 浏览器体验，再在本机额外补 `msedge`、profile、缓存目录等参数。
+
+## 常用接口
+
+正式主接口：
+
+- `GET /health`
+- `POST /client/messages`
+- `GET /client/ws`
+- `GET /client/workspaces`
+- `GET /client/workspaces/{workspace_id}/agents`
+- `GET /operator/config`
+- `GET /operator/memory`
+- `GET /runtime/state`
+- `GET /runtime/usage`
+- `GET /developer/runtime/debug`
+- `WSS /agent/ws`
+
+兼容说明：
+
+- `GET /ws` 只返回兼容性错误，不再承载聊天流
+- 旧 `POST /inputs`、`POST /controls`、根路径 `session/messages` 不再是正式主链
+
+## 生产建议
+
+腾讯云 / Linux 部署至少建议补齐这几项：
+
+- 反向代理：使用 Nginx / Caddy 暴露 `443`，转发到 `127.0.0.1:8000`
+- TLS：为 `client/ws` 与 `agent/ws` 提供 `wss://`
+- 进程守护：使用 `systemd`、Supervisor 或容器编排保证 `python main.py service` 常驻
+- 数据库：使用 PostgreSQL，不要依赖本地临时状态文件充当正式持久化
+- 密钥管理：`.env` 放服务器本地，避免把真实 token 和密码写进仓库
+- 防火墙：只开放必要端口，数据库优先内网访问
+- 日志与监控：至少监控 `/health`、数据库连通性和 Agent 在线状态
+
+一个最小 `systemd` 思路：
+
+- `WorkingDirectory` 指向仓库根目录
+- `ExecStart` 使用 `.venv` 中的 Python 执行 `python main.py service`
+- `EnvironmentFile` 指向 `.env`
+- `Restart=always`
+
+## 开发与桌面端补充
+
+### CIL
 
 先确保 service 已启动：
 
@@ -227,170 +425,80 @@ http://127.0.0.1:8000
 python main.py cil
 ```
 
-支持的内置命令：
-
-- `/help`
-- `/config list`
-- `/config get <key>`
-- `/config set <key> <value>`
-
-### 4. 启动桌面端 UI
-
-先确保 service 已启动，再在 `meetyou-ui/` 下运行：
-
-```bash
-npm run dev
-```
-
-如果你从 launcher 执行 `start ui`，会自动尝试拉起 service，再打开 Electron 开发窗口。
-
-## 服务端接口
-
-当前正式主接口按 surface 划分：
-
-- `GET /health`：健康检查
-- `POST /client/messages`：客户端提交聊天消息
-- `GET /client/ws`：订阅 thread 级实时事件
-- `GET /client/workspaces`：列出客户端可用 workspace
-- `GET /client/workspaces/{workspace_id}/agents`：列出该 workspace 下在线可用 Agent
-- `GET /operator/config`、`GET /operator/memory`：运维 / 观察面接口
-- `GET /runtime/state`、`GET /runtime/usage`、`GET /developer/runtime/debug`：运行态与开发诊断接口
-- `GET /ws`：旧主聊天路径，现仅返回兼容性错误并提示迁移到 `/client/ws`
-- `POST /inputs`、`POST /controls`、旧根路径 `session/messages` 入口：现只返回受控迁移错误，不再触发真实聊天主链
-- `GET /config`、`GET /memory` 等根路径接口：迁移期兼容入口，不再是默认产品面
-
-正式目标架构见 [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)，workspace 模型见 [docs/workspace-capability-model.md](docs/workspace-capability-model.md)，API 面设计见 [docs/core-api-surfaces.md](docs/core-api-surfaces.md)，当前正式计划与完成口径见 [docs/implementation-plan.md](docs/implementation-plan.md)。
-
-### `POST /client/messages` 示例
-
-```json
-{
-  "thread_id": "thread-personal-001",
-  "workspace_id": "personal",
-  "client_id": "desktop-app",
-  "content": "帮我总结今天的任务"
-}
-```
-
-### WebSocket 连接示例
-
-```text
-ws://127.0.0.1:8000/client/ws?thread_id=thread-personal-001
-```
-
-客户端会先收到 `connection` 帧，随后按 thread 推送统一 envelope：
-
-- `event`
-- `runtime`
-- `ack`
-- `error`
-
-如果旧客户端仍连接根路径 `/ws`，服务端会返回 `legacy_websocket_path_removed` 错误并关闭连接。
-
-## PC 客户端说明
-
-`meetyou-ui/` 是 PC 客户端前端；`desktop_agent/` 则是 PC 客户端内本地后端的当前实现。两者共同构成 PC 客户端。
-
-`edge_agent/` 是按 workspace 接入的边缘 Agent 运行时。它和 `desktop_agent/` 当前都通过统一的 `WSS /agent/ws` + `meetyou.agent.v1` transport 接入 Core，只是 `transport_profile` 分别标记为 `desktop_wss` 与 `edge_wss`。
-
-需要特别区分两类“heartbeat”：
-
-- `Core Heart`：服务端后台时间编排中枢，负责 `scheduler loop` 与 `heartbeat reasoning loop`
-- `agent heartbeat`：Agent 通过 `/agent/ws` 上报在线状态、活跃调用与离线队列等运行指标；`agent.hello.ack` 可协商新的 `heartbeat_interval_seconds`，且新间隔应立即作用到当前连接
-
-当前客户端产品面已收口为：
-
-- 聊天界面
-- 推理摘要展示
-- 工具活动展示
-- `StatusIsland` 顶层连接/思考反馈 + operation `tone/summary` 细粒度反馈的双层状态模型
-- token/context 统计面板
-- 独立“工作区与规程”管理页
-- 独立“附件管理”页面
-- 设置页
-- 记忆图谱页
-
-开发命令：
+### 桌面端开发
 
 ```bash
 cd meetyou-ui
+npm install
 npm run dev
 ```
 
-构建命令：
+### 桌面端构建
 
 ```bash
+cd meetyou-ui
 npm run build
 ```
 
-## Edge Agent
+说明：
 
-启动边缘 Agent：
+- 当前桌面端整体仍偏 Windows
+- Linux 服务器部署的核心目标应是 Core Service，而不是 Electron UI
 
-```bash
-python main.py edge-agent
-```
+## 验证建议
 
-默认读取 `user/edge_agent.json`，并通过 `ws://127.0.0.1:8000/agent/ws` 接入服务端 Gateway。
+Linux 服务器首轮验收建议按这个顺序：
 
-当前 Edge Agent 基线已经覆盖：
+1. `pip install -r requirements.txt`
+2. `python main.py service`
+3. `curl /health`
+4. 确认数据库 migration 成功
+5. 用一个客户端验证 `POST /client/messages` + `GET /client/ws`
+6. 启动一个 `edge-agent` 或 `desktop-agent`
+7. 检查 `GET /client/workspaces/{workspace_id}/agents` 是否能看到在线 Agent
 
-- `agent.hello` / `agent.hello.ack` / `agent.capabilities.snapshot` / `agent.ready`
-- `agent.heartbeat` 在线状态上报与 `heartbeat_interval_seconds` 协商
-- 最小 capability 样例与运行时分发
+如果你只做最小 Agent 验证，建议关注：
 
-建议验证路径：
-
-- 最小协议与运行时测试：`.venv\Scripts\python.exe -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime`
-- 需要连同 Gateway 验证注册与调用主链时：`.venv\Scripts\python.exe -m unittest tests.test_gateway_agent_api`
-
-## 飞书 Bot
-
-启用飞书前至少需要：
-
-- `enable_feishu_bot = true`
-- `.env` 中配置 `MEETYOU_FEISHU_APP_ID`
-- `.env` 中配置 `MEETYOU_FEISHU_APP_SECRET`
-
-相关持久化文件：
-
-- `user/feishu_chat_ids.json`
-
-- Feishu 输入会通过 `GatewayConversationClient` 进入 `POST /client/messages`
-- Feishu 输出、审批、补充输入和 operation 更新都通过 `GET /client/ws` 事件回推
-- `FeishuInputAdapter` 的旧 event bus 直连分支仅保留兼容用途，不再是正式主链
+- `agent.hello`
+- `agent.hello.ack`
+- `agent.capabilities.snapshot`
+- `agent.ready`
+- `agent.heartbeat`
 
 ## 测试
 
-仓库当前包含较多后端测试，集中在 `tests/` 目录，例如：
-
-- 运行态与 usage
-- gateway 配置与记忆接口
-- assistant modes
-- memory / task scheduler
-- scenario tools / document tools
-- edge agent protocol / runtime
-
-如果本地已安装测试依赖，可执行：
+后端最小相关测试：
 
 ```bash
-.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
+python -m unittest tests.test_config_manager
+python -m unittest tests.test_gateway_agent_api
+python -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime
 ```
 
-如只想验证当前 `F93` 相关的 Edge Agent 基线，建议先跑：
+如果你在 Windows 上做桌面端联调，再补：
 
 ```bash
-.venv\Scripts\python.exe -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime
+cd meetyou-ui
+npm run typecheck
+npm run test
 ```
+
+说明：
+
+- 当前仓库没有现成的 Linux / 腾讯云一键验收脚本
+- `scripts/manual-acceptance.cmd` 和 PowerShell 路径主要服务 Windows 桌面链路
+- 本次仓库内验证主要覆盖文档/模板一致性与本地自动化测试，仍建议在真实 Linux 云服务器上完成一次 `service -> client/ws -> agent/ws` 联机验收
 
 ## 相关文档
 
-- [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)：目标拓扑与职责分层
-- [docs/workspace-capability-model.md](docs/workspace-capability-model.md)：Workspace、Capability 与作用域模型
-- [docs/core-api-surfaces.md](docs/core-api-surfaces.md)：Client / Agent / Operator / Developer API 面
-- [docs/manual-startup-acceptance.md](docs/manual-startup-acceptance.md)：人工启动验收与排障手册
-- [docs/runtime-migration.md](docs/runtime-migration.md)：运行时破坏性迁移说明
-- [docs/playwright-mcp.md](docs/playwright-mcp.md)：Playwright MCP 说明
+- [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)
+- [docs/workspace-capability-model.md](docs/workspace-capability-model.md)
+- [docs/core-api-surfaces.md](docs/core-api-surfaces.md)
+- [docs/agent-protocol-v1.md](docs/agent-protocol-v1.md)
+- [docs/manual-startup-acceptance.md](docs/manual-startup-acceptance.md)
+- [docs/runtime-migration.md](docs/runtime-migration.md)
+- [docs/playwright-mcp.md](docs/playwright-mcp.md)
+- [user/README.md](user/README.md)
 
 ## License
 

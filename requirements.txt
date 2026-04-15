@@ -9,9 +9,10 @@ numpy
 psutil
 pyvis
 SQLAlchemy>=2.0,<2.1
-uiautomation
+# Windows-only host sensing for the desktop experience.
+uiautomation; platform_system == "Windows"
 mcp
-pywin32
+pywin32; platform_system == "Windows"
 python-dotenv
 fastapi
 uvicorn

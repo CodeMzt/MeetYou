@@ -229,19 +229,26 @@ Core 将：
 
 ### 5.2 主要资源
 
-- `agent registration`
+- `agent websocket registration`
 - `capability snapshots`
 - `capability calls`
-- `offline receipts`
-- `attachment upload tickets`
+- `agent attachment upload tickets`
+- `agent attachment content`
 
 ### 5.3 建议端点 / 通道轮廓
 
 - `WSS /agent/ws`
-- `POST /agent/register`
 - `POST /agent/attachments/upload-ticket`
-- `POST /agent/attachments/complete`
-- `POST /agent/offline/receipts`
+- `PUT /agent/attachments/upload/{ticket_id}`
+- `POST /agent/attachments/{attachment_id}/complete`
+- `GET /agent/attachments/content/{attachment_id}?ticket_id=...`
+
+当前口径补充：
+
+- Agent 注册通过 `agent.hello -> agent.hello.ack -> agent.capabilities.snapshot -> agent.ready` 在 `WSS /agent/ws` 上完成，不存在独立 `POST /agent/register` 正式入口
+- `desktop-agent` 与 `edge-agent` 共用同一条 `WSS /agent/ws` 主链与 `meetyou.agent.v1` envelope，差异通过 `agent_type` 与 `transport_profile` 区分
+- Agent HTTP 面当前主要用于附件票据、上传、完成与回读；离线回执接口仍属于协议预留，不应在文档中表述为已落地正式端点
+- Agent 鉴权与 Client 鉴权分离；启用后 Agent HTTP / WebSocket 接受 `Authorization: Bearer ...`、`X-API-Key`，WebSocket 也兼容 `access_token` query
 
 语义细节见 `docs/agent-protocol-v1.md`。
 

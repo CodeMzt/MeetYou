@@ -28,18 +28,20 @@ The browser entry now belongs in `user/core_mcp_servers.json`:
 {
   "mcpServers": {
     "browser_automation": {
-      "command": "npx.cmd",
+      "command": "npx",
       "args": [
         "-y",
         "@playwright/mcp@latest",
-        "--browser",
-        "msedge"
+        "--caps",
+        "pdf"
       ],
       "enabled": false
     }
   }
 }
 ```
+
+If you want to keep the Windows desktop browsing experience, you can add Windows-specific flags on that machine, for example `--browser msedge`, `--user-data-dir user/playwright-user-data`, `--output-dir user/playwright-mcp-output`, or a project-local `npm_config_cache`.
 
 ## Recommended Usage
 
@@ -56,12 +58,12 @@ For browsing and scraping, the most useful tools are:
 
 - Prefer direct target URLs over search-engine result pages.
 - Avoid Google search result pages in browser automation flows.
-- Reuse the persistent browser profile under `user/playwright-user-data`.
+- Reuse a persistent browser profile such as `user/playwright-user-data` when you need logged-in state.
 - Use Playwright for page interaction, not as a generic web search engine.
 
 ## Notes
 
-- Browser engine: `msedge`
-- Browser profile: persistent local profile
-- npm cache: project-local `.npm-cache/`
+- Browser engine: default browser or an explicit value such as `msedge`
+- Browser profile: persistent local profile when needed
+- npm cache: optional project-local `.npm-cache/`
 - package source: `npx @playwright/mcp@latest`
