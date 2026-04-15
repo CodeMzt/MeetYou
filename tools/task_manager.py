@@ -4,7 +4,9 @@ import copy
 import json
 import os
 import re
+import time
 from calendar import monthrange
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -43,6 +45,9 @@ _DEFAULT_JOB_MAX_RETRIES = 3
 _URGENT_DUE_WINDOW = timedelta(hours=6)
 _BACKGROUND_DUE_LIST_LIMIT = 3
 _REPEATED_FAILURE_THRESHOLD = 2
+_STORE_LOCK_POLL_SECONDS = 0.05
+_STORE_LOCK_TIMEOUT_SECONDS = 5.0
+_STALE_STORE_LOCK_SECONDS = 30.0
 _TASK_SCHEMA_VERSION = "2"
 _UNSET = object()
 _SPACE_RE = re.compile(r"\s+")
@@ -222,6 +227,24 @@ def _cycle_event_id(task_key: Any, cycle_key: Any, event_kind: Any) -> str:
     if not (normalized_task_key and normalized_cycle_key and normalized_event_kind):
         return ""
     return f"{normalized_task_key}:{normalized_cycle_key}:{normalized_event_kind}"
+
+
+def _pending_delivery_identity(record: dict[str, Any], payload: dict[str, Any]) -> str:
+    source_event_id = _normalize_text(payload.get("source_event_id"))
+    if source_event_id:
+        return source_event_id
+    event_id = _normalize_text(payload.get("event_id"))
+    if event_id:
+        return event_id
+    cycle_key = _normalize_text(payload.get("cycle_key"))
+    kind = _normalize_text(payload.get("kind")) or "task_update"
+    cycle_event_id = _cycle_event_id(record.get("task_key"), cycle_key, kind)
+    if cycle_event_id:
+        return cycle_event_id
+    task_key = _normalize_text(record.get("task_key"))
+    if task_key:
+        return f"{task_key}:{kind}"
+    return kind
 
 
 def _slugify(value: str) -> str:
@@ -871,6 +894,50 @@ class TaskManager(TaskRepository):
             return
         self._task_file_path = resolved_path
         self._store = self._load_store()
+
+    def _store_lock_path(self) -> str:
+        if self._store_backend is not None or not self._task_file_path:
+            return ""
+        return f"{self._task_file_path}.lock"
+
+    @contextmanager
+    def _acquire_store_lock(self):
+        lock_path = self._store_lock_path()
+        if not lock_path:
+            yield
+            return
+        path = Path(lock_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        owner = f"{os.getpid()}:{uuid4().hex}"
+        deadline = time.monotonic() + _STORE_LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    handle.write(owner)
+                break
+            except FileExistsError:
+                try:
+                    age_seconds = time.time() - path.stat().st_mtime
+                except OSError:
+                    age_seconds = 0.0
+                if age_seconds >= _STALE_STORE_LOCK_SECONDS:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                    continue
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out waiting for task store lock: {lock_path}")
+                time.sleep(_STORE_LOCK_POLL_SECONDS)
+        try:
+            yield
+        finally:
+            try:
+                if path.exists() and path.read_text(encoding="utf-8") == owner:
+                    path.unlink()
+            except OSError:
+                pass
 
     def _touch_updated(self) -> None:
         self._normalize_store_metadata()
@@ -2144,52 +2211,55 @@ class TaskManager(TaskRepository):
         lease_seconds: int = _DEFAULT_LEASE_SECONDS,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        current = now or _utcnow()
-        claimed: list[dict[str, Any]] = []
-        for record in self._sort_tasks(self._iter_all_active_tasks(task_domain="assistant_schedule")):
-            if len(claimed) >= limit:
-                break
-            if _normalize_text(record.get("task_status")).lower() != "open":
-                continue
-            if not self._is_task_due(record, now=current):
-                continue
-            if record.get("schedule_kind") not in {"once", "recurring"} and not record.get("auto_run"):
-                continue
-            current_text = _dt_to_iso(current)
-            claim_token = uuid4().hex
-            record["run_lock_until"] = _dt_to_iso(current + timedelta(seconds=max(lease_seconds, 10)))
-            record["active_claim_token"] = claim_token
-            record["last_triggered_at"] = current_text
-            record["last_run_status"] = "queued" if record.get("auto_run") else "due"
-            self._update_task_job(
-                record,
-                status="queued",
-                runtime_source="heart.scheduler",
-                started_at=current_text,
-                next_retry_at=None,
-                increment_attempt=True,
-                last_result={
-                    "status": record["last_run_status"],
-                    "summary": "Task was claimed by the scheduler.",
-                    "at": current_text,
-                },
-            )
-            record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
-            self._sync_orchestration_state(record, now=current)
-            record["last_updated_at"] = current_text
-            self._append_run_history(
-                record,
-                {
-                    "timestamp": current_text,
-                    "status": record["last_run_status"],
-                    "summary": "Task was claimed by the scheduler for execution." if record.get("auto_run") else "Task was claimed by the scheduler for notification.",
-                    "runtime_source": "heart.scheduler",
-                },
-            )
-            claimed.append(copy.deepcopy(record))
-        if claimed:
-            await self._persist()
-        return claimed
+        with self._acquire_store_lock():
+            if self._store_backend is not None or self._task_file_path:
+                self._store = self._load_store()
+            current = now or _utcnow()
+            claimed: list[dict[str, Any]] = []
+            for record in self._sort_tasks(self._iter_all_active_tasks(task_domain="assistant_schedule")):
+                if len(claimed) >= limit:
+                    break
+                if _normalize_text(record.get("task_status")).lower() != "open":
+                    continue
+                if not self._is_task_due(record, now=current):
+                    continue
+                if record.get("schedule_kind") not in {"once", "recurring"} and not record.get("auto_run"):
+                    continue
+                current_text = _dt_to_iso(current)
+                claim_token = uuid4().hex
+                record["run_lock_until"] = _dt_to_iso(current + timedelta(seconds=max(lease_seconds, 10)))
+                record["active_claim_token"] = claim_token
+                record["last_triggered_at"] = current_text
+                record["last_run_status"] = "queued" if record.get("auto_run") else "due"
+                self._update_task_job(
+                    record,
+                    status="queued",
+                    runtime_source="heart.scheduler",
+                    started_at=current_text,
+                    next_retry_at=None,
+                    increment_attempt=True,
+                    last_result={
+                        "status": record["last_run_status"],
+                        "summary": "Task was claimed by the scheduler.",
+                        "at": current_text,
+                    },
+                )
+                record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
+                self._sync_orchestration_state(record, now=current)
+                record["last_updated_at"] = current_text
+                self._append_run_history(
+                    record,
+                    {
+                        "timestamp": current_text,
+                        "status": record["last_run_status"],
+                        "summary": "Task was claimed by the scheduler for execution." if record.get("auto_run") else "Task was claimed by the scheduler for notification.",
+                        "runtime_source": "heart.scheduler",
+                    },
+                )
+                claimed.append(copy.deepcopy(record))
+            if claimed:
+                await self._persist()
+            return claimed
 
     async def complete_due_notification(
         self,
@@ -2428,6 +2498,7 @@ class TaskManager(TaskRepository):
     async def _pending_delivery_messages(self, source=None, *, clear: bool) -> list[dict[str, Any]]:
         user_id = self._memory._resolve_user_id(source)
         pending: list[dict[str, Any]] = []
+        seen_delivery_keys: set[str] = set()
         changed = False
         for record in self._iter_user_tasks(user_id):
             payload = record.get("pending_delivery")
@@ -2438,18 +2509,24 @@ class TaskManager(TaskRepository):
                 record["pending_delivery"] = None
                 changed = True
                 continue
-            pending.append(
-                {
-                    "task_key": _normalize_text(record.get("task_key")),
-                    "summary": _normalize_text(record.get("content")),
-                    "message": message,
-                    "kind": _normalize_text(payload.get("kind")) or "task_update",
-                    "event_id": _normalize_text(payload.get("event_id")) or None,
-                    "source_event_id": _normalize_text(payload.get("source_event_id")) or None,
-                    "cycle_key": _normalize_text(payload.get("cycle_key")) or None,
-                    "created_at": _normalize_text(payload.get("created_at")),
-                }
-            )
+            raw_event_id = _normalize_text(payload.get("event_id")) or None
+            raw_source_event_id = _normalize_text(payload.get("source_event_id")) or None
+            delivery_key = _pending_delivery_identity(record, payload)
+            if delivery_key not in seen_delivery_keys:
+                seen_delivery_keys.add(delivery_key)
+                pending.append(
+                    {
+                        "task_key": _normalize_text(record.get("task_key")),
+                        "summary": _normalize_text(record.get("content")),
+                        "message": message,
+                        "kind": _normalize_text(payload.get("kind")) or "task_update",
+                        "event_id": raw_event_id,
+                        "source_event_id": raw_source_event_id or raw_event_id,
+                        "cycle_key": _normalize_text(payload.get("cycle_key")) or None,
+                        "delivery_key": delivery_key,
+                        "created_at": _normalize_text(payload.get("created_at")),
+                    }
+                )
             if clear:
                 record["pending_delivery"] = None
                 self._update_task_job(
@@ -2464,8 +2541,8 @@ class TaskManager(TaskRepository):
                         delivered=True,
                         channel="task_update",
                         message=message,
-                        event_id=payload.get("event_id"),
-                        source_event_id=payload.get("source_event_id"),
+                        event_id=raw_event_id,
+                        source_event_id=raw_source_event_id,
                     ),
                 )
                 self._sync_orchestration_state(record)
@@ -2500,7 +2577,9 @@ class TaskManager(TaskRepository):
             if not isinstance(payload, dict):
                 continue
             event_id = _normalize_text(payload.get("event_id"))
-            if target_ids and event_id not in target_ids:
+            source_event_id = _normalize_text(payload.get("source_event_id"))
+            delivery_key = _pending_delivery_identity(record, payload)
+            if target_ids and not ({event_id, source_event_id, delivery_key} & target_ids):
                 continue
             message = _normalize_text(payload.get("message"))
             record["pending_delivery"] = None

@@ -155,6 +155,31 @@ class AgentDispatchServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(selection.agent.agent_id, "desktop-main-agent")
 
+    async def test_replace_agent_capabilities_truncates_oversized_titles_for_persistence(self):
+        long_title = "Read the complete contents of a file from the file system as text. " * 8
+        self.domain.services.capability.replace_agent_capabilities(
+            agent=self.agent,
+            capabilities=[
+                {
+                    "capability_id": "agent.desktop-main-agent.file.read_text_file",
+                    "kind": "tool",
+                    "title": long_title,
+                    "risk_level": "read",
+                    "requires_confirmation": False,
+                    "workspace_ids": ["desktop-main"],
+                }
+            ],
+            workspace_rows=[self.desktop_workspace],
+            revision=2,
+        )
+
+        capability = self.domain.services.capability.get_by_capability_id(
+            "agent.desktop-main-agent.file.read_text_file"
+        )
+        self.assertIsNotNone(capability)
+        self.assertLessEqual(len(capability.title), 255)
+        self.assertEqual((capability.meta or {}).get("full_title"), long_title)
+
     async def test_dispatch_encrypts_sensitive_arguments_for_agent_transport(self):
         transport_payload: dict[str, object] = {}
 

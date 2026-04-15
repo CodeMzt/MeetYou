@@ -18,9 +18,18 @@ class _FakeWsManager:
         return session_id in self._sessions
 
 
+class _FakeClientWsManager:
+    def __init__(self, threads=None):
+        self._threads = set(threads or [])
+
+    def has_connections(self, thread_id: str) -> bool:
+        return thread_id in self._threads
+
+
 class _FakeGateway:
-    def __init__(self, sessions=None):
+    def __init__(self, sessions=None, threads=None):
         self.ws_manager = _FakeWsManager(sessions=sessions)
+        self.client_ws_manager = _FakeClientWsManager(threads=threads)
 
 
 class HeartbeatSignalRoutingTests(unittest.TestCase):
@@ -40,9 +49,21 @@ class HeartbeatSignalRoutingTests(unittest.TestCase):
     def test_recent_user_delivery_prefers_deliverable_active_session(self):
         manager = SessionManager()
         manager.get_or_create_session(make_source(SourceKind.SYSTEM.value, "boot"), "system:boot")
-        manager.get_or_create_session(make_source(SourceKind.WEB.value, "tab-old"), "web:old")
-        manager.get_or_create_session(make_source(SourceKind.FEISHU.value, "chat-live"), "feishu:live")
-        manager.get_or_create_session(make_source(SourceKind.WEB.value, "tab-live"), "web:live")
+        manager.bind_runtime_session(
+            make_source(SourceKind.WEB.value, "tab-old"),
+            "web:old",
+            metadata={"thread_id": "thr-old"},
+        )
+        manager.bind_runtime_session(
+            make_source(SourceKind.FEISHU.value, "chat-live"),
+            "feishu:live",
+            metadata={"thread_id": "thr-feishu"},
+        )
+        manager.bind_runtime_session(
+            make_source(SourceKind.WEB.value, "tab-live"),
+            "web:live",
+            metadata={"thread_id": "thr-live"},
+        )
 
         manager.set_default_target("feishu:live", EventTarget(kind=TargetKind.FEISHU.value, id="chat-live"))
         manager.set_default_target("web:live", EventTarget(kind=TargetKind.WEB.value, id="tab-live"))
@@ -51,13 +72,34 @@ class HeartbeatSignalRoutingTests(unittest.TestCase):
 
         app = App.__new__(App)
         app.session_manager = manager
-        app.gateway = _FakeGateway(sessions={"web:live"})
+        app.core_services = None
+        app.gateway = _FakeGateway(threads={"thr-live"})
 
         session_id, target = App._recent_user_delivery(app)
 
         self.assertEqual(session_id, "web:live")
         self.assertEqual(target.kind, TargetKind.WEB.value)
         self.assertEqual(target.id, "tab-live")
+
+    def test_recent_user_delivery_supports_feishu_formal_client_thread(self):
+        manager = SessionManager()
+        manager.bind_runtime_session(
+            make_source(SourceKind.FEISHU.value, "chat-live"),
+            "feishu:live",
+            metadata={"thread_id": "thr-feishu-live"},
+        )
+        manager.set_default_target("feishu:live", EventTarget(kind=TargetKind.FEISHU.value, id="chat-live"))
+
+        app = App.__new__(App)
+        app.session_manager = manager
+        app.core_services = None
+        app.gateway = _FakeGateway(threads={"thr-feishu-live"})
+
+        session_id, target = App._recent_user_delivery(app)
+
+        self.assertEqual(session_id, "feishu:live")
+        self.assertEqual(target.kind, TargetKind.FEISHU.value)
+        self.assertEqual(target.id, "chat-live")
 
     def test_signal_input_keeps_normal_conversation_style(self):
         app = App.__new__(App)

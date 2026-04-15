@@ -145,10 +145,9 @@ class FeishuOutputAdapter:
         if event_type == "reasoning.delta":
             return
 
+        # Suppress routine runtime/activity chatter in Feishu so the chat only
+        # shows user-relevant replies and explicit interaction prompts.
         if event_type == "activity.status":
-            content = str(event.get("content") or "").strip()
-            if content:
-                await self._send_text(chat_id, f"[系统] {content}")
             return
 
         if event_type == "message.delta":
@@ -163,13 +162,6 @@ class FeishuOutputAdapter:
             return
 
         if event_type == "operation.updated":
-            status = str(event.get("status") or "")
-            detail = str(event.get("detail") or "")
-            operation_id = str(event.get("operation_id") or "")
-            text = f"[操作] {operation_id} {status}".strip()
-            if detail:
-                text = f"{text}: {detail}"
-            await self._send_text(chat_id, text)
             return
 
     def _has_valid_token(self) -> bool:
@@ -339,5 +331,4 @@ class FeishuOutputAdapter:
                     str(event.content or ""),
                 )
                 return
-            if event.content:
-                await self._send_text(chat_id, str(event.content))
+            return

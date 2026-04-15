@@ -768,6 +768,51 @@ class App:
             error=error,
         )
 
+    def _resolve_background_target(self, session_id: str, target: EventTarget) -> EventTarget:
+        resolved_target = target
+        if target.kind == TargetKind.CURRENT_SESSION.value and session_id:
+            resolved_target = self.session_manager.get_default_target(session_id)
+        return EventTarget(
+            kind=str(getattr(resolved_target, "kind", "") or ""),
+            id=str(getattr(resolved_target, "id", "") or ""),
+            metadata=dict(getattr(resolved_target, "metadata", {}) or {}),
+        )
+
+    def _resolve_session_thread_id(self, session_id: str) -> str:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return ""
+        core_services = getattr(self, "core_services", None)
+        if core_services is not None:
+            session_row = core_services.session.get_by_session_id(normalized_session_id)
+            if session_row is not None:
+                thread_row = core_services.thread.get_by_id(session_row.thread_id)
+                thread_id = str(getattr(thread_row, "thread_id", "") or "").strip()
+                if thread_id:
+                    return thread_id
+        session_manager = getattr(self, "session_manager", None)
+        get_binding = getattr(session_manager, "get_binding", None)
+        if not callable(get_binding):
+            return ""
+        binding = get_binding(normalized_session_id)
+        metadata = dict(getattr(binding, "metadata", {}) or {}) if binding is not None else {}
+        return str(metadata.get("thread_id") or "").strip()
+
+    def _has_active_client_thread(self, session_id: str) -> bool:
+        thread_id = self._resolve_session_thread_id(session_id)
+        if not thread_id:
+            return False
+        gateway = getattr(self, "gateway", None)
+        client_ws_manager = getattr(gateway, "client_ws_manager", None)
+        has_connections = getattr(client_ws_manager, "has_connections", None)
+        return bool(callable(has_connections) and has_connections(thread_id))
+
+    def _has_legacy_web_session(self, session_id: str) -> bool:
+        gateway = getattr(self, "gateway", None)
+        ws_manager = getattr(gateway, "ws_manager", None)
+        has_session = getattr(ws_manager, "has_session", None)
+        return bool(session_id and callable(has_session) and has_session(session_id))
+
     async def _create_scheduled_task_operation(self, task_record: dict[str, Any], *, operation_type: str, title: str):
         core_services = getattr(self, "core_services", None)
         if core_services is None:
@@ -852,29 +897,75 @@ class App:
         )
 
     def _can_deliver_task_update(self, session_id: str, target: EventTarget) -> bool:
-        resolved_target = target
-        if target.kind == TargetKind.CURRENT_SESSION.value and session_id:
-            resolved_target = self.session_manager.get_default_target(session_id)
+        resolved_target = self._resolve_background_target(session_id, target)
         if resolved_target.kind == TargetKind.WEB.value:
-            return bool(self.gateway is not None and session_id and self.gateway.ws_manager.has_session(session_id))
+            return self._has_active_client_thread(session_id) or self._has_legacy_web_session(session_id)
         if resolved_target.kind == TargetKind.FEISHU.value:
-            return bool(resolved_target.id)
+            return self._has_active_client_thread(session_id)
         if resolved_target.kind == TargetKind.CLI.value:
             return bool(session_id)
         return False
 
-    async def _emit_task_update(self, task_record: dict[str, Any], message: str) -> bool:
-        session_id, target = self._task_delivery(task_record)
-        if not session_id or not self._can_deliver_task_update(session_id, target):
+    async def _deliver_background_message(
+        self,
+        session_id: str,
+        target: EventTarget,
+        message: str,
+        *,
+        activity_kind: str,
+    ) -> bool:
+        if not session_id or not message:
             return False
-        await self.speaker.emit_text(
-            session_id,
-            message,
-            self._runtime_source,
-            target=target,
-            metadata={"activity_kind": "scheduled_task"},
-        )
-        return True
+        resolved_target = self._resolve_background_target(session_id, target)
+        if resolved_target.kind in {TargetKind.WEB.value, TargetKind.FEISHU.value} and self._has_active_client_thread(session_id):
+            await self._get_client_thread_bridge().persist_and_publish_assistant_message(
+                session_id,
+                content=message,
+                stream_id="",
+                turn_id=uuid4().hex,
+            )
+            return True
+        if resolved_target.kind == TargetKind.WEB.value and self._has_legacy_web_session(session_id):
+            await self.speaker.emit_text(
+                session_id,
+                message,
+                self._runtime_source,
+                target=resolved_target,
+                metadata={"activity_kind": activity_kind},
+            )
+            return True
+        if resolved_target.kind == TargetKind.CLI.value:
+            await self.speaker.emit_text(
+                session_id,
+                message,
+                self._runtime_source,
+                target=resolved_target,
+                metadata={"activity_kind": activity_kind},
+            )
+            return True
+        return False
+
+    async def _emit_task_update(self, task_record: dict[str, Any], message: str) -> bool:
+        delivery_candidates: list[tuple[str, EventTarget]] = []
+        task_session_id, task_target = self._task_delivery(task_record)
+        if task_session_id:
+            delivery_candidates.append((task_session_id, task_target))
+        recent_delivery = self._recent_user_delivery()
+        if recent_delivery is not None:
+            recent_session_id, _ = recent_delivery
+            if all(existing_session_id != recent_session_id for existing_session_id, _ in delivery_candidates):
+                delivery_candidates.append(recent_delivery)
+        for session_id, target in delivery_candidates:
+            if not self._can_deliver_task_update(session_id, target):
+                continue
+            if await self._deliver_background_message(
+                session_id,
+                target,
+                message,
+                activity_kind="scheduled_task",
+            ):
+                return True
+        return False
 
     async def _emit_pending_task_updates(self, session_id: str, target: EventTarget, source) -> None:
         peek_pending = getattr(self.task_manager, "peek_pending_delivery_messages", None)
@@ -889,20 +980,22 @@ class App:
             kind = str(item.get("kind") or "").strip()
             prefix = "提醒补发" if kind == "task_due" else "结果补发" if kind == "task_completion" else "后台补发"
             lines.append(f"- {prefix}：{item['message']}")
-        await self.speaker.emit_text(
+        delivered = await self._deliver_background_message(
             session_id,
+            target,
             "\n".join(lines),
-            self._runtime_source,
-            target=target,
+            activity_kind="scheduled_task",
         )
+        if not delivered:
+            return
         acknowledge_pending = getattr(self.task_manager, "acknowledge_pending_delivery_messages", None)
         if callable(acknowledge_pending):
             await acknowledge_pending(
                 source=source,
                 event_ids=[
-                    str(item.get("event_id") or "").strip()
+                    str(item.get("delivery_key") or item.get("source_event_id") or item.get("event_id") or "").strip()
                     for item in pending
-                    if str(item.get("event_id") or "").strip()
+                    if str(item.get("delivery_key") or item.get("source_event_id") or item.get("event_id") or "").strip()
                 ],
             )
 

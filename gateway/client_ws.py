@@ -26,6 +26,9 @@ class ClientWebSocketManager:
             if not connections:
                 self._connections.pop(thread_id, None)
 
+    def has_connections(self, thread_id: str) -> bool:
+        return bool(self._connections.get(thread_id, set()))
+
     async def publish_event(self, thread_id: str, *, event_type: str, payload: dict) -> None:
         frame = {
             "schema": _CLIENT_WS_SCHEMA,

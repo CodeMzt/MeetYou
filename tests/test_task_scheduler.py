@@ -518,6 +518,117 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         task = manager.get_task_by_key(task_key)
         self.assertEqual(task["job"]["last_delivery"]["state"], "delivered")
 
+    async def test_pending_delivery_deduplicates_same_source_event_and_acknowledges_all_duplicates(self):
+        manager = TaskManager(_FakeMemory())
+        created_first = json.loads(
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="提醒我回看日报 A",
+                schedule_kind="once",
+                due_at="2026-04-02T09:00:00Z",
+                source={"id": "desktop-user"},
+                session_id="web:session:1",
+            )
+        )
+        created_second = json.loads(
+            await manager.manage_scheduled_tasks(
+                action="create",
+                summary="提醒我回看日报 B",
+                schedule_kind="once",
+                due_at="2026-04-02T09:00:00Z",
+                source={"id": "desktop-user"},
+                session_id="web:session:1",
+            )
+        )
+        claim_time = datetime(2026, 4, 2, 9, 30, tzinfo=timezone.utc)
+        await manager.claim_due_tasks(now=claim_time)
+        await manager.complete_due_notification(
+            created_first["tasks"][0]["task_key"],
+            summary="该回看日报了",
+            delivered=False,
+            now=claim_time,
+        )
+        await manager.complete_due_notification(
+            created_second["tasks"][0]["task_key"],
+            summary="该回看日报了",
+            delivered=False,
+            now=claim_time,
+        )
+
+        first_record = manager._find_task_by_key_any_user(created_first["tasks"][0]["task_key"])
+        second_record = manager._find_task_by_key_any_user(created_second["tasks"][0]["task_key"])
+        self.assertIsNotNone(first_record)
+        self.assertIsNotNone(second_record)
+        first_record["pending_delivery"]["event_id"] = "task-due-1"
+        first_record["pending_delivery"]["source_event_id"] = "shared-task-due"
+        second_record["pending_delivery"]["event_id"] = "task-due-2"
+        second_record["pending_delivery"]["source_event_id"] = "shared-task-due"
+
+        pending = await manager.peek_pending_delivery_messages(source={"id": "desktop-user"})
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["delivery_key"], "shared-task-due")
+        self.assertEqual(pending[0]["source_event_id"], "shared-task-due")
+
+        cleared = await manager.acknowledge_pending_delivery_messages(
+            source={"id": "desktop-user"},
+            event_ids=[pending[0]["delivery_key"]],
+        )
+        self.assertEqual(cleared, 2)
+        self.assertEqual(await manager.peek_pending_delivery_messages(source={"id": "desktop-user"}), [])
+
+    async def test_multi_instance_claim_reloads_latest_store_before_claiming(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_path = Path(tmp_dir) / "memory_graph.json"
+            task_path = Path(tmp_dir) / "user" / "memory_tasks.json"
+            memory_path.write_text(
+                json.dumps(
+                    {
+                        "metadata": {"updated_at": "2026-04-02T10:00:00Z"},
+                        "records": [],
+                        "edges": [],
+                        "working_summaries": {"global": "", "by_session": {}},
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            first_manager = TaskManager(
+                _FakeMemory(str(memory_path)),
+                task_file_path=str(task_path),
+            )
+            created = json.loads(
+                await first_manager.manage_scheduled_tasks(
+                    action="create",
+                    summary="每日巡检",
+                    schedule_kind="once",
+                    due_at="2026-04-02T09:00:00Z",
+                    source={"id": "desktop-user"},
+                    session_id="web:session:1",
+                )
+            )
+            second_manager = TaskManager(
+                _FakeMemory(str(memory_path)),
+                task_file_path=str(task_path),
+            )
+            claim_time = datetime(2026, 4, 2, 9, 30, tzinfo=timezone.utc)
+
+            first_claim = await first_manager.claim_due_tasks(now=claim_time)
+            self.assertEqual(len(first_claim), 1)
+
+            second_claim = await second_manager.claim_due_tasks(now=claim_time)
+            self.assertEqual(second_claim, [])
+
+            reloaded = TaskManager(
+                _FakeMemory(str(memory_path)),
+                task_file_path=str(task_path),
+            )
+            task = reloaded.get_task_by_key(created["tasks"][0]["task_key"])
+            self.assertIsNotNone(task)
+            self.assertEqual(task["last_run_status"], "due")
+            self.assertTrue(task["active_claim_token"])
+
     async def test_overdue_recurring_task_is_caught_up_and_current_cycle_is_not_duplicated(self):
         manager = TaskManager(_FakeMemory())
         created = json.loads(
