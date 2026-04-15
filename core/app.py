@@ -930,6 +930,37 @@ class App:
                 return session_id, resolved_target
         return None
 
+
+    def _recent_client_thread_bridge_metadata(self, *, workspace_ids: list[str] | None = None) -> dict[str, str]:
+        list_recent = getattr(self.session_manager, "list_recent_bindings", None)
+        if not callable(list_recent):
+            return {}
+        allowed_workspace_ids = {str(item or "").strip() for item in (workspace_ids or []) if str(item or "").strip()}
+        fallback: dict[str, str] = {}
+        for binding in list_recent():
+            session_id = str(getattr(binding, "session_id", "") or "").strip()
+            if not session_id or session_id.startswith("system:"):
+                continue
+            source = getattr(binding, "source", None)
+            source_kind = str(getattr(source, "kind", "") or "").strip().lower()
+            if source_kind not in {SourceKind.WEB.value, SourceKind.FEISHU.value, SourceKind.CLI.value}:
+                continue
+            metadata = dict(getattr(binding, "metadata", {}) or {})
+            thread_id = str(metadata.get("thread_id") or "").strip()
+            if not thread_id:
+                continue
+            candidate = {
+                "thread_id": thread_id,
+                "workspace_id": str(metadata.get("workspace_id") or "").strip(),
+                "client_id": str(metadata.get("client_id") or "").strip(),
+                "bridged_session_id": session_id,
+            }
+            if allowed_workspace_ids and candidate["workspace_id"] in allowed_workspace_ids:
+                return candidate
+            if not fallback:
+                fallback = candidate
+        return fallback
+
     @staticmethod
     def _is_heartbeat_signal(event: InboundEvent) -> bool:
         return (
@@ -1757,8 +1788,16 @@ class App:
         prompt_text = str(payload.get("prompt") or "").strip()
         if not prompt_text:
             return payload
+        agent_key = str(agent_id or "").strip() or "unknown"
+        agent_session_id = f"system:agent:{agent_key}"
+        agent_target = make_target(
+            TargetKind.INTERNAL.value,
+            target_id=agent_key,
+            trigger="agent_connected",
+        )
+        bridge_metadata = self._recent_client_thread_bridge_metadata(workspace_ids=workspace_ids)
         event = InboundEvent(
-            session_id=f"system:agent:{str(agent_id or '').strip() or 'unknown'}",
+            session_id=agent_session_id,
             type=EventType.MESSAGE.value,
             role="user",
             content=prompt_text,
@@ -1766,34 +1805,51 @@ class App:
                 SourceKind.SYSTEM.value,
                 "agent_connection",
                 display_name="Agent Connection",
-                agent_id=str(agent_id or "").strip(),
+                agent_id=agent_key,
             ),
-            target=make_target(
-                TargetKind.INTERNAL.value,
-                target_id=str(agent_id or "").strip(),
-                trigger="agent_connected",
-            ),
+            target=agent_target,
             metadata={
                 "prompt_name": str(payload.get("prompt_name") or "agent_connected"),
                 "trigger": "agent_connected",
-                "agent_id": str(agent_id or "").strip(),
+                "agent_id": agent_key,
                 "agent_type": str(agent_type or "").strip(),
                 "display_name": str(display_name or "").strip(),
                 "transport_profile": str(transport_profile or "").strip(),
                 "workspace_ids": [str(item).strip() for item in (workspace_ids or []) if str(item).strip()],
                 "transient": True,
                 "connection_prompt": payload,
+                "bridge_thread_id": str(bridge_metadata.get("thread_id") or ""),
+                "bridge_workspace_id": str(bridge_metadata.get("workspace_id") or ""),
+                "bridge_client_id": str(bridge_metadata.get("client_id") or ""),
+                "bridge_session_id": str(bridge_metadata.get("bridged_session_id") or ""),
             },
         )
+        bind_runtime_session = getattr(self.session_manager, "bind_runtime_session", None)
+        if callable(bind_runtime_session):
+            bind_runtime_session(
+                make_source(SourceKind.SYSTEM.value, f"agent:{agent_key}", agent_id=agent_key),
+                session_id=agent_session_id,
+                default_target=agent_target,
+                metadata={
+                    "transient": True,
+                    "trigger": "agent_connected",
+                    "agent_id": agent_key,
+                    "thread_id": str(bridge_metadata.get("thread_id") or ""),
+                    "workspace_id": str(bridge_metadata.get("workspace_id") or ""),
+                    "client_id": str(bridge_metadata.get("client_id") or ""),
+                    "bridged_session_id": str(bridge_metadata.get("bridged_session_id") or ""),
+                },
+            )
         await self.event_bus.inbound_queue.put(event)
         logger.info(
             "Injected agent connection event into Core",
             extra={
                 "context": {
-                    "agent_id": str(agent_id or "").strip(),
+                    "agent_id": agent_key,
                     "agent_type": str(agent_type or "").strip(),
                     "workspace_ids": [str(item).strip() for item in (workspace_ids or []) if str(item).strip()],
                     "trigger": "agent_connected",
+                    "bridge_thread_id": str(bridge_metadata.get("thread_id") or ""),
                 }
             },
         )

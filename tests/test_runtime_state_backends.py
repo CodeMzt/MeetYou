@@ -87,6 +87,41 @@ class RuntimeStateBackendTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(stored["records"][0]["content"], "把服务端记忆迁移到 state blob")
             await memory.close_memory()
 
+    async def test_memory_write_triggers_db_sync_callback(self):
+        service = _InMemoryStateBlobService()
+        backend = RuntimeStateBlobBackend(service, principal_id="self", state_key="memory_graph", default_factory=dict)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "memory.json"
+
+            class _Config:
+                def get(self, key, default=None):
+                    values = {
+                        "memory_file_path": str(config_path),
+                        "embedding_model": "fake-embedding",
+                        "embedding_api_key": "",
+                        "embedding_api_url": "",
+                    }
+                    return values.get(key, default)
+
+            memory = Memory()
+            await memory.init_memory(_Config())
+            memory.set_store_backend(backend, migrate_current=True)
+            callback_calls: list[int] = []
+
+            async def _db_sync_callback():
+                callback_calls.append(len(service.state.get(("self", "memory_graph"), {}).get("records", [])))
+
+            async def _fake_embedding(text: str):
+                return [0.1, 0.2, 0.3]
+
+            memory._get_embedding = _fake_embedding
+            memory.set_db_sync_callback(_db_sync_callback)
+            await memory.save_memory("写入后触发 DB 同步", source={"id": "desktop-user"})
+
+            self.assertEqual(callback_calls, [1])
+            await memory.close_memory()
+
     async def test_task_manager_persists_to_blob_backend(self):
         service = _InMemoryStateBlobService()
         backend = RuntimeStateBlobBackend(service, principal_id="self", state_key="task_store", default_factory=dict)

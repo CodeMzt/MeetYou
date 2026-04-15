@@ -225,7 +225,7 @@ class AgentDispatchService:
 
         candidates: list[tuple[Any, str]] = []
         for agent in self._agent_service.list_agents():
-            if agent.status != "online":
+            if str(getattr(agent, "status", "") or "").strip().lower() not in {"online", "ready"}:
                 continue
             bindings = self._agent_service.list_workspace_bindings(agent.agent_id)
             if not any(binding.enabled and binding.workspace_id == workspace.id for binding in bindings):

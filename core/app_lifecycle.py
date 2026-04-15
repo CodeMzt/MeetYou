@@ -11,7 +11,13 @@ from typing import Any
 
 from core.exceptions import ConfigError
 from core.db.bootstrap import bootstrap_core_domain
-from core.db.importers import import_config_state, import_memory_state, import_source_catalog_state, import_task_state
+from core.db.importers import (
+    import_config_state,
+    import_memory_state,
+    import_memory_state_payload,
+    import_source_catalog_state,
+    import_task_state,
+)
 from core.source_catalog import SOURCE_CATALOG_STATE_KEY
 from core.state_backends import RuntimeStateBlobBackend
 from core.status import RuntimeStatus
@@ -43,11 +49,17 @@ async def sync_memory_state_to_db(app) -> None:
     core_domain = getattr(app, "core_domain", None)
     if core_services is None or core_domain is None:
         return
-    import_memory_state(
-        app.config.get("memory_file_path") or "user/memory_graph.json",
+    payload = core_services.state_blob.load_state(
+        principal_id=core_domain.principal.id,
+        state_key="memory_graph",
+        default_factory=lambda: {"records": []},
+    )
+    import_memory_state_payload(
+        payload,
         principal_id=core_domain.principal.id,
         workspaces=core_domain.workspaces,
         services=core_services,
+        imported_from="runtime_state_blob:memory_graph",
     )
 
 
@@ -98,6 +110,7 @@ async def setup_app_runtime(app) -> None:
         ),
         migrate_current=True,
     )
+    app.memory.set_db_sync_callback(app._sync_memory_state_to_db)
     app.task_manager.set_store_backend(
         RuntimeStateBlobBackend(
             state_blob_service,
@@ -145,6 +158,7 @@ async def setup_app_runtime(app) -> None:
     else:
         app.tools_manager.set_agent_dispatcher(capability_dispatcher)
     await sync_config_state_to_db(app)
+    await sync_memory_state_to_db(app)
     logger.info(
         "Core MCP 边界: %s",
         mcp_config_diagnostic.get("message") or "未提供 Core MCP 配置诊断。",

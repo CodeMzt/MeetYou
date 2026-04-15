@@ -10,6 +10,7 @@ from psycopg import connect
 
 from core.db.bootstrap import bootstrap_core_domain
 from core.credential_transport import encrypt_json_payload
+from core.app_lifecycle import sync_memory_state_to_db
 from core.event_bus import EventBus
 from core.io_protocol import EventTarget, HumanInputRequestEvent, TargetKind, make_source
 from core.session_manager import SessionManager
@@ -184,6 +185,89 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         )
         self.assertEqual(session_resp.status_code, 200)
         self.assertEqual(session_resp.json()["thread_id"], thread_payload["thread_id"])
+
+    def test_create_session_binds_runtime_session_and_replays_connected_agent(self):
+        workspace = self.core_domain.services.workspace.get_by_workspace_id("personal")
+        self.assertIsNotNone(workspace)
+        registered = self.core_domain.services.agent.register_agent(
+            principal_id=self.core_domain.principal.id,
+            agent_id="desktop-main-agent",
+            agent_type="desktop",
+            display_name="Desktop Main Agent",
+            transport_profile="local",
+            workspace_rows=[workspace],
+        )
+        agent = self.core_domain.services.agent.record_heartbeat(
+            agent_id=registered.agent_id,
+            status="ready",
+            metrics={"source": "test"},
+        )
+        calls: list[dict] = []
+
+        async def _connected(_agent_id: str) -> bool:
+            return True
+
+        async def _capture_handler(**kwargs):
+            calls.append(dict(kwargs))
+
+        self.gateway.agent_ws_manager.is_connected = _connected  # type: ignore[method-assign]
+        self.gateway._agent_connection_event_handler = _capture_handler  # noqa: SLF001
+
+        thread_resp = self.client.post(
+            "/client/threads",
+            json={"workspace_id": "personal", "title": "Session bootstrap replay"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_resp.status_code, 200)
+        thread_id = thread_resp.json()["thread_id"]
+
+        session_resp = self.client.post(
+            "/client/sessions",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "client_id": "electron-main",
+                "client_type": "electron",
+                "display_name": "Electron Main",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(session_resp.status_code, 200)
+        session_id = session_resp.json()["session_id"]
+
+        binding = self.gateway._session_manager.get_binding(session_id)  # noqa: SLF001
+        self.assertIsNotNone(binding)
+        self.assertEqual(getattr(binding, "session_id", ""), session_id)
+        self.assertEqual((binding.metadata or {}).get("thread_id"), thread_id)
+        self.assertEqual((binding.metadata or {}).get("workspace_id"), "personal")
+        self.assertEqual((binding.metadata or {}).get("client_id"), "electron-main")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["agent_id"], agent.agent_id)
+        self.assertEqual(calls[0]["workspace_ids"], ["personal"])
+
+    def test_workspace_agents_include_ready_agent(self):
+        workspace = self.core_domain.services.workspace.get_by_workspace_id("desktop-main")
+        self.assertIsNotNone(workspace)
+        registered = self.core_domain.services.agent.register_agent(
+            principal_id=self.core_domain.principal.id,
+            agent_id="desktop-main-agent",
+            agent_type="desktop",
+            display_name="Desktop Main Agent",
+            transport_profile="desktop_wss",
+            workspace_rows=[workspace],
+        )
+        self.core_domain.services.agent.record_heartbeat(
+            agent_id=registered.agent_id,
+            status="ready",
+            metrics={"source": "test"},
+        )
+
+        response = self.client.get("/client/workspaces/desktop-main/agents", headers=self._auth_headers())
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        agent_rows = {item["agent_id"]: item for item in payload}
+        self.assertIn("desktop-main-agent", agent_rows)
+        self.assertEqual(agent_rows["desktop-main-agent"]["status"], "ready")
 
     def test_client_attachment_flow(self):
         thread_resp = self.client.post(
@@ -2553,6 +2637,48 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(memory_resp.json()["records"][0]["fact_value"], "阿明")
         self.assertEqual(memory_resp.json()["records"][0]["workspace_tags"], ["personal"])
         self.assertEqual(memory_resp.json()["records"][0]["source_label"], "工作区:personal")
+
+    def test_operator_memory_routes_reflect_runtime_state_blob_sync(self):
+        self.core_domain.services.state_blob.save_state(
+            principal_id=self.core_domain.principal.id,
+            state_key="memory_graph",
+            payload={
+                "metadata": {"schema_version": "2", "revision": 1},
+                "records": [
+                    {
+                        "id": "mem_runtime_1",
+                        "type": "profile",
+                        "scope": {"user_id": "browser-tab-a", "session_id": ""},
+                        "content": "name: 小白",
+                        "canonical_text": "name: 小白",
+                        "status": "active",
+                        "workspace_tags": ["personal"],
+                        "origin_workspace_id": "personal",
+                        "fact_key": "name",
+                        "fact_value": "小白",
+                    }
+                ],
+                "edges": [],
+                "working_summaries": {"global": "", "by_session": {}},
+            },
+            meta={"source": "test"},
+        )
+        app = type(
+            "_App",
+            (),
+            {
+                "core_services": self.core_domain.services,
+                "core_domain": self.core_domain,
+            },
+        )()
+
+        asyncio.run(sync_memory_state_to_db(app))
+
+        memory_resp = self.client.get("/operator/memory", headers=self._auth_headers())
+        self.assertEqual(memory_resp.status_code, 200)
+        self.assertEqual(memory_resp.json()["records"][0]["id"], "mem_runtime_1")
+        self.assertEqual(memory_resp.json()["records"][0]["fact_value"], "小白")
+        self.assertEqual(memory_resp.json()["records"][0]["workspace_tags"], ["personal"])
 
 
 if __name__ == "__main__":
