@@ -186,4 +186,5 @@ memory_tasks.json.bak
 .npm-cache/
 技术信息日报_2026-04-03.md
 tmp_*.py
+meetyou-ui/node_modules/
 meetyou-ui/dist-electron/
