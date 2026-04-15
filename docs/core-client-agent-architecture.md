@@ -29,6 +29,8 @@ MeetYou V2 的目标不是单机桌面助手，而是一个以私人服务器为
 - Procedure 默认由 AI / Core 自动推断与维护；用户只通过确认回调参与持久化变更，不承担主动选择或编辑。
 - 记忆采用全局统一存储，workspace 通过标签和检索优先级体现，而不是硬隔离存两份。
 - Client Local Backend 与 Edge / Bridge Node 在部署归属上不同，但在 Core 内部统一建模为 `Agent`。
+- `Core Heart` 已收口为服务端时间编排中枢；其 `scheduler loop` 与 `heartbeat reasoning loop` 负责后台时间触发与时间压力判断，不与 `/agent/ws` 的 transport heartbeat 混用。
+- 任务域已明确分为 `user_todo` 与 `assistant_schedule`：前者属于用户待办，后者属于助手定时编排。
 
 ## 3. 拓扑
 
@@ -57,6 +59,7 @@ Core Service 是系统的大脑和账本，负责：
 
 - 对话编排
 - 记忆、任务、自动化、审批、审计
+- `Core Heart` 时间编排，包括 `scheduler loop` 的确定性触发与 `heartbeat reasoning loop` 的时间压力判断
 - Procedure / Skill / Mode / Source Profile 管理
 - Workspace、Agent、Client 元数据管理
 - 能力选路与执行调度
@@ -235,6 +238,12 @@ Core -> Feishu / Desktop UI / Mobile: 推送 operation 结果与附件引用
 - 重连、心跳与离线缓存由具体 Agent runtime 自行处理
 - 如未来确有弱设备长期离线或 broker 级需求，再在统一 Agent 语义上增加额外 transport profile，而不是引入另一套 Agent 模型
 
+补充：
+
+- 这里的“心跳”仅指 Agent transport heartbeat，用于在线状态、last seen 与运行指标协商
+- `agent.hello.ack` 下发的新 `heartbeat_interval_seconds` 应立即作用到当前连接
+- 它不承担 `Core Heart` 的调度、提醒或时间压力判断职责
+
 ## 7. API 面分层
 
 Core 暴露四类 API 面：
@@ -257,7 +266,7 @@ Core 暴露四类 API 面：
 ### 8.1 Core 持久化的数据
 
 - 记忆
-- 任务与自动化
+- `user_todo` 与 `assistant_schedule`
 - Workspace、Agent、Client 元数据
 - Thread、Session、Operation
 - 审批记录与审计记录

@@ -19,15 +19,91 @@ from edge_agent.config import EdgeAgentConfig
 
 def build_static_capabilities(config: EdgeAgentConfig, *, extra_capabilities: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     workspace_ids = list(config.workspace_ids)
+    agent_id = config.agent_id
     base = [
         {
-            "capability_id": f"agent.{config.agent_id}.utility.echo",
+            "capability_id": f"agent.{agent_id}.utility.echo",
             "kind": "tool",
             "title": "Echo Payload",
             "tags": ["edge", "utility", "debug"],
+            "abstract_capability_key": "utility.echo",
             "risk_level": "read",
             "requires_confirmation": False,
             "workspace_ids": workspace_ids,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "message": {"type": "string"},
+                },
+            },
+            "output_schema": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "echo": {"type": "string"},
+                    "arguments": {"type": "object"},
+                },
+                "required": ["summary", "echo"],
+            },
+        },
+        {
+            "capability_id": f"agent.{agent_id}.math.add",
+            "kind": "tool",
+            "title": "Add Two Numbers",
+            "tags": ["edge", "math", "deterministic"],
+            "abstract_capability_key": "math.add",
+            "risk_level": "read",
+            "requires_confirmation": False,
+            "workspace_ids": workspace_ids,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "left": {"type": "number"},
+                    "right": {"type": "number"},
+                },
+                "required": ["left", "right"],
+            },
+            "output_schema": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "left": {"type": "number"},
+                    "right": {"type": "number"},
+                    "result": {"type": "number"},
+                    "operation": {"type": "string"},
+                },
+                "required": ["summary", "result", "operation"],
+            },
+        },
+        {
+            "capability_id": f"agent.{agent_id}.math.divide",
+            "kind": "tool",
+            "title": "Divide Two Numbers",
+            "tags": ["edge", "math", "deterministic"],
+            "abstract_capability_key": "math.divide",
+            "risk_level": "read",
+            "requires_confirmation": False,
+            "workspace_ids": workspace_ids,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "left": {"type": "number"},
+                    "right": {"type": "number"},
+                },
+                "required": ["left", "right"],
+            },
+            "output_schema": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "left": {"type": "number"},
+                    "right": {"type": "number"},
+                    "result": {"type": "number"},
+                    "operation": {"type": "string"},
+                },
+                "required": ["summary", "result", "operation"],
+            },
         }
     ]
     if extra_capabilities:

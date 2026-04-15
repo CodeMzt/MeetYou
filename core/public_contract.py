@@ -7,6 +7,7 @@ PUBLIC_MODE_RESEARCH = "research"
 PUBLIC_MODE_DOCUMENTS = "documents"
 PUBLIC_MODE_STUDY = "study"
 PUBLIC_MODE_AUTOMATION = "automation"
+PUBLIC_MODE_DANXI = "danxi"
 
 PUBLIC_ASSISTANT_MODES = (
     PUBLIC_MODE_GENERAL,
@@ -14,6 +15,7 @@ PUBLIC_ASSISTANT_MODES = (
     PUBLIC_MODE_DOCUMENTS,
     PUBLIC_MODE_STUDY,
     PUBLIC_MODE_AUTOMATION,
+    PUBLIC_MODE_DANXI,
 )
 
 # Transitional mapping while the legacy assistant-mode runtime is still in place.
@@ -29,6 +31,7 @@ _PUBLIC_TO_INTERNAL_MODE = {
     PUBLIC_MODE_DOCUMENTS: "documents",
     PUBLIC_MODE_STUDY: "study",
     PUBLIC_MODE_AUTOMATION: "office",
+    PUBLIC_MODE_DANXI: "danxi",
 }
 
 _INTERNAL_ASSISTANT_MODES = {
@@ -38,6 +41,7 @@ _INTERNAL_ASSISTANT_MODES = {
     "documents",
     "study",
     "office",
+    "danxi",
 }
 
 EXECUTION_TARGET_CORE_ONLY = "core_only"

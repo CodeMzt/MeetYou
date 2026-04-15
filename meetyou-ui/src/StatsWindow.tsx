@@ -6,6 +6,7 @@ import { parseRuntimeDebugEnvelope } from './protocolClient'
 import { RuntimeDebugSnapshot, RuntimeErrorPayload } from './types'
 import styles from './StatsWindow.module.css'
 import SubWindow from './components/layout/SubWindow'
+import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from './windowBridge'
 
 type DevtoolsPayload = {
   sessionId?: string
@@ -34,10 +35,10 @@ function renderErrorSummary(lastFailure: RuntimeErrorPayload | null): string {
   return `${lastFailure.code} / ${lastFailure.category} / ${lastFailure.retryable ? '可重试' : '不可重试'}`
 }
 
-export default function StatsWindow() {
+export default function RuntimeDebugWindow() {
   const [runtimeDebugSnapshot, setRuntimeDebugSnapshot] = useState<RuntimeDebugSnapshot | null>(null)
   const [sessionId, setSessionId] = useState('')
-  const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:8000')
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL)
 
   useEffect(() => {
     if (!sessionId) {
@@ -78,17 +79,17 @@ export default function StatsWindow() {
   }, [baseUrl, sessionId])
 
   useEffect(() => {
-    const handleStatsUpdated = (_event: unknown, data: DevtoolsPayload | null) => {
+    const handleRuntimeDebugUpdated = (_event: unknown, data: DevtoolsPayload | null) => {
       setSessionId(data?.sessionId || '')
-      setBaseUrl(data?.baseUrl || 'http://127.0.0.1:8000')
+      setBaseUrl(data?.baseUrl || DEFAULT_BASE_URL)
     }
 
-    window.ipcRenderer?.on('devtools-updated', handleStatsUpdated)
+    window.ipcRenderer?.on(WINDOW_SYNC_CHANNEL.runtimeDebug.update, handleRuntimeDebugUpdated)
 
-    window.ipcRenderer?.send('request-devtools')
+    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.runtimeDebug.request)
 
     return () => {
-      window.ipcRenderer?.off('devtools-updated', handleStatsUpdated)
+      window.ipcRenderer?.off(WINDOW_SYNC_CHANNEL.runtimeDebug.update, handleRuntimeDebugUpdated)
     }
   }, [])
 

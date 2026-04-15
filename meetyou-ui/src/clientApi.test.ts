@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  createDanxiReply,
+  deleteDanxiReply,
   fetchRuntimeUsageSnapshot,
+  getDanxiPostSummary,
+  getDanxiProfile,
+  getDanxiSessionStatus,
   getClientProcedureDetail,
   getClientThreadProcedureContext,
+  listDanxiPosts,
   listOperatorSourceProfiles,
+  loginDanxiSession,
   listClientProcedures,
   resolveClientAttachmentDownloadPlan,
+  updateDanxiReply,
+  updateDanxiWebvpnCookie,
   updateOperatorWorkspaceGovernance,
   pinClientThreadProcedure,
   unpinClientThreadProcedure,
@@ -288,6 +297,7 @@ describe('clientApi', () => {
     ) as typeof fetch
 
     const workspace = await updateOperatorWorkspaceGovernance('http://127.0.0.1:8000', 'study', {
+      base_mode: 'danxi',
       preferred_source_profiles: ['study_materials', 'workspace_local'],
       memory_ranking_policy: 'workspace_first',
     })
@@ -295,6 +305,301 @@ describe('clientApi', () => {
     expect(workspace.workspace_id).toBe('study')
     expect(workspace.preferred_source_profiles).toEqual(['study_materials', 'workspace_local'])
     expect(workspace.memory_ranking_policy).toBe('workspace_first')
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/operator/workspaces/study',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          base_mode: 'danxi',
+          preferred_source_profiles: ['study_materials', 'workspace_local'],
+          memory_ranking_policy: 'workspace_first',
+        }),
+      }),
+    )
+  })
+
+  it('logs into Danxi session and patches WebVPN cookie through client API', async () => {
+    const invoke = vi.fn(async (channel: string, payload?: { purpose?: string }) => {
+      if (channel === 'get-gateway-access-token') {
+        return ''
+      }
+      if (channel === 'encrypt-danxi-credentials' && payload?.purpose === 'danxi.client.login.v1') {
+        return {
+          version: 'v1',
+          alg: 'aes-256-gcm',
+          purpose: 'danxi.client.login.v1',
+          iv: 'iv-login',
+          ciphertext: 'cipher-login',
+          tag: 'tag-login',
+        }
+      }
+      if (channel === 'encrypt-danxi-credentials' && payload?.purpose === 'danxi.client.webvpn_cookie.v1') {
+        return {
+          version: 'v1',
+          alg: 'aes-256-gcm',
+          purpose: 'danxi.client.webvpn_cookie.v1',
+          iv: 'iv-cookie',
+          ciphertext: 'cipher-cookie',
+          tag: 'tag-cookie',
+        }
+      }
+      return undefined
+    })
+    ;(globalThis as { window?: Window }).window = {
+      ipcRenderer: {
+        send: vi.fn(),
+        on: vi.fn(() => () => {}),
+        off: vi.fn(),
+        invoke,
+      },
+    } as unknown as Window
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            session_key: 'default',
+            email: 'user@example.com',
+            transport: 'direct',
+            webvpn_enabled: false,
+            has_webvpn_cookie: false,
+            webvpn_required: false,
+            direct_connect_available: true,
+            logged_in: true,
+            user_profile: { user_id: 1 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            session_key: 'default',
+            email: 'user@example.com',
+            transport: 'webvpn',
+            webvpn_enabled: true,
+            has_webvpn_cookie: true,
+            webvpn_required: true,
+            direct_connect_available: false,
+            logged_in: true,
+            user_profile: { user_id: 1 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const session = await loginDanxiSession('http://127.0.0.1:8000', {
+      email: 'user@example.com',
+      password: 'secret',
+      use_webvpn: false,
+    })
+    const patched = await updateDanxiWebvpnCookie('http://127.0.0.1:8000', {
+      cookie_header: 'vpn=ok',
+      enable_webvpn: true,
+    })
+
+    expect(session.transport).toBe('direct')
+    expect(patched.transport).toBe('webvpn')
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8000/client/danxi/session/login',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          session_key: 'default',
+          encrypted_credentials: {
+            version: 'v1',
+            alg: 'aes-256-gcm',
+            purpose: 'danxi.client.login.v1',
+            iv: 'iv-login',
+            ciphertext: 'cipher-login',
+            tag: 'tag-login',
+          },
+        }),
+      }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8000/client/danxi/session/webvpn-cookie',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          session_key: 'default',
+          encrypted_credentials: {
+            version: 'v1',
+            alg: 'aes-256-gcm',
+            purpose: 'danxi.client.webvpn_cookie.v1',
+            iv: 'iv-cookie',
+            ciphertext: 'cipher-cookie',
+            tag: 'tag-cookie',
+          },
+        }),
+      }),
+    )
+  })
+
+  it('rejects Danxi credential submission when encrypted transport is unavailable', async () => {
+    ;(globalThis as { window?: Window }).window = {} as Window
+    globalThis.fetch = vi.fn() as typeof fetch
+
+    await expect(
+      loginDanxiSession('http://127.0.0.1:8000', {
+        email: 'user@example.com',
+        password: 'secret',
+      }),
+    ).rejects.toThrow('当前环境不支持加密发送 Danxi 凭证，请在 Electron 桌面端中使用。')
+
+    await expect(
+      updateDanxiWebvpnCookie('http://127.0.0.1:8000', {
+        cookie_header: 'vpn=ok',
+      }),
+    ).rejects.toThrow('当前环境不支持加密发送 Danxi 凭证，请在 Electron 桌面端中使用。')
+
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('loads Danxi session status and posts via client API', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            session_key: 'default',
+            email: 'user@example.com',
+            transport: 'webvpn',
+            webvpn_enabled: true,
+            has_webvpn_cookie: true,
+            webvpn_required: true,
+            direct_connect_available: false,
+            logged_in: true,
+            user_profile: { user_id: 1 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            scope: 'homepage',
+            count: 1,
+            items: [{ hole_id: 101, content: 'hello danxi' }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const session = await getDanxiSessionStatus('http://127.0.0.1:8000')
+    const posts = await listDanxiPosts('http://127.0.0.1:8000', { length: 12 })
+
+    expect(session.logged_in).toBe(true)
+    expect(posts.items[0]?.hole_id).toBe(101)
+  })
+
+  it('loads Danxi profile and supports reply/edit/delete/summary facades', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            session_key: 'default',
+            logged_in: true,
+            transport: 'direct',
+            webvpn_enabled: false,
+            has_webvpn_cookie: false,
+            webvpn_required: false,
+            direct_connect_available: true,
+            profile: { user_id: 7, nickname: '阿明' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            status_code: 201,
+            message: '回复已发布，帖子详情已可刷新。',
+            hole_id: 101,
+            floor_id: 9001,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            status_code: 200,
+            message: '回复已更新，帖子详情已可刷新。',
+            floor_id: 9001,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            status_code: 200,
+            message: '回复已删除，帖子详情已可刷新。',
+            floor_id: 9001,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            hole_id: 101,
+            title: '帖子 #101',
+            summary: '主贴在询问宿舍报修流程，共整理到 2 条楼层，参与者约 2 位。',
+            key_points: ['主贴在询问宿舍报修流程', '当前帖子显示 2 条回复。'],
+            reply_highlights: ['匿名: 先在企业微信提交工单'],
+            floor_count: 2,
+            participant_count: 2,
+            generated_at: '2026-04-14T00:00:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const profile = await getDanxiProfile('http://127.0.0.1:8000', { refresh: true })
+    const created = await createDanxiReply('http://127.0.0.1:8000', 101, { content: '我也遇到这个问题' })
+    const updated = await updateDanxiReply('http://127.0.0.1:8000', 9001, { content: '已解决，谢谢' })
+    const deleted = await deleteDanxiReply('http://127.0.0.1:8000', 9001, { confirm: true })
+    const summary = await getDanxiPostSummary('http://127.0.0.1:8000', 101, { floor_limit: 20 })
+
+    expect(profile.profile?.nickname).toBe('阿明')
+    expect(created.ok).toBe(true)
+    expect(updated.message).toContain('更新')
+    expect(deleted.floor_id).toBe(9001)
+    expect(summary.hole_id).toBe(101)
+    expect(summary.reply_highlights[0]).toContain('企业微信')
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8000/client/danxi/profile?refresh=true',
+      expect.anything(),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8000/client/danxi/posts/101/replies',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:8000/client/danxi/floors/9001',
+      expect.objectContaining({ method: 'PATCH' }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      4,
+      'http://127.0.0.1:8000/client/danxi/floors/9001?confirm=true',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      5,
+      'http://127.0.0.1:8000/client/danxi/posts/101/summary?floor_limit=20',
+      expect.anything(),
+    )
   })
 
   it('loads source profile catalog from operator API', async () => {

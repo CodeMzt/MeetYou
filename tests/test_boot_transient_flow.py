@@ -1,26 +1,10 @@
-import asyncio
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from core.app import App
 from core.event_bus import EventBus
-from core.io_protocol import EventType, SourceKind, TargetKind, make_source
-
-
-class BootTransientFlowTests(unittest.TestCase):
-    def test_build_boot_event_marks_boot_turn_as_transient(self):
-        event = App._build_boot_event(
-            "start prompt",
-            make_source(SourceKind.SYSTEM.value, "boot"),
-        )
-
-        self.assertEqual(event.session_id, "system:boot")
-        self.assertEqual(event.type, EventType.MESSAGE.value)
-        self.assertEqual(event.role, "user")
-        self.assertEqual(event.target.kind, TargetKind.BROADCAST.value)
-        self.assertTrue(event.metadata["transient"])
-        self.assertTrue(event.metadata["boot_event"])
+from core.io_protocol import InboundEvent, SourceKind, TargetKind
 
 
 class _PromptConfig:
@@ -28,9 +12,78 @@ class _PromptConfig:
         self._start_prompt = start_prompt
 
     def get_prompt(self, prompt_name: str) -> str:
-        if prompt_name != "start":
-            raise AssertionError(prompt_name)
-        return self._start_prompt
+        if prompt_name in {"agent_connected", "agent_connection"}:
+            return self._start_prompt
+        if prompt_name == "start":
+            return self._start_prompt
+        raise AssertionError(prompt_name)
+
+
+class AgentConnectionPromptTests(unittest.IsolatedAsyncioTestCase):
+    def test_build_agent_connection_prompt_includes_runtime_context(self):
+        app = App.__new__(App)
+        app.config = _PromptConfig("agent connect prompt")
+
+        payload = App.build_agent_connection_prompt(
+            app,
+            agent_id="desktop-main-agent",
+            agent_type="desktop",
+            display_name="Desktop Main Agent",
+            transport_profile="desktop_wss",
+            workspace_ids=["personal", "desktop-main"],
+        )
+
+        self.assertEqual(payload["prompt_name"], "agent_connected")
+        self.assertEqual(payload["context"]["trigger"], "agent_connected")
+        self.assertEqual(payload["context"]["agent_id"], "desktop-main-agent")
+        self.assertEqual(payload["context"]["workspace_ids"], ["personal", "desktop-main"])
+        self.assertIn("agent connect prompt", payload["prompt"])
+        self.assertIn("desktop-main-agent", payload["prompt"])
+        self.assertIn("desktop_wss", payload["prompt"])
+
+    async def test_inject_agent_connection_event_enqueues_internal_message(self):
+        app = App.__new__(App)
+        app.config = _PromptConfig("agent connect prompt")
+        app.event_bus = EventBus()
+
+        payload = await App.inject_agent_connection_event(
+            app,
+            agent_id="desktop-main-agent",
+            agent_type="desktop",
+            display_name="Desktop Main Agent",
+            transport_profile="desktop_wss",
+            workspace_ids=["personal", "desktop-main"],
+        )
+
+        event = app.event_bus.inbound_queue.get_nowait()
+        self.assertIsInstance(event, InboundEvent)
+        self.assertEqual(event.session_id, "system:agent:desktop-main-agent")
+        self.assertEqual(event.source.kind, SourceKind.SYSTEM.value)
+        self.assertEqual(event.target.kind, TargetKind.INTERNAL.value)
+        self.assertEqual(event.target.id, "desktop-main-agent")
+        self.assertEqual(event.metadata["trigger"], "agent_connected")
+        self.assertEqual(event.metadata["connection_prompt"]["prompt_name"], "agent_connected")
+        self.assertIn("desktop-main-agent", event.content)
+        self.assertEqual(payload["prompt_name"], "agent_connected")
+
+    def test_agent_connection_event_resolves_as_transient_internal_reply(self):
+        app = App.__new__(App)
+        event = InboundEvent(
+            session_id="system:agent:desktop-main-agent",
+            type="message",
+            role="user",
+            content="hello",
+            source=SimpleNamespace(kind=SourceKind.SYSTEM.value),
+            target=SimpleNamespace(kind=TargetKind.INTERNAL.value, id="desktop-main-agent"),
+            metadata={"trigger": "agent_connected", "transient": True, "agent_id": "desktop-main-agent"},
+        )
+
+        request = App._resolve_session_execution_request(app, event)
+
+        self.assertIsNotNone(request)
+        self.assertEqual(request.target.kind, TargetKind.INTERNAL.value)
+        self.assertEqual(request.target.id, "desktop-main-agent")
+        self.assertTrue(request.is_boot)
 
 
 class _SetupConfig:
@@ -60,30 +113,13 @@ class _SetupConfig:
 class _FakeGateway:
     def __init__(self):
         self.output_adapter = object()
+        self.agent_output_adapter = object()
         self.dispatch_agent_call = AsyncMock()
         self.start = AsyncMock()
 
 
-class BootStartupInjectionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_inject_core_startup_boot_event_enqueues_transient_boot_message(self):
-        app = App.__new__(App)
-        app.config = _PromptConfig("start prompt")
-        app.event_bus = EventBus()
-
-        await App._inject_core_startup_boot_event(app)
-
-        event = await asyncio.wait_for(app.event_bus.inbound_queue.get(), timeout=0.1)
-        self.assertEqual(event.session_id, "system:boot")
-        self.assertEqual(event.type, EventType.MESSAGE.value)
-        self.assertEqual(event.role, "user")
-        self.assertEqual(event.content, "start prompt")
-        self.assertEqual(event.source.kind, SourceKind.SYSTEM.value)
-        self.assertEqual(event.source.id, "boot")
-        self.assertEqual(event.target.kind, TargetKind.BROADCAST.value)
-        self.assertTrue(event.metadata["transient"])
-        self.assertTrue(event.metadata["boot_event"])
-
-    async def test_setup_treats_boot_injection_as_core_startup_step(self):
+class AppSetupGatewayPromptTests(unittest.IsolatedAsyncioTestCase):
+    async def test_setup_registers_agent_connection_prompt_getter_on_gateway(self):
         app = App.__new__(App)
         app.config = _SetupConfig()
         app.event_bus = EventBus()
@@ -100,6 +136,7 @@ class BootStartupInjectionTests(unittest.IsolatedAsyncioTestCase):
         )
         app.tools_manager = SimpleNamespace(
             set_state_backends=lambda **kwargs: None,
+            set_core_domain=lambda *args, **kwargs: None,
             set_agent_dispatcher=lambda dispatcher: None,
             init_tools=AsyncMock(),
         )
@@ -125,15 +162,19 @@ class BootStartupInjectionTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("core.app.bootstrap_core_domain", return_value=core_domain),
-            patch("core.app.FastAPIGateway", return_value=gateway),
+            patch("core.app.FastAPIGateway", return_value=gateway) as gateway_cls,
             patch.object(App, "_sync_config_state_to_db", AsyncMock()),
             patch.object(App, "_refresh_brain_runtime", AsyncMock()),
-            patch.object(App, "_inject_core_startup_boot_event", AsyncMock()) as inject_boot,
         ):
             await App.setup(app)
 
-        inject_boot.assert_awaited_once_with()
         gateway.start.assert_awaited_once()
+        prompt_getter = gateway_cls.call_args.kwargs["agent_connection_prompt_getter"]
+        event_handler = gateway_cls.call_args.kwargs["agent_connection_event_handler"]
+        self.assertIs(prompt_getter.__self__, app)
+        self.assertIs(prompt_getter.__func__, App.build_agent_connection_prompt)
+        self.assertIs(event_handler.__self__, app)
+        self.assertIs(event_handler.__func__, App.inject_agent_connection_event)
 
 
 if __name__ == "__main__":

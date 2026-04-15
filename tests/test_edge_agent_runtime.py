@@ -2,6 +2,7 @@ import asyncio
 import io
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 
 from edge_agent.config import EdgeAgentConfig
 from edge_agent.runtime import EdgeAgentRuntime
@@ -27,7 +28,7 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         runtime.stop()
         await asyncio.wait_for(task, timeout=2)
 
-    async def test_runtime_handles_call_request_with_echo_handler(self):
+    async def test_runtime_handles_call_request_with_math_add_handler(self):
         config = EdgeAgentConfig(agent_id="edge-test-agent", workspace_ids=["home-lab"])
         runtime = EdgeAgentRuntime(config)
 
@@ -47,8 +48,8 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "message_id": "dispatch-1",
                 "payload": {
                     "call_id": "call-1",
-                    "capability_id": f"agent.{config.agent_id}.utility.echo",
-                    "arguments": {"text": "hello-edge"},
+                    "capability_id": f"agent.{config.agent_id}.math.add",
+                    "arguments": {"left": 7, "right": 5},
                 },
             },
         )
@@ -58,7 +59,75 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "capability.call.progress",
             "capability.call.result",
         ])
-        self.assertEqual(ws.sent[-1]["payload"]["result"]["echo"], "hello-edge")
+        self.assertEqual(ws.sent[-1]["payload"]["result"]["result"], 12.0)
+        self.assertEqual(ws.sent[-1]["payload"]["result"]["operation"], "add")
+
+    async def test_runtime_returns_error_for_unknown_capability(self):
+        config = EdgeAgentConfig(agent_id="edge-test-agent", workspace_ids=["home-lab"])
+        runtime = EdgeAgentRuntime(config)
+
+        class _FakeWs:
+            def __init__(self):
+                self.sent = []
+
+            async def send_json(self, payload):
+                self.sent.append(payload)
+
+        ws = _FakeWs()
+        await runtime._handle_call_request(
+            ws,
+            {
+                "schema": "meetyou.agent.v1",
+                "type": "capability.call.request",
+                "message_id": "dispatch-unknown",
+                "payload": {
+                    "call_id": "call-unknown",
+                    "capability_id": f"agent.{config.agent_id}.math.missing",
+                    "arguments": {"left": 1, "right": 2},
+                },
+            },
+        )
+
+        self.assertEqual([item["type"] for item in ws.sent], [
+            "capability.call.accepted",
+            "capability.call.progress",
+            "capability.call.error",
+        ])
+        self.assertEqual(ws.sent[-1]["payload"]["error"]["code"], "capability_not_implemented")
+
+    async def test_runtime_returns_error_when_capability_execution_fails(self):
+        config = EdgeAgentConfig(agent_id="edge-test-agent", workspace_ids=["home-lab"])
+        runtime = EdgeAgentRuntime(config)
+
+        class _FakeWs:
+            def __init__(self):
+                self.sent = []
+
+            async def send_json(self, payload):
+                self.sent.append(payload)
+
+        ws = _FakeWs()
+        await runtime._handle_call_request(
+            ws,
+            {
+                "schema": "meetyou.agent.v1",
+                "type": "capability.call.request",
+                "message_id": "dispatch-failure",
+                "payload": {
+                    "call_id": "call-failure",
+                    "capability_id": f"agent.{config.agent_id}.math.divide",
+                    "arguments": {"left": 9, "right": 0},
+                },
+            },
+        )
+
+        self.assertEqual([item["type"] for item in ws.sent], [
+            "capability.call.accepted",
+            "capability.call.progress",
+            "capability.call.error",
+        ])
+        self.assertEqual(ws.sent[-1]["payload"]["error"]["code"], "edge_call_failed")
+        self.assertEqual(ws.sent[-1]["payload"]["error"]["message"], "Division by zero is not allowed")
 
     async def test_hello_ack_applies_heartbeat_interval_without_waiting_old_interval(self):
         config = EdgeAgentConfig(
@@ -130,6 +199,29 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ready_received)
         self.assertEqual(runtime._heartbeat_interval_seconds, 7)
         self.assertTrue(runtime._heartbeat_interval_updated.is_set())
+
+    async def test_runtime_retries_after_transient_connection_failure(self):
+        runtime = EdgeAgentRuntime(
+            EdgeAgentConfig(
+                core_base_url="http://127.0.0.1:8000",
+                agent_id="edge-test-agent",
+                reconnect_delay_seconds=1,
+            )
+        )
+        attempts = []
+
+        async def _fake_run_connection():
+            attempts.append("run")
+            if len(attempts) == 1:
+                raise RuntimeError("transient connect failure")
+            runtime.stop()
+
+        runtime._run_connection = _fake_run_connection
+        with mock.patch("edge_agent.runtime.asyncio.sleep", new=mock.AsyncMock()) as sleep_mock:
+            await asyncio.wait_for(runtime.run(), timeout=2)
+
+        self.assertEqual(len(attempts), 2)
+        sleep_mock.assert_awaited_once_with(1)
 
 
 if __name__ == "__main__":

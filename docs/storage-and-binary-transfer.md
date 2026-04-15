@@ -12,6 +12,7 @@
 ## 1.1 当前兼容态与目标态
 
 - 当前兼容态：`client` / `agent` 已具备 upload ticket、内容上传、`attachment.complete` 与 download ticket 主链；对象存储 backend 已支持 `local/filesystem` 与 `s3_compatible`，但上传和下载内容仍主要通过 Core HTTP 路由代理完成。
+- 当前正式附件模型：工具或 capability 不直接回传裸下载链接，而是先声明 `attachment_outputs`；Desktop Agent / Client uploader 负责收口 upload-ticket / upload / complete，Core 再统一归一化为 attachment object view，供 operation / message / task 复用。
 - 目标态：在保持 attachment metadata / ticket 主链不变的前提下，让下载优先切到预签名 URL，并补齐 MinIO / S3 部署说明与实际接入验收。
 - `F76` 负责把“可运行兼容态”收口到“对象存储产品化目标态”。
 - `F77` 负责把截图类附件的短生命周期、过期清理和 Agent 本地缓存回收收口为正式策略。
@@ -145,6 +146,63 @@ Object Storage 用于保存：
 }
 ```
 
+补充原则：
+
+- `attachment` 是服务端权威资源，`attachment_outputs` 只是 tool / capability 对“本次调用产出附件”的声明格式
+- 统一展示层不直接依赖调用方原始 payload，而是消费 Core 归一化后的 attachment object view
+- 同一 attachment object view 可以挂到 `operation`、`message`、`task` 等多个资源视图，但元数据真相源始终在 attachment domain
+- Electron 独立“附件管理”页与主窗口状态区都应复用同一 attachment domain 真相源，而不是维护第二套上传结果模型
+
+### 7.1 Attachment 输出对象
+
+Agent / tool 在执行结果中应优先返回结构化 `attachment_outputs`，而不是临时拼接下载链接。
+
+示例：
+
+```json
+{
+  "summary": "done",
+  "attachment_outputs": [
+    {
+      "local_path": "C:/temp/report.txt",
+      "file_name": "report.txt",
+      "kind": "file",
+      "mime_type": "text/plain",
+      "lifecycle_policy": "normal"
+    }
+  ]
+}
+```
+
+约定：
+
+- `local_path` 只在 uploader 所在端本地可见，不会直接暴露给 Client UI
+- uploader 完成 upload / complete 后，Core 返回 attachment object view，后续展示和下载都应基于该对象
+- 对于截图、导出文件、分析产物等“工具执行副产物”，优先走该模型，而不是把文件内容内嵌进主消息或结果文本
+
+### 7.2 Attachment Object View
+
+统一展示层建议消费如下对象：
+
+```json
+{
+  "attachmentId": "att_123",
+  "fileName": "report.txt",
+  "kind": "file",
+  "mimeType": "text/plain",
+  "sizeBytes": 5120,
+  "downloadUrl": "http://127.0.0.1:8000/client/attachments/content/att_123?ticket_id=down_123",
+  "lifecyclePolicy": "normal"
+}
+```
+
+它的职责是：
+
+- 为 UI 提供稳定的文件名、类型、大小和下载入口
+- 屏蔽 agent 侧原始 `local_path`、上传票据和对象存储 backend 细节
+- 让 message 列表、operation 卡片和后续管理页复用同一套附件显示组件
+- 让独立“附件管理”页可以直接展示关键时间戳、下载与删除操作，而不必重新拼装 attachment payload
+
 ## 8. 上传流程
 
 ### 8.1 Agent 上传大附件
@@ -164,6 +222,7 @@ Object Storage 用于保存：
 3. Agent 仍通过 Core 的 attachment upload 路由提交二进制内容
 4. Core 把内容写入当前 object store backend，并更新 attachment 状态
 5. Agent / Core 再调用 `attachment.complete` 收口 attachment reference
+6. Core 将 `attachment_outputs` 归一化为 attachment object view，并挂接到 operation / message
 
 ### 8.2 Client 上传附件
 
@@ -188,6 +247,7 @@ Object Storage 用于保存：
 2. Core 校验权限
 3. 支持预签名下载的对象存储后端时，Core 返回短时下载 URL，Client 直接从对象存储拉取
 4. 不支持直链时，Core 返回指向 `client/attachments/content/*` 的短时兼容下载 URL，Client 再通过 Core 路由读取 attachment 内容
+5. UI 无论走预签名还是代理下载，都只消费 attachment object view / download ticket，不自行拼接对象存储路径
 
 ### 9.2 Agent 下载
 
@@ -202,7 +262,7 @@ Feishu Client -> Core: 请求桌面截图
 Core -> Desktop Agent: 创建截图 operation
 Desktop Agent -> Object Storage: 上传 screenshot.png
 Desktop Agent -> Core: attachment.complete
-Core -> Feishu Client: 返回 attachment reference
+Core -> Feishu Client: 返回 attachment object view / attachment reference
 ```
 
 ## 11. 离线附件缓存
@@ -278,6 +338,15 @@ agent-data/
 - 当前实现：Core 定时清理过期上传草稿、失效下载票据和已过期 attachment；Agent 清理已成功上传的 `ephemeral` / 截图类本地缓存文件。
 - 仍保留的扩展空间：如后续需要更强离线缓存治理，可继续补“已过期但尚未回传成功”的端侧清理细则。
 
+### 12.3 展示与反馈协同
+
+附件生命周期不仅影响存储，也影响用户反馈：
+
+- message / operation 视图只展示已完成 upload / complete 的 attachment object view
+- 若 tool 已声明 `attachment_outputs` 但上传尚未完成，状态反馈应仍保留在 operation 的 `phase/detail/summary`，而不是提前渲染伪下载链接
+- 管理页或状态页如需聚合附件，只应聚合已归一化成功的 attachment object，而不是读取 uploader 中间态
+- 主窗口状态反馈应继续遵循双层模型：`StatusIsland` 承接全局即时反馈，operation `tone/summary` 承接执行态细节；附件上传成功提示不再默认插入聊天流
+
 ## 13. 推荐落地顺序
 
 ### Phase 1
@@ -303,6 +372,7 @@ agent-data/
 - 第二版后续批次已引入 object store 抽象与 `s3_compatible` 后端实现位点
 - `agent` 侧 uploader 也已接入 upload ticket / upload / complete 主链
 - 当前下载已优先使用预签名 URL；当对象存储后端不支持直链时，再回退到 Core 代理内容，这部分即 `F76` 的兼容策略
+- attachment tool 化结果已接入 `attachment_outputs -> attachment object view` 主链，operation / message 显示层不再依赖临时拼接链接
 
 生命周期进度补充：
 

@@ -1,4 +1,4 @@
-import { ConnectionState, RuntimeStateSnapshot, RuntimeHealthSnapshot, TurnActivity } from '../../types'
+import { ConnectionState, RuntimeHealthSnapshot, RuntimeStateSnapshot, TurnActivity } from '../../types'
 import { buildStatusPresentation } from '../../utils/statusFormatting'
 import StatusIcon from './StatusIcon'
 import styles from './StatusStrip.module.css'

@@ -241,6 +241,68 @@ class AttachmentServiceTests(unittest.TestCase):
             finally:
                 context.engine.dispose()
 
+    def test_attachment_service_lists_reads_and_deletes_with_timestamps(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            context = bootstrap_core_domain(
+                database_url=TEST_DATABASE_URL,
+                run_migrations=True,
+                attachment_storage_root=Path(tmp_dir),
+            )
+            try:
+                attachment, ticket = context.services.attachment.create_upload_ticket(
+                    owner_type="thread",
+                    owner_id="thr_manage_1",
+                    issuer_type="client",
+                    issuer_ref="desktop-app",
+                    kind="file",
+                    mime_type="text/plain",
+                    file_name="managed.txt",
+                )
+                uploaded = context.services.attachment.store_upload_content(ticket.ticket_id, b"managed-body")
+                ready = context.services.attachment.complete_attachment(
+                    attachment_id=attachment.attachment_id,
+                    ticket_id=ticket.ticket_id,
+                )
+
+                listed = context.services.attachment.list_attachments(
+                    owner_type="thread",
+                    owner_id="thr_manage_1",
+                )
+                detail = context.services.attachment.get_attachment_record(attachment.attachment_id)
+
+                self.assertEqual(len(listed), 1)
+                self.assertEqual(listed[0]["attachment_id"], attachment.attachment_id)
+                self.assertTrue(listed[0]["created_at"])
+                self.assertTrue(listed[0]["updated_at"])
+                self.assertEqual(listed[0]["uploaded_at"], uploaded.meta["uploaded_at"])
+                self.assertEqual(listed[0]["completed_at"], ready.meta["completed_at"])
+                self.assertEqual(detail["status"], "ready")
+                self.assertEqual(detail["file_name"], "managed.txt")
+                self.assertEqual(context.services.attachment.read_attachment_bytes(attachment.attachment_id), b"managed-body")
+
+                deleted = context.services.attachment.delete_attachment(attachment.attachment_id)
+                self.assertEqual(deleted["status"], "deleted")
+                self.assertTrue(deleted["deleted_at"])
+
+                self.assertEqual(
+                    context.services.attachment.list_attachments(
+                        owner_type="thread",
+                        owner_id="thr_manage_1",
+                    ),
+                    [],
+                )
+                listed_deleted = context.services.attachment.list_attachments(
+                    owner_type="thread",
+                    owner_id="thr_manage_1",
+                    include_deleted=True,
+                )
+                self.assertEqual(len(listed_deleted), 1)
+                self.assertEqual(listed_deleted[0]["status"], "deleted")
+                with self.assertRaisesRegex(ValueError, "attachment_deleted"):
+                    context.services.attachment.read_attachment_bytes(attachment.attachment_id)
+            finally:
+                context.engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()

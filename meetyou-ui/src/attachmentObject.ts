@@ -37,6 +37,8 @@ export function normalizeAttachmentObject(value: unknown): AttachmentObjectView 
   }
   return {
     attachmentId,
+    ownerType: readString(record, 'ownerType', 'owner_type') || undefined,
+    ownerId: readString(record, 'ownerId', 'owner_id') || undefined,
     kind: readString(record, 'kind') || 'file',
     fileName: readString(record, 'fileName', 'file_name') || attachmentId,
     mimeType: readString(record, 'mimeType', 'mime_type') || undefined,
@@ -44,6 +46,8 @@ export function normalizeAttachmentObject(value: unknown): AttachmentObjectView 
     status: readString(record, 'status') || undefined,
     lifecyclePolicy: readString(record, 'lifecyclePolicy', 'lifecycle_policy') || undefined,
     expiresAt: readString(record, 'expiresAt', 'expires_at') || undefined,
+    createdAt: readString(record, 'createdAt', 'created_at') || undefined,
+    updatedAt: readString(record, 'updatedAt', 'updated_at') || undefined,
     downloadUrl: readString(record, 'downloadUrl', 'download_url') || undefined,
     fallbackDownloadUrl: readString(record, 'fallbackDownloadUrl', 'fallback_download_url') || undefined,
     downloadStrategy: readString(record, 'downloadStrategy', 'download_strategy') || undefined,

@@ -102,6 +102,7 @@ export function formatAssistantModeLabel(mode: string): string {
   if (normalized === 'documents') return '文档'
   if (normalized === 'study') return '学习'
   if (normalized === 'automation') return '自动化'
+  if (normalized === 'danxi') return '旦夕'
   return mode || '未设置'
 }
 

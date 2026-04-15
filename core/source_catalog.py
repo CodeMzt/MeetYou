@@ -174,6 +174,27 @@ FALLBACK_SOURCE_PROFILES = {
             "威胁",
         ],
     },
+    "campus_forum": {
+        "label": "Campus Forum",
+        "description": "Campus forum threads, subscriptions, messages, and other low-risk school-community signals.",
+        "preferred_source_ids": [],
+        "official_only": False,
+        "default_freshness": "high",
+        "primary_domains": [
+            "forum.fduhole.com",
+            "auth.fduhole.com",
+            "webvpn.fudan.edu.cn",
+        ],
+        "match_any": [
+            "danxi",
+            "旦夕",
+            "fduhole",
+            "forum",
+            "校园论坛",
+            "帖子",
+            "楼层",
+        ],
+    },
 }
 
 

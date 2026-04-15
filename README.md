@@ -32,7 +32,9 @@ Mobile Client(UI + Local Backend)-/      |
 - 会话级运行状态、推理摘要、token/context 使用量透出
 - Assistant Modes 路由机制，支持不同场景下的工具束与策略切换
 - 配置中心与热更新接口
-- 定时任务、后台心跳、运行宿主机感知能力
+- `Core Heart` 时间编排能力，区分 `scheduler loop` 的确定性触发与 `heartbeat reasoning loop` 的时间压力判断
+- 任务域已分为 `user_todo` 与 `assistant_schedule`，分别承接用户待办与助手定时编排
+- agent transport heartbeat 协商、后台运行状态与运行宿主机感知能力
 - 客户端本地后端 / 边缘节点承接本地文件、Shell、本地 MCP 与设备能力
 - Core 仅保留运行所需的平台识别、时间、系统生命体征与少量上下文感知
 
@@ -153,6 +155,7 @@ MEETYOU_FEISHU_APP_SECRET=
 
 - `api_provider` / `api_url` / `model`：主对话模型
 - `heartbeat_api_provider` / `heartbeat_api_url` / `heart_model`：后台心跳模型
+- `Core Heart` 的“心跳”用于服务端时间编排与时间压力判断，不等同于 `/agent/ws` 上的 agent transport heartbeat
 - `embedding_api_url` / `embedding_model`：向量化与记忆能力
 - `thinking_enabled` / `thinking_effort` / `thinking_budget_tokens`：默认推理参数
 - `assistant_modes` / `mode_router`：模式路由与工具策略
@@ -256,7 +259,7 @@ npm run dev
 - `POST /inputs`、`POST /controls`、旧根路径 `session/messages` 入口：现只返回受控迁移错误，不再触发真实聊天主链
 - `GET /config`、`GET /memory` 等根路径接口：迁移期兼容入口，不再是默认产品面
 
-正式目标架构见 [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)，workspace 模型见 [docs/workspace-capability-model.md](docs/workspace-capability-model.md)，API 面设计见 [docs/core-api-surfaces.md](docs/core-api-surfaces.md)，当前基线与缺口见 [docs/server-centric-migration-baseline.md](docs/server-centric-migration-baseline.md)。
+正式目标架构见 [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)，workspace 模型见 [docs/workspace-capability-model.md](docs/workspace-capability-model.md)，API 面设计见 [docs/core-api-surfaces.md](docs/core-api-surfaces.md)，当前正式计划与完成口径见 [docs/implementation-plan.md](docs/implementation-plan.md)。
 
 ### `POST /client/messages` 示例
 
@@ -290,11 +293,20 @@ ws://127.0.0.1:8000/client/ws?thread_id=thread-personal-001
 
 `edge_agent/` 是按 workspace 接入的边缘 Agent 运行时。它和 `desktop_agent/` 当前都通过统一的 `WSS /agent/ws` + `meetyou.agent.v1` transport 接入 Core，只是 `transport_profile` 分别标记为 `desktop_wss` 与 `edge_wss`。
 
+需要特别区分两类“heartbeat”：
+
+- `Core Heart`：服务端后台时间编排中枢，负责 `scheduler loop` 与 `heartbeat reasoning loop`
+- `agent heartbeat`：Agent 通过 `/agent/ws` 上报在线状态、活跃调用与离线队列等运行指标；`agent.hello.ack` 可协商新的 `heartbeat_interval_seconds`，且新间隔应立即作用到当前连接
+
+当前客户端产品面已收口为：
+
 - 聊天界面
 - 推理摘要展示
 - 工具活动展示
-- 运行状态条
+- `StatusIsland` 顶层连接/思考反馈 + operation `tone/summary` 细粒度反馈的双层状态模型
 - token/context 统计面板
+- 独立“工作区与规程”管理页
+- 独立“附件管理”页面
 - 设置页
 - 记忆图谱页
 
@@ -321,6 +333,17 @@ python main.py edge-agent
 
 默认读取 `user/edge_agent.json`，并通过 `ws://127.0.0.1:8000/agent/ws` 接入服务端 Gateway。
 
+当前 Edge Agent 基线已经覆盖：
+
+- `agent.hello` / `agent.hello.ack` / `agent.capabilities.snapshot` / `agent.ready`
+- `agent.heartbeat` 在线状态上报与 `heartbeat_interval_seconds` 协商
+- 最小 capability 样例与运行时分发
+
+建议验证路径：
+
+- 最小协议与运行时测试：`.venv\Scripts\python.exe -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime`
+- 需要连同 Gateway 验证注册与调用主链时：`.venv\Scripts\python.exe -m unittest tests.test_gateway_agent_api`
+
 ## 飞书 Bot
 
 启用飞书前至少需要：
@@ -346,6 +369,7 @@ python main.py edge-agent
 - assistant modes
 - memory / task scheduler
 - scenario tools / document tools
+- edge agent protocol / runtime
 
 如果本地已安装测试依赖，可执行：
 
@@ -353,12 +377,17 @@ python main.py edge-agent
 .venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```
 
+如只想验证当前 `F93` 相关的 Edge Agent 基线，建议先跑：
+
+```bash
+.venv\Scripts\python.exe -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime
+```
+
 ## 相关文档
 
 - [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)：目标拓扑与职责分层
 - [docs/workspace-capability-model.md](docs/workspace-capability-model.md)：Workspace、Capability 与作用域模型
 - [docs/core-api-surfaces.md](docs/core-api-surfaces.md)：Client / Agent / Operator / Developer API 面
-- [docs/server-centric-migration-baseline.md](docs/server-centric-migration-baseline.md)：当前基线、缺口与后续收口顺序
 - [docs/manual-startup-acceptance.md](docs/manual-startup-acceptance.md)：人工启动验收与排障手册
 - [docs/runtime-migration.md](docs/runtime-migration.md)：运行时破坏性迁移说明
 - [docs/playwright-mcp.md](docs/playwright-mcp.md)：Playwright MCP 说明

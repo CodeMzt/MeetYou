@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Save, SlidersHorizontal } from 'lucide-react'
 import { listOperatorSourceProfiles, updateOperatorWorkspaceGovernance } from '../../clientApi'
-import type { ClientWorkspace, OperatorSourceProfile } from '../../types'
-import { formatMemoryRankingPolicyLabel, formatSourceProfileLabel } from '../../utils/statusFormatting'
+import type { AssistantMode, ClientWorkspace, OperatorSourceProfile } from '../../types'
+import { formatAssistantModeLabel, formatMemoryRankingPolicyLabel, formatSourceProfileLabel } from '../../utils/statusFormatting'
 import styles from './WorkspaceGovernanceEditor.module.css'
 
 const FALLBACK_SOURCE_PROFILES: OperatorSourceProfile[] = [
@@ -16,6 +16,8 @@ const FALLBACK_SOURCE_PROFILES: OperatorSourceProfile[] = [
   { profile_name: 'cyber_threat', label: 'Cyber Threat', description: 'Official vulnerability and exploit advisories.', official_only: true, default_freshness: 'high' },
 ]
 
+const BASE_MODE_OPTIONS: AssistantMode[] = ['general', 'research', 'documents', 'study', 'automation', 'danxi']
+
 interface WorkspaceGovernanceEditorProps {
   baseUrl: string
   workspace: ClientWorkspace
@@ -23,6 +25,7 @@ interface WorkspaceGovernanceEditorProps {
 }
 
 export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorkspaceSaved }: WorkspaceGovernanceEditorProps) {
+  const [baseMode, setBaseMode] = useState<AssistantMode>(workspace.base_mode || 'general')
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>(workspace.preferred_source_profiles)
   const [memoryRankingPolicy, setMemoryRankingPolicy] = useState(workspace.memory_ranking_policy || 'workspace_first')
   const [availableProfiles, setAvailableProfiles] = useState<OperatorSourceProfile[]>(FALLBACK_SOURCE_PROFILES)
@@ -32,6 +35,7 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
   const [successMessage, setSuccessMessage] = useState('')
 
   useEffect(() => {
+    setBaseMode(workspace.base_mode || 'general')
     setSelectedProfiles(workspace.preferred_source_profiles)
     setMemoryRankingPolicy(workspace.memory_ranking_policy || 'workspace_first')
     setError('')
@@ -75,10 +79,12 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
     })
   }, [selectedProfiles])
   const hasChanges =
+    baseMode !== workspace.base_mode ||
     normalizedProfiles.join('|') !== workspace.preferred_source_profiles.join('|') ||
     memoryRankingPolicy !== workspace.memory_ranking_policy
 
   const handleReset = () => {
+    setBaseMode(workspace.base_mode || 'general')
     setSelectedProfiles(workspace.preferred_source_profiles)
     setMemoryRankingPolicy(workspace.memory_ranking_policy || 'workspace_first')
     setError('')
@@ -101,6 +107,7 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
       setError('')
       setSuccessMessage('')
       const updated = await updateOperatorWorkspaceGovernance(baseUrl, workspace.workspace_id, {
+        base_mode: baseMode,
         preferred_source_profiles: normalizedProfiles,
         memory_ranking_policy: memoryRankingPolicy,
       })
@@ -125,6 +132,26 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
       </div>
 
       <div className={styles.form}>
+        <label className={styles.field}>
+          <span className={styles.label}>Base Mode</span>
+          <select
+            className={styles.select}
+            value={baseMode}
+            onChange={(event) => {
+              setBaseMode(event.target.value as AssistantMode)
+              setError('')
+              setSuccessMessage('')
+            }}
+          >
+            {BASE_MODE_OPTIONS.map((mode) => (
+              <option key={mode} value={mode}>
+                {formatAssistantModeLabel(mode)}
+              </option>
+            ))}
+          </select>
+          <span className={styles.hint}>当前工作区默认模式。若 thread 没有更具体的偏好，会优先以这里作为公开模式入口。</span>
+        </label>
+
         <label className={styles.field}>
           <span className={styles.label}>Preferred Source Profiles</span>
           <div className={styles.optionGrid}>

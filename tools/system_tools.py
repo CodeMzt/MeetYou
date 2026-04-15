@@ -83,6 +83,10 @@ def set_agent_dispatcher(dispatcher):
     _agent_dispatcher = dispatcher
 
 
+def set_capability_dispatcher(dispatcher):
+    set_agent_dispatcher(dispatcher)
+
+
 def set_local_fallback_enabled(enabled: bool):
     global _allow_local_fallback
     _allow_local_fallback = bool(enabled)
@@ -192,7 +196,12 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: b
         logger.info(f"用户确认执行危险命令: {cmd}")
 
     if _agent_dispatcher is not None:
-        result = await _agent_dispatcher.dispatch_local_capability(
+        dispatch = getattr(_agent_dispatcher, "dispatch_agent_capability", None)
+        if not callable(dispatch):
+            dispatch = getattr(_agent_dispatcher, "dispatch_local_capability", None)
+        if not callable(dispatch):
+            raise RuntimeError("Capability dispatcher does not support capability dispatch")
+        result = await dispatch(
             capability_suffix="shell.exec",
             arguments={"command": cmd},
             session_id=session_id,

@@ -498,6 +498,8 @@ class ClientAttachmentUploadTicketResponse(BaseModel):
     expires_at: str
     object_key: str
     status: str
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class ClientAttachmentUploadResult(BaseModel):
@@ -506,6 +508,9 @@ class ClientAttachmentUploadResult(BaseModel):
     status: str
     size_bytes: int
     sha256: str
+    created_at: str = ""
+    updated_at: str = ""
+    uploaded_at: str = ""
 
 
 class ClientAttachmentCompleteRequest(BaseModel):
@@ -527,6 +532,13 @@ class ClientAttachmentResponse(BaseModel):
     expires_at: str = ""
     sha256: str
     status: str
+    created_at: str = ""
+    updated_at: str = ""
+    uploaded_at: str = ""
+    completed_at: str = ""
+    deleted_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class ClientAttachmentDownloadTicketResponse(BaseModel):
@@ -627,6 +639,86 @@ class ClientWorkspaceResponse(BaseModel):
         return normalize_execution_target(value)
 
 
+class ClientDanxiSessionLoginRequest(BaseModel):
+    session_key: str = "default"
+    encrypted_credentials: dict[str, Any] | None = None
+
+
+class ClientDanxiWebvpnCookiePatchRequest(BaseModel):
+    session_key: str = "default"
+    encrypted_credentials: dict[str, Any] | None = None
+
+
+class ClientDanxiSessionResponse(BaseModel):
+    session_key: str
+    email: str = ""
+    transport: str = ""
+    webvpn_enabled: bool = False
+    has_webvpn_cookie: bool = False
+    webvpn_required: bool = False
+    direct_connect_available: bool = False
+    logged_in: bool = False
+    user_profile: dict[str, Any] | None = None
+
+
+class ClientDanxiListResponse(BaseModel):
+    count: int = 0
+    items: list[Any] = Field(default_factory=list)
+    scope: str = ""
+
+
+class ClientDanxiPostResponse(BaseModel):
+    hole: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClientDanxiSearchResponse(BaseModel):
+    query: str = ""
+    floor_hits: int = 0
+    hole_ids: list[int] = Field(default_factory=list)
+    hits_by_hole: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ClientDanxiProfileResponse(BaseModel):
+    session_key: str = ""
+    logged_in: bool = False
+    transport: str = ""
+    webvpn_enabled: bool = False
+    has_webvpn_cookie: bool = False
+    webvpn_required: bool = False
+    direct_connect_available: bool = False
+    profile: dict[str, Any] | None = None
+
+
+class ClientDanxiReplyCreateRequest(BaseModel):
+    session_key: str = "default"
+    content: str = ""
+
+
+class ClientDanxiReplyUpdateRequest(BaseModel):
+    session_key: str = "default"
+    content: str = ""
+
+
+class ClientDanxiActionResponse(BaseModel):
+    ok: bool = False
+    status_code: int = 200
+    message: str = ""
+    hole_id: int | None = None
+    floor_id: int | None = None
+
+
+class ClientDanxiSummaryResponse(BaseModel):
+    hole_id: int
+    title: str = ""
+    summary: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    reply_highlights: list[str] = Field(default_factory=list)
+    floor_count: int = 0
+    participant_count: int = 0
+    generated_at: str = ""
+
+
 class ClientAvailableAgentResponse(BaseModel):
     agent_id: str
     display_name: str
@@ -665,8 +757,16 @@ class OperatorWorkspaceCreateRequest(BaseModel):
 
 
 class OperatorWorkspaceUpdateRequest(BaseModel):
+    base_mode: str | None = None
     preferred_source_profiles: list[str] | None = None
     memory_ranking_policy: str | None = None
+
+    @field_validator("base_mode", mode="before")
+    @classmethod
+    def _normalize_base_mode(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return to_public_assistant_mode(value)
 
 
 class OperatorSourceProfileResponse(BaseModel):

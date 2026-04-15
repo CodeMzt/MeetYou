@@ -21,7 +21,8 @@ from core.source_catalog import SourceCatalogManager
 
 ASSISTANT_MODE_NORMAL = "normal"
 ASSISTANT_MODE_AUTO = "auto"
-ASSISTANT_SPECIALIZED_MODES = ("documents", "research", "office", "study")
+ASSISTANT_MODE_DANXI = "danxi"
+ASSISTANT_SPECIALIZED_MODES = ("documents", "research", "office", "study", "danxi")
 ASSISTANT_MODES = (ASSISTANT_MODE_NORMAL, *ASSISTANT_SPECIALIZED_MODES)
 VALID_ASSISTANT_MODES = (ASSISTANT_MODE_AUTO, *ASSISTANT_MODES)
 
@@ -383,6 +384,17 @@ _DEFAULT_SOURCE_PROFILES = {
         "source_order": ["exchange", "regulator", "ir", "official", "media"],
         "freshness": "high",
     },
+    "campus_forum": {
+        "label": "Campus Forum",
+        "description": "Campus forum threads, replies, subscriptions, and private workspace context first.",
+        "primary_domains": [
+            "forum.fduhole.com",
+            "auth.fduhole.com",
+            "webvpn.fudan.edu.cn",
+        ],
+        "source_order": ["forum_api", "memory", "local"],
+        "freshness": "high",
+    },
 }
 
 _DEFAULT_MODE_TOOL_BUNDLES = {
@@ -438,6 +450,29 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
             "track_mastery",
         ],
         "mcp_servers": ["filesystem_tools"],
+    },
+    "danxi": {
+        "tools": [
+            "danxi_login",
+            "danxi_logout",
+            "danxi_get_session_status",
+            "danxi_list_divisions",
+            "danxi_list_tags",
+            "danxi_list_posts",
+            "danxi_get_post",
+            "danxi_list_floors",
+            "danxi_search_posts",
+            "danxi_create_post",
+            "danxi_reply_post",
+            "danxi_edit_reply",
+            "danxi_delete_reply",
+            "danxi_delete_post",
+            "danxi_manage_favorite",
+            "danxi_manage_subscription",
+            "danxi_list_messages",
+            "danxi_mark_message_read",
+        ],
+        "mcp_servers": [],
     },
 }
 
@@ -526,6 +561,7 @@ _MODE_PROMPT_FALLBACKS = {
         "- research: deep research, source tracking, evidence-heavy analysis, research-style reports, and the research_grounding skill layered on top of the shared basic tools\n"
         "- office: schedules, meeting briefs, drafts, notes sync, and coordination, with task_recognition available when task signals appear and the shared basic tools used for grounding\n"
         "- study: study plans, learning points, quizzes, flashcards, mastery tracking, and the study_coaching skill combined with the shared basic tools\n"
+        "- danxi: FDU campus-forum browsing, thread search, favorites or subscriptions, messages, and normal-user post or reply actions through the Danxi tool suite\n"
         "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, ask_human, and get_current_system_time.\n"
         "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled work.\n"
         "If signals are mixed, prefer the smallest mode that directly matches the user's next job."
@@ -568,6 +604,13 @@ _MODE_PROMPT_FALLBACKS = {
         "Start with the shared basic tools when you need memory lookup, private knowledge lookup, or lightweight page reading, then use the study_coaching skill to turn the retrieved material into guided learning work.\n"
         "If the user adds user TODOs or scheduled follow-ups, task_recognition can also activate the matching task tool."
     ),
+    "danxi": (
+        "[Danxi Mode]\n"
+        "You are operating as a Danxi campus-forum specialist.\n"
+        "Use Danxi tools only in this mode to browse forum content, search threads or floors, manage subscriptions or favorites, and perform normal-user post or reply operations.\n"
+        "Prefer safe, low-frequency actions that match ordinary user behavior. Ask for confirmation before destructive actions such as deleting a post or reply.\n"
+        "Keep all forum-side claims grounded in the returned Danxi API data, and use summarize_text, organize_notes, or extract_action_items to turn fetched thread data into concise deliverables."
+    ),
 }
 
 _SKILL_PROMPT_FALLBACKS = {
@@ -601,6 +644,12 @@ _SKILL_PROMPT_FALLBACKS = {
         "Track evolving public topics, compare multiple sources, and produce a structured digest with clear freshness boundaries.\n"
         "Prefer available web and browser MCP capabilities, and fall back to native research tools when those integrations are unavailable."
     ),
+    "mode-danxi": (
+        "[Danxi Mode Skill]\n"
+        "Operate as a campus-forum workflow specialist.\n"
+        "Browse divisions, threads, floors, subscriptions, favorites, and messages with Danxi tools; keep all forum writes low-risk and confirmation-first.\n"
+        "Do not attempt admin-only APIs, bulk operations, concurrency tests, or other high-risk forum actions."
+    ),
 }
 
 _DEFAULT_PROMPT_REGISTRY = {
@@ -610,6 +659,7 @@ _DEFAULT_PROMPT_REGISTRY = {
     "mode:research": {"path": "prompt/modes/research", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["research"]},
     "mode:office": {"path": "prompt/modes/office", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["office"]},
     "mode:study": {"path": "prompt/modes/study", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["study"]},
+    "mode:danxi": {"path": "prompt/modes/danxi", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["danxi"]},
     "skill:task-recognition": {
         "path": "prompt/SKILL/task-recognition",
         "kind": "skill",
@@ -639,6 +689,11 @@ _DEFAULT_PROMPT_REGISTRY = {
         "path": "prompt/SKILL/hotspot-tracking",
         "kind": "skill",
         "fallback": _SKILL_PROMPT_FALLBACKS["hotspot-tracking"],
+    },
+    "skill:mode-danxi": {
+        "path": "prompt/SKILL/mode-danxi",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["mode-danxi"],
     },
 }
 
@@ -693,6 +748,13 @@ _DEFAULT_SKILL_REGISTRY = {
         "fallback_tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
         "activation_keywords": ["hotspot", "trending", "breaking", "热点", "时政热点", "热搜", "舆情"],
         "authorization": {"read_only": True},
+    },
+    "danxi_digest": {
+        "prompts": [],
+        "tools": ["summarize_text", "organize_notes", "extract_action_items"],
+        "mcp_servers": [],
+        "scenes": ["danxi_forum_ops"],
+        "activation_keywords": ["danxi", "旦夕", "fduhole", "forum", "帖子", "楼层", "校内论坛"],
     },
 }
 
@@ -758,6 +820,25 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "fallback_tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
         "activation_keywords": ["hotspot", "trending", "breaking", "热点", "时政热点", "热搜", "舆情"],
         "authorization": {"read_only": True},
+    },
+    "danxi_forum_ops": {
+        "title": "Danxi Forum Ops",
+        "summary": "校内论坛浏览、信息整理与低风险普通用户操作。",
+        "applicable_modes": ["danxi"],
+        "skills": ["danxi_digest", "knowledge_synthesis"],
+        "tools": [
+            "danxi_list_posts",
+            "danxi_get_post",
+            "danxi_list_floors",
+            "danxi_search_posts",
+            "danxi_list_messages",
+            "summarize_text",
+            "organize_notes",
+            "extract_action_items",
+        ],
+        "mcp_servers": [],
+        "fallback_tools": ["danxi_list_posts", "danxi_get_post", "danxi_list_floors", "summarize_text"],
+        "activation_keywords": ["danxi", "旦夕", "forum", "帖子", "楼层", "收藏", "订阅"],
     },
 }
 
@@ -916,6 +997,15 @@ _DEFAULT_MODE_DEFINITIONS = {
         "skills": ["study_coaching"],
         "auto_skills": ["task_recognition", "knowledge_synthesis"],
         "scenes": ["study_guidance", "knowledge_synthesis"],
+    },
+    "danxi": {
+        "prompts": ["mode:danxi"],
+        "mode_skills": ["mode:danxi"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES["danxi"]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["danxi"]["mcp_servers"],
+        "skills": [],
+        "auto_skills": ["danxi_digest", "knowledge_synthesis"],
+        "scenes": ["danxi_forum_ops", "knowledge_synthesis"],
     },
 }
 
@@ -1562,4 +1652,6 @@ class AssistantModeManager:
             return self.classify_research_source_profile(content)
         if mode == "study":
             return "study_materials"
+        if mode == ASSISTANT_MODE_DANXI:
+            return "campus_forum"
         return "workspace_local"

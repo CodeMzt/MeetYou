@@ -224,7 +224,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_authorization_gateway_enforces_document_confirmation_and_write_boundary(self):
         with tempfile.TemporaryDirectory() as trusted_dir, tempfile.TemporaryDirectory() as other_dir:
             manager = self._build_manager(mode_manager=_FakeModeManager([trusted_dir]))
-            manager.set_agent_dispatcher(_FakeAgentDispatcher())
+            manager.set_capability_dispatcher(_FakeAgentDispatcher())
             trusted_path = str(Path(trusted_dir) / "report.md")
             outside_path = str(Path(other_dir) / "report.md")
             route_context = {

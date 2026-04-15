@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
+
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import ValidationError
 
 from agent_protocol import build_capability_call_request
+from core.credential_transport import CredentialTransportError, decrypt_json_payload
 from core.http_headers import build_attachment_content_disposition
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import (
@@ -18,6 +21,17 @@ from core.public_contract import (
 
 from gateway.models import (
     ClientApprovalDecisionRequest,
+    ClientDanxiActionResponse,
+    ClientDanxiListResponse,
+    ClientDanxiPostResponse,
+    ClientDanxiProfileResponse,
+    ClientDanxiReplyCreateRequest,
+    ClientDanxiReplyUpdateRequest,
+    ClientDanxiSearchResponse,
+    ClientDanxiSessionLoginRequest,
+    ClientDanxiSessionResponse,
+    ClientDanxiSummaryResponse,
+    ClientDanxiWebvpnCookiePatchRequest,
     ClientApprovalResponse,
     ClientAttachmentCompleteRequest,
     ClientAttachmentDownloadTicketResponse,
@@ -46,9 +60,87 @@ from gateway.models import (
     ClientWorkspaceResponse,
 )
 from service_runtime.models import RuntimeError
+from tools.danxi_tools import get_shared_danxi_tools
 
 
 _APPROVAL_RISK_LEVELS = {"write", "system", "device", "destructive", "local_write", "external_write"}
+_DANXI_TOOLS = get_shared_danxi_tools()
+_DANXI_LOGIN_PURPOSE = "danxi.client.login.v1"
+_DANXI_WEBVPN_PURPOSE = "danxi.client.webvpn_cookie.v1"
+
+
+def _danxi_raise_http_error(gateway, exc: Exception) -> None:
+    message = str(exc) or "Danxi 请求失败"
+    lowered = message.lower()
+    status_code = 400
+    code = "danxi_request_failed"
+    if "找不到 danxi 会话" in message.lower() or "还没有活跃的 danxi 会话" in lowered:
+        status_code = 404
+        code = "danxi_session_not_found"
+    elif "401" in lowered or "未授权" in message or "token" in lowered:
+        status_code = 401
+        code = "danxi_unauthorized"
+    elif "403" in lowered or "无权限" in message or "forbidden" in lowered:
+        status_code = 403
+        code = "danxi_forbidden"
+    elif "409" in lowered or "冲突" in message:
+        status_code = 409
+        code = "danxi_conflict"
+    elif isinstance(exc, CredentialTransportError):
+        if exc.code == "credential_key_unavailable":
+            status_code = 503
+            code = "danxi_credential_key_unavailable"
+        elif exc.code == "credential_encrypted_required":
+            status_code = 400
+            code = "danxi_encrypted_credentials_required"
+        else:
+            status_code = 400
+            code = "danxi_credential_decrypt_failed"
+    gateway._raise_http_error(status_code=status_code, code=code, message=message)
+
+
+def _danxi_session_response(payload: dict[str, Any]) -> ClientDanxiSessionResponse:
+    return ClientDanxiSessionResponse(**payload)
+
+
+def _danxi_profile_response(payload: dict[str, Any]) -> ClientDanxiProfileResponse:
+    return ClientDanxiProfileResponse(**payload)
+
+
+def _danxi_action_response(payload: dict[str, Any], message: str) -> ClientDanxiActionResponse:
+    normalized = dict(payload)
+    normalized["message"] = message
+    return ClientDanxiActionResponse(**normalized)
+
+
+def _resolve_danxi_login_payload(payload: ClientDanxiSessionLoginRequest) -> dict[str, Any]:
+    if not payload.encrypted_credentials:
+        raise CredentialTransportError(
+            "credential_encrypted_required",
+            "Danxi 登录请求必须提供 encrypted_credentials，已禁用明文跨边界凭证传输。",
+        )
+    decrypted = decrypt_json_payload(payload.encrypted_credentials, purpose=_DANXI_LOGIN_PURPOSE)
+    return {
+        "email": str(decrypted.get("email") or ""),
+        "password": str(decrypted.get("password") or ""),
+        "session_key": str(decrypted.get("session_key") or payload.session_key or "default"),
+        "use_webvpn": decrypted.get("use_webvpn"),
+        "webvpn_cookie": str(decrypted.get("webvpn_cookie") or ""),
+    }
+
+
+def _resolve_danxi_webvpn_cookie_payload(payload: ClientDanxiWebvpnCookiePatchRequest) -> dict[str, Any]:
+    if not payload.encrypted_credentials:
+        raise CredentialTransportError(
+            "credential_encrypted_required",
+            "Danxi WebVPN 登录态更新必须提供 encrypted_credentials，已禁用明文跨边界凭证传输。",
+        )
+    decrypted = decrypt_json_payload(payload.encrypted_credentials, purpose=_DANXI_WEBVPN_PURPOSE)
+    return {
+        "session_key": str(decrypted.get("session_key") or payload.session_key or "default"),
+        "cookie_header": str(decrypted.get("cookie_header") or ""),
+        "enable_webvpn": bool(decrypted.get("enable_webvpn", True)),
+    }
 
 
 def _thread_response(thread, workspace_id: str) -> ClientThreadResponse:
@@ -166,6 +258,35 @@ def _attachment_response(attachment) -> ClientAttachmentResponse:
         expires_at=str(getattr(attachment, "expires_at", "") or ""),
         sha256=attachment.sha256,
         status=attachment.status,
+        created_at=attachment.created_at.isoformat() if getattr(attachment, "created_at", None) is not None else "",
+        updated_at=attachment.updated_at.isoformat() if getattr(attachment, "updated_at", None) is not None else "",
+        uploaded_at=str(metadata.get("uploaded_at") or ""),
+        completed_at=str(metadata.get("completed_at") or ""),
+        deleted_at=str(metadata.get("deleted_at") or ""),
+    )
+
+
+def _attachment_response_from_view(view: dict[str, Any] | Any) -> ClientAttachmentResponse:
+    if not isinstance(view, dict):
+        return _attachment_response(view)
+    return ClientAttachmentResponse(
+        attachment_id=str(view.get("attachment_id") or ""),
+        owner_type=str(view.get("owner_type") or ""),
+        owner_id=str(view.get("owner_id") or ""),
+        kind=str(view.get("kind") or "file"),
+        mime_type=str(view.get("mime_type") or "application/octet-stream"),
+        file_name=str(view.get("file_name") or ""),
+        object_key=str(view.get("object_key") or ""),
+        size_bytes=int(view.get("size_bytes") or 0),
+        lifecycle_policy=str(view.get("lifecycle_policy") or "normal"),
+        expires_at=str(view.get("expires_at") or ""),
+        sha256=str(view.get("sha256") or ""),
+        status=str(view.get("status") or ""),
+        created_at=str(view.get("created_at") or ""),
+        updated_at=str(view.get("updated_at") or ""),
+        uploaded_at=str(view.get("uploaded_at") or ""),
+        completed_at=str(view.get("completed_at") or ""),
+        deleted_at=str(view.get("deleted_at") or ""),
     )
 
 
@@ -658,6 +779,213 @@ def build_client_router(gateway) -> APIRouter:
         rows.sort(key=lambda item: (0 if item.owner_client_id else 1, item.display_name.lower(), item.agent_id))
         return rows
 
+    @router.post("/danxi/session/login", response_model=ClientDanxiSessionResponse)
+    async def danxi_login(payload: ClientDanxiSessionLoginRequest, request: Request):
+        gateway._require_http_auth(request)
+        try:
+            resolved = _resolve_danxi_login_payload(payload)
+            result = _DANXI_TOOLS.danxi_login(
+                email=resolved["email"],
+                password=resolved["password"],
+                session_key=resolved["session_key"],
+                use_webvpn=resolved["use_webvpn"],
+                webvpn_cookie=resolved["webvpn_cookie"],
+            )
+            return _danxi_session_response(
+                {
+                    **result,
+                    "direct_connect_available": _DANXI_TOOLS._can_connect_directly(),
+                    "webvpn_required": bool(result.get("webvpn_enabled") and not _DANXI_TOOLS._can_connect_directly()),
+                }
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/session", response_model=ClientDanxiSessionResponse)
+    async def danxi_session(request: Request, session_key: str = ""):
+        gateway._require_http_auth(request)
+        try:
+            return _danxi_session_response(_DANXI_TOOLS.danxi_get_session_status(session_key=session_key))
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/profile", response_model=ClientDanxiProfileResponse)
+    async def danxi_profile(request: Request, session_key: str = "", refresh: bool = False):
+        gateway._require_http_auth(request)
+        try:
+            return _danxi_profile_response(_DANXI_TOOLS.danxi_get_user_profile(session_key=session_key, refresh=refresh))
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.patch("/danxi/session/webvpn-cookie", response_model=ClientDanxiSessionResponse)
+    async def danxi_webvpn_cookie(payload: ClientDanxiWebvpnCookiePatchRequest, request: Request):
+        gateway._require_http_auth(request)
+        try:
+            resolved = _resolve_danxi_webvpn_cookie_payload(payload)
+            return _danxi_session_response(
+                _DANXI_TOOLS.danxi_set_webvpn_cookie(
+                    resolved["cookie_header"],
+                    session_key=resolved["session_key"],
+                    enable_webvpn=resolved["enable_webvpn"],
+                )
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/divisions", response_model=ClientDanxiListResponse)
+    async def danxi_divisions(request: Request, session_key: str = ""):
+        gateway._require_http_auth(request)
+        try:
+            return ClientDanxiListResponse(**_DANXI_TOOLS.danxi_list_divisions(session_key=session_key))
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/posts", response_model=ClientDanxiListResponse)
+    async def danxi_posts(
+        request: Request,
+        session_key: str = "",
+        division_id: int | None = None,
+        start_time: str = "",
+        length: int = 20,
+        offset: int = 0,
+        tag: str = "",
+        order: str = "last_replied",
+    ):
+        gateway._require_http_auth(request)
+        try:
+            return ClientDanxiListResponse(
+                **_DANXI_TOOLS.danxi_list_posts(
+                    session_key=session_key,
+                    division_id=division_id,
+                    start_time=start_time,
+                    length=length,
+                    offset=offset,
+                    tag=tag,
+                    order=order,
+                )
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/posts/{hole_id}", response_model=ClientDanxiPostResponse)
+    async def danxi_post(hole_id: int, request: Request, session_key: str = ""):
+        gateway._require_http_auth(request)
+        try:
+            return ClientDanxiPostResponse(**_DANXI_TOOLS.danxi_get_post(hole_id, session_key=session_key))
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/posts/{hole_id}/floors", response_model=ClientDanxiListResponse)
+    async def danxi_post_floors(
+        hole_id: int,
+        request: Request,
+        session_key: str = "",
+        offset: int = 0,
+        size: int = 20,
+        include_all: bool = False,
+    ):
+        gateway._require_http_auth(request)
+        try:
+            return ClientDanxiListResponse(
+                **_DANXI_TOOLS.danxi_list_floors(
+                    hole_id,
+                    session_key=session_key,
+                    offset=offset,
+                    size=size,
+                    include_all=include_all,
+                )
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.post("/danxi/posts/{hole_id}/replies", response_model=ClientDanxiActionResponse)
+    async def danxi_create_reply(hole_id: int, payload: ClientDanxiReplyCreateRequest, request: Request):
+        gateway._require_http_auth(request)
+        try:
+            return _danxi_action_response(
+                _DANXI_TOOLS.danxi_reply_post(hole_id, payload.content, session_key=payload.session_key),
+                message="回复已发布，帖子详情已可刷新。",
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.patch("/danxi/floors/{floor_id}", response_model=ClientDanxiActionResponse)
+    async def danxi_update_reply(floor_id: int, payload: ClientDanxiReplyUpdateRequest, request: Request):
+        gateway._require_http_auth(request)
+        try:
+            return _danxi_action_response(
+                _DANXI_TOOLS.danxi_edit_reply(floor_id, payload.content, session_key=payload.session_key),
+                message="回复已更新，帖子详情已可刷新。",
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.delete("/danxi/floors/{floor_id}", response_model=ClientDanxiActionResponse)
+    async def danxi_remove_reply(floor_id: int, request: Request, confirm: bool = False, session_key: str = ""):
+        gateway._require_http_auth(request)
+        try:
+            return _danxi_action_response(
+                _DANXI_TOOLS.danxi_delete_reply(floor_id, confirm=confirm, session_key=session_key),
+                message="回复已删除，帖子详情已可刷新。",
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/posts/{hole_id}/summary", response_model=ClientDanxiSummaryResponse)
+    async def danxi_post_summary(hole_id: int, request: Request, session_key: str = "", floor_limit: int = 50):
+        gateway._require_http_auth(request)
+        try:
+            return ClientDanxiSummaryResponse(
+                **_DANXI_TOOLS.danxi_summarize_post(
+                    hole_id,
+                    session_key=session_key,
+                    floor_limit=floor_limit,
+                )
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/search", response_model=ClientDanxiSearchResponse)
+    async def danxi_search(
+        request: Request,
+        query: str,
+        session_key: str = "",
+        accurate: bool = False,
+        length: int = 20,
+        start_floor: int | None = None,
+        start_time: str = "",
+        end_time: str = "",
+    ):
+        gateway._require_http_auth(request)
+        try:
+            payload = _DANXI_TOOLS.danxi_search_posts(
+                query,
+                session_key=session_key,
+                accurate=accurate,
+                length=length,
+                start_floor=start_floor,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            payload["hits_by_hole"] = {str(key): value for key, value in dict(payload.get("hits_by_hole") or {}).items()}
+            return ClientDanxiSearchResponse(**payload)
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/messages", response_model=ClientDanxiListResponse)
+    async def danxi_messages(request: Request, session_key: str = "", unread_only: bool = False, start_time: str = ""):
+        gateway._require_http_auth(request)
+        try:
+            return ClientDanxiListResponse(
+                **_DANXI_TOOLS.danxi_list_messages(
+                    session_key=session_key,
+                    unread_only=unread_only,
+                    start_time=start_time,
+                )
+            )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
     @router.get("/procedures", response_model=list[ClientProcedureResponse])
     async def list_procedures(request: Request):
         gateway._require_http_auth(request)
@@ -716,6 +1044,8 @@ def build_client_router(gateway) -> APIRouter:
             expires_at=ticket.expires_at,
             object_key=attachment.object_key,
             status=attachment.status,
+            created_at=attachment.created_at.isoformat() if getattr(attachment, "created_at", None) is not None else "",
+            updated_at=attachment.updated_at.isoformat() if getattr(attachment, "updated_at", None) is not None else "",
         )
 
     @router.put("/attachments/upload/{ticket_id}", response_model=ClientAttachmentUploadResult)
@@ -733,6 +1063,9 @@ def build_client_router(gateway) -> APIRouter:
             status=attachment.status,
             size_bytes=attachment.size_bytes,
             sha256=attachment.sha256,
+            created_at=attachment.created_at.isoformat() if getattr(attachment, "created_at", None) is not None else "",
+            updated_at=attachment.updated_at.isoformat() if getattr(attachment, "updated_at", None) is not None else "",
+            uploaded_at=str((getattr(attachment, "meta", {}) or {}).get("uploaded_at") or ""),
         )
 
     @router.post("/attachments/{attachment_id}/complete", response_model=ClientAttachmentResponse)
@@ -749,6 +1082,44 @@ def build_client_router(gateway) -> APIRouter:
         except ValueError as exc:
             gateway._raise_http_error(status_code=409, code=str(exc), message=str(exc))
         return _attachment_response(attachment)
+
+    @router.get("/attachments", response_model=list[ClientAttachmentResponse])
+    async def list_attachments(request: Request, owner_type: str = "", owner_id: str = "", include_deleted: bool = False, limit: int = 50):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            rows = domain.services.attachment.list_attachments(
+                owner_type=owner_type,
+                owner_id=owner_id,
+                include_deleted=include_deleted,
+                limit=limit,
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(status_code=400, code=str(exc), message=str(exc))
+        return [_attachment_response_from_view(row) for row in rows]
+
+    @router.get("/attachments/{attachment_id}", response_model=ClientAttachmentResponse)
+    async def get_attachment(attachment_id: str, request: Request, include_deleted: bool = False):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            row = domain.services.attachment.get_attachment_record(
+                attachment_id=attachment_id,
+                include_deleted=include_deleted,
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(status_code=404, code=str(exc), message=str(exc))
+        return _attachment_response_from_view(row)
+
+    @router.delete("/attachments/{attachment_id}", response_model=ClientAttachmentResponse)
+    async def delete_attachment(attachment_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            row = domain.services.attachment.delete_attachment(attachment_id)
+        except ValueError as exc:
+            gateway._raise_http_error(status_code=404, code=str(exc), message=str(exc))
+        return _attachment_response_from_view(row)
 
     @router.get("/attachments/{attachment_id}/download-ticket", response_model=ClientAttachmentDownloadTicketResponse)
     async def create_attachment_download_ticket(attachment_id: str, http_request: Request, client_id: str = ""):
@@ -804,6 +1175,19 @@ def build_client_router(gateway) -> APIRouter:
             media_type=attachment.mime_type,
             headers={"Content-Disposition": build_attachment_content_disposition(file_name)},
         )
+
+    @router.get("/threads/{thread_id}/attachments", response_model=list[ClientAttachmentResponse])
+    async def list_thread_attachments(thread_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        thread = domain.services.thread.get_by_thread_id(thread_id)
+        if thread is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {thread_id}")
+        attachments = domain.services.attachment.list_attachments(
+            owner_type="thread",
+            owner_id=thread_id,
+        )
+        return [_attachment_response_from_view(item) for item in attachments]
 
     @router.post("/threads", response_model=ClientThreadResponse)
     async def create_thread(http_request: Request, payload: ClientThreadCreateRequest):

@@ -95,6 +95,22 @@ _DEFAULT_MODE_SKILL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "track_mastery",
         ],
     },
+    "danxi": {
+        "id": "mode:danxi",
+        "skill_type": "mode",
+        "title": "Danxi Mode Skill",
+        "summary": "旦夕校园论坛范式，强调论坛浏览、信息整理与低风险普通用户操作。",
+        "file_name": "mode-danxi",
+        "applicable_modes": ["danxi"],
+        "scenarios": ["forum browsing", "thread search", "favorites", "subscriptions", "reply drafting"],
+        "recommended_tools": [
+            "danxi_list_posts",
+            "danxi_get_post",
+            "danxi_list_floors",
+            "danxi_search_posts",
+            "danxi_list_messages",
+        ],
+    },
 }
 
 _DEFAULT_REUSABLE_SKILL_DEFINITIONS: dict[str, dict[str, Any]] = {

@@ -1,5 +1,5 @@
 import { startTransition, useCallback, useState } from 'react'
-import { createClientOperation, decideClientApproval } from '../../clientApi'
+import { decideClientApproval } from '../../clientApi'
 import { normalizeAttachmentObjects } from '../../attachmentObject'
 import { createSystemTurn } from '../../chatState'
 import { parseClientWsPayload } from '../../protocolClient'
@@ -84,58 +84,10 @@ function applyOperationEvent(
 export function useOperations(
   baseUrl: string,
   clientContext: ClientContext | null,
-  desktopAgentId: string,
   initializeClientContext: () => Promise<ClientContext>,
   dispatchChat: any
 ) {
   const [operations, setOperations] = useState<OperationView[]>([])
-
-  const sendAgentEchoOperation = useCallback(
-    async (text: string) => {
-      const content = text.trim()
-      if (!content) {
-        return
-      }
-      const context = clientContext ?? (await initializeClientContext())
-      const targetAgentId = desktopAgentId
-      if (!targetAgentId) {
-        throw new Error(`当前 workspace ${context.workspace.workspace_id} 没有可用的桌面 Agent`)
-      }
-      const operation = await createClientOperation(baseUrl, {
-        thread_id: context.threadId,
-        workspace_id: context.workspace.workspace_id,
-        client_id: context.clientId,
-        session_id: context.session.session_id,
-        title: `Agent Echo: ${content.slice(0, 40)}`,
-        operation_type: 'capability_call',
-        execution_target: 'specific_agent',
-        target_agent_id: targetAgentId,
-        capability_id: `agent.${targetAgentId}.utility.echo`,
-        arguments: { text: content },
-      })
-      startTransition(() => {
-        setOperations((current) =>
-          upsertOperationView(current, {
-            ...operation,
-            call_id: '',
-            phase: '',
-            detail: '',
-            result: {},
-            error: {},
-            attachments: [],
-            tone: 'pending',
-            summary: '等待调度',
-            isBlocking: false,
-          }),
-        )
-        dispatchChat({
-          type: 'append_system_turn',
-          turn: createSystemTurn(`已创建 Agent 操作: ${operation.title || operation.operation_id}`),
-        })
-      })
-    },
-    [baseUrl, clientContext, desktopAgentId, initializeClientContext, dispatchChat],
-  )
 
   const decideOperationApproval = useCallback(
     async (approvalId: string, decision: 'approve' | 'reject') => {
@@ -177,7 +129,6 @@ export function useOperations(
 
   return {
     operations,
-    sendAgentEchoOperation,
     decideOperationApproval,
     processWsUpdateForOperations,
   }

@@ -11,37 +11,6 @@
         "npm_config_cache": "e:/Documents/Project/MeetYou/.npm-cache"
       },
       "enabled": false
-    },
-    "tavily_web": {
-      "command": "npx.cmd",
-      "args": [
-        "-y",
-        "tavily-mcp@0.1.3"
-      ],
-      "env": {
-        "npm_config_cache": "e:/Documents/Project/MeetYou/.npm-cache"
-      },
-      "enabled": false
-    },
-    "playwright_web": {
-      "command": "npx.cmd",
-      "args": [
-        "-y",
-        "@playwright/mcp@latest",
-        "--browser",
-        "msedge",
-        "--caps",
-        "pdf",
-        "--user-data-dir",
-        "e:/Documents/Project/MeetYou/user/playwright-user-data",
-        "--output-dir",
-        "e:/Documents/Project/MeetYou/user/playwright-mcp-output"
-      ],
-      "env": {
-        "npm_config_cache": "e:/Documents/Project/MeetYou/.npm-cache",
-        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1"
-      },
-      "enabled": false
     }
   }
 }

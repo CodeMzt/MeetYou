@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { User, Bot } from 'lucide-react'
 import { ChatTurn, HumanInputRequestPayload, OperationView, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel } from '../../types'
@@ -41,7 +41,10 @@ export default function MessageList({
   sendControlCommand
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const lastAssistantMessageId = [...messages].reverse().find(m => m.role === 'assistant')?.id
+  const lastAssistantMessageId = useMemo(
+    () => [...messages].reverse().find((message) => message.role === 'assistant')?.id,
+    [messages],
+  )
 
   useEffect(() => {
     if (scrollRef.current) {

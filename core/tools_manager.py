@@ -12,7 +12,9 @@ from core.tool_runtime import (
     get_mcp_timeout_seconds,
     should_expose_mcp_tool,
 )
+from tools.attachment_tools import AttachmentTools
 from tools.agent_memory import AgentMemoryTools
+from tools.danxi_tools import get_shared_danxi_tools
 from tools.document_tools import DocumentTools
 from tools.lightweight_tools import LightweightTools
 from tools.office_tools import OfficeTools
@@ -29,8 +31,10 @@ class ToolsManager:
     def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None, task_manager=None):
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
+        self._attachment_tools = AttachmentTools()
         self._agent_memory_tools = AgentMemoryTools(memory)
         self._web_search_tools = WebSearchTools(mcp_manager)
+        self._danxi_tools = get_shared_danxi_tools()
         self._document_tools = (
             DocumentTools(mode_manager, allow_local_fallback=False) if mode_manager is not None else None
         )
@@ -70,10 +74,33 @@ class ToolsManager:
             "list_skills": self._scenario_tools.list_skills,
             "load_skill": self._scenario_tools.load_skill,
             "create_skill": self._scenario_tools.create_skill,
+            "list_attachments": self._attachment_tools.list_attachments,
+            "read_attachment": self._attachment_tools.read_attachment,
+            "delete_attachment": self._attachment_tools.delete_attachment,
             "manage_procedures": self._procedure_tools.manage_procedures,
             "summarize_text": self._lightweight_tools.summarize_text,
             "organize_notes": self._lightweight_tools.organize_notes,
             "extract_action_items": self._lightweight_tools.extract_action_items,
+            "danxi_login": self._danxi_tools.danxi_login,
+            "danxi_logout": self._danxi_tools.danxi_logout,
+            "danxi_get_session_status": self._danxi_tools.danxi_get_session_status,
+            "danxi_set_webvpn_cookie": self._danxi_tools.danxi_set_webvpn_cookie,
+            "danxi_clear_webvpn_cookie": self._danxi_tools.danxi_clear_webvpn_cookie,
+            "danxi_list_divisions": self._danxi_tools.danxi_list_divisions,
+            "danxi_list_tags": self._danxi_tools.danxi_list_tags,
+            "danxi_list_posts": self._danxi_tools.danxi_list_posts,
+            "danxi_get_post": self._danxi_tools.danxi_get_post,
+            "danxi_list_floors": self._danxi_tools.danxi_list_floors,
+            "danxi_search_posts": self._danxi_tools.danxi_search_posts,
+            "danxi_create_post": self._danxi_tools.danxi_create_post,
+            "danxi_reply_post": self._danxi_tools.danxi_reply_post,
+            "danxi_edit_reply": self._danxi_tools.danxi_edit_reply,
+            "danxi_delete_reply": self._danxi_tools.danxi_delete_reply,
+            "danxi_delete_post": self._danxi_tools.danxi_delete_post,
+            "danxi_manage_favorite": self._danxi_tools.danxi_manage_favorite,
+            "danxi_manage_subscription": self._danxi_tools.danxi_manage_subscription,
+            "danxi_list_messages": self._danxi_tools.danxi_list_messages,
+            "danxi_mark_message_read": self._danxi_tools.danxi_mark_message_read,
         }
         supported_funcs = {name: func for name, func in supported_funcs.items() if func is not None}
         if self._document_tools is not None:
@@ -127,10 +154,16 @@ class ToolsManager:
         if self._document_tools is not None:
             self._document_tools.set_agent_dispatcher(dispatcher)
 
+    def set_capability_dispatcher(self, dispatcher) -> None:
+        self.set_agent_dispatcher(dispatcher)
+
     def set_core_domain(self, core_domain) -> None:
+        self._attachment_tools.set_core_domain(core_domain)
         self._procedure_tools.set_core_domain(core_domain)
 
-    def set_state_backends(self, *, office_backend=None, study_backend=None) -> None:
+    def set_state_backends(self, *, office_backend=None, study_backend=None, danxi_backend=None) -> None:
+        if self._danxi_tools is not None and danxi_backend is not None:
+            self._danxi_tools.set_state_backend(danxi_backend)
         if self._office_tools is not None and office_backend is not None:
             self._office_tools.set_state_backend(office_backend)
         if self._study_tools is not None and study_backend is not None:

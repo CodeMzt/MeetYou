@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import unittest
 
 from psycopg import connect
@@ -93,7 +94,7 @@ class AgentDispatchServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.domain.engine.dispose()
 
-    async def test_dispatch_local_capability_waits_for_agent_result(self):
+    async def test_dispatch_agent_capability_waits_for_agent_result(self):
         async def fake_transport(*, agent_id: str, payload: dict) -> bool:
             self.assertEqual(agent_id, "desktop-main-agent")
             call_id = payload["payload"]["call_id"]
@@ -113,18 +114,22 @@ class AgentDispatchServiceTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         self.domain.agent_dispatch.set_transport(fake_transport)
-        result = await self.domain.agent_dispatch.dispatch_local_capability(
+        result = await self.domain.agent_dispatch.dispatch_agent_capability(
             capability_suffix="file.read",
             arguments={"path": "demo.txt"},
             session_id=self.session.session_id,
-            title="Read demo.txt",
+            title="Read demo.txt for wait-result test",
             operation_type="tool.read_local_documents",
         )
 
         self.assertEqual(result["content"], "hello")
         with self.domain.session_factory() as session:
-            operation = session.execute(select(Operation)).scalar_one()
-            call = session.execute(select(OperationCall)).scalar_one()
+            operation = session.execute(
+                select(Operation).where(Operation.title == "Read demo.txt for wait-result test")
+            ).scalar_one()
+            call = session.execute(
+                select(OperationCall).where(OperationCall.operation_id == operation.id)
+            ).scalar_one()
             self.assertEqual(operation.status, "succeeded")
             self.assertEqual(call.status, "succeeded")
 
@@ -150,7 +155,61 @@ class AgentDispatchServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(selection.agent.agent_id, "desktop-main-agent")
 
-    async def test_dispatch_local_capability_does_not_fallback_to_other_workspace_agent(self):
+    async def test_dispatch_encrypts_sensitive_arguments_for_agent_transport(self):
+        transport_payload: dict[str, object] = {}
+
+        async def fake_transport(*, agent_id: str, payload: dict) -> bool:
+            self.assertEqual(agent_id, "desktop-main-agent")
+            transport_payload.update(payload)
+            call_id = payload["payload"]["call_id"]
+
+            async def resolve_later():
+                await asyncio.sleep(0.01)
+                await self.domain.agent_dispatch.notify_call_result(
+                    call_id=call_id,
+                    result={"summary": "ok"},
+                )
+                self.domain.services.operation_call.mark_succeeded(
+                    call_id=call_id,
+                    result={"summary": "ok"},
+                )
+
+            asyncio.create_task(resolve_later())
+            return True
+
+        self.domain.agent_dispatch.set_transport(fake_transport)
+        old_secret = os.environ.get("MEETYOU_CREDENTIAL_SECRET")
+        os.environ["MEETYOU_CREDENTIAL_SECRET"] = "dispatch-test-secret"
+        try:
+            await self.domain.agent_dispatch.dispatch_agent_capability(
+                capability_suffix="file.read",
+                arguments={"path": "demo.txt", "access_token": "token-abc"},
+                session_id=self.session.session_id,
+                title="Read demo.txt for encrypted-args test",
+                operation_type="tool.read_local_documents",
+            )
+        finally:
+            if old_secret is None:
+                os.environ.pop("MEETYOU_CREDENTIAL_SECRET", None)
+            else:
+                os.environ["MEETYOU_CREDENTIAL_SECRET"] = old_secret
+
+        payload = transport_payload["payload"]
+        self.assertEqual(payload["arguments"]["access_token"], "[REDACTED]")
+        self.assertTrue(payload["encrypted_arguments"])
+
+        with self.domain.session_factory() as session:
+            operation = session.execute(
+                select(Operation).where(Operation.title == "Read demo.txt for encrypted-args test")
+            ).scalar_one()
+            call = session.execute(
+                select(OperationCall).where(OperationCall.operation_id == operation.id)
+            ).scalar_one()
+            self.assertEqual(operation.meta["arguments"]["access_token"], "[REDACTED]")
+            self.assertTrue(operation.meta["arguments_encrypted"])
+            self.assertEqual(call.arguments["access_token"], "[REDACTED]")
+
+    async def test_dispatch_agent_capability_does_not_fallback_to_other_workspace_agent(self):
         home_lab_workspace = self.domain.services.workspace.get_by_workspace_id("home-lab")
         other_thread = self.domain.services.thread.create_thread(
             principal_id=self.domain.principal.id,
@@ -164,18 +223,25 @@ class AgentDispatchServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(AgentDispatchError) as error_context:
-            await self.domain.agent_dispatch.dispatch_local_capability(
+            await self.domain.agent_dispatch.dispatch_agent_capability(
                 capability_suffix="file.read",
                 arguments={"path": "demo.txt"},
                 session_id=other_session.session_id,
-                title="Read demo.txt",
+                title="Read demo.txt for home-lab rejection test",
                 operation_type="tool.read_local_documents",
             )
-        self.assertEqual(error_context.exception.tool_error_code, "desktop_agent_unavailable")
+        self.assertEqual(error_context.exception.tool_error_code, "agent_capability_unavailable")
         self.assertEqual(error_context.exception.tool_error_details["workspace_id"], "home-lab")
+        self.assertEqual(error_context.exception.tool_error_details["capability_suffix"], "file.read")
 
         with self.domain.session_factory() as session:
-            operations = session.execute(select(Operation)).scalars().all()
-            calls = session.execute(select(OperationCall)).scalars().all()
+            operations = session.execute(
+                select(Operation).where(Operation.title == "Read demo.txt for home-lab rejection test")
+            ).scalars().all()
+            calls = session.execute(
+                select(OperationCall).where(
+                    OperationCall.operation_id.in_([operation.id for operation in operations])
+                )
+            ).scalars().all()
             self.assertEqual(len(operations), 0)
             self.assertEqual(len(calls), 0)

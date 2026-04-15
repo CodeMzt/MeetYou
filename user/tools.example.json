@@ -13,7 +13,9 @@
               "description": "The command to execute."
             }
           },
-          "required": ["cmd"]
+          "required": [
+            "cmd"
+          ]
         }
       }
     },
@@ -45,7 +47,9 @@
               "description": "Optional timeout in seconds."
             }
           },
-          "required": ["question"]
+          "required": [
+            "question"
+          ]
         }
       }
     },
@@ -92,7 +96,9 @@
               "description": "Optional focus for the research."
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     },
@@ -113,7 +119,9 @@
               "description": "Optional extraction focus."
             }
           },
-          "required": ["url"]
+          "required": [
+            "url"
+          ]
         }
       }
     },
@@ -131,11 +139,17 @@
             },
             "scope": {
               "type": "string",
-              "enum": ["auto", "memory", "notion"],
+              "enum": [
+                "auto",
+                "memory",
+                "notion"
+              ],
               "description": "Optional scope."
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     },
@@ -149,7 +163,15 @@
           "properties": {
             "action": {
               "type": "string",
-              "enum": ["create", "list", "detail", "update", "complete", "delete", "restore"]
+              "enum": [
+                "create",
+                "list",
+                "detail",
+                "update",
+                "complete",
+                "delete",
+                "restore"
+              ]
             },
             "task_key": {
               "type": "string"
@@ -171,7 +193,11 @@
             },
             "task_status": {
               "type": "string",
-              "enum": ["open", "blocked", "done"]
+              "enum": [
+                "open",
+                "blocked",
+                "done"
+              ]
             },
             "deadline": {
               "type": "string"
@@ -183,7 +209,9 @@
               "type": "integer"
             }
           },
-          "required": ["action"]
+          "required": [
+            "action"
+          ]
         }
       }
     },
@@ -250,7 +278,85 @@
               }
             }
           },
-          "required": ["action"]
+          "required": [
+            "action"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_attachments",
+        "description": "List attachments for a specific owner and return metadata with lifecycle timestamps.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "owner_type": {
+              "type": "string"
+            },
+            "owner_id": {
+              "type": "string"
+            },
+            "include_deleted": {
+              "type": "boolean"
+            },
+            "limit": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "owner_type",
+            "owner_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read_attachment",
+        "description": "Read attachment metadata and optionally include a bounded content preview for text or binary files.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "attachment_id": {
+              "type": "string"
+            },
+            "include_content": {
+              "type": "boolean"
+            },
+            "include_deleted": {
+              "type": "boolean"
+            },
+            "encoding": {
+              "type": "string"
+            },
+            "max_bytes": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "attachment_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "delete_attachment",
+        "description": "Delete an attachment record and remove its stored object when available.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "attachment_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "attachment_id"
+          ]
         }
       }
     },
@@ -264,7 +370,17 @@
           "properties": {
             "action": {
               "type": "string",
-              "enum": ["create", "list", "detail", "update", "complete", "delete", "cancel", "disable", "restore"]
+              "enum": [
+                "create",
+                "list",
+                "detail",
+                "update",
+                "complete",
+                "delete",
+                "cancel",
+                "disable",
+                "restore"
+              ]
             },
             "task_key": {
               "type": "string"
@@ -286,7 +402,11 @@
             },
             "task_status": {
               "type": "string",
-              "enum": ["open", "blocked", "done"]
+              "enum": [
+                "open",
+                "blocked",
+                "done"
+              ]
             },
             "deadline": {
               "type": "string"
@@ -299,7 +419,10 @@
             },
             "schedule_kind": {
               "type": "string",
-              "enum": ["once", "recurring"]
+              "enum": [
+                "once",
+                "recurring"
+              ]
             },
             "due_at": {
               "type": "string"
@@ -317,7 +440,10 @@
                   "properties": {
                     "freq": {
                       "type": "string",
-                      "enum": ["daily", "weekly"]
+                      "enum": [
+                        "daily",
+                        "weekly"
+                      ]
                     },
                     "weekday": {
                       "oneOf": [
@@ -347,10 +473,16 @@
             },
             "notify_policy": {
               "type": "string",
-              "enum": ["on_due", "on_completion", "silent"]
+              "enum": [
+                "on_due",
+                "on_completion",
+                "silent"
+              ]
             }
           },
-          "required": ["action"]
+          "required": [
+            "action"
+          ]
         }
       }
     },
@@ -367,7 +499,11 @@
             },
             "skill_type": {
               "type": "string",
-              "enum": ["all", "mode", "reusable"]
+              "enum": [
+                "all",
+                "mode",
+                "reusable"
+              ]
             }
           },
           "required": []
@@ -389,7 +525,9 @@
               "type": "boolean"
             }
           },
-          "required": ["skill_id"]
+          "required": [
+            "skill_id"
+          ]
         }
       }
     },
@@ -435,7 +573,11 @@
               "type": "boolean"
             }
           },
-          "required": ["title", "summary", "content"]
+          "required": [
+            "title",
+            "summary",
+            "content"
+          ]
         }
       }
     },
@@ -452,7 +594,10 @@
             },
             "style": {
               "type": "string",
-              "enum": ["brief", "outline"]
+              "enum": [
+                "brief",
+                "outline"
+              ]
             },
             "focus": {
               "type": "string"
@@ -461,7 +606,9 @@
               "type": "integer"
             }
           },
-          "required": ["text"]
+          "required": [
+            "text"
+          ]
         }
       }
     },
@@ -478,7 +625,9 @@
             },
             "structure": {
               "type": "string",
-              "enum": ["outline"]
+              "enum": [
+                "outline"
+              ]
             },
             "title": {
               "type": "string"
@@ -487,7 +636,9 @@
               "type": "string"
             }
           },
-          "required": ["text"]
+          "required": [
+            "text"
+          ]
         }
       }
     },
@@ -509,7 +660,9 @@
               "type": "integer"
             }
           },
-          "required": ["text"]
+          "required": [
+            "text"
+          ]
         }
       }
     },
@@ -528,7 +681,9 @@
               "type": "string"
             }
           },
-          "required": ["content"]
+          "required": [
+            "content"
+          ]
         }
       }
     },
@@ -544,7 +699,9 @@
               "type": "string"
             }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
         }
       }
     },
@@ -573,7 +730,9 @@
               "type": "string"
             }
           },
-          "required": ["paths"]
+          "required": [
+            "paths"
+          ]
         }
       }
     },
@@ -598,7 +757,10 @@
               "type": "boolean"
             }
           },
-          "required": ["path", "content"]
+          "required": [
+            "path",
+            "content"
+          ]
         }
       }
     },
@@ -623,7 +785,10 @@
               "type": "boolean"
             }
           },
-          "required": ["path", "instructions"]
+          "required": [
+            "path",
+            "instructions"
+          ]
         }
       }
     },
@@ -645,7 +810,10 @@
               }
             }
           },
-          "required": ["title", "sections"]
+          "required": [
+            "title",
+            "sections"
+          ]
         }
       }
     },
@@ -659,7 +827,11 @@
           "properties": {
             "action": {
               "type": "string",
-              "enum": ["draft", "create", "list"]
+              "enum": [
+                "draft",
+                "create",
+                "list"
+              ]
             },
             "when": {
               "type": "string"
@@ -684,7 +856,9 @@
               "type": "string"
             }
           },
-          "required": ["action"]
+          "required": [
+            "action"
+          ]
         }
       }
     },
@@ -709,7 +883,9 @@
               "type": "string"
             }
           },
-          "required": ["topic"]
+          "required": [
+            "topic"
+          ]
         }
       }
     },
@@ -728,7 +904,9 @@
               "type": "string"
             }
           },
-          "required": ["topic"]
+          "required": [
+            "topic"
+          ]
         }
       }
     },
@@ -747,7 +925,9 @@
               "type": "string"
             }
           },
-          "required": ["notes"]
+          "required": [
+            "notes"
+          ]
         }
       }
     },
@@ -769,7 +949,9 @@
               }
             }
           },
-          "required": ["goal"]
+          "required": [
+            "goal"
+          ]
         }
       }
     },
@@ -785,7 +967,9 @@
               "type": "string"
             }
           },
-          "required": ["text"]
+          "required": [
+            "text"
+          ]
         }
       }
     },
@@ -801,7 +985,9 @@
               "type": "string"
             }
           },
-          "required": ["text"]
+          "required": [
+            "text"
+          ]
         }
       }
     },
@@ -817,7 +1003,9 @@
               "type": "string"
             }
           },
-          "required": ["text"]
+          "required": [
+            "text"
+          ]
         }
       }
     },
@@ -836,33 +1024,509 @@
               "type": "number"
             }
           },
-          "required": ["topic"]
+          "required": [
+            "topic"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_login",
+        "description": "Log into Danxi (FDUHole) with user credentials and optionally enable WebVPN transport when direct access is unavailable.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "session_key": {
+              "type": "string"
+            },
+            "use_webvpn": {
+              "type": "boolean"
+            },
+            "webvpn_cookie": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_logout",
+        "description": "Clear a cached Danxi session.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "session_key": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_get_session_status",
+        "description": "Inspect the current Danxi session, transport mode, and cached profile state.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "session_key": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_list_divisions",
+        "description": "List Danxi forum divisions available to the current user.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "session_key": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_list_tags",
+        "description": "List Danxi forum tags for drafting or filtering posts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "session_key": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_list_posts",
+        "description": "Browse Danxi homepage posts or posts under a specific division.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "division_id": {
+              "type": "integer"
+            },
+            "start_time": {
+              "type": "string"
+            },
+            "length": {
+              "type": "integer"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "order": {
+              "type": "string"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_get_post",
+        "description": "Fetch a single Danxi post by hole id.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "hole_id": {
+              "type": "integer"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "hole_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_list_floors",
+        "description": "List replies (floors) for a Danxi post.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "hole_id": {
+              "type": "integer"
+            },
+            "offset": {
+              "type": "integer"
+            },
+            "size": {
+              "type": "integer"
+            },
+            "include_all": {
+              "type": "boolean"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "hole_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_search_posts",
+        "description": "Search Danxi floors and return grouped post hits.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "accurate": {
+              "type": "boolean"
+            },
+            "length": {
+              "type": "integer"
+            },
+            "start_floor": {
+              "type": "integer"
+            },
+            "start_time": {
+              "type": "string"
+            },
+            "end_time": {
+              "type": "string"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_create_post",
+        "description": "Create a normal-user Danxi post in a division.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "division_id": {
+              "type": "integer"
+            },
+            "content": {
+              "type": "string"
+            },
+            "tag_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "tag_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "division_id",
+            "content"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_reply_post",
+        "description": "Reply to a Danxi post as a normal user.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "hole_id": {
+              "type": "integer"
+            },
+            "content": {
+              "type": "string"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "hole_id",
+            "content"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_edit_reply",
+        "description": "Edit a Danxi reply owned by the current user when the API permits it.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "floor_id": {
+              "type": "integer"
+            },
+            "content": {
+              "type": "string"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "floor_id",
+            "content"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_delete_reply",
+        "description": "Delete a Danxi reply after explicit confirmation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "floor_id": {
+              "type": "integer"
+            },
+            "confirm": {
+              "type": "boolean"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "floor_id",
+            "confirm"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_delete_post",
+        "description": "Delete a Danxi post after explicit confirmation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "hole_id": {
+              "type": "integer"
+            },
+            "confirm": {
+              "type": "boolean"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "hole_id",
+            "confirm"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_manage_favorite",
+        "description": "List, add, or remove Danxi favorites for the current user.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "list",
+                "add",
+                "remove"
+              ]
+            },
+            "hole_id": {
+              "type": "integer"
+            },
+            "length": {
+              "type": "integer"
+            },
+            "prefetch_length": {
+              "type": "integer"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_manage_subscription",
+        "description": "List, add, or remove Danxi subscriptions for the current user.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "list",
+                "add",
+                "remove"
+              ]
+            },
+            "hole_id": {
+              "type": "integer"
+            },
+            "length": {
+              "type": "integer"
+            },
+            "prefetch_length": {
+              "type": "integer"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_list_messages",
+        "description": "Read Danxi station messages for the current user.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "unread_only": {
+              "type": "boolean"
+            },
+            "start_time": {
+              "type": "string"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_mark_message_read",
+        "description": "Mark a Danxi message as read or unread.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "message_id": {
+              "type": "integer"
+            },
+            "has_read": {
+              "type": "boolean"
+            },
+            "session_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message_id"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_set_webvpn_cookie",
+        "description": "Attach or refresh a WebVPN cookie for the current Danxi session.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cookie_header": {
+              "type": "string"
+            },
+            "session_key": {
+              "type": "string"
+            },
+            "enable_webvpn": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cookie_header"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "danxi_clear_webvpn_cookie",
+        "description": "Clear the cached WebVPN cookie from the current Danxi session.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "session_key": {
+              "type": "string"
+            }
+          }
         }
       }
     }
   ],
   "memory_tools": [
-    {
-      "type": "function",
-      "function": {
-        "name": "remember_knowledge",
-        "description": "Persist durable user or project knowledge into long-term memory.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "content": {
-              "type": "string",
-              "description": "The content to remember."
-            },
-            "category": {
-              "type": "string",
-              "description": "Optional memory category."
-            }
-          },
-          "required": ["content"]
-        }
-      }
-    },
     {
       "type": "function",
       "function": {
@@ -873,7 +1537,14 @@
           "properties": {
             "action": {
               "type": "string",
-              "enum": ["list", "detail", "edit", "delete", "invalidate", "forget"]
+              "enum": [
+                "list",
+                "detail",
+                "edit",
+                "delete",
+                "invalidate",
+                "forget"
+              ]
             },
             "memory_id": {
               "type": "string"
@@ -894,7 +1565,9 @@
               "type": "integer"
             }
           },
-          "required": ["action"]
+          "required": [
+            "action"
+          ]
         }
       }
     },
@@ -911,7 +1584,9 @@
               "description": "The memory query."
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     }
@@ -948,7 +1623,9 @@
               "description": "Optional maximum number of search results."
             }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       }
     },
@@ -965,7 +1642,9 @@
               "description": "The page URL."
             }
           },
-          "required": ["url"]
+          "required": [
+            "url"
+          ]
         }
       }
     }

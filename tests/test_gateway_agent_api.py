@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 import unittest
 
@@ -12,6 +13,7 @@ from core.db.models.agent import Agent, AgentCapabilitySnapshot
 from core.db.models.capability import Capability, CapabilityWorkspaceBinding
 from core.db.models.operation import Operation, OperationCall
 from core.event_bus import EventBus
+from core.io_protocol import EventSource, EventTarget, EventType, InboundEvent, OutboundEvent, SourceKind, TargetKind, make_source, make_target
 from core.session_manager import SessionManager
 from gateway.api import FastAPIGateway
 
@@ -54,8 +56,9 @@ class GatewayAgentApiTests(unittest.TestCase):
     def setUp(self):
         self.access_token = "agent-token"
         self.core_domain = bootstrap_core_domain(database_url=TEST_DATABASE_URL, run_migrations=True)
+        self.event_bus = EventBus()
         self.gateway = FastAPIGateway(
-            EventBus(),
+            self.event_bus,
             SessionManager(),
             health_getter=lambda: {
                 "service": "meetyou-runtime",
@@ -155,6 +158,104 @@ class GatewayAgentApiTests(unittest.TestCase):
             self.assertIn("agent.desktop-main-agent.shell.exec", capability_ids)
             bindings = session.execute(select(CapabilityWorkspaceBinding)).scalars().all()
             self.assertGreaterEqual(len(bindings), 4)
+
+    def test_agent_hello_injects_core_event_and_returns_connection_prompt(self):
+        async def _prompt_getter(**kwargs):
+            return {
+                "prompt_name": "agent_connected",
+                "prompt": f"欢迎 {kwargs['agent_id']}，请像同事一样自然打招呼。",
+                "context": {"trigger": "agent_connected", "agent_id": kwargs["agent_id"]},
+            }
+
+        async def _event_handler(**kwargs):
+            await self.event_bus.inbound_queue.put(
+                InboundEvent(
+                    session_id=f"system:agent:{kwargs['agent_id']}",
+                    type=EventType.MESSAGE.value,
+                    role="user",
+                    content=kwargs["connection_prompt"]["prompt"],
+                    source=make_source(SourceKind.SYSTEM.value, "agent_connection"),
+                    target=make_target(TargetKind.INTERNAL.value, kwargs["agent_id"]),
+                    metadata={"trigger": "agent_connected", "agent_id": kwargs["agent_id"]},
+                )
+            )
+
+        self.gateway._agent_connection_prompt_getter = _prompt_getter
+        self.gateway._agent_connection_event_handler = _event_handler
+        hello = {
+            "schema": "meetyou.agent.v1",
+            "type": "agent.hello",
+            "message_id": "msg-hello-connect-prompt",
+            "sent_at": "2026-04-08T00:00:00Z",
+            "agent_id": "desktop-main-agent",
+            "payload": {
+                "agent_type": "desktop",
+                "display_name": "Desktop Main Agent",
+                "transport_profile": "desktop_wss",
+                "owner_client_id": "desktop-app",
+                "owner_client_type": "electron",
+                "owner_client_display_name": "Desktop App",
+                "workspace_ids": ["personal", "desktop-main"],
+                "supports_offline_cache": True,
+                "host": {"hostname": "DESKTOP-01", "os": "windows", "arch": "x86_64"},
+            },
+        }
+
+        with self.client.websocket_connect("/agent/ws", headers=self._auth_headers()) as websocket:
+            websocket.send_json(hello)
+            hello_ack = websocket.receive_json()
+
+        self.assertEqual(hello_ack["type"], "agent.hello.ack")
+        self.assertEqual(hello_ack["payload"]["connection_prompt"]["prompt_name"], "agent_connected")
+        self.assertIn("自然打招呼", hello_ack["payload"]["connection_prompt"]["prompt"])
+        event = self.event_bus.inbound_queue.get_nowait()
+        self.assertEqual(event.session_id, "system:agent:desktop-main-agent")
+        self.assertEqual(event.metadata["trigger"], "agent_connected")
+
+    def test_internal_agent_target_routes_core_reply_back_to_agent_socket(self):
+        hello = {
+            "schema": "meetyou.agent.v1",
+            "type": "agent.hello",
+            "message_id": "msg-hello-agent-reply",
+            "sent_at": "2026-04-08T00:00:00Z",
+            "agent_id": "desktop-main-agent",
+            "payload": {
+                "agent_type": "desktop",
+                "display_name": "Desktop Main Agent",
+                "transport_profile": "desktop_wss",
+                "owner_client_id": "desktop-app",
+                "owner_client_type": "electron",
+                "owner_client_display_name": "Desktop App",
+                "workspace_ids": ["personal", "desktop-main"],
+                "supports_offline_cache": True,
+                "host": {"hostname": "DESKTOP-01", "os": "windows", "arch": "x86_64"},
+            },
+        }
+
+        with self.client.websocket_connect("/agent/ws", headers=self._auth_headers()) as websocket:
+            websocket.send_json(hello)
+            websocket.receive_json()
+
+            asyncio.run(
+                self.gateway.agent_output_adapter.send(
+                    OutboundEvent(
+                        session_id="system:agent:desktop-main-agent",
+                        type=EventType.MESSAGE.value,
+                        role="assistant",
+                        content="已收到连接，等你同步能力快照。",
+                        source=EventSource(kind=SourceKind.SYSTEM.value, id="agent_connection"),
+                        target=EventTarget(kind=TargetKind.INTERNAL.value, id="desktop-main-agent"),
+                        metadata={"trigger": "agent_connected"},
+                    )
+                )
+            )
+
+            agent_message = websocket.receive_json()
+
+        self.assertEqual(agent_message["type"], "agent.message")
+        self.assertEqual(agent_message["payload"]["session_id"], "system:agent:desktop-main-agent")
+        self.assertEqual(agent_message["payload"]["role"], "assistant")
+        self.assertEqual(agent_message["payload"]["content"], "已收到连接，等你同步能力快照。")
 
     def test_agent_websocket_rejects_identity_switch_on_same_socket(self):
         first_hello = {

@@ -1,46 +1,50 @@
 import { useState, useEffect } from 'react'
+import { getDanxiSessionStatus } from './clientApi'
 import { useMeetYou } from './hooks/useMeetYou'
 import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'
+import StatusStrip from './components/status/StatusStrip'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
 import { AssistantMode, ThinkingOverride } from './types'
+import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
 import styles from './App.module.css'
 
 export default function App() {
-  const baseUrl = 'http://127.0.0.1:8000'
+  const baseUrl = DEFAULT_BASE_URL
   const {
     messages,
     operations,
-    procedureContext,
     workspace,
     sendMessage,
     decideOperationApproval,
-    sessionId,
-    threadId,
     connectionState,
     connected,
     desktopAgentConnected,
     runtimeSnapshot,
     usageSnapshot,
+    turnActivities,
     approvalDisplay,
     confirmRequest,
     pendingHumanInput,
     healthSnapshot,
     lastError,
     archivedTurnCount,
+    statusFeedback,
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
     uploadAttachment,
     downloadAttachment,
     refreshWorkspace,
+    reloadProcedureContext,
   } = useMeetYou(baseUrl)
 
   const [inputVal, setInputVal] = useState('')
   const [isPinned, setIsPinned] = useState(true)
   const [thinkingOverride, setThinkingOverride] = useState<ThinkingOverride>('default')
   const [preferredMode, setPreferredMode] = useState<AssistantMode>('general')
+  const [danxiStatusText, setDanxiStatusText] = useState('未连接')
 
   const togglePin = () => {
     const nextPinned = !isPinned
@@ -49,37 +53,52 @@ export default function App() {
   }
 
   useEffect(() => {
-    window.ipcRenderer?.send('update-devtools', { sessionId, baseUrl })
-  }, [sessionId, baseUrl])
-
-  useEffect(() => {
-    window.ipcRenderer?.send('update-stats', { usageSnapshot })
-  }, [usageSnapshot])
-
-  useEffect(() => {
-    window.ipcRenderer?.send('update-workspace-panel', {
+    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.danxi.update, {
       baseUrl,
-      threadId,
-      workspace,
-      procedureContext,
-      connectionState,
-      desktopAgentConnected,
-      operations,
-      approvalDisplay,
-      pendingHumanInput,
+      preferredMode,
+      workspaceTitle: workspace?.title || workspace?.workspace_id || '',
     })
-  }, [baseUrl, threadId, workspace, procedureContext, connectionState, desktopAgentConnected, operations, approvalDisplay, pendingHumanInput])
+  }, [baseUrl, preferredMode, workspace])
 
   useEffect(() => {
     const handleWorkspaceGovernanceUpdated = (_event: unknown, data: { workspace_id?: string } | null) => {
       void refreshWorkspace(data?.workspace_id)
+      void reloadProcedureContext()
     }
 
-    window.ipcRenderer?.on('workspace-governance-updated', handleWorkspaceGovernanceUpdated)
+    window.ipcRenderer?.on(WINDOW_EVENT_CHANNEL.workspaceGovernanceUpdated, handleWorkspaceGovernanceUpdated)
     return () => {
-      window.ipcRenderer?.off('workspace-governance-updated', handleWorkspaceGovernanceUpdated)
+      window.ipcRenderer?.off(WINDOW_EVENT_CHANNEL.workspaceGovernanceUpdated, handleWorkspaceGovernanceUpdated)
     }
-  }, [refreshWorkspace])
+  }, [refreshWorkspace, reloadProcedureContext])
+
+  useEffect(() => {
+    if (preferredMode !== 'danxi') {
+      return
+    }
+    let cancelled = false
+    const loadDanxiStatus = async () => {
+      try {
+        const status = await getDanxiSessionStatus(baseUrl)
+        if (!cancelled) {
+          setDanxiStatusText(status.logged_in ? `已连接 · ${status.transport || 'direct'}` : '未连接')
+        }
+      } catch {
+        if (!cancelled) {
+          setDanxiStatusText('未连接')
+        }
+      }
+    }
+    void loadDanxiStatus()
+    const handleDanxiAuthUpdated = () => {
+      void loadDanxiStatus()
+    }
+    window.ipcRenderer?.on(WINDOW_EVENT_CHANNEL.danxiAuthUpdated, handleDanxiAuthUpdated)
+    return () => {
+      cancelled = true
+      window.ipcRenderer?.off(WINDOW_EVENT_CHANNEL.danxiAuthUpdated, handleDanxiAuthUpdated)
+    }
+  }, [baseUrl, preferredMode])
 
   const handleSend = () => {
     if (!inputVal.trim() || !connected || confirmRequest || pendingHumanInput) {
@@ -104,9 +123,18 @@ export default function App() {
           runtimeSnapshot={runtimeSnapshot}
           usageSnapshot={usageSnapshot}
           healthSnapshot={healthSnapshot}
+          statusFeedback={statusFeedback}
+          preferredMode={preferredMode}
+          danxiStatusText={danxiStatusText}
         />
 
         <div className={styles.contentArea}>
+          <StatusStrip
+            connectionState={connectionState}
+            runtimeSnapshot={runtimeSnapshot}
+            healthSnapshot={healthSnapshot}
+            turnActivities={turnActivities}
+          />
           <MessageList
             connected={connected}
             messages={messages}

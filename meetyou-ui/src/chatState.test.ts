@@ -57,6 +57,21 @@ describe('chatState', () => {
     expect(state.messages[0]?.content).toContain('确认结果')
   })
 
+  it('deduplicates consecutive identical system notices', () => {
+    let state = reduceChatState(createInitialChatState(), {
+      type: 'append_system_turn',
+      turn: createSystemTurn('缺少有效访问令牌', true),
+    })
+
+    state = reduceChatState(state, {
+      type: 'append_system_turn',
+      turn: createSystemTurn('缺少有效访问令牌', true),
+    })
+
+    expect(state.messages).toHaveLength(1)
+    expect(state.messages[0]?.error).toBe('缺少有效访问令牌')
+  })
+
   it('hydrates persisted client messages into chat turns', () => {
     const state = reduceChatState(createInitialChatState(), {
       type: 'hydrate_messages',

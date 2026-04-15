@@ -1,6 +1,6 @@
 # Playwright MCP
 
-MeetYou now supports the official Microsoft Playwright MCP server for webpage browsing and extraction.
+MeetYou 当前将 Playwright 浏览器自动化定位为 `Core MCP` 能力，而不是 `Desktop Agent` 本地 MCP。
 
 ## What It Adds
 
@@ -9,12 +9,37 @@ MeetYou now supports the official Microsoft Playwright MCP server for webpage br
 - clicking, typing, tab management, screenshots
 - network log and console inspection
 
-## Local Config
+## Config Boundary
 
-The local runtime config lives in `user/mcp_servers.json` and includes:
+- `user/core_mcp_servers.json`: service-side `Core MCP` config, suitable for browser automation and other server-safe integrations
+- `user/mcp_servers.json`: Desktop Agent local MCP config, reserved for machine-local capabilities such as filesystem access
+- Do not keep Playwright browser automation in Desktop Agent local MCP as the formal path anymore
 
-- `playwright_web`: official `@playwright/mcp`
-- `filesystem_tools`: existing filesystem MCP, now also compatible with Windows `npx.cmd`
+The example config in this repo uses:
+
+- `browser_automation`: official `@playwright/mcp`
+- `filesystem_tools`: a separate Desktop Agent local MCP example kept in `user/mcp_servers.example.json`
+
+## Example Core MCP Config
+
+The browser entry now belongs in `user/core_mcp_servers.json`:
+
+```json
+{
+  "mcpServers": {
+    "browser_automation": {
+      "command": "npx.cmd",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--browser",
+        "msedge"
+      ],
+      "enabled": false
+    }
+  }
+}
+```
 
 ## Recommended Usage
 

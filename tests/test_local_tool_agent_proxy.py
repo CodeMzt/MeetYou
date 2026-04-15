@@ -38,6 +38,9 @@ class _FakeAgentDispatcher:
     def __init__(self):
         self.calls = []
 
+    async def dispatch_agent_capability(self, **kwargs):
+        return await self.dispatch_local_capability(**kwargs)
+
     async def dispatch_local_capability(self, **kwargs):
         self.calls.append(dict(kwargs))
         suffix = kwargs["capability_suffix"]
@@ -77,11 +80,11 @@ class _FakeAgentDispatcher:
 class LocalToolAgentProxyTests(unittest.IsolatedAsyncioTestCase):
     async def test_exec_sys_cmd_uses_agent_dispatcher(self):
         dispatcher = _FakeAgentDispatcher()
-        system_tools.set_agent_dispatcher(dispatcher)
+        system_tools.set_capability_dispatcher(dispatcher)
         try:
             result = await system_tools.exec_sys_cmd('python -c "print(123)"', session_id='sess_1')
         finally:
-            system_tools.set_agent_dispatcher(None)
+            system_tools.set_capability_dispatcher(None)
 
         self.assertEqual(result, '123')
         self.assertEqual(dispatcher.calls[0]['capability_suffix'], 'shell.exec')

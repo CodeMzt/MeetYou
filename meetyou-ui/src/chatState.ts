@@ -152,6 +152,19 @@ function pruneTurns(turns: ChatTurn[], activeTurnId: string): { turns: ChatTurn[
   }
 }
 
+function appendSystemTurn(turns: ChatTurn[], nextTurn: ChatTurn): ChatTurn[] {
+  const previousTurn = turns[turns.length - 1]
+  if (
+    previousTurn &&
+    previousTurn.role === 'system' &&
+    previousTurn.content === nextTurn.content &&
+    previousTurn.error === nextTurn.error
+  ) {
+    return turns
+  }
+  return [...turns, nextTurn]
+}
+
 function hydrateClientMessages(messages: ClientMessage[]): ChatTurn[] {
   return messages.map((m) => ({
     id: m.message_id,
@@ -303,7 +316,11 @@ export function reduceChatState(state: ChatState, action: ChatAction): ChatState
     case 'append_user_turn':
       return withPrunedMessages(state, [...state.messages, action.turn], action.turn.turnId)
     case 'append_system_turn':
-      return withPrunedMessages(state, [...state.messages, action.turn], state.runtimeSnapshot?.turn_id || '')
+      return withPrunedMessages(
+        state,
+        appendSystemTurn(state.messages, action.turn),
+        state.runtimeSnapshot?.turn_id || '',
+      )
     case 'hydrate_messages':
       return {
         ...state,

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Cpu } from 'lucide-react'
-import type { RuntimeStateSnapshot, RuntimeUsageSnapshot, RuntimeHealthSnapshot } from '../../types'
+import type { RuntimeStateSnapshot, RuntimeUsageSnapshot, RuntimeHealthSnapshot, StatusFeedback } from '../../types'
 import MotionCard from '../common/MotionCard'
 import styles from './StatusIsland.module.css'
 
@@ -9,30 +9,48 @@ interface StatusIslandProps {
   runtimeSnapshot: RuntimeStateSnapshot | null
   usageSnapshot: RuntimeUsageSnapshot | null
   healthSnapshot: RuntimeHealthSnapshot | null
+  statusFeedback?: StatusFeedback | null
+  preferredMode?: string
+  danxiStatusText?: string
 }
 
-export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSnapshot }: StatusIslandProps) {
+export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSnapshot, statusFeedback, preferredMode, danxiStatusText }: StatusIslandProps) {
   const [expanded, setExpanded] = useState(false)
 
   const isConnected = !!healthSnapshot
   const status = runtimeSnapshot?.status || 'idle'
   const isThinking = status === 'thinking' || status === 'tool_calling'
   const isError = status === 'error'
+  const isDanxi = preferredMode === 'danxi'
 
   let indicatorClass = styles.statusIndicator
   if (isError) indicatorClass += ` ${styles.error}`
+  else if (statusFeedback && statusFeedback.tone === 'success') indicatorClass += ` ${styles.online}` // Use online color for success
   else if (isThinking) indicatorClass += ` ${styles.thinking}`
-  else if (isConnected) indicatorClass += ` ${styles.online}`
+  else if (isConnected || (isDanxi && danxiStatusText?.includes('已连接'))) indicatorClass += ` ${styles.online}`
 
-  const displayText = isThinking ? runtimeSnapshot?.detail || '思考中...' : 'MeetYou'
+  let displayText = 'MeetYou'
+  if (statusFeedback) {
+    displayText = statusFeedback.text
+  } else if (isThinking) {
+    displayText = runtimeSnapshot?.detail || '思考中...'
+  } else if (isDanxi) {
+    displayText = `旦夕 · ${danxiStatusText || '未连接'}`
+  }
 
   const variants = {
-    idle: { width: 120, height: 36 },
+    idle: { width: isDanxi ? 180 : 120, height: 36 },
     thinking: { width: 200, height: 36 },
+    feedback: { width: 200, height: 36 },
     expanded: { width: 200, height: 36 }
   }
 
-  const currentVariant = isThinking ? 'thinking' : 'idle'
+  let currentVariant = 'idle'
+  if (statusFeedback) {
+    currentVariant = 'feedback'
+  } else if (isThinking) {
+    currentVariant = 'thinking'
+  }
 
   return (
     <div className={styles.islandContainer}>
@@ -46,7 +64,7 @@ export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSna
         onClick={() => setExpanded(!expanded)}
       >
         <motion.div className={styles.islandContent} layout>
-          {isThinking ? (
+          {isThinking && !statusFeedback ? (
             <motion.div
               animate={{ rotate: 360 }}
               transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
@@ -83,6 +101,13 @@ export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSna
               <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#af52de' }}/> 记忆</div>
               <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-accent)' }}/> 当前</div>
             </div>
+            
+            {isDanxi && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: 12 }}>
+                <span style={{ color: 'var(--text-secondary)' }}>旦夕状态</span>
+                <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{danxiStatusText || '未连接'}</span>
+              </div>
+            )}
           </MotionCard>
         )}
       </AnimatePresence>

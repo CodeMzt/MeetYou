@@ -4,6 +4,7 @@ import './dashboard.css'
 import UsagePanel from './components/status/UsagePanel'
 import type { RuntimeUsageSnapshot } from './types'
 import SubWindow from './components/layout/SubWindow'
+import { WINDOW_SYNC_CHANNEL } from './windowBridge'
 
 type StatsPayload = {
   usageSnapshot: RuntimeUsageSnapshot | null
@@ -17,11 +18,11 @@ export default function ContextWindow() {
       setUsageSnapshot(data?.usageSnapshot ?? null)
     }
 
-    window.ipcRenderer?.on('stats-updated', handleStatsUpdated)
-    window.ipcRenderer?.send('request-stats')
+    window.ipcRenderer?.on(WINDOW_SYNC_CHANNEL.context.update, handleStatsUpdated)
+    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.context.request)
 
     return () => {
-      window.ipcRenderer?.off('stats-updated', handleStatsUpdated)
+      window.ipcRenderer?.off(WINDOW_SYNC_CHANNEL.context.update, handleStatsUpdated)
     }
   }, [])
 

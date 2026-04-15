@@ -77,6 +77,7 @@ def _populate_skill_dir(target_dir: Path) -> None:
         "mode-research",
         "mode-office",
         "mode-study",
+        "mode-danxi",
     ):
         (target_dir / skill_name).write_text((source_dir / skill_name).read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -197,6 +198,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             "mode-research",
             "mode-office",
             "mode-study",
+            "mode-danxi",
         ):
             skill_path = repo_root / "prompt" / "SKILL" / skill_name
             self.assertTrue(skill_path.is_file())
@@ -484,7 +486,7 @@ class AssistantModeManagerTests(unittest.TestCase):
     def test_skill_management_tools_are_available_in_all_modes(self):
         manager = AssistantModeManager(_FakeConfig())
 
-        for mode in ("normal", "documents", "research", "office", "study"):
+        for mode in ("normal", "documents", "research", "office", "study", "danxi"):
             bundle = manager.get_tool_bundle(mode)
             self.assertIn("list_skills", bundle["tools"])
             self.assertIn("load_skill", bundle["tools"])
@@ -528,6 +530,27 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertEqual(route.requested_mode, "research")
         self.assertEqual(route.current_mode, "research")
         self.assertIn("Preferred mode override requested", route.route_reason)
+
+    def test_preferred_danxi_mode_uses_forum_bundle(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        route = manager.route(
+            {
+                "content": "浏览一下 Danxi 热门帖子并整理重点。",
+                "metadata": {"preferred_mode": "danxi"},
+            },
+            session_metadata={"current_mode": "normal"},
+            source=SimpleNamespace(kind="desktop", id="desktop-user"),
+        )
+
+        self.assertEqual(route.requested_mode, "danxi")
+        self.assertEqual(route.current_mode, "danxi")
+        self.assertEqual(route.source_profile, "campus_forum")
+        self.assertIn("danxi_list_posts", route.tool_bundle)
+        self.assertIn("danxi_search_posts", route.tool_bundle)
+        self.assertIn("summarize_text", route.tool_bundle)
+        prompt_text = manager.get_prompt_for_mode("danxi")
+        self.assertIn("[Danxi Mode]", prompt_text)
 
     def test_preferred_normal_starts_in_normal_mode(self):
         manager = AssistantModeManager(_FakeConfig())
@@ -671,6 +694,24 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "track_mastery",
                     "manage_tasks",
                     "manage_scheduled_tasks",
+                    "danxi_login",
+                    "danxi_logout",
+                    "danxi_get_session_status",
+                    "danxi_list_divisions",
+                    "danxi_list_tags",
+                    "danxi_list_posts",
+                    "danxi_get_post",
+                    "danxi_list_floors",
+                    "danxi_search_posts",
+                    "danxi_create_post",
+                    "danxi_reply_post",
+                    "danxi_edit_reply",
+                    "danxi_delete_reply",
+                    "danxi_delete_post",
+                    "danxi_manage_favorite",
+                    "danxi_manage_subscription",
+                    "danxi_list_messages",
+                    "danxi_mark_message_read",
                 ],
                 mcp_servers=["filesystem_tools"],
             )

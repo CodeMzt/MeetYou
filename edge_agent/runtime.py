@@ -5,6 +5,8 @@ import logging
 
 import aiohttp
 
+from agent_protocol import AGENT_ARGUMENTS_PURPOSE
+from core.credential_transport import CredentialTransportError, decrypt_json_payload
 from edge_agent.config import EdgeAgentConfig
 from edge_agent.execution import build_capability_handlers
 from edge_agent.protocol import (
@@ -30,6 +32,7 @@ class EdgeAgentRuntime:
         self._active_ws = None
         self._heartbeat_interval_seconds = max(1, int(config.heartbeat_interval_seconds))
         self._heartbeat_interval_updated = asyncio.Event()
+        self._last_connection_prompt: dict | None = None
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -101,9 +104,21 @@ class EdgeAgentRuntime:
             return ready_received
         message_type = str(payload.get("type") or "")
         if message_type == "agent.hello.ack":
-            next_interval = int(payload.get("payload", {}).get("heartbeat_interval_seconds") or self._heartbeat_interval_seconds)
+            ack_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+            next_interval = int(ack_payload.get("heartbeat_interval_seconds") or self._heartbeat_interval_seconds)
             self._set_heartbeat_interval(next_interval)
-            logger.info("Edge Agent hello acknowledged: %s", payload.get("payload", {}))
+            connection_prompt = ack_payload.get("connection_prompt")
+            if isinstance(connection_prompt, dict) and connection_prompt:
+                self._last_connection_prompt = dict(connection_prompt)
+                logger.info(
+                    "Edge Agent received connection prompt %s",
+                    connection_prompt.get("prompt_name") or "agent_connected",
+                )
+            logger.info("Edge Agent hello acknowledged: %s", ack_payload)
+            return ready_received
+        if message_type == "agent.message":
+            agent_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+            logger.info("Edge Agent received Core reply: %s", agent_payload)
             return ready_received
         if message_type == "agent.ready":
             logger.info("Edge Agent ready: %s", payload.get("payload", {}))
@@ -119,7 +134,25 @@ class EdgeAgentRuntime:
         capability_id = str(envelope_payload.get("capability_id") or "")
         correlation_id = str(payload.get("message_id") or "")
         arguments = envelope_payload.get("arguments") if isinstance(envelope_payload.get("arguments"), dict) else {}
+        encrypted_arguments = (
+            envelope_payload.get("encrypted_arguments")
+            if isinstance(envelope_payload.get("encrypted_arguments"), dict)
+            else {}
+        )
         if not call_id or not capability_id:
+            return
+        try:
+            arguments = self._resolve_call_arguments(arguments, encrypted_arguments)
+        except CredentialTransportError as exc:
+            await ws.send_json(
+                build_call_error(
+                    self.config,
+                    call_id=call_id,
+                    correlation_id=correlation_id,
+                    code=exc.code,
+                    message=exc.message,
+                )
+            )
             return
         handler = self._handlers.get(capability_id)
         await ws.send_json(build_call_accepted(self.config, call_id=call_id, correlation_id=correlation_id))
@@ -163,4 +196,13 @@ class EdgeAgentRuntime:
                 correlation_id=correlation_id,
                 result=result,
             )
+        )
+
+    @staticmethod
+    def _resolve_call_arguments(arguments: dict, encrypted_arguments: dict) -> dict:
+        if not encrypted_arguments:
+            return dict(arguments or {})
+        return decrypt_json_payload(
+            encrypted_arguments,
+            purpose=AGENT_ARGUMENTS_PURPOSE,
         )
