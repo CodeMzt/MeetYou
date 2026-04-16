@@ -89,14 +89,15 @@ cd MeetYou
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements-core.txt
 ```
 
 说明：
 
 - Windows 下激活命令是 `.venv\Scripts\activate`
-- `requirements.txt` 中的 Windows 专属依赖只会在 Windows 上安装
-- 如果服务器只运行 Core，不需要先安装桌面端依赖
+- 开发态全量安装仍可使用 `pip install -r requirements.txt`
+- 只部署 Core 时优先使用 `requirements-core.txt`
+- 只部署 `desktop-agent` / `edge-agent` 时分别使用 `requirements-desktop-agent.txt` / `requirements-edge-agent.txt`
 
 ### 2. 初始化配置文件
 
@@ -215,7 +216,7 @@ MEETYOU_CREDENTIAL_SECRET=
 Linux 服务器请显式使用：
 
 ```bash
-python main.py service
+python -m service_runtime
 ```
 
 不要用：
@@ -228,7 +229,8 @@ python main.py
 
 - `python main.py` 会进入 launcher
 - launcher 当前偏向 Windows / PowerShell 使用场景
-- 服务器部署应该直接运行 `service` 主入口
+- 服务器部署应该直接运行可分离的 Core 主入口
+- 开发环境仍可继续使用 `python main.py service`
 
 启动成功后默认地址通常是：
 
@@ -337,6 +339,12 @@ Agent WebSocket 还兼容 `access_token` query。
 - `desktop-agent` 应部署在用户自己的 Windows 电脑，而不是 Linux Core 服务器上
 - `mcp_servers_path` 指向的是本地 MCP 配置，不属于服务端 MCP
 
+启动命令：
+
+```bash
+python -m desktop_agent
+```
+
 ### `edge-agent` 示例
 
 `user/edge_agent.json`：
@@ -357,7 +365,7 @@ Agent WebSocket 还兼容 `access_token` query。
 启动命令：
 
 ```bash
-python main.py edge-agent
+python -m edge_agent
 ```
 
 ## MCP 配置边界
@@ -402,7 +410,7 @@ python main.py edge-agent
 
 - 反向代理：使用 Nginx / Caddy 暴露 `443`，转发到 `127.0.0.1:8000`
 - TLS：为 `client/ws` 与 `agent/ws` 提供 `wss://`
-- 进程守护：使用 `systemd`、Supervisor 或容器编排保证 `python main.py service` 常驻
+- 进程守护：使用 `systemd`、Supervisor 或容器编排保证 `python -m service_runtime` 常驻
 - 数据库：使用 PostgreSQL，不要依赖本地临时状态文件充当正式持久化
 - 密钥管理：`.env` 放服务器本地，避免把真实 token 和密码写进仓库
 - 防火墙：只开放必要端口，数据库优先内网访问
@@ -411,9 +419,67 @@ python main.py edge-agent
 一个最小 `systemd` 思路：
 
 - `WorkingDirectory` 指向仓库根目录
-- `ExecStart` 使用 `.venv` 中的 Python 执行 `python main.py service`
+- `ExecStart` 使用 `.venv` 中的 Python 执行 `python -m service_runtime`
 - `EnvironmentFile` 指向 `.env`
 - `Restart=always`
+
+仓库内已提供可直接改造的模板：
+
+- `deploy/systemd/meetyou-core.service.template`
+- `deploy/systemd/meetyou-desktop-agent.service.template`
+- `deploy/systemd/meetyou-edge-agent.service.template`
+- `deploy/systemd/*.env.example`
+- `scripts/linux/install-core-systemd.sh`
+- `scripts/linux/install-desktop-agent-systemd.sh`
+- `scripts/linux/install-edge-agent-systemd.sh`
+
+## 发布与升级策略
+
+MeetYou 当前按三个独立发布单元组织：
+
+- `Core Service`：服务端主链，负责 Gateway、数据库 migration、协议协商与权威状态
+- `desktop-agent`：用户设备侧本地能力运行时，单独使用 `requirements-desktop-agent.txt` 与 `python -m desktop_agent`
+- `edge-agent`：远端节点运行时，单独使用 `requirements-edge-agent.txt` 与 `python -m edge_agent`
+
+这三个发布单元可以独立打包、独立升级，不要求始终同批次上线；但协议兼容窗口只有有限范围，发布时要按下面顺序推进。
+
+### 推荐升级顺序
+
+1. 升级前先备份 PostgreSQL，并保留上一版 Core / Agent 可执行环境或安装包。
+2. 先升级 `Core Service`，确认 Alembic migration、`GET /health`、`GET /operator/agents` 与 `WSS /agent/ws` 正常。
+3. 先灰度一小批 `desktop-agent`，确认本机能力、握手协商与附件回传正常。
+4. 再灰度一小批 `edge-agent` 或单个 workspace 节点，确认远端节点 capability 调用稳定。
+5. 最后再扩大 Agent 覆盖范围；若有 UI 随版本更新，再单独推进 UI。
+
+这样做的原因是：Core 持有协议协商、Gateway 和数据库主链，先升级 Core 可以尽早暴露不兼容问题，并把 Agent 灰度范围控制在最小集合。
+
+### 兼容窗口
+
+当前文档与测试只明确承诺以下窗口：
+
+- `Core N` + `Agent N`：首选组合，`agent.hello.ack.payload.protocol.compatibility_mode` 应为 `negotiated`
+- `Core N` + `Agent N-1`：允许，通过 legacy/default 协商降级继续运行
+- `Core N-1` + `Agent N`：允许，Agent 需要接受旧 Core 返回的 legacy ack 并回退到兼容路径
+
+不承诺跨两个及以上发布代差的长期兼容，也不要把 `legacy_defaults` 当成常态运行方式。只要灰度确认完成，就应尽快把 Core、`desktop-agent`、`edge-agent` 收敛到同一发布代。
+
+### 灰度建议
+
+- Core 灰度：先在预发或单实例环境验证 `python -m service_runtime`、`/health`、`/client/ws`、`/agent/ws`
+- `desktop-agent` 灰度：优先选择一台内部 Windows 设备，检查 `agent.hello -> agent.ready`、一次 capability 调用、一次附件上传/下载
+- `edge-agent` 灰度：优先选择一个低风险 workspace 或单个边缘节点，检查 `transport_profile=edge_wss`、heartbeat 与低风险 capability
+- 观测重点：`accepted` 是否为 `true`、`compatibility_mode` 是否符合预期、是否出现 `reject_reason`、Agent 在线状态是否持续刷新
+
+如果灰度阶段已经出现 `compatibility_mode=rejected`、大面积 `legacy_defaults`、能力快照缺失或附件回传异常，就不要继续扩大范围。
+
+### 回滚说明
+
+- Agent 回滚优先：如果问题只出现在 `desktop-agent` 或 `edge-agent`，先回滚对应 Agent 包，不必立即回滚 Core
+- Core 回滚谨慎：Core 升级前必须先做 PostgreSQL 快照或备份；若 Core 版本需要回退，应连同上一版服务环境和对应数据快照一起恢复
+- 停止扩散：一旦灰度出现握手拒绝、持续掉线、能力调用失败或 migration 异常，立即停止后续批次
+- 回滚后复核：重新检查 `GET /health`、`GET /operator/agents`、一次 `capability.call.request -> result` 主链，再决定是否重启灰度
+
+如果 Core 已经引入新的数据库 schema 或状态写入口，不要只回滚代码而忽略数据快照；否则会把回滚变成未验证的混搭状态。
 
 ## 开发与桌面端补充
 
@@ -450,11 +516,11 @@ npm run build
 Linux 服务器首轮验收建议按这个顺序：
 
 1. `pip install -r requirements.txt`
-2. `python main.py service`
+2. `python -m service_runtime`
 3. `curl /health`
 4. 确认数据库 migration 成功
 5. 用一个客户端验证 `POST /client/messages` + `GET /client/ws`
-6. 启动一个 `edge-agent` 或 `desktop-agent`
+6. 启动一个 `python -m edge_agent` 或 `python -m desktop_agent`
 7. 检查 `GET /client/workspaces/{workspace_id}/agents` 是否能看到在线 Agent
 
 如果你只做最小 Agent 验证，建议关注：

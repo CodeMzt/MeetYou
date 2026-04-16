@@ -594,7 +594,16 @@ class DesktopAgentHeartbeatNegotiationTests(unittest.IsolatedAsyncioTestCase):
             {
                 "schema": "meetyou.agent.v1",
                 "type": "agent.hello.ack",
-                "payload": {"heartbeat_interval_seconds": 5},
+                "payload": {
+                    "heartbeat_interval_seconds": 5,
+                    "protocol": {
+                        "selected_schema": "meetyou.agent.v1",
+                        "selected_version": 1,
+                        "enabled_features": ["connection_prompt", "heartbeat_interval_negotiation"],
+                        "disabled_features": ["experimental.delta"],
+                        "compatibility_mode": "downgraded",
+                    },
+                },
             },
             False,
             object(),
@@ -604,3 +613,5 @@ class DesktopAgentHeartbeatNegotiationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ready_received)
         self.assertEqual(runtime._heartbeat_interval_seconds, 5)
         self.assertTrue(runtime._heartbeat_interval_updated.is_set())
+        self.assertEqual(runtime._negotiated_protocol["compatibility_mode"], "downgraded")
+        self.assertEqual(runtime._negotiated_protocol["disabled_features"], ["experimental.delta"])

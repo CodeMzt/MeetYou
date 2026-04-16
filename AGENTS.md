@@ -3,7 +3,9 @@
 ## 运行形态
 
 - 仓库分为两部分：根目录的 Python Core Service / agent runtime，以及 `meetyou-ui/` 下的 Electron + React 前端。
-- 当前正式入口是 `python main.py service`、`python main.py cil`、`python main.py desktop-agent`、`python main.py edge-agent`；`python main.py` / `python main.py launcher` 会打开 launcher。
+- 开发态统一入口仍是 `python main.py service`、`python main.py cil`、`python main.py desktop-agent`、`python main.py edge-agent`；`python main.py` / `python main.py launcher` 会打开 launcher。
+- 生产可分离入口改为 `python -m service_runtime`、`python -m desktop_agent`、`python -m edge_agent`；对应依赖清单分别是 `requirements-core.txt`、`requirements-desktop-agent.txt`、`requirements-edge-agent.txt`。
+- `Core Service`、`desktop-agent`、`edge-agent` 是三个独立发布单元；发布文档、升级说明、部署脚本不要再假设三者必须同包同批次上线。
 - 不要再使用旧的 `python main.py gateway` 或 launcher `start gateway`；该入口已移除。
 - Launcher 命令是 `start service`、`start cil`、`start ui`、`status`、`exit`。
 - OpenCode repo-local 配置放在 `.opencode/`；新会话优先用 `/repo-scan` 建立上下文，改完后优先用 `/verify-backend`、`/verify-frontend`、`/verify-fullstack`，不要临时猜验证流程。
@@ -70,12 +72,15 @@
 
 ## 常用命令
 
-- 后端安装：`python -m venv .venv`，`.venv\Scripts\activate`，`pip install -r requirements.txt`
-- 后端启动：`python main.py service`
+- 开发全量安装：`python -m venv .venv`，`.venv\Scripts\activate`，`pip install -r requirements.txt`
+- Core 生产安装：`pip install -r requirements-core.txt`
+- Desktop Agent 生产安装：`pip install -r requirements-desktop-agent.txt`
+- Edge Agent 生产安装：`pip install -r requirements-edge-agent.txt`
+- 后端启动：`python main.py service` 或 `python -m service_runtime`
 - Launcher：`python main.py`
 - CIL：`python main.py cil`
-- Desktop Agent：`python main.py desktop-agent`
-- Edge Agent：`python main.py edge-agent`
+- Desktop Agent：`python main.py desktop-agent` 或 `python -m desktop_agent`
+- Edge Agent：`python main.py edge-agent` 或 `python -m edge_agent`
 - 前端开发：在 `meetyou-ui/` 下执行 `npm install`、`npm run dev`（会拉起 Electron 开发窗口）
 - 前端校验：在 `meetyou-ui/` 下执行 `npm run typecheck`、`npm run test`
 - 前端构建：在 `meetyou-ui/` 下执行 `npm run build`（实际脚本是 `tsc && vite build && electron-builder`）
@@ -89,6 +94,8 @@
 - 任务完成前至少确认：改动落在正确边界内，没有重新引入旧入口名或旧路径契约。
 - 改动命中协议、配置、持久化或跨端交互时，必须补最小相关验证，而不是只做静态阅读。
 - 接口、启动方式、配置项或验证流程有变化时，同步更新 `AGENTS.md`、`README.md` 或相关 docs。
+- 如果改动涉及发布单元、升级顺序、兼容窗口、灰度或回滚口径，文档只能承诺已被代码或测试覆盖的范围；当前默认只承诺 `Core/Agent` 同版与相邻一代发布的兼容窗口。
+- 发布/回滚文档必须明确 `Core Service` 持有数据库 migration 与协议协商主导权；只有在保留对应 PostgreSQL 快照时才允许宣称可安全回滚 Core。
 - 如果变更会影响行为，但仓库里没有覆盖测试，说明里要明确测试缺口。
 - Danxi 二阶段相关改动完成前，至少确认四件事：1）独立窗口布局未退化；2）自动恢复/失效清理逻辑仍成立；3）凭证仍按加密口径跨边界；4）验收记录明确本次走直连还是 WebVPN。
 
@@ -97,6 +104,7 @@
 - 后端改动：先跑最小相关 `unittest` 模块；只有跨目录或跨子系统时再跑 `discover`。
 - 前端改动：先 `npm run typecheck`，再 `npm run test`；只有碰 Electron/Vite/build 链路时再跑 `npm run build`。当有实质功能需要测试，需要进行真实的功能测试，不能仅停留在编译测试。
 - Cross-surface 改动：先 backend，再 frontend；涉及 API/协议或 service 主链时，再补 `python smoke_check.py`。
+- 文档改动如果直接涉及 Agent 协议兼容、发布/回滚流程或部署主链，至少跑 `tests/test_agent_release_compatibility.py`；若同时改了 service 主链口径，再补 `python smoke_check.py`。
 - 桌面主链改动：在需要真实链路时跑 `scripts\manual-acceptance.cmd check`；要完整拉起 service + desktop-agent + UI 时用 `scripts\manual-acceptance.cmd start`。
 - 仓库里没有已配置好的 lint、pre-commit 或 CI workflow，不要在说明里假设这些检查存在。
 - Danxi 改动：先跑 `tests/test_danxi_tools.py`、`tests/test_assistant_modes.py`、`tests/test_gateway_surface_routes.py` 最小相关后端用例，再跑前端 `npm run typecheck` 和 `npm run test`；若做真链路，只执行少量顺序化浏览/搜索/发帖或回帖验证，并记录是否走 WebVPN。

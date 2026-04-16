@@ -4,7 +4,8 @@ import platform
 import socket
 from typing import Any
 
-from agent_protocol import (
+from agent_sdk.capability_ids import build_agent_capability_id
+from agent_sdk.protocol import (
     AGENT_SCHEMA,
     build_agent_capabilities_snapshot,
     build_agent_heartbeat,
@@ -22,7 +23,7 @@ def build_static_capabilities(config: EdgeAgentConfig, *, extra_capabilities: li
     agent_id = config.agent_id
     base = [
         {
-            "capability_id": f"agent.{agent_id}.utility.echo",
+            "capability_id": build_agent_capability_id(agent_id, "utility.echo"),
             "kind": "tool",
             "title": "Echo Payload",
             "tags": ["edge", "utility", "debug"],
@@ -48,7 +49,7 @@ def build_static_capabilities(config: EdgeAgentConfig, *, extra_capabilities: li
             },
         },
         {
-            "capability_id": f"agent.{agent_id}.math.add",
+            "capability_id": build_agent_capability_id(agent_id, "math.add"),
             "kind": "tool",
             "title": "Add Two Numbers",
             "tags": ["edge", "math", "deterministic"],
@@ -77,7 +78,7 @@ def build_static_capabilities(config: EdgeAgentConfig, *, extra_capabilities: li
             },
         },
         {
-            "capability_id": f"agent.{agent_id}.math.divide",
+            "capability_id": build_agent_capability_id(agent_id, "math.divide"),
             "kind": "tool",
             "title": "Divide Two Numbers",
             "tags": ["edge", "math", "deterministic"],

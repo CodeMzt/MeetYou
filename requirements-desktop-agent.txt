@@ -1,0 +1,8 @@
+# Desktop Agent production dependencies.
+aiohttp
+mcp
+psutil
+pydantic
+python-dotenv
+pywin32; platform_system == "Windows"
+uiautomation; platform_system == "Windows"

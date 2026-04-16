@@ -1,0 +1,24 @@
+# Core Service / CIL / launcher production dependencies.
+aiohttp
+alembic
+boto3
+fastapi
+lark-oapi
+mcp
+networkx
+numpy
+openpyxl
+pgvector
+Pillow
+prompt_toolkit
+psutil
+pydantic
+PyMuPDF
+python-docx
+python-dotenv
+python-pptx
+psycopg[binary]
+pytesseract
+pyvis
+SQLAlchemy>=2.0,<2.1
+uvicorn

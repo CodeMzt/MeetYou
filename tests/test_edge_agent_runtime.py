@@ -1,9 +1,13 @@
 import asyncio
 import io
+import json
 import unittest
 from contextlib import redirect_stdout
+from types import SimpleNamespace
 from unittest import mock
 
+import aiohttp
+from agent_sdk.runtime import AgentHandshakeRejected
 from edge_agent.config import EdgeAgentConfig
 from edge_agent.runtime import EdgeAgentRuntime
 import main as meetyou_main
@@ -199,6 +203,130 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ready_received)
         self.assertEqual(runtime._heartbeat_interval_seconds, 7)
         self.assertTrue(runtime._heartbeat_interval_updated.is_set())
+
+    async def test_hello_ack_tracks_negotiated_protocol_and_downgrade(self):
+        runtime = EdgeAgentRuntime(
+            EdgeAgentConfig(
+                core_base_url="http://127.0.0.1:8000",
+                agent_id="edge-test-agent",
+                workspace_ids=["home-lab"],
+            )
+        )
+
+        await runtime._handle_server_message(
+            {
+                "schema": "meetyou.agent.v1",
+                "type": "agent.hello.ack",
+                "payload": {
+                    "accepted": True,
+                    "requires_capability_snapshot": False,
+                    "protocol": {
+                        "selected_schema": "meetyou.agent.v1",
+                        "selected_version": 1,
+                        "enabled_features": ["connection_prompt"],
+                        "disabled_features": ["experimental.delta"],
+                        "compatibility_mode": "downgraded",
+                    },
+                },
+            },
+            False,
+            object(),
+        )
+
+        self.assertFalse(runtime._requires_capability_snapshot)
+        self.assertEqual(runtime._negotiated_protocol["selected_version"], 1)
+        self.assertEqual(runtime._negotiated_protocol["compatibility_mode"], "downgraded")
+        self.assertEqual(runtime._negotiated_protocol["disabled_features"], ["experimental.delta"])
+
+    async def test_hello_ack_rejection_raises_handshake_error(self):
+        runtime = EdgeAgentRuntime(
+            EdgeAgentConfig(
+                core_base_url="http://127.0.0.1:8000",
+                agent_id="edge-test-agent",
+                workspace_ids=["home-lab"],
+            )
+        )
+
+        with self.assertRaises(AgentHandshakeRejected) as ctx:
+            await runtime._handle_server_message(
+                {
+                    "schema": "meetyou.agent.v1",
+                    "type": "agent.hello.ack",
+                    "payload": {
+                        "accepted": False,
+                        "reject_reason": {
+                            "code": "unsupported_required_agent_features",
+                            "message": "gateway 不支持 agent 要求的 feature",
+                            "details": {"unsupported_features": ["experimental.delta"]},
+                        },
+                    },
+                },
+                False,
+                object(),
+            )
+
+        self.assertEqual(ctx.exception.code, "unsupported_required_agent_features")
+        self.assertEqual(ctx.exception.details["unsupported_features"], ["experimental.delta"])
+
+    async def test_complete_handshake_can_skip_snapshot_when_ack_does_not_require_it(self):
+        runtime = EdgeAgentRuntime(
+            EdgeAgentConfig(
+                core_base_url="http://127.0.0.1:8000",
+                agent_id="edge-test-agent",
+                workspace_ids=["home-lab"],
+            )
+        )
+
+        class _FakeMessage:
+            def __init__(self, payload):
+                self.type = aiohttp.WSMsgType.TEXT
+                self._payload = payload
+
+            def json(self, loads=json.loads):
+                return self._payload
+
+        class _FakeWs:
+            def __init__(self, messages):
+                self.sent = []
+                self._messages = list(messages)
+
+            async def send_json(self, payload):
+                self.sent.append(payload)
+
+            async def receive(self):
+                if self._messages:
+                    return self._messages.pop(0)
+                return SimpleNamespace(type=aiohttp.WSMsgType.CLOSED)
+
+        ws = _FakeWs(
+            [
+                _FakeMessage(
+                    {
+                        "schema": "meetyou.agent.v1",
+                        "type": "agent.hello.ack",
+                        "payload": {
+                            "accepted": True,
+                            "requires_capability_snapshot": False,
+                            "protocol": {
+                                "selected_schema": "meetyou.agent.v1",
+                                "selected_version": 1,
+                                "enabled_features": ["capability_snapshot_optional"],
+                                "disabled_features": [],
+                                "compatibility_mode": "negotiated",
+                            },
+                        },
+                    }
+                )
+            ]
+        )
+
+        await ws.send_json(runtime.build_hello_message())
+        ready_received = await runtime._complete_handshake(ws, object(), False)
+        if runtime._requires_capability_snapshot:
+            await runtime._send_capability_snapshot(ws)
+
+        self.assertFalse(ready_received)
+        self.assertEqual([item["type"] for item in ws.sent], ["agent.hello"])
 
     async def test_runtime_retries_after_transient_connection_failure(self):
         runtime = EdgeAgentRuntime(

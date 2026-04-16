@@ -136,6 +136,8 @@ Core -> Desktop Agent: agent.ready
 - Core 可在 `agent.hello.ack` 中下发新的 `heartbeat_interval_seconds`
 - Agent runtime 收到后应立即重排当前 heartbeat loop，而不是等待旧间隔自然耗尽
 - 此 heartbeat 只服务 transport 保活、在线状态与运行指标，不承载 Heart 的时间感判断
+- `agent.hello` / `agent.hello.ack` 现在显式承载 `schema` / `version` / `features` 协商；旧 Agent 若未携带协商块，Gateway 会按 legacy defaults 做兼容选择
+- 若 Agent 声明了 Gateway 不支持的 `required_features`、或没有共享 schema / version，Gateway 会返回 `agent.hello.ack.accepted=false` 与 `reject_reason`
 
 ### 7.3 回连
 
@@ -191,7 +193,21 @@ Core -> Edge Agent: agent.ready
       "os": "windows",
       "arch": "x86_64"
     },
-    "supports_offline_cache": true
+    "supports_offline_cache": true,
+    "protocol": {
+      "schema": "meetyou.agent.v1",
+      "version": 1,
+      "supported_schemas": ["meetyou.agent.v1"],
+      "supported_versions": [1],
+      "features": [
+        "capability_snapshot_optional",
+        "connection_prompt",
+        "feature_negotiation",
+        "heartbeat_interval_negotiation",
+        "hello_reject_reason"
+      ],
+      "required_features": []
+    }
   }
 }
 ```
@@ -200,6 +216,8 @@ Core -> Edge Agent: agent.ready
 
 - `desktop-agent` 通常会携带 `owner_client_*`，用于表达它归属于某个具体桌面 Client
 - `edge-agent` 一般不带这组字段，而是主要依赖 `agent_type=edge`、`transport_profile=edge_wss` 与 `workspace_ids`
+- `payload.protocol.features` 表示 Agent 可选支持的握手能力，Gateway 会在 ack 中选择交集
+- `payload.protocol.required_features` 表示没有这些能力就必须拒绝连接，而不是静默降级
 
 ### 9.2 `agent.hello.ack`
 
@@ -213,7 +231,17 @@ Core -> Edge Agent: agent.ready
     "accepted": true,
     "registered_agent_id": "desktop-main-agent",
     "heartbeat_interval_seconds": 20,
-    "requires_capability_snapshot": true
+    "requires_capability_snapshot": true,
+    "protocol": {
+      "selected_schema": "meetyou.agent.v1",
+      "selected_version": 1,
+      "enabled_features": [
+        "connection_prompt",
+        "heartbeat_interval_negotiation"
+      ],
+      "disabled_features": [],
+      "compatibility_mode": "legacy_defaults"
+    }
   }
 }
 ```
@@ -224,6 +252,48 @@ Core -> Edge Agent: agent.ready
 - `registered_agent_id`：Core 侧认定的 agent 标识
 - `heartbeat_interval_seconds`：当前连接应立即采用的 transport heartbeat 周期
 - `requires_capability_snapshot`：是否要求重新上报 capability 快照
+- `protocol.selected_*`：Gateway 最终选择的 schema / version
+- `protocol.enabled_features`：本连接真正启用的协商特性
+- `protocol.disabled_features`：Agent 声明但 Gateway 未启用的特性，用于显式降级
+- `protocol.compatibility_mode`：`negotiated` / `downgraded` / `legacy_defaults` / `rejected`
+- 当 `accepted=false` 时，`payload.reject_reason` 会返回 `code`、`message` 与 `details`
+
+### 9.2.1 发布兼容与升级窗口
+
+当前协议按独立发布单元设计：
+
+- `Core Service` 单独发布，负责 `agent.hello.ack`、数据库 migration 与最终兼容决策
+- `desktop-agent` 单独发布，允许按设备灰度
+- `edge-agent` 单独发布，允许按节点或 workspace 灰度
+
+当前代码与测试只明确覆盖这三种发布关系：
+
+- `Core N` + `Agent N`：首选路径，期望 `compatibility_mode=negotiated`
+- `Core N` + `Agent N-1`：允许继续运行，通常走 `legacy_defaults` 或受限降级路径
+- `Core N-1` + `Agent N`：允许继续运行，新 Agent 必须接受旧 Core 返回的 legacy ack 并回退
+
+协议文档不承诺跨两个及以上发布代差的长期兼容。如果出现以下任一情况，应视为停止灰度信号，而不是继续放量：
+
+- `accepted=false`
+- `compatibility_mode=rejected`
+- `required_features` 无法满足
+- 无共享 `schema` / `version`
+
+推荐升级顺序：
+
+1. 先升级 `Core Service`
+2. 观察 `agent.hello.ack`、heartbeat 与 capability 调用
+3. 先灰度少量 `desktop-agent`
+4. 再灰度少量 `edge-agent`
+5. 最后扩大到全量 Agent
+
+推荐回滚顺序：
+
+1. 如果问题仅出现在 Agent 侧，先回滚对应 `desktop-agent` 或 `edge-agent`
+2. 如果问题来自 Core 协议协商或 migration，先停止 Agent 放量
+3. 只有在已保留升级前 PostgreSQL 快照时，才回滚 Core 版本与数据
+
+换句话说，`agent.hello.ack` 既是握手响应，也是灰度与回滚阶段最关键的兼容观察点。
 
 ### 9.3 `agent.capabilities.snapshot`
 

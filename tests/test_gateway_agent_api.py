@@ -134,6 +134,10 @@ class GatewayAgentApiTests(unittest.TestCase):
             websocket.send_json(hello)
             hello_ack = websocket.receive_json()
             self.assertEqual(hello_ack["type"], "agent.hello.ack")
+            self.assertTrue(hello_ack["payload"]["accepted"])
+            self.assertEqual(hello_ack["payload"]["protocol"]["selected_schema"], "meetyou.agent.v1")
+            self.assertEqual(hello_ack["payload"]["protocol"]["selected_version"], 1)
+            self.assertEqual(hello_ack["payload"]["protocol"]["compatibility_mode"], "legacy_defaults")
             websocket.send_json(snapshot)
             ready = websocket.receive_json()
             self.assertEqual(ready["type"], "agent.ready")
@@ -158,6 +162,90 @@ class GatewayAgentApiTests(unittest.TestCase):
             self.assertIn("agent.desktop-main-agent.shell.exec", capability_ids)
             bindings = session.execute(select(CapabilityWorkspaceBinding)).scalars().all()
             self.assertGreaterEqual(len(bindings), 4)
+
+    def test_agent_hello_ack_negotiates_features_and_reports_downgrade(self):
+        hello = {
+            "schema": "meetyou.agent.v1",
+            "type": "agent.hello",
+            "message_id": "msg-hello-negotiated",
+            "sent_at": "2026-04-08T00:00:00Z",
+            "agent_id": "desktop-main-agent",
+            "payload": {
+                "agent_type": "desktop",
+                "display_name": "Desktop Main Agent",
+                "transport_profile": "desktop_wss",
+                "owner_client_id": "desktop-app",
+                "owner_client_type": "electron",
+                "owner_client_display_name": "Desktop App",
+                "workspace_ids": ["personal", "desktop-main"],
+                "supports_offline_cache": True,
+                "host": {"hostname": "DESKTOP-01", "os": "windows", "arch": "x86_64"},
+                "protocol": {
+                    "schema": "meetyou.agent.v1",
+                    "version": 1,
+                    "supported_schemas": ["meetyou.agent.v1"],
+                    "supported_versions": [1],
+                    "features": [
+                        "connection_prompt",
+                        "heartbeat_interval_negotiation",
+                        "feature_negotiation",
+                        "hello_reject_reason",
+                        "experimental.delta",
+                    ],
+                    "required_features": [],
+                },
+            },
+        }
+
+        with self.client.websocket_connect("/agent/ws", headers=self._auth_headers()) as websocket:
+            websocket.send_json(hello)
+            hello_ack = websocket.receive_json()
+
+        self.assertEqual(hello_ack["type"], "agent.hello.ack")
+        self.assertTrue(hello_ack["payload"]["accepted"])
+        self.assertEqual(hello_ack["payload"]["protocol"]["selected_version"], 1)
+        self.assertEqual(hello_ack["payload"]["protocol"]["compatibility_mode"], "downgraded")
+        self.assertIn("experimental.delta", hello_ack["payload"]["protocol"]["disabled_features"])
+        self.assertIn("heartbeat_interval_negotiation", hello_ack["payload"]["protocol"]["enabled_features"])
+        self.assertEqual(hello_ack["payload"]["heartbeat_interval_seconds"], 20)
+
+    def test_agent_hello_ack_rejects_unsupported_required_features_with_reason(self):
+        hello = {
+            "schema": "meetyou.agent.v1",
+            "type": "agent.hello",
+            "message_id": "msg-hello-reject-required-feature",
+            "sent_at": "2026-04-08T00:00:00Z",
+            "agent_id": "desktop-main-agent",
+            "payload": {
+                "agent_type": "desktop",
+                "display_name": "Desktop Main Agent",
+                "transport_profile": "desktop_wss",
+                "workspace_ids": ["personal", "desktop-main"],
+                "supports_offline_cache": True,
+                "host": {"hostname": "DESKTOP-01", "os": "windows", "arch": "x86_64"},
+                "protocol": {
+                    "schema": "meetyou.agent.v1",
+                    "version": 1,
+                    "supported_schemas": ["meetyou.agent.v1"],
+                    "supported_versions": [1],
+                    "features": ["feature_negotiation", "hello_reject_reason"],
+                    "required_features": ["experimental.delta"],
+                },
+            },
+        }
+
+        with self.client.websocket_connect("/agent/ws", headers=self._auth_headers()) as websocket:
+            websocket.send_json(hello)
+            hello_ack = websocket.receive_json()
+
+        self.assertEqual(hello_ack["type"], "agent.hello.ack")
+        self.assertFalse(hello_ack["payload"]["accepted"])
+        self.assertEqual(hello_ack["payload"]["protocol"]["compatibility_mode"], "rejected")
+        self.assertEqual(hello_ack["payload"]["reject_reason"]["code"], "unsupported_required_agent_features")
+        self.assertEqual(
+            hello_ack["payload"]["reject_reason"]["details"]["unsupported_features"],
+            ["experimental.delta"],
+        )
 
     def test_agent_hello_injects_core_event_and_returns_connection_prompt(self):
         async def _prompt_getter(**kwargs):

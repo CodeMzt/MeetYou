@@ -1,25 +1,4 @@
-aiohttp
-alembic
-boto3
-pgvector
-psycopg[binary]
-prompt_toolkit
-networkx
-numpy
-psutil
-pyvis
-SQLAlchemy>=2.0,<2.1
-# Windows-only host sensing for the desktop experience.
-uiautomation; platform_system == "Windows"
-mcp
-pywin32; platform_system == "Windows"
-python-dotenv
-fastapi
-uvicorn
-lark-oapi
-PyMuPDF
-python-docx
-openpyxl
-python-pptx
-Pillow
-pytesseract
+# Full development install: keep a single command for local unified startup.
+-r requirements-core.txt
+-r requirements-desktop-agent.txt
+-r requirements-edge-agent.txt
