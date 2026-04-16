@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
+from agent_sdk.capability_ids import build_agent_capability_id
+
 
 Handler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
@@ -52,7 +54,7 @@ async def math_divide_handler(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def build_capability_handlers(agent_id: str) -> dict[str, Handler]:
     return {
-        f"agent.{agent_id}.utility.echo": echo_handler,
-        f"agent.{agent_id}.math.add": math_add_handler,
-        f"agent.{agent_id}.math.divide": math_divide_handler,
+        build_agent_capability_id(agent_id, "utility.echo"): echo_handler,
+        build_agent_capability_id(agent_id, "math.add"): math_add_handler,
+        build_agent_capability_id(agent_id, "math.divide"): math_divide_handler,
     }

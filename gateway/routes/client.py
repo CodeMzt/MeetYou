@@ -8,8 +8,8 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import ValidationError
 
-from agent_protocol import build_capability_call_request
-from core.credential_transport import CredentialTransportError, decrypt_json_payload
+from agent_protocol import AGENT_ARGUMENTS_PURPOSE, build_capability_call_request
+from core.credential_transport import CredentialTransportError, decrypt_json_payload, protect_sensitive_arguments
 from core.http_headers import build_attachment_content_disposition
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import (
@@ -724,12 +724,15 @@ async def _dispatch_specific_agent_operation(gateway, domain, *, operation, thre
         await _publish_operation_update(gateway, operation=operation, thread_id=thread.thread_id, detail=error["message"], error=error)
         return operation, ""
 
+    public_arguments = metadata.get("arguments") if isinstance(metadata.get("arguments"), dict) else {}
+    encrypted_arguments = metadata.get("encrypted_arguments") if isinstance(metadata.get("encrypted_arguments"), dict) else None
+
     call = domain.services.operation_call.create_call(
         operation_id=operation.id,
         capability_id=capability.id,
         target_agent_id=target_agent.id,
         status="queued",
-        arguments=metadata.get("arguments") if isinstance(metadata.get("arguments"), dict) else {},
+        arguments=public_arguments,
     )
     dispatched = await gateway.dispatch_agent_call(
         agent_id=target_agent.agent_id,
@@ -740,7 +743,8 @@ async def _dispatch_specific_agent_operation(gateway, domain, *, operation, thre
             call_id=call.call_id,
             workspace_id=workspace.workspace_id,
             capability_id=capability_key,
-            arguments=dict(metadata.get("arguments") or {}),
+            arguments=dict(public_arguments or {}),
+            encrypted_arguments=encrypted_arguments,
             timeout_seconds=60,
             audit_context={
                 "principal_id": "self",
@@ -1765,6 +1769,25 @@ def build_client_router(gateway) -> APIRouter:
                 )
 
         approval_required = bool(target_agent is not None and capability is not None and _capability_requires_approval(capability))
+        operation_arguments = dict(payload.arguments or {})
+        operation_encrypted_arguments = None
+        operation_arguments_encrypted = False
+        if target_agent is not None and capability is not None:
+            try:
+                protected_arguments = protect_sensitive_arguments(
+                    operation_arguments,
+                    purpose=AGENT_ARGUMENTS_PURPOSE,
+                )
+            except CredentialTransportError as exc:
+                gateway._raise_http_error(
+                    status_code=503 if exc.code == "credential_key_unavailable" else 400,
+                    code=exc.code,
+                    message=exc.message,
+                )
+            operation_arguments = dict(protected_arguments.public_arguments or {})
+            operation_encrypted_arguments = protected_arguments.encrypted_arguments
+            operation_arguments_encrypted = bool(operation_encrypted_arguments)
+
         operation = domain.services.operation.create_operation(
             thread_id=thread.id,
             workspace_id=workspace.id,
@@ -1779,9 +1802,11 @@ def build_client_router(gateway) -> APIRouter:
                 "capability_id": getattr(capability, "capability_id", "") or capability_ref,
                 "capability_ref": capability_ref,
                 "abstract_capability_key": domain.services.capability.get_abstract_capability_key(capability) if capability is not None else "",
-                "arguments": dict(payload.arguments or {}),
+                "arguments": operation_arguments,
+                "arguments_encrypted": operation_arguments_encrypted,
                 "approval_required": approval_required,
                 "routing_reason": routing_reason,
+                **({"encrypted_arguments": operation_encrypted_arguments} if operation_encrypted_arguments else {}),
                 **({"procedure_id": procedure_profile.get("procedure_id", "")} if procedure is not None else {}),
                 **({"procedure": procedure_profile.get("procedure_snapshot", {})} if procedure is not None else {}),
             },

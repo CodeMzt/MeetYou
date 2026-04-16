@@ -4,7 +4,8 @@ import platform
 import socket
 from typing import Any
 
-from agent_protocol import (
+from agent_sdk.capability_ids import build_agent_capability_id
+from agent_sdk.protocol import (
     AGENT_SCHEMA,
     build_agent_capabilities_snapshot,
     build_agent_heartbeat,
@@ -22,7 +23,7 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
     agent_id = config.agent_id
     base = [
         {
-            "capability_id": f"agent.{agent_id}.utility.echo",
+            "capability_id": build_agent_capability_id(agent_id, "utility.echo"),
             "kind": "tool",
             "title": "Echo Payload",
             "tags": ["desktop", "utility", "debug"],
@@ -31,7 +32,7 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
             "workspace_ids": workspace_ids,
         },
         {
-            "capability_id": f"agent.{agent_id}.workspace.analyze",
+            "capability_id": build_agent_capability_id(agent_id, "workspace.analyze"),
             "kind": "tool",
             "title": "Analyze Workspace",
             "tags": ["desktop", "workspace", "read"],
@@ -40,7 +41,7 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
             "workspace_ids": workspace_ids,
         },
         {
-            "capability_id": f"agent.{agent_id}.file.read",
+            "capability_id": build_agent_capability_id(agent_id, "file.read"),
             "kind": "tool",
             "title": "Read Local File",
             "tags": ["desktop", "documents", "read"],
@@ -49,7 +50,7 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
             "workspace_ids": workspace_ids,
         },
         {
-            "capability_id": f"agent.{agent_id}.file.write",
+            "capability_id": build_agent_capability_id(agent_id, "file.write"),
             "kind": "tool",
             "title": "Write Local File",
             "tags": ["desktop", "documents", "write"],
@@ -58,7 +59,7 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
             "workspace_ids": workspace_ids,
         },
         {
-            "capability_id": f"agent.{agent_id}.shell.exec",
+            "capability_id": build_agent_capability_id(agent_id, "shell.exec"),
             "kind": "tool",
             "title": "Execute Local Command",
             "tags": ["desktop", "system", "shell"],

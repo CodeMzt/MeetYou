@@ -5,15 +5,13 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import aiohttp
-from agent_protocol import AGENT_ARGUMENTS_PURPOSE
-from core.credential_transport import CredentialTransportError, decrypt_json_payload
-
+from agent_sdk.protocol import AGENT_SCHEMA
+from agent_sdk.runtime import AgentRuntimeBase, CapabilityExecutionError, CapabilityExecutionOutcome
 from desktop_agent.config import DesktopAgentConfig
-from desktop_agent.mcp_runtime import DesktopAgentMCPRuntime
 from desktop_agent.execution import build_capability_handlers
+from desktop_agent.mcp_runtime import DesktopAgentMCPRuntime
+from desktop_agent.policy import DesktopAgentPolicyError
 from desktop_agent.protocol import (
-    AGENT_SCHEMA,
     build_call_accepted,
     build_call_error,
     build_call_progress,
@@ -31,42 +29,31 @@ except Exception:  # pragma: no cover
     psutil = None
 
 
-class DesktopAgentRuntime:
+class DesktopAgentRuntime(AgentRuntimeBase):
     def __init__(self, config: DesktopAgentConfig):
-        self.config = config
-        self._stop_event = asyncio.Event()
-        self._capability_revision = 1
-        self._handlers = build_capability_handlers(config)
         self._mcp_runtime = DesktopAgentMCPRuntime(config)
         self._mcp_init_task: asyncio.Task | None = None
         self._mcp_ready = False
-        self._active_ws = None
-        self._heartbeat_interval_seconds = max(1, int(config.heartbeat_interval_seconds))
-        self._heartbeat_interval_updated = asyncio.Event()
-        self._last_connection_prompt: dict[str, Any] | None = None
+        super().__init__(config, handlers=build_capability_handlers(config), logger=logger)
 
-    async def run(self) -> None:
-        try:
-            if self._mcp_init_task is None:
-                self._mcp_init_task = asyncio.create_task(self._initialize_mcp_runtime())
-            while not self._stop_event.is_set():
-                try:
-                    await self._run_connection()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    logger.exception("Desktop Agent connection failed: %s", exc)
-                if not self._stop_event.is_set():
-                    await asyncio.sleep(self.config.reconnect_delay_seconds)
-        finally:
-            if self._mcp_init_task is not None:
-                self._mcp_init_task.cancel()
-                with __import__("contextlib").suppress(asyncio.CancelledError):
-                    await self._mcp_init_task
-            await self._mcp_runtime.close()
+    @property
+    def protocol_schema(self) -> str:
+        return AGENT_SCHEMA
 
-    def stop(self) -> None:
-        self._stop_event.set()
+    @property
+    def runtime_label(self) -> str:
+        return "Desktop Agent"
+
+    async def startup(self) -> None:
+        if self._mcp_init_task is None:
+            self._mcp_init_task = asyncio.create_task(self._initialize_mcp_runtime())
+
+    async def shutdown(self) -> None:
+        if self._mcp_init_task is not None:
+            self._mcp_init_task.cancel()
+            with __import__("contextlib").suppress(asyncio.CancelledError):
+                await self._mcp_init_task
+        await self._mcp_runtime.close()
 
     async def _initialize_mcp_runtime(self) -> None:
         try:
@@ -77,96 +64,6 @@ class DesktopAgentRuntime:
             raise
         except Exception as exc:
             logger.exception("Desktop Agent MCP initialization failed: %s", exc)
-
-    async def _run_connection(self) -> None:
-        headers = {}
-        if self.config.agent_access_token:
-            headers["Authorization"] = f"Bearer {self.config.agent_access_token}"
-        timeout = aiohttp.ClientTimeout(total=None, connect=15)
-        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
-            async with session.ws_connect(self.config.websocket_url) as ws:
-                self._active_ws = ws
-                self._set_heartbeat_interval(self.config.heartbeat_interval_seconds, notify=False)
-                ready_received = False
-                await ws.send_json(build_hello(self.config))
-                await self._send_capability_snapshot(ws)
-                heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
-                try:
-                    async for message in ws:
-                        if message.type == aiohttp.WSMsgType.TEXT:
-                            payload = message.json(loads=__import__("json").loads)
-                            ready_received = await self._handle_server_message(
-                                payload,
-                                ready_received,
-                                ws,
-                                session,
-                            )
-                        elif message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
-                            break
-                finally:
-                    heartbeat_task.cancel()
-                    with __import__("contextlib").suppress(asyncio.CancelledError):
-                        await heartbeat_task
-                    if self._active_ws is ws:
-                        self._active_ws = None
-
-    async def _send_capability_snapshot(self, ws) -> None:
-        await ws.send_json(
-            build_capabilities_snapshot(
-                self.config,
-                revision=self._capability_revision,
-                extra_capabilities=self._mcp_runtime.capability_definitions() if self._mcp_ready else [],
-            )
-        )
-
-    def _set_heartbeat_interval(self, interval: int, *, notify: bool = True) -> int:
-        normalized = max(1, int(interval))
-        changed = normalized != self._heartbeat_interval_seconds
-        self._heartbeat_interval_seconds = normalized
-        if notify and changed:
-            self._heartbeat_interval_updated.set()
-        return normalized
-
-    async def _heartbeat_loop(self, ws) -> None:
-        while True:
-            interval = max(3, self._heartbeat_interval_seconds)
-            try:
-                await asyncio.wait_for(self._heartbeat_interval_updated.wait(), timeout=interval)
-                self._heartbeat_interval_updated.clear()
-                continue
-            except asyncio.TimeoutError:
-                pass
-            await ws.send_json(build_heartbeat(self.config, metrics=self._collect_metrics()))
-
-    async def _handle_server_message(self, payload: dict, ready_received: bool, ws, session) -> bool:
-        schema = str(payload.get("schema") or "")
-        if schema != AGENT_SCHEMA:
-            return ready_received
-        message_type = str(payload.get("type") or "")
-        if message_type == "agent.hello.ack":
-            ack_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-            next_interval = int(ack_payload.get("heartbeat_interval_seconds") or self._heartbeat_interval_seconds)
-            self._set_heartbeat_interval(next_interval)
-            connection_prompt = ack_payload.get("connection_prompt")
-            if isinstance(connection_prompt, dict) and connection_prompt:
-                self._last_connection_prompt = dict(connection_prompt)
-                logger.info(
-                    "Desktop Agent received connection prompt %s",
-                    connection_prompt.get("prompt_name") or "agent_connected",
-                )
-            logger.info("Desktop Agent hello acknowledged: %s", ack_payload)
-            return ready_received
-        if message_type == "agent.message":
-            agent_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-            logger.info("Desktop Agent received Core reply: %s", agent_payload)
-            return ready_received
-        if message_type == "agent.ready":
-            logger.info("Desktop Agent ready: %s", payload.get("payload", {}))
-            return True
-        if message_type == "capability.call.request":
-            await self._handle_call_request(ws, payload, session)
-            return ready_received
-        return ready_received
 
     @staticmethod
     def _split_result_payload(result: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -251,117 +148,91 @@ class DesktopAgentRuntime:
             )
         return uploaded
 
-    async def _handle_call_request(self, ws, payload: dict, session) -> None:
-        envelope_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
-        call_id = str(envelope_payload.get("call_id") or "")
-        capability_id = str(envelope_payload.get("capability_id") or "")
-        operation_id = str(envelope_payload.get("operation_id") or "")
-        correlation_id = str(payload.get("message_id") or "")
-        arguments = envelope_payload.get("arguments") if isinstance(envelope_payload.get("arguments"), dict) else {}
-        encrypted_arguments = (
-            envelope_payload.get("encrypted_arguments")
-            if isinstance(envelope_payload.get("encrypted_arguments"), dict)
-            else {}
+    def build_hello_message(self) -> dict[str, Any]:
+        return build_hello(self.config)
+
+    def build_capabilities_snapshot_message(self, *, revision: int) -> dict[str, Any]:
+        return build_capabilities_snapshot(
+            self.config,
+            revision=revision,
+            extra_capabilities=self._mcp_runtime.capability_definitions() if self._mcp_ready else [],
         )
-        if not call_id or not capability_id:
-            return
-        try:
-            arguments = self._resolve_call_arguments(arguments, encrypted_arguments)
-        except CredentialTransportError as exc:
-            await ws.send_json(
-                build_call_error(
-                    self.config,
-                    call_id=call_id,
-                    correlation_id=correlation_id,
-                    code=exc.code,
-                    message=exc.message,
-                )
-            )
-            return
+
+    def build_heartbeat_message(self, *, metrics: dict[str, Any] | None = None) -> dict[str, Any]:
+        return build_heartbeat(self.config, metrics=metrics)
+
+    def build_call_accepted_message(self, *, call_id: str, correlation_id: str) -> dict[str, Any]:
+        return build_call_accepted(self.config, call_id=call_id, correlation_id=correlation_id)
+
+    def build_call_progress_message(self, *, call_id: str, correlation_id: str, phase: str, detail: str) -> dict[str, Any]:
+        return build_call_progress(
+            self.config,
+            call_id=call_id,
+            correlation_id=correlation_id,
+            phase=phase,
+            detail=detail,
+        )
+
+    def build_call_result_message(self, *, call_id: str, correlation_id: str, outcome: CapabilityExecutionOutcome) -> dict[str, Any]:
+        return build_call_result(
+            self.config,
+            call_id=call_id,
+            correlation_id=correlation_id,
+            result=outcome.result,
+            attachment_outputs=outcome.attachment_outputs,
+        )
+
+    def build_call_error_message(
+        self,
+        *,
+        call_id: str,
+        correlation_id: str,
+        code: str,
+        message: str,
+        retryable: bool = False,
+    ) -> dict[str, Any]:
+        return build_call_error(
+            self.config,
+            call_id=call_id,
+            correlation_id=correlation_id,
+            code=code,
+            message=message,
+            retryable=retryable,
+        )
+
+    def call_progress_detail(self, capability_id: str) -> str:
+        del capability_id
+        return "Dispatching capability handler"
+
+    async def execute_capability(
+        self,
+        *,
+        capability_id: str,
+        arguments: dict[str, Any],
+        envelope_payload: dict[str, Any],
+        session,
+    ) -> CapabilityExecutionOutcome:
+        operation_id = str(envelope_payload.get("operation_id") or "")
         handler = self._handlers.get(capability_id)
-        await ws.send_json(build_call_accepted(self.config, call_id=call_id, correlation_id=correlation_id))
-        await ws.send_json(build_call_progress(self.config, call_id=call_id, correlation_id=correlation_id, phase="running", detail="Dispatching capability handler"))
         if handler is None and self._mcp_runtime.can_handle(capability_id):
             try:
                 result = await self._mcp_runtime.call_capability(capability_id, arguments)
             except Exception as exc:
-                await ws.send_json(
-                    build_call_error(
-                        self.config,
-                        call_id=call_id,
-                        correlation_id=correlation_id,
-                        code="mcp_call_failed",
-                        message=str(exc),
-                    )
-                )
-                return
+                raise CapabilityExecutionError("mcp_call_failed", str(exc)) from exc
             result_payload, attachment_outputs = self._split_result_payload(result)
             uploaded = await self._upload_attachment_outputs(session, operation_id=operation_id, attachment_outputs=attachment_outputs)
-            await ws.send_json(
-                build_call_result(
-                    self.config,
-                    call_id=call_id,
-                    correlation_id=correlation_id,
-                    result=result_payload,
-                    attachment_outputs=uploaded,
-                )
-            )
-            return
+            return CapabilityExecutionOutcome(result=result_payload, attachment_outputs=uploaded)
         if handler is None:
-            await ws.send_json(
-                build_call_error(
-                    self.config,
-                    call_id=call_id,
-                    correlation_id=correlation_id,
-                    code="capability_not_implemented",
-                    message=f"Capability not implemented: {capability_id}",
-                )
-            )
-            return
+            raise CapabilityExecutionError("capability_not_implemented", f"Capability not implemented: {capability_id}")
         try:
             result = await handler(arguments)
         except DesktopAgentPolicyError as exc:
-            await ws.send_json(
-                build_call_error(
-                    self.config,
-                    call_id=call_id,
-                    correlation_id=correlation_id,
-                    code=exc.code,
-                    message=exc.message,
-                )
-            )
-            return
+            raise CapabilityExecutionError(exc.code, exc.message) from exc
         except Exception as exc:
-            await ws.send_json(
-                build_call_error(
-                    self.config,
-                    call_id=call_id,
-                    correlation_id=correlation_id,
-                    code="capability_execution_failed",
-                    message=str(exc),
-                )
-            )
-            return
+            raise CapabilityExecutionError("capability_execution_failed", str(exc)) from exc
         result_payload, attachment_outputs = self._split_result_payload(result)
         uploaded = await self._upload_attachment_outputs(session, operation_id=operation_id, attachment_outputs=attachment_outputs)
-        await ws.send_json(
-            build_call_result(
-                self.config,
-                call_id=call_id,
-                correlation_id=correlation_id,
-                result=result_payload,
-                attachment_outputs=uploaded,
-            )
-        )
-
-    @staticmethod
-    def _resolve_call_arguments(arguments: dict[str, Any], encrypted_arguments: dict[str, Any]) -> dict[str, Any]:
-        if not encrypted_arguments:
-            return dict(arguments or {})
-        return decrypt_json_payload(
-            encrypted_arguments,
-            purpose=AGENT_ARGUMENTS_PURPOSE,
-        )
+        return CapabilityExecutionOutcome(result=result_payload, attachment_outputs=uploaded)
 
     @staticmethod
     def _collect_metrics() -> dict[str, float | int]:
@@ -373,3 +244,6 @@ class DesktopAgentRuntime:
             "active_calls": 0,
             "offline_queue_size": 0,
         }
+
+    def collect_metrics(self) -> dict[str, float | int]:
+        return self._collect_metrics()

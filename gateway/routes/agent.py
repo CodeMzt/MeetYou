@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from agent_protocol import (
+    AGENT_FEATURE_CONNECTION_PROMPT,
+    AGENT_FEATURE_HEARTBEAT_INTERVAL_NEGOTIATION,
+    AGENT_PROTOCOL_VERSION,
     AGENT_WS_SCHEMA,
     AgentCapabilitiesSnapshotPayload,
     AgentEnvelope,
@@ -13,6 +17,11 @@ from agent_protocol import (
     CapabilityCallProgressPayload,
     CapabilityCallResultPayload,
     build_agent_envelope,
+    build_agent_protocol_selection,
+    build_agent_reject_reason,
+    infer_agent_protocol_offer,
+    DEFAULT_AGENT_PROTOCOL_FEATURES,
+    LEGACY_AGENT_PROTOCOL_FEATURES,
 )
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
@@ -22,11 +31,67 @@ from core.http_headers import build_attachment_content_disposition
 from service_runtime.models import RuntimeError
 
 logger = logging.getLogger("meetyou.gateway.agent_ws")
+_GATEWAY_PROTOCOL_FEATURES = frozenset(DEFAULT_AGENT_PROTOCOL_FEATURES)
 
 
 def _workspace_title(workspace_id: str) -> str:
     cleaned = str(workspace_id or "").strip()
     return cleaned.replace("-", " ").replace("_", " ").title() or "Workspace"
+
+
+def _negotiate_agent_protocol(payload: AgentHelloPayload, *, envelope_schema: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    protocol_present = isinstance(payload.protocol, dict) and bool(payload.protocol)
+    offer = infer_agent_protocol_offer(
+        payload.protocol if protocol_present else None,
+        envelope_schema=envelope_schema,
+        default_features=LEGACY_AGENT_PROTOCOL_FEATURES,
+    )
+    offered_schemas = set(offer.get("supported_schemas") or [])
+    if AGENT_WS_SCHEMA not in offered_schemas:
+        return None, build_agent_reject_reason(
+            "unsupported_agent_schema",
+            f"gateway 不支持 agent 提供的 schema 集: {sorted(offered_schemas)}",
+            details={
+                "supported_schemas": sorted(offered_schemas),
+                "gateway_supported_schemas": [AGENT_WS_SCHEMA],
+            },
+        )
+    offered_versions = {int(value) for value in offer.get("supported_versions") or []}
+    if AGENT_PROTOCOL_VERSION not in offered_versions:
+        return None, build_agent_reject_reason(
+            "unsupported_agent_version",
+            f"gateway 不支持 agent 提供的协议版本: {sorted(offered_versions)}",
+            details={
+                "supported_versions": sorted(offered_versions),
+                "gateway_supported_versions": [AGENT_PROTOCOL_VERSION],
+            },
+        )
+    required_features = set(offer.get("required_features") or [])
+    missing_required_features = sorted(required_features - _GATEWAY_PROTOCOL_FEATURES)
+    if missing_required_features:
+        return None, build_agent_reject_reason(
+            "unsupported_required_agent_features",
+            f"gateway 不支持 agent 要求的 feature: {missing_required_features}",
+            details={
+                "required_features": sorted(required_features),
+                "unsupported_features": missing_required_features,
+                "gateway_supported_features": sorted(_GATEWAY_PROTOCOL_FEATURES),
+            },
+        )
+    requested_features = set(offer.get("features") or [])
+    enabled_features = sorted(requested_features & _GATEWAY_PROTOCOL_FEATURES)
+    disabled_features = sorted(requested_features - _GATEWAY_PROTOCOL_FEATURES)
+    compatibility_mode = "legacy_defaults" if not protocol_present else "downgraded" if disabled_features else "negotiated"
+    return (
+        build_agent_protocol_selection(
+            selected_schema=AGENT_WS_SCHEMA,
+            selected_version=AGENT_PROTOCOL_VERSION,
+            enabled_features=enabled_features,
+            disabled_features=disabled_features,
+            compatibility_mode=compatibility_mode,
+        ),
+        None,
+    )
 
 
 def build_agent_router(gateway) -> APIRouter:
@@ -135,6 +200,35 @@ def build_agent_router(gateway) -> APIRouter:
                 try:
                     if envelope.type == "agent.hello":
                         payload = AgentHelloPayload.model_validate(envelope.payload)
+                        negotiated_protocol, reject_reason = _negotiate_agent_protocol(
+                            payload,
+                            envelope_schema=envelope.schema_name,
+                        )
+                        if reject_reason is not None:
+                            sent = await gateway._safe_send_json(
+                                websocket,
+                                build_agent_envelope(
+                                    envelope_type="agent.hello.ack",
+                                    agent_id=envelope.agent_id,
+                                    message_id=f"ack-{envelope.message_id}",
+                                    correlation_id=envelope.message_id,
+                                    payload={
+                                        "accepted": False,
+                                        "registered_agent_id": "",
+                                        "requires_capability_snapshot": False,
+                                        "protocol": build_agent_protocol_selection(
+                                            selected_schema="",
+                                            selected_version=0,
+                                            compatibility_mode="rejected",
+                                        ),
+                                        "reject_reason": reject_reason,
+                                    },
+                                ),
+                            )
+                            if not sent:
+                                break
+                            await websocket.close(code=1008, reason=str(reject_reason.get("code") or "agent_handshake_rejected"))
+                            break
                         bound_agent_id = envelope.agent_id
                         owner_client = None
                         if payload.owner_client_id:
@@ -166,22 +260,30 @@ def build_agent_router(gateway) -> APIRouter:
                             host_arch=str(payload.host.get("arch") or ""),
                             supports_offline_cache=payload.supports_offline_cache,
                             owner_client_id=getattr(owner_client, "id", None),
-                            meta={"last_hello": envelope.model_dump()},
+                            meta={
+                                "last_hello": envelope.model_dump(),
+                                "negotiated_protocol": negotiated_protocol,
+                            },
                         )
-                        connection_prompt = await gateway.build_agent_connection_prompt(
-                            agent_id=envelope.agent_id,
-                            agent_type=payload.agent_type,
-                            display_name=payload.display_name,
-                            transport_profile=payload.transport_profile,
-                            workspace_ids=payload.workspace_ids,
-                        )
+                        enabled_features = set((negotiated_protocol or {}).get("enabled_features") or [])
+                        connection_prompt = None
+                        if AGENT_FEATURE_CONNECTION_PROMPT in enabled_features:
+                            connection_prompt = await gateway.build_agent_connection_prompt(
+                                agent_id=envelope.agent_id,
+                                agent_type=payload.agent_type,
+                                display_name=payload.display_name,
+                                transport_profile=payload.transport_profile,
+                                workspace_ids=payload.workspace_ids,
+                            )
                         await gateway.agent_ws_manager.connect(current_agent.agent_id, websocket)
                         ack_payload = {
                             "accepted": True,
                             "registered_agent_id": envelope.agent_id,
                             "requires_capability_snapshot": True,
-                            "heartbeat_interval_seconds": 20,
+                            "protocol": negotiated_protocol,
                         }
+                        if AGENT_FEATURE_HEARTBEAT_INTERVAL_NEGOTIATION in enabled_features:
+                            ack_payload["heartbeat_interval_seconds"] = 20
                         if connection_prompt:
                             ack_payload["connection_prompt"] = connection_prompt
                         sent = await gateway._safe_send_json(

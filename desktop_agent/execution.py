@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from agent_sdk.capability_ids import build_agent_capability_id
 from desktop_agent.config import DesktopAgentConfig
 from desktop_agent.policy import (
     DesktopAgentPolicyError,
@@ -156,9 +157,9 @@ def build_workspace_analyze_handler(config: DesktopAgentConfig) -> Handler:
 
 def build_capability_handlers(config: DesktopAgentConfig) -> dict[str, Handler]:
     return {
-        f"agent.{config.agent_id}.utility.echo": echo_handler,
-        f"agent.{config.agent_id}.workspace.analyze": build_workspace_analyze_handler(config),
-        f"agent.{config.agent_id}.file.read": build_file_read_handler(config),
-        f"agent.{config.agent_id}.file.write": build_file_write_handler(config),
-        f"agent.{config.agent_id}.shell.exec": build_shell_exec_handler(config),
+        build_agent_capability_id(config.agent_id, "utility.echo"): echo_handler,
+        build_agent_capability_id(config.agent_id, "workspace.analyze"): build_workspace_analyze_handler(config),
+        build_agent_capability_id(config.agent_id, "file.read"): build_file_read_handler(config),
+        build_agent_capability_id(config.agent_id, "file.write"): build_file_write_handler(config),
+        build_agent_capability_id(config.agent_id, "shell.exec"): build_shell_exec_handler(config),
     }

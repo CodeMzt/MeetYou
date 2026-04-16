@@ -1,18 +1,13 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
+from agent_sdk.capability_ids import build_mcp_capability_id, slug_capability_segment
+from agent_sdk.risk import ToolRiskClassifier
 from desktop_agent.config import DesktopAgentConfig
-from core.tool_runtime.risk import ToolRiskClassifier
 from tools.mcp import MCPManager
-
-
-def _slug(value: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", str(value or "").strip())
-    return cleaned.strip("_") or "item"
 
 
 class DesktopAgentMCPRuntime:
@@ -85,12 +80,12 @@ class DesktopAgentMCPRuntime:
                 if not tool_name:
                     continue
                 risk_level = self._risk_classifier.get_tool_action_risk(tool_name)
-                capability_id = f"agent.{self._config.agent_id}.mcp.{_slug(server_name)}.{_slug(tool_name)}"
+                capability_id = build_mcp_capability_id(self._config.agent_id, server_name, tool_name)
                 mapping[capability_id] = {
                     "capability_id": capability_id,
                     "kind": "tool",
                     "title": str(function.get("description") or tool_name),
-                    "tags": ["desktop", "mcp", _slug(server_name)],
+                    "tags": ["desktop", "mcp", slug_capability_segment(server_name)],
                     "risk_level": risk_level,
                     "requires_confirmation": risk_level != "read",
                     "workspace_ids": list(self._config.workspace_ids),
