@@ -39,11 +39,43 @@ const DANXI_WEBVPN_LOGIN_PREFIX = 'https://webvpn.fudan.edu.cn/login'
 const DANXI_LOGIN_PURPOSE = 'danxi.client.login.v1'
 const DANXI_WEBVPN_PURPOSE = 'danxi.client.webvpn_cookie.v1'
 const DESKTOP_BACKEND_READY_TIMEOUT_MS = 15000
+const DEFAULT_DESKTOP_BRIDGE_HOST = '127.0.0.1'
+const DEFAULT_DESKTOP_BRIDGE_PORT = 38951
 let desktopBackendProcess: ChildProcess | null = null
 let desktopBridgeAccessToken = ''
+let desktopBridgeBaseUrl = DEFAULT_BASE_URL
 
 function getWorkspaceRoot() {
   return path.resolve(app.getAppPath(), '..')
+}
+
+function readDesktopAgentConfigValue<T = unknown>(key: string): T | null {
+  const configPath = path.join(getWorkspaceRoot(), 'user', 'desktop_agent.json')
+  try {
+    const payload = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>
+    return (payload[key] as T | undefined) ?? null
+  } catch {
+    return null
+  }
+}
+
+function resolveDesktopBridgeBaseUrl() {
+  const host = String(
+    process.env.MEETYOU_DESKTOP_LOCAL_HOST ||
+    readWorkspaceEnvValue(['MEETYOU_DESKTOP_LOCAL_HOST']) ||
+    readDesktopAgentConfigValue<string>('local_bridge_host') ||
+    DEFAULT_DESKTOP_BRIDGE_HOST,
+  ).trim() || DEFAULT_DESKTOP_BRIDGE_HOST
+
+  const portText = String(
+    process.env.MEETYOU_DESKTOP_LOCAL_PORT ||
+    readWorkspaceEnvValue(['MEETYOU_DESKTOP_LOCAL_PORT']) ||
+    readDesktopAgentConfigValue<number>('local_bridge_port') ||
+    DEFAULT_DESKTOP_BRIDGE_PORT,
+  ).trim()
+  const numericPort = Number.parseInt(portText, 10)
+  const port = Number.isFinite(numericPort) && numericPort > 0 ? numericPort : DEFAULT_DESKTOP_BRIDGE_PORT
+  return `http://${host}:${port}`
 }
 
 function resolveWorkspacePython() {
@@ -70,7 +102,7 @@ async function waitForDesktopBackend(timeoutMs = DESKTOP_BACKEND_READY_TIMEOUT_M
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(`${DEFAULT_BASE_URL}${DESKTOP_BRIDGE_STATUS_PATH}`)
+      const response = await fetch(`${desktopBridgeBaseUrl}${DESKTOP_BRIDGE_STATUS_PATH}`)
       if (response.ok) {
         return true
       }
@@ -83,6 +115,10 @@ async function waitForDesktopBackend(timeoutMs = DESKTOP_BACKEND_READY_TIMEOUT_M
 }
 
 async function ensureDesktopBackendStarted() {
+  desktopBridgeBaseUrl = resolveDesktopBridgeBaseUrl()
+  process.env.MEETYOU_DESKTOP_BRIDGE_BASE_URL = desktopBridgeBaseUrl
+  latestRuntimeDebugWindow = { ...latestRuntimeDebugWindow, baseUrl: desktopBridgeBaseUrl }
+  latestDanxiWindow = { ...latestDanxiWindow, baseUrl: desktopBridgeBaseUrl }
   if (await waitForDesktopBackend(500)) {
     desktopBridgeAccessToken = ''
     return
@@ -739,6 +775,8 @@ function createWindow() {
   ipcMain.on('cancel-danxi-auth-window', () => {
     danxiAuthWin?.close()
   })
+  ipcMain.removeHandler('get-desktop-bridge-base-url')
+  ipcMain.handle('get-desktop-bridge-base-url', () => desktopBridgeBaseUrl)
   ipcMain.removeHandler('get-gateway-access-token')
   ipcMain.handle('get-gateway-access-token', () => desktopBridgeAccessToken)
   ipcMain.removeHandler('encrypt-danxi-credentials')

@@ -1,4 +1,14 @@
-export const DEFAULT_BASE_URL = 'http://127.0.0.1:38951'
+const DEFAULT_LOCAL_BRIDGE_BASE_URL = 'http://127.0.0.1:38951'
+
+function resolveRendererBridgeBaseUrl(): string {
+  if (typeof window === 'undefined') {
+    return DEFAULT_LOCAL_BRIDGE_BASE_URL
+  }
+  const candidate = String(window.meetyouDesktopRuntime?.bridgeBaseUrl || '').trim()
+  return candidate || DEFAULT_LOCAL_BRIDGE_BASE_URL
+}
+
+export const DEFAULT_BASE_URL = resolveRendererBridgeBaseUrl()
 export const DESKTOP_BRIDGE_STATUS_PATH = '/desktop/bridge/status'
 
 export const WINDOW_HASH_ROUTE = {
