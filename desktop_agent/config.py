@@ -10,6 +10,7 @@ from pathlib import Path
 DEFAULT_CONFIG_PATH = Path("user") / "desktop_agent.json"
 DEFAULT_LOCAL_BRIDGE_HOST = "127.0.0.1"
 DEFAULT_LOCAL_BRIDGE_PORT = 38951
+DEFAULT_ENV_PATH = Path(".env")
 
 
 def _default_agent_id() -> str:
@@ -95,7 +96,17 @@ def _to_bool(value: object, *, default: bool) -> bool:
     return default
 
 
+def _load_env_file(env_file_path: Path = DEFAULT_ENV_PATH) -> None:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_file_path, override=True)
+    except ImportError:
+        return
+
+
 def load_desktop_agent_config(config_file_path: str | None = None) -> DesktopAgentConfig:
+    _load_env_file()
     file_path = Path(config_file_path or DEFAULT_CONFIG_PATH)
     payload: dict[str, object] = {}
     if file_path.exists():
