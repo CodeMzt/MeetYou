@@ -370,6 +370,7 @@ Agent WebSocket 还兼容 `access_token` query。
 {
   "core_base_url": "https://your-domain.example",
   "agent_access_token": "replace-with-agent-token",
+  "gateway_access_token": "replace-with-gateway-token",
   "agent_id": "desktop-main-agent",
   "display_name": "Desktop Main Agent",
   "owner_client_id": "desktop-app",
@@ -393,6 +394,7 @@ Agent WebSocket 还兼容 `access_token` query。
 - `desktop-agent` 应部署在用户自己的 Windows 电脑，而不是 Linux Core 服务器上
 - `mcp_servers_path` 指向的是本地 MCP 配置，不属于服务端 MCP
 - 正常桌面链路下，Electron UI 会优先托管这个 backend；`python -m desktop_agent` 主要保留给 backend-only 调试
+- 如果 Core 开启了 Gateway 鉴权，桌面 UI 经本地 bridge 访问 `client/*` 时需要有效的 `gateway_access_token`；建议直接在 `.env` 中配置 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 
 启动命令：
 

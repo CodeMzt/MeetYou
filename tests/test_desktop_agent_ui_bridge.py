@@ -30,7 +30,8 @@ class DesktopUiBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.bridge = DesktopUiBridge(
             DesktopAgentConfig(
                 core_base_url=self.core_base_url,
-                agent_access_token="core-token",
+                agent_access_token="agent-token",
+                gateway_access_token="core-token",
                 local_bridge_port=self.bridge_port,
                 local_bridge_access_token="local-token",
             )
