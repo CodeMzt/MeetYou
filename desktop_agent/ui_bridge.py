@@ -208,20 +208,46 @@ class DesktopUiBridge:
         return f"{scheme}://{base.split('://', 1)[1]}{path}{('?' + query_string) if query_string else ''}"
 
     async def _handle_status(self, _request: web.Request) -> web.Response:
-        bridge_token_source = "none"
-        if self._config.gateway_access_token:
-            if self._config.gateway_access_token == self._config.agent_access_token:
-                bridge_token_source = "gateway_or_agent"
-            else:
-                bridge_token_source = "gateway_only"
+        core_reachable = False
+        core_auth_ok = False
+        core_diagnostic = ""
+        if self._session is not None:
+            try:
+                async with self._session.get(
+                    f"{self._config.core_base_url.rstrip('/')}/health",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as health_resp:
+                    core_reachable = health_resp.status < 500
+                    core_auth_ok = health_resp.status < 400
+                    if not core_auth_ok:
+                        core_diagnostic = f"Core /health returned {health_resp.status}"
+            except Exception as exc:
+                core_diagnostic = f"Core unreachable: {exc}"
+
+            if core_reachable and not core_auth_ok:
+                try:
+                    headers = _build_core_auth_headers(self._config.gateway_access_token)
+                    async with self._session.get(
+                        f"{self._config.core_base_url.rstrip('/')}/client/workspaces",
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as ws_resp:
+                        core_auth_ok = ws_resp.status < 400
+                        if not core_auth_ok:
+                            core_diagnostic = f"Core client surface returned {ws_resp.status} — gateway_access_token may be wrong or missing"
+                except Exception as exc:
+                    core_diagnostic = f"Core client surface check failed: {exc}"
+
         return web.json_response(
             {
                 "status": "ready",
                 "local_bridge_base_url": self._config.local_bridge_base_url,
                 "core_base_url": self._config.core_base_url,
                 "local_bridge_enabled": self._config.local_bridge_enabled,
-                "bridge_gateway_token_present": bool(self._config.gateway_access_token),
-                "bridge_gateway_token_source": bridge_token_source,
+                "core_reachable": core_reachable,
+                "core_auth_ok": core_auth_ok,
+                "core_diagnostic": core_diagnostic,
+                "has_gateway_access_token": bool(self._config.gateway_access_token),
             }
         )
 
@@ -253,6 +279,13 @@ class DesktopUiBridge:
                     rewritten = _rewrite_proxy_payload(request.path, parsed, self._config)
                     if rewritten is not parsed:
                         payload = json.dumps(rewritten, ensure_ascii=False).encode("utf-8")
+                if response.status == 401:
+                    logger.warning(
+                        "Desktop UI bridge: Core returned 401 for %s %s — "
+                        "gateway_access_token is likely wrong or missing in desktop_agent config",
+                        request.method,
+                        request.path,
+                    )
                 return web.Response(status=response.status, body=payload, headers=response_headers)
         except Exception as exc:
             logger.exception("Desktop UI bridge proxy failed: %s", exc)
