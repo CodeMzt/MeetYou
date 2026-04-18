@@ -131,6 +131,40 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(config.agent_access_token, "gateway-from-dotenv")
         self.assertEqual(config.gateway_access_token, "gateway-from-dotenv")
 
+    def test_gateway_token_prefers_env_agent_token_over_file_agent_token(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "desktop_agent.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "core_base_url": "http://127.0.0.1:8000",
+                        "agent_access_token": "agent-from-file",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            old_agent = os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
+            old_gateway = os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
+            os.environ["MEETYOU_AGENT_ACCESS_TOKEN"] = "agent-from-env"
+            os.environ.pop("MEETYOU_GATEWAY_ACCESS_TOKEN", None)
+            previous_cwd = Path.cwd()
+            os.chdir(tmp_dir)
+            try:
+                config = load_desktop_agent_config(str(config_path))
+            finally:
+                os.chdir(previous_cwd)
+                if old_agent is None:
+                    os.environ.pop("MEETYOU_AGENT_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_AGENT_ACCESS_TOKEN"] = old_agent
+                if old_gateway is None:
+                    os.environ.pop("MEETYOU_GATEWAY_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_GATEWAY_ACCESS_TOKEN"] = old_gateway
+
+        self.assertEqual(config.agent_access_token, "agent-from-env")
+        self.assertEqual(config.gateway_access_token, "agent-from-env")
+
     def test_protocol_builders_include_expected_agent_payloads(self):
         config = load_desktop_agent_config()
         capabilities = build_static_capabilities(config)

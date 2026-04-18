@@ -208,12 +208,20 @@ class DesktopUiBridge:
         return f"{scheme}://{base.split('://', 1)[1]}{path}{('?' + query_string) if query_string else ''}"
 
     async def _handle_status(self, _request: web.Request) -> web.Response:
+        bridge_token_source = "none"
+        if self._config.gateway_access_token:
+            if self._config.gateway_access_token == self._config.agent_access_token:
+                bridge_token_source = "gateway_or_agent"
+            else:
+                bridge_token_source = "gateway_only"
         return web.json_response(
             {
                 "status": "ready",
                 "local_bridge_base_url": self._config.local_bridge_base_url,
                 "core_base_url": self._config.core_base_url,
                 "local_bridge_enabled": self._config.local_bridge_enabled,
+                "bridge_gateway_token_present": bool(self._config.gateway_access_token),
+                "bridge_gateway_token_source": bridge_token_source,
             }
         )
 

@@ -116,6 +116,8 @@ class DesktopUiBridgeTests(unittest.IsolatedAsyncioTestCase):
                 payload = await response.json()
         self.assertEqual(payload["local_bridge_base_url"], self.bridge_base_url)
         self.assertEqual(payload["core_base_url"], self.core_base_url)
+        self.assertTrue(payload["bridge_gateway_token_present"])
+        self.assertEqual(payload["bridge_gateway_token_source"], "gateway_only")
 
     async def test_http_proxy_requires_local_auth_and_rewrites_attachment_ticket_urls(self):
         async with ClientSession() as session:
