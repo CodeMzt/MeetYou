@@ -153,7 +153,13 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
       }
       setClientContext(nextContext)
 
-      await refreshAvailableAgents(nextContext)
+      let nextAgentId = await refreshAvailableAgents(nextContext)
+      if (!nextAgentId) {
+        for (let attempt = 0; attempt < 4 && !nextAgentId; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 500))
+          nextAgentId = await refreshAvailableAgents(nextContext)
+        }
+      }
       dispatchTransport({ type: 'sync_session', sessionId: session.session_id })
       onInitSuccess(thread.thread_id)
       return nextContext

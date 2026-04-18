@@ -16,7 +16,7 @@
 - 运行主链先看 `main.py`、`service_runtime/service.py`、`core/app.py`、`core/app_lifecycle.py`；`core_service/` 目录存在，但当前启动主链不从这里进入。
 - `core/app.py` 仍是后端主装配点，但运行生命周期与客户端线程桥接已分别下沉到 `core/app_lifecycle.py`、`core/client_thread_bridge.py`；不要再把新的运行时职责继续堆回单一 `App` 类。
 - 前端入口分两层：`meetyou-ui/electron/main.ts` 是 Electron main process，`meetyou-ui/src/main.tsx` 是 renderer 入口。
-- `desktop_agent/` 是客户端本地后端实现，负责本地文件、Shell、本地 MCP、桌面能力，以及 UI 使用的本地 `/desktop/*` 后端 API；其中本地 API 主链看 `desktop_agent/desktop_api.py`，到 Core 的内部调用主链看 `desktop_agent/core_client.py`。`edge_agent/` 是按 workspace 接入的边缘 Agent 运行时。
+- `desktop_agent/` 是客户端本地后端实现，负责本地文件、Shell、本地 MCP、桌面能力，以及 UI 使用的本地 `/desktop/*` 后端 API；其中本地 API 主链看 `desktop_agent/desktop_api.py`，到 Core 的内部调用主链看 `desktop_agent/core_client.py`。当前桌面链路默认在本地 desktop session 建立后再启动 `/agent/ws` runtime，避免重复连接注入。`edge_agent/` 是按 workspace 接入的边缘 Agent 运行时。
 - `desktop_agent/` 与 `edge_agent/` 当前统一通过 `WSS /agent/ws` + `meetyou.agent.v1` 接入；差异主要体现在 `agent_type` 与 `transport_profile`，不要再按旧 MQTT 方案假设 edge 主链。
 - 不要把本地文件读写、Shell、本地 MCP 生命周期重新塞回 Core；这些能力当前通过 agent dispatch 委派给 Desktop Agent / Edge Agent。
 
@@ -117,4 +117,4 @@
 ## 平台注意事项
 
 - 项目整体偏 Windows：README、launcher、`.cmd` 脚本、PowerShell 拉起方式、`uiautomation`、Electron 窗口行为都默认按 Windows 使用。
-- `launcher.py` 会先探测 `GET /health`，确认 service 可用后再拉起 CIL 或 UI；复现桌面链路时默认按 `service -> UI -> desktop backend(由 UI 托管)` 顺序处理。
+- `launcher.py` 会先探测 `GET /health`，确认 service 可用后再拉起 CIL 或 UI；复现桌面链路时默认按 `service -> UI -> desktop backend(由 UI 托管) -> desktop session -> /agent/ws runtime` 顺序处理。

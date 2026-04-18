@@ -19,6 +19,7 @@ scripts\manual-acceptance.cmd start
 1. 启动 `service`
 2. 启动 Electron UI
 3. 由 Electron main 自动拉起 desktop backend
+4. renderer 创建 desktop session 后，再由 backend 启动 `/agent/ws` runtime
 
 如果只想单独调 backend，可使用：
 
@@ -45,7 +46,8 @@ scripts\manual-acceptance.cmd check
 
 1. 聊天主窗口能建立连接并创建线程/会话
 2. `desktop-agent` 已在线，且 capability 可被发现
-3. 发送一条普通消息，确认 `/desktop/ws -> Core /client/ws` 实时链路正常
+3. 桌面端连接注入消息只出现一次，不再因 session bootstrap 再重复一条
+4. 发送一条普通消息，确认 `/desktop/ws -> Core /client/ws` 实时链路正常
 4. 上传一个小附件，确认 UI 只访问 `/desktop/attachments/*`，而不是 Core 附件路径
 5. 打开 runtime debug / workspace / attachments / Danxi 子窗口，确认这些窗口仍可工作
 

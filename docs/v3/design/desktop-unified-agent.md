@@ -62,6 +62,13 @@ Electron main process 负责：
 - 对 UI 暴露自己的 `/desktop/*` API 与 `/desktop/ws`
 - 统一管理 Core token、本地 token、连接状态、附件上传下载与本地依赖性操作
 
+桌面端真实启动顺序按以下口径收口：
+
+1. Electron main 启动本地 desktop backend 进程
+2. renderer 创建本地 desktop session（`POST /desktop/sessions`）
+3. desktop backend 在 session 建立后再启动 `/agent/ws` runtime
+4. `agent_connected` 注入只保留一次，不再在 session bootstrap 阶段重复回放第二条提示
+
 ## 4. 对外契约与对内契约
 
 ### 4.1 Core 正式契约保持不变
@@ -136,6 +143,16 @@ renderer 不再需要知道 Core Gateway token。
 ### 6.3 保留 standalone backend 调试能力
 
 `python -m desktop_agent` 仍保留，方便 backend-only 调试、验证和发布。但默认桌面产品链路应由 Electron 托管它，而不是要求用户手动双开。
+
+### 6.4 避免重复连接注入
+
+旧方案会在 agent 实际连接时注入一次 `agent_connected`，又在 client session bootstrap 时回放一次在线 agent，最终让 UI 收到两条近似的连接提示。
+
+当前桌面端口径要求：
+
+- agent runtime 延后到 desktop session 建立后启动
+- client session bootstrap 不再重放第二次 `agent_connected` 注入
+- UI 只看到一条一体化桌面端接入提示
 
 ## 7. 验收要求
 

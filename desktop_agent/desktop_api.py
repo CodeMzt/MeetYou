@@ -5,7 +5,7 @@ import contextlib
 import json
 import logging
 from dataclasses import dataclass
-from typing import Callable
+from typing import Awaitable, Callable
 
 import aiohttp
 from aiohttp import web
@@ -29,6 +29,7 @@ class DesktopApiRoute:
     core_path_builder: Callable[[web.Request], str]
     rewrite_json: Callable[[object, DesktopAgentConfig], object] | None = None
     binary_response: bool = False
+    starts_runtime: bool = False
 
 
 def _build_error_response(
@@ -82,7 +83,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("GET", "/desktop/workspaces", lambda _request: "/client/workspaces"),
         DesktopApiRoute("GET", "/desktop/workspaces/{workspace_id}/agents", lambda request: f"/client/workspaces/{request.match_info['workspace_id']}/agents"),
         DesktopApiRoute("POST", "/desktop/threads", lambda _request: "/client/threads"),
-        DesktopApiRoute("POST", "/desktop/sessions", lambda _request: "/client/sessions"),
+        DesktopApiRoute("POST", "/desktop/sessions", lambda _request: "/client/sessions", starts_runtime=True),
         DesktopApiRoute("POST", "/desktop/messages", lambda _request: "/client/messages"),
         DesktopApiRoute("GET", "/desktop/threads/{thread_id}/messages", lambda request: f"/client/threads/{request.match_info['thread_id']}/messages"),
         DesktopApiRoute("POST", "/desktop/operations", lambda _request: "/client/operations"),
@@ -128,11 +129,17 @@ def _desktop_routes() -> list[DesktopApiRoute]:
 
 
 class DesktopApiServer:
-    def __init__(self, config: DesktopAgentConfig):
+    def __init__(
+        self,
+        config: DesktopAgentConfig,
+        *,
+        on_client_session_created: Callable[[], Awaitable[None]] | None = None,
+    ):
         self._config = config
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._core_client = DesktopCoreClient(config)
+        self._on_client_session_created = on_client_session_created
 
     async def start(self) -> None:
         if self._runner is not None:
@@ -207,6 +214,8 @@ class DesktopApiServer:
             if content_type.lower().startswith("application/json") and payload and route.rewrite_json is not None:
                 parsed = json.loads(payload.decode("utf-8"))
                 payload = json.dumps(route.rewrite_json(parsed, self._config), ensure_ascii=False).encode("utf-8")
+            if response.status < 400 and route.starts_runtime and self._on_client_session_created is not None:
+                await self._on_client_session_created()
             return web.Response(status=response.status, body=payload, headers=response.headers)
         except Exception as exc:
             logger.exception("Desktop backend request failed: %s", exc)

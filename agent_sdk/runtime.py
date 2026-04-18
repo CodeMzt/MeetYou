@@ -213,7 +213,20 @@ class AgentRuntimeBase(ABC):
     async def handle_agent_message(self, *, payload: dict[str, Any], ws, session) -> None:
         del ws, session
         agent_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-        self._logger.info("%s received Core reply: %s", self.runtime_label, agent_payload)
+        metadata = agent_payload.get("metadata") if isinstance(agent_payload.get("metadata"), dict) else {}
+        stream_event = str(metadata.get("stream_event") or "").strip().lower()
+        if stream_event in {"start", "chunk", "end"}:
+            return
+        content = str(agent_payload.get("content") or "")
+        preview = content[:120] + ("..." if len(content) > 120 else "")
+        self._logger.info(
+            "%s received Core reply event_type=%s role=%s session_id=%s preview=%r",
+            self.runtime_label,
+            str(agent_payload.get("event_type") or ""),
+            str(agent_payload.get("role") or ""),
+            str(agent_payload.get("session_id") or ""),
+            preview,
+        )
 
     async def _handle_call_request(self, ws, payload: dict[str, Any], session=None) -> None:
         envelope_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}

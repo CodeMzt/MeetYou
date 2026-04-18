@@ -497,32 +497,6 @@ def _bind_runtime_session(gateway, *, session_id: str, source, metadata: dict | 
     )
 
 
-async def _replay_connected_workspace_agents(
-    gateway,
-    *,
-    domain,
-    workspace,
-) -> None:
-    workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
-    if not workspace_id:
-        return
-    for agent in domain.services.agent.list_agents_for_workspace(workspace.id):
-        if not _is_agent_available_status(getattr(agent, "status", "")):
-            continue
-        if not await gateway.agent_ws_manager.is_connected(agent.agent_id):
-            continue
-        try:
-            await gateway.notify_agent_connected(
-                agent_id=agent.agent_id,
-                agent_type=str(getattr(agent, "agent_type", "") or ""),
-                display_name=str(getattr(agent, "display_name", "") or agent.agent_id),
-                transport_profile=str(getattr(agent, "transport_profile", "") or ""),
-                workspace_ids=[workspace_id],
-            )
-        except Exception:
-            logger.exception("Failed to replay connected agent event for workspace session bootstrap: %s", agent.agent_id)
-
-
 def _capability_requires_approval(capability) -> bool:
     if capability is None:
         return False
@@ -1337,11 +1311,6 @@ def build_client_router(gateway) -> APIRouter:
                 "client_id": payload.client_id,
                 "session_row_id": str(getattr(session, "id", "") or ""),
             },
-        )
-        await _replay_connected_workspace_agents(
-            gateway,
-            domain=domain,
-            workspace=workspace,
         )
         return ClientSessionResponse(
             session_id=session.session_id,

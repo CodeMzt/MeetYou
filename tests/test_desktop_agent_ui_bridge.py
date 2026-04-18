@@ -18,6 +18,7 @@ def _unused_port() -> int:
 
 class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.session_start_count = 0
         self.core_port = _unused_port()
         self.bridge_port = _unused_port()
         self.core_base_url = f"http://127.0.0.1:{self.core_port}"
@@ -27,6 +28,9 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
         self.core_site = web.TCPSite(self.core_runner, host="127.0.0.1", port=self.core_port)
         await self.core_site.start()
 
+        async def _mark_session_started() -> None:
+            self.session_start_count += 1
+
         self.bridge = DesktopApiServer(
             DesktopAgentConfig(
                 core_base_url=self.core_base_url,
@@ -34,7 +38,8 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
                 gateway_access_token="core-token",
                 local_bridge_port=self.bridge_port,
                 local_bridge_access_token="local-token",
-            )
+            ),
+            on_client_session_created=_mark_session_started,
         )
         await self.bridge.start()
 
@@ -46,6 +51,7 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
         app = web.Application()
         app.router.add_get("/health", self._handle_health)
         app.router.add_get("/client/workspaces", self._handle_workspaces)
+        app.router.add_post("/client/sessions", self._handle_sessions)
         app.router.add_post("/client/attachments/upload-ticket", self._handle_upload_ticket)
         app.router.add_put("/client/attachments/upload/{ticket_id}", self._handle_upload_content)
         app.router.add_get("/client/attachments/{attachment_id}/download-ticket", self._handle_download_ticket)
@@ -79,6 +85,19 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
                 "expires_at": "2026-04-18T00:00:00Z",
                 "object_key": f"attachments/{payload['owner_id']}/att_1",
                 "status": "pending",
+            }
+        )
+
+    async def _handle_sessions(self, request: web.Request) -> web.Response:
+        self._assert_core_auth(request)
+        payload = await request.json()
+        return web.json_response(
+            {
+                "session_id": "sess_1",
+                "thread_id": payload["thread_id"],
+                "workspace_id": payload["workspace_id"],
+                "client_id": payload["client_id"],
+                "status": "active",
             }
         )
 
@@ -213,3 +232,23 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message.type, aiohttp.WSMsgType.TEXT)
         self.assertEqual(message.data, '{"text":"hello-bridge"}')
+
+    async def test_session_creation_triggers_runtime_start_callback(self):
+        headers = {"Authorization": "Bearer local-token"}
+        async with ClientSession() as session:
+            async with session.post(
+                f"{self.bridge_base_url}/desktop/sessions",
+                headers=headers,
+                json={
+                    "thread_id": "thr_1",
+                    "workspace_id": "personal",
+                    "client_id": "desktop-app",
+                    "client_type": "electron",
+                    "display_name": "Desktop App",
+                },
+            ) as response:
+                self.assertEqual(response.status, 200)
+                payload = await response.json()
+
+        self.assertEqual(payload["session_id"], "sess_1")
+        self.assertEqual(self.session_start_count, 1)
