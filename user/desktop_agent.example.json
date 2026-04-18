@@ -15,5 +15,8 @@
   "heartbeat_interval_seconds": 20,
   "reconnect_delay_seconds": 3,
   "supports_offline_cache": true,
-  "transport_profile": "desktop_wss"
+  "transport_profile": "desktop_wss",
+  "local_bridge_enabled": true,
+  "local_bridge_host": "127.0.0.1",
+  "local_bridge_port": 38951
 }

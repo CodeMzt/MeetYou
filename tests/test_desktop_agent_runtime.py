@@ -44,6 +44,10 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
             self.assertEqual(config.agent_access_token, "agent-secret")
             self.assertEqual(config.owner_client_id, "desktop-app")
             self.assertEqual(config.websocket_url, "ws://192.168.1.50:8000/agent/ws")
+            self.assertTrue(config.local_bridge_enabled)
+            self.assertEqual(config.local_bridge_host, "127.0.0.1")
+            self.assertEqual(config.local_bridge_port, 38951)
+            self.assertEqual(config.local_bridge_base_url, "http://127.0.0.1:38951")
 
     def test_protocol_builders_include_expected_agent_payloads(self):
         config = load_desktop_agent_config()
