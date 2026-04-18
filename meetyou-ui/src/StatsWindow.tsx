@@ -113,6 +113,7 @@ export default function RuntimeDebugWindow() {
   const routeHistory = Array.isArray(runtimeDebugSnapshot?.route_history)
     ? runtimeDebugSnapshot?.route_history.slice(-4)
     : []
+  const authTrace = (window.__meetyouAuthTrace?.entries || []).slice(-8).reverse()
 
   return (
     <SubWindow title="运行调试" icon={<Gauge size={16} />} contentStyle={{ padding: '20px', display: 'flex', flexDirection: 'column' }}>
@@ -252,6 +253,28 @@ export default function RuntimeDebugWindow() {
             {runtimeDebugSnapshot.last_failure ? (
               <div className={styles.blockText}>{runtimeDebugSnapshot.last_failure.message}</div>
             ) : null}
+          </section>
+
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>前端到本地后端鉴权轨迹</div>
+            <div className={styles.inlineMeta}>
+              <span>Renderer baseUrl: {window.__meetyouAuthTrace?.baseUrl || baseUrl}</span>
+              <span>最近记录: {authTrace.length}</span>
+            </div>
+            {authTrace.length > 0 ? (
+              <div className={styles.list}>
+                {authTrace.map((entry, index) => (
+                  <div key={`${entry.ts}-${entry.method}-${index}`} className={styles.listItem}>
+                    <strong>{entry.method}</strong>
+                    <span>{entry.host}</span>
+                    <span>{entry.status ? `HTTP ${entry.status}` : entry.error || '-'}</span>
+                    <span>{entry.attachAuth ? `auth:${entry.tokenSource}` : 'auth:none'}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className={styles.empty}>暂无前端鉴权轨迹，先回主窗口触发一次请求。</div>
+            )}
           </section>
         </>
       )}
