@@ -94,6 +94,32 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(config.agent_access_token, "agent-from-file")
         self.assertEqual(config.gateway_access_token, "gateway-from-file")
 
+    def test_load_desktop_agent_config_prefers_file_core_base_url_over_env_override(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "desktop_agent.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "core_base_url": "https://core.example.com",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            previous_base = os.environ.get("MEETYOU_AGENT_BASE_URL")
+            os.environ["MEETYOU_AGENT_BASE_URL"] = "http://127.0.0.1:8000"
+            previous_cwd = Path.cwd()
+            os.chdir(tmp_dir)
+            try:
+                config = load_desktop_agent_config(str(config_path))
+            finally:
+                os.chdir(previous_cwd)
+                if previous_base is None:
+                    os.environ.pop("MEETYOU_AGENT_BASE_URL", None)
+                else:
+                    os.environ["MEETYOU_AGENT_BASE_URL"] = previous_base
+
+        self.assertEqual(config.core_base_url, "https://core.example.com")
+
     def test_load_desktop_agent_config_reads_gateway_token_from_dotenv(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "desktop_agent.json"
@@ -128,7 +154,7 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
                 else:
                     os.environ["MEETYOU_GATEWAY_ACCESS_TOKEN"] = previous_gateway
 
-        self.assertEqual(config.agent_access_token, "gateway-from-dotenv")
+        self.assertEqual(config.agent_access_token, "agent-from-file")
         self.assertEqual(config.gateway_access_token, "gateway-from-dotenv")
 
     def test_protocol_builders_include_expected_agent_payloads(self):

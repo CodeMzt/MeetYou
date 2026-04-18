@@ -116,27 +116,27 @@ def load_desktop_agent_config(config_file_path: str | None = None) -> DesktopAge
     env_workspace_ids = os.environ.get("MEETYOU_AGENT_WORKSPACES", "").strip()
 
     return DesktopAgentConfig(
-        core_base_url=str(os.environ.get("MEETYOU_AGENT_BASE_URL") or payload.get("core_base_url") or "http://127.0.0.1:8000").strip(),
+        core_base_url=str(payload.get("core_base_url") or os.environ.get("MEETYOU_AGENT_BASE_URL") or "http://127.0.0.1:8000").strip(),
         agent_access_token=str(
-            os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
+            payload.get("agent_access_token")
+            or os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
             or os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
-            or payload.get("agent_access_token")
             or ""
         ).strip(),
         gateway_access_token=str(
-            os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
-            or payload.get("gateway_access_token")
-            or os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
+            payload.get("gateway_access_token")
+            or os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
             or payload.get("agent_access_token")
+            or os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
             or ""
         ).strip(),
-        agent_id=str(os.environ.get("MEETYOU_AGENT_ID") or payload.get("agent_id") or _default_agent_id()).strip(),
-        display_name=str(os.environ.get("MEETYOU_AGENT_DISPLAY_NAME") or payload.get("display_name") or _default_display_name()).strip(),
-        owner_client_id=str(os.environ.get("MEETYOU_AGENT_OWNER_CLIENT_ID") or payload.get("owner_client_id") or "desktop-app").strip(),
-        owner_client_type=str(os.environ.get("MEETYOU_AGENT_OWNER_CLIENT_TYPE") or payload.get("owner_client_type") or "electron").strip(),
+        agent_id=str(payload.get("agent_id") or os.environ.get("MEETYOU_AGENT_ID") or _default_agent_id()).strip(),
+        display_name=str(payload.get("display_name") or os.environ.get("MEETYOU_AGENT_DISPLAY_NAME") or _default_display_name()).strip(),
+        owner_client_id=str(payload.get("owner_client_id") or os.environ.get("MEETYOU_AGENT_OWNER_CLIENT_ID") or "desktop-app").strip(),
+        owner_client_type=str(payload.get("owner_client_type") or os.environ.get("MEETYOU_AGENT_OWNER_CLIENT_TYPE") or "electron").strip(),
         owner_client_display_name=str(
-            os.environ.get("MEETYOU_AGENT_OWNER_CLIENT_DISPLAY_NAME")
-            or payload.get("owner_client_display_name")
+            payload.get("owner_client_display_name")
+            or os.environ.get("MEETYOU_AGENT_OWNER_CLIENT_DISPLAY_NAME")
             or "Desktop App"
         ).strip(),
         workspace_ids=[item for item in (env_workspace_ids.split(",") if env_workspace_ids else workspace_ids or ["personal", "desktop-main", "study"]) if str(item).strip()],
