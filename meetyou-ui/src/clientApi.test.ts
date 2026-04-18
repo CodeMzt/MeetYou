@@ -307,7 +307,7 @@ describe('clientApi', () => {
     expect(workspace.preferred_source_profiles).toEqual(['study_materials', 'workspace_local'])
     expect(workspace.memory_ranking_policy).toBe('workspace_first')
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/operator/workspaces/study',
+      'http://127.0.0.1:8000/desktop/workspaces/study',
       expect.objectContaining({
         method: 'PATCH',
         body: JSON.stringify({
@@ -403,7 +403,7 @@ describe('clientApi', () => {
     expect(patched.transport).toBe('webvpn')
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       1,
-      'http://127.0.0.1:8000/client/danxi/session/login',
+      'http://127.0.0.1:8000/desktop/danxi/session/login',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
@@ -421,7 +421,7 @@ describe('clientApi', () => {
     )
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       2,
-      'http://127.0.0.1:8000/client/danxi/session/webvpn-cookie',
+      'http://127.0.0.1:8000/desktop/danxi/session/webvpn-cookie',
       expect.objectContaining({
         method: 'PATCH',
         body: JSON.stringify({
@@ -578,27 +578,27 @@ describe('clientApi', () => {
     expect(summary.reply_highlights[0]).toContain('企业微信')
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       1,
-      'http://127.0.0.1:8000/client/danxi/profile?refresh=true',
+      'http://127.0.0.1:8000/desktop/danxi/profile?refresh=true',
       expect.anything(),
     )
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       2,
-      'http://127.0.0.1:8000/client/danxi/posts/101/replies',
+      'http://127.0.0.1:8000/desktop/danxi/posts/101/replies',
       expect.objectContaining({ method: 'POST' }),
     )
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       3,
-      'http://127.0.0.1:8000/client/danxi/floors/9001',
+      'http://127.0.0.1:8000/desktop/danxi/floors/9001',
       expect.objectContaining({ method: 'PATCH' }),
     )
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       4,
-      'http://127.0.0.1:8000/client/danxi/floors/9001?confirm=true',
+      'http://127.0.0.1:8000/desktop/danxi/floors/9001?confirm=true',
       expect.objectContaining({ method: 'DELETE' }),
     )
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       5,
-      'http://127.0.0.1:8000/client/danxi/posts/101/summary?floor_limit=20',
+      'http://127.0.0.1:8000/desktop/danxi/posts/101/summary?floor_limit=20',
       expect.anything(),
     )
   })
@@ -652,11 +652,11 @@ describe('clientApi', () => {
     ) as typeof fetch
 
     const { downloadClientAttachmentContent: downloadAttachment } = await import('./clientApi')
-    const blob = await downloadAttachment(`${DEFAULT_BASE_URL}/client/attachments/content/att_1?ticket_id=down_1`)
+    const blob = await downloadAttachment(`${DEFAULT_BASE_URL}/desktop/attachments/content/att_1?ticket_id=down_1`)
 
     expect(await blob.text()).toBe('attachment-body')
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      `${DEFAULT_BASE_URL}/client/attachments/content/att_1?ticket_id=down_1`,
+      `${DEFAULT_BASE_URL}/desktop/attachments/content/att_1?ticket_id=down_1`,
       expect.objectContaining({
         headers: expect.any(Headers),
       }),
@@ -697,7 +697,7 @@ describe('clientApi', () => {
       attachment_id: 'att_1',
       ticket_id: 'down_1',
       download_url: 'https://minio.example.com/presigned/att_1',
-      fallback_download_url: 'http://127.0.0.1:8000/client/attachments/content/att_1?ticket_id=down_1',
+      fallback_download_url: 'http://127.0.0.1:8000/desktop/attachments/content/att_1?ticket_id=down_1',
       download_strategy: 'presigned',
       expires_at: '2026-04-13T00:00:00Z',
       mime_type: 'image/png',
@@ -716,8 +716,8 @@ describe('clientApi', () => {
     const plan = resolveClientAttachmentDownloadPlan({
       attachment_id: 'att_2',
       ticket_id: 'down_2',
-      download_url: 'http://127.0.0.1:8000/client/attachments/content/att_2?ticket_id=down_2',
-      fallback_download_url: 'http://127.0.0.1:8000/client/attachments/content/att_2?ticket_id=down_2',
+      download_url: 'http://127.0.0.1:8000/desktop/attachments/content/att_2?ticket_id=down_2',
+      fallback_download_url: 'http://127.0.0.1:8000/desktop/attachments/content/att_2?ticket_id=down_2',
       download_strategy: 'proxy',
       expires_at: '2026-04-13T00:00:00Z',
       mime_type: 'application/pdf',
@@ -727,7 +727,7 @@ describe('clientApi', () => {
 
     expect(plan).toEqual({
       mode: 'proxy',
-      url: 'http://127.0.0.1:8000/client/attachments/content/att_2?ticket_id=down_2',
+      url: 'http://127.0.0.1:8000/desktop/attachments/content/att_2?ticket_id=down_2',
       fileName: 'report.pdf',
     })
   })

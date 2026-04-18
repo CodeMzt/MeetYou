@@ -9,7 +9,7 @@ function resolveRendererBridgeBaseUrl(): string {
 }
 
 export const DEFAULT_BASE_URL = resolveRendererBridgeBaseUrl()
-export const DESKTOP_BRIDGE_STATUS_PATH = '/desktop/bridge/status'
+export const DESKTOP_BRIDGE_STATUS_PATH = '/desktop/status'
 
 export const WINDOW_HASH_ROUTE = {
   dashboard: '#/dashboard',

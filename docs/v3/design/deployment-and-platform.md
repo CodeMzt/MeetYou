@@ -21,7 +21,7 @@ V3 在部署与平台方向上的核心目标是：
 - `scripts/prepare_core_runtime.py` 与 `scripts/check_core_runtime.py` 最小初始化 / 自检脚本
 - Linux 非容器化部署模板：`deploy/systemd/*` 与 `scripts/linux/*`
 - Electron 桌面端构建脚本：`npm run build`
-- Electron main 托管本地 desktop backend，renderer 默认改连 loopback bridge
+- Electron main 托管本地 desktop backend，renderer 默认改连本地 `/desktop/*` API
 
 当前仓库尚未具备：
 
@@ -106,7 +106,7 @@ V3 应继续维护：
 围绕桌面端继续推进：
 
 - Electron 托管 desktop backend 的启动、恢复与退出
-- 本地 bridge 对 UI 的统一代理边界
+- Desktop backend 对 UI 的 `/desktop/*` 契约边界
 - Windows 特定能力的插件化或模块化边界
 - 非 Windows 下的 capability 降级、禁用或替代实现语义
 - 文档与测试中对平台差异的显式说明

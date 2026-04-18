@@ -26,7 +26,7 @@ Feishu Client ----------------------/        |
 角色边界：
 
 - `Core Service`：服务端主链，负责会话、路由、记忆、任务、工具调度、Gateway 与运行时状态
-- `desktop-agent`：桌面端本地后端，承接本地文件、Shell、本地 MCP、桌面能力以及 UI bridge
+- `desktop-agent`：桌面端本地后端，承接本地文件、Shell、本地 MCP、桌面能力以及 UI 使用的 `/desktop/*` API
 - `edge-agent`：运行在远端边缘节点上，按 workspace 接入并提供该节点的能力
 - `meetyou-ui/`：桌面客户端前端，默认通过本地 desktop backend 与 Core 交互，不建议部署到 Linux 服务器上作为生产主链
 
@@ -36,7 +36,7 @@ Feishu Client ----------------------/        |
 - Agent 正式实时入口是 `WSS /agent/ws`
 - 根路径 `GET /ws` 只保留兼容性错误，不再承载正式聊天流
 - 本地文件、Shell、本地 MCP 生命周期属于 Agent 边界，不要重新塞回 Core
-- 桌面 UI 默认先连本地 loopback bridge `http://127.0.0.1:38951`，而不是直接连 Core
+- 桌面 UI 默认先连本地 desktop backend `http://127.0.0.1:38951`，而不是直接连 Core
 
 ## 适用平台
 
@@ -394,7 +394,7 @@ Agent WebSocket 还兼容 `access_token` query。
 - `desktop-agent` 应部署在用户自己的 Windows 电脑，而不是 Linux Core 服务器上
 - `mcp_servers_path` 指向的是本地 MCP 配置，不属于服务端 MCP
 - 正常桌面链路下，Electron UI 会优先托管这个 backend；`python -m desktop_agent` 主要保留给 backend-only 调试
-- 如果 Core 开启了 Gateway 鉴权，桌面 UI 经本地 bridge 访问 `client/*` 时需要有效的 `gateway_access_token`；建议直接在 `.env` 中配置 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+- 如果 Core 开启了 Gateway 鉴权，desktop backend 内部访问 Core client/operator/runtime/developer surface 时需要有效的 `gateway_access_token`；建议直接在 `.env` 中配置 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 
 启动命令：
 
@@ -455,6 +455,16 @@ python -m edge_agent
 - `GET /runtime/usage`
 - `GET /developer/runtime/debug`
 - `WSS /agent/ws`
+
+桌面端本地接口：
+
+- `GET /desktop/status`
+- `GET /desktop/health`
+- `POST /desktop/messages`
+- `GET /desktop/ws`
+- `GET /desktop/workspaces`
+- `GET /desktop/runtime/usage`
+- `GET /desktop/runtime/debug`
 
 兼容说明：
 

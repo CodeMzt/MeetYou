@@ -42,6 +42,10 @@ export interface ClientAttachmentDownloadPlan {
   fileName: string
 }
 
+function buildDesktopUrl(baseUrl: string, path: string): string {
+  return `${baseUrl}/desktop${path}`
+}
+
 function isProxyAttachmentDownloadUrl(url: string): boolean {
   const value = String(url || '').trim()
   if (!value) {
@@ -49,9 +53,9 @@ function isProxyAttachmentDownloadUrl(url: string): boolean {
   }
   try {
     const parsed = new URL(value, 'http://127.0.0.1')
-    return parsed.pathname.includes('/client/attachments/content/')
+    return parsed.pathname.includes('/desktop/attachments/content/')
   } catch {
-    return value.includes('/client/attachments/content/')
+    return value.includes('/desktop/attachments/content/')
   }
 }
 
@@ -79,7 +83,7 @@ async function readJsonOrThrow<T>(response: Response, fallback: string): Promise
 }
 
 export async function listClientWorkspaces(baseUrl: string): Promise<ClientWorkspace[]> {
-  const response = await fetchWithAuth(`${baseUrl}/client/workspaces`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/workspaces'))
   return readJsonOrThrow<ClientWorkspace[]>(response, '加载工作空间失败')
 }
 
@@ -94,7 +98,7 @@ export async function loginDanxiSession(
   },
 ): Promise<DanxiSessionStatus> {
   const encryptedCredentials = await encryptDanxiCredentials('danxi.client.login.v1', payload)
-  const response = await fetchWithAuth(`${baseUrl}/client/danxi/session/login`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/danxi/session/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -107,7 +111,7 @@ export async function loginDanxiSession(
 
 export async function getDanxiSessionStatus(baseUrl: string, sessionKey = 'default'): Promise<DanxiSessionStatus> {
   const response = await fetchWithAuth(
-    `${baseUrl}/client/danxi/session?session_key=${encodeURIComponent(sessionKey)}`,
+    `${buildDesktopUrl(baseUrl, '/danxi/session')}?session_key=${encodeURIComponent(sessionKey)}`,
   )
   return readJsonOrThrow<DanxiSessionStatus>(response, '读取 Danxi 会话状态失败')
 }
@@ -121,7 +125,7 @@ export async function updateDanxiWebvpnCookie(
   },
 ): Promise<DanxiSessionStatus> {
   const encryptedCredentials = await encryptDanxiCredentials('danxi.client.webvpn_cookie.v1', payload)
-  const response = await fetchWithAuth(`${baseUrl}/client/danxi/session/webvpn-cookie`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/danxi/session/webvpn-cookie'), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -139,7 +143,7 @@ export async function getDanxiProfile(
     refresh?: boolean
   } = {},
 ): Promise<DanxiUserProfileResponse> {
-  const url = new URL(`${baseUrl}/client/danxi/profile`)
+  const url = new URL(buildDesktopUrl(baseUrl, '/danxi/profile'))
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value))
@@ -151,7 +155,7 @@ export async function getDanxiProfile(
 
 export async function listDanxiDivisions(baseUrl: string, sessionKey = 'default'): Promise<DanxiListResponse> {
   const response = await fetchWithAuth(
-    `${baseUrl}/client/danxi/divisions?session_key=${encodeURIComponent(sessionKey)}`,
+    `${buildDesktopUrl(baseUrl, '/danxi/divisions')}?session_key=${encodeURIComponent(sessionKey)}`,
   )
   return readJsonOrThrow<DanxiListResponse>(response, '加载 Danxi 分区失败')
 }
@@ -168,7 +172,7 @@ export async function listDanxiPosts(
     order?: string
   } = {},
 ): Promise<DanxiListResponse> {
-  const url = new URL(`${baseUrl}/client/danxi/posts`)
+  const url = new URL(buildDesktopUrl(baseUrl, '/danxi/posts'))
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value))
@@ -184,7 +188,7 @@ export async function getDanxiPost(
   sessionKey = 'default',
 ): Promise<DanxiPostResponse> {
   const response = await fetchWithAuth(
-    `${baseUrl}/client/danxi/posts/${holeId}?session_key=${encodeURIComponent(sessionKey)}`,
+    `${buildDesktopUrl(baseUrl, `/danxi/posts/${holeId}`)}?session_key=${encodeURIComponent(sessionKey)}`,
   )
   return readJsonOrThrow<DanxiPostResponse>(response, '加载 Danxi 帖子详情失败')
 }
@@ -199,7 +203,7 @@ export async function listDanxiFloors(
     include_all?: boolean
   } = {},
 ): Promise<DanxiListResponse> {
-  const url = new URL(`${baseUrl}/client/danxi/posts/${holeId}/floors`)
+  const url = new URL(buildDesktopUrl(baseUrl, `/danxi/posts/${holeId}/floors`))
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value))
@@ -217,7 +221,7 @@ export async function createDanxiReply(
     content: string
   },
 ): Promise<DanxiActionResponse> {
-  const response = await fetchWithAuth(`${baseUrl}/client/danxi/posts/${holeId}/replies`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/danxi/posts/${holeId}/replies`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -233,7 +237,7 @@ export async function updateDanxiReply(
     content: string
   },
 ): Promise<DanxiActionResponse> {
-  const response = await fetchWithAuth(`${baseUrl}/client/danxi/floors/${floorId}`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/danxi/floors/${floorId}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -249,7 +253,7 @@ export async function deleteDanxiReply(
     confirm?: boolean
   } = {},
 ): Promise<DanxiActionResponse> {
-  const url = new URL(`${baseUrl}/client/danxi/floors/${floorId}`)
+  const url = new URL(buildDesktopUrl(baseUrl, `/danxi/floors/${floorId}`))
   url.searchParams.set('confirm', String(payload.confirm ?? true))
   if (payload.session_key) {
     url.searchParams.set('session_key', payload.session_key)
@@ -268,7 +272,7 @@ export async function getDanxiPostSummary(
     floor_limit?: number
   } = {},
 ): Promise<DanxiSummaryResponse> {
-  const url = new URL(`${baseUrl}/client/danxi/posts/${holeId}/summary`)
+  const url = new URL(buildDesktopUrl(baseUrl, `/danxi/posts/${holeId}/summary`))
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value))
@@ -290,7 +294,7 @@ export async function searchDanxiPosts(
     end_time?: string
   },
 ): Promise<DanxiSearchResponse> {
-  const url = new URL(`${baseUrl}/client/danxi/search`)
+  const url = new URL(buildDesktopUrl(baseUrl, '/danxi/search'))
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value))
@@ -308,7 +312,7 @@ export async function listDanxiMessages(
     start_time?: string
   } = {},
 ): Promise<DanxiListResponse> {
-  const url = new URL(`${baseUrl}/client/danxi/messages`)
+  const url = new URL(buildDesktopUrl(baseUrl, '/danxi/messages'))
   Object.entries(payload).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, String(value))
@@ -327,7 +331,7 @@ export async function updateOperatorWorkspaceGovernance(
     memory_ranking_policy?: string
   },
 ): Promise<ClientWorkspace> {
-  const response = await fetchWithAuth(`${baseUrl}/operator/workspaces/${encodeURIComponent(workspaceId)}`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -336,7 +340,7 @@ export async function updateOperatorWorkspaceGovernance(
 }
 
 export async function listOperatorSourceProfiles(baseUrl: string): Promise<OperatorSourceProfile[]> {
-  const response = await fetchWithAuth(`${baseUrl}/operator/source-profiles`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/source-profiles'))
   return readJsonOrThrow<OperatorSourceProfile[]>(response, '加载 source profile 目录失败')
 }
 
@@ -344,7 +348,7 @@ export async function createClientThread(
   baseUrl: string,
   payload: Pick<ClientThread, 'workspace_id' | 'title'> & { mode?: string; pinned_procedure_id?: string | null },
 ): Promise<ClientThread> {
-  const response = await fetchWithAuth(`${baseUrl}/client/threads`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/threads'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -362,7 +366,7 @@ export async function createClientSession(
     display_name?: string
   },
 ): Promise<ClientSession> {
-  const response = await fetchWithAuth(`${baseUrl}/client/sessions`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/sessions'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -371,7 +375,7 @@ export async function createClientSession(
 }
 
 export async function sendClientMessage(baseUrl: string, payload: ClientMessageCreatePayload): Promise<ClientMessage> {
-  const response = await fetchWithAuth(`${baseUrl}/client/messages`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/messages'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -380,7 +384,7 @@ export async function sendClientMessage(baseUrl: string, payload: ClientMessageC
 }
 
 export async function listThreadMessages(baseUrl: string, threadId: string): Promise<ClientMessage[]> {
-  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/messages`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/messages`))
   return readJsonOrThrow<ClientMessage[]>(response, '加载消息历史失败')
 }
 
@@ -399,7 +403,7 @@ export async function createClientOperation(
     arguments?: Record<string, unknown>
   },
 ): Promise<ClientOperation> {
-  const response = await fetchWithAuth(`${baseUrl}/client/operations`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/operations'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -408,17 +412,17 @@ export async function createClientOperation(
 }
 
 export async function listClientAvailableAgents(baseUrl: string, workspaceId: string): Promise<ClientAvailableAgent[]> {
-  const response = await fetchWithAuth(`${baseUrl}/client/workspaces/${encodeURIComponent(workspaceId)}/agents`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/agents`))
   return readJsonOrThrow<ClientAvailableAgent[]>(response, '加载可用 Agent 失败')
 }
 
 export async function listClientProcedures(baseUrl: string): Promise<ClientProcedure[]> {
-  const response = await fetchWithAuth(`${baseUrl}/client/procedures`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/procedures'))
   return readJsonOrThrow<ClientProcedure[]>(response, '加载 Procedure 列表失败')
 }
 
 export async function getClientProcedureDetail(baseUrl: string, procedureId: string): Promise<ClientProcedureDetail> {
-  const response = await fetchWithAuth(`${baseUrl}/client/procedures/${encodeURIComponent(procedureId)}`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/procedures/${encodeURIComponent(procedureId)}`))
   return readJsonOrThrow<ClientProcedureDetail>(response, '加载 Procedure 详情失败')
 }
 
@@ -426,7 +430,7 @@ export async function getClientThreadProcedureContext(
   baseUrl: string,
   threadId: string,
 ): Promise<ClientThreadProcedureContext> {
-  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/procedure-context`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/procedure-context`))
   return readJsonOrThrow<ClientThreadProcedureContext>(response, '加载线程 Procedure 上下文失败')
 }
 
@@ -435,7 +439,7 @@ export async function pinClientThreadProcedure(
   threadId: string,
   procedureId: string,
 ): Promise<ClientThreadProcedureContext> {
-  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/pinned-procedure`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/pinned-procedure`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ procedure_id: procedureId }),
@@ -447,7 +451,7 @@ export async function unpinClientThreadProcedure(
   baseUrl: string,
   threadId: string,
 ): Promise<ClientThreadProcedureContext> {
-  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/pinned-procedure`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/pinned-procedure`), {
     method: 'DELETE',
   })
   return readJsonOrThrow<ClientThreadProcedureContext>(response, '取消固定线程规程失败')
@@ -467,7 +471,7 @@ export async function decideClientApproval(
   reason: string
   operation_status: string
 }> {
-  const response = await fetchWithAuth(`${baseUrl}/client/approvals/${encodeURIComponent(approvalId)}/decision`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/approvals/${encodeURIComponent(approvalId)}/decision`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -493,7 +497,7 @@ export async function submitClientConfirmResponse(
   operation_id: string
 }> {
   const response = await fetchWithAuth(
-    `${baseUrl}/client/sessions/${encodeURIComponent(sessionId)}/confirm-response`,
+    buildDesktopUrl(baseUrl, `/sessions/${encodeURIComponent(sessionId)}/confirm-response`),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -519,7 +523,7 @@ export async function submitClientHumanInputResponse(
   selected_option?: string
 }> {
   const response = await fetchWithAuth(
-    `${baseUrl}/client/sessions/${encodeURIComponent(sessionId)}/human-input-response`,
+    buildDesktopUrl(baseUrl, `/sessions/${encodeURIComponent(sessionId)}/human-input-response`),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -549,7 +553,7 @@ export async function createClientAttachmentUploadTicket(
   object_key: string
   status: string
 }> {
-  const response = await fetchWithAuth(`${baseUrl}/client/attachments/upload-ticket`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/attachments/upload-ticket'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -579,7 +583,7 @@ export async function completeClientAttachment(
   attachmentId: string,
   payload: { ticket_id?: string; sha256?: string; size_bytes?: number },
 ): Promise<ClientAttachmentRecord> {
-  const response = await fetchWithAuth(`${baseUrl}/client/attachments/${encodeURIComponent(attachmentId)}/complete`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}/complete`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -591,7 +595,7 @@ export async function listClientThreadAttachments(
   baseUrl: string,
   threadId: string,
 ): Promise<ClientAttachmentRecord[]> {
-  const response = await fetchWithAuth(`${baseUrl}/client/threads/${encodeURIComponent(threadId)}/attachments`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/attachments`))
   return readJsonOrThrow<ClientAttachmentRecord[]>(response, '加载附件列表失败')
 }
 
@@ -599,7 +603,7 @@ export async function deleteClientAttachment(
   baseUrl: string,
   attachmentId: string,
 ): Promise<ClientAttachmentRecord> {
-  const response = await fetchWithAuth(`${baseUrl}/client/attachments/${encodeURIComponent(attachmentId)}`, {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}`), {
     method: 'DELETE',
   })
   return readJsonOrThrow<ClientAttachmentRecord>(response, '删除附件失败')
@@ -611,7 +615,7 @@ export async function createClientAttachmentDownloadTicket(
   clientId?: string,
 ): Promise<ClientAttachmentDownloadTicket> {
   const query = clientId ? `?client_id=${encodeURIComponent(clientId)}` : ''
-  const response = await fetchWithAuth(`${baseUrl}/client/attachments/${encodeURIComponent(attachmentId)}/download-ticket${query}`)
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}/download-ticket${query}`))
   return readJsonOrThrow(response, '创建附件下载票据失败')
 }
 
@@ -655,7 +659,7 @@ export async function fetchRuntimeUsageSnapshot(
   sessionId: string,
 ): Promise<RuntimeUsageSnapshot> {
   const response = await fetchWithAuth(
-    `${baseUrl}/runtime/usage?session_id=${encodeURIComponent(sessionId)}`,
+    `${buildDesktopUrl(baseUrl, '/runtime/usage')}?session_id=${encodeURIComponent(sessionId)}`,
   )
   const payload = await readJsonOrThrow<unknown>(response, '加载 token / context 快照失败')
   const snapshot = parseRuntimeUsageEnvelope(payload)
@@ -666,7 +670,7 @@ export async function fetchRuntimeUsageSnapshot(
 }
 
 export async function createClientWsUrl(baseUrl: string, threadId: string): Promise<string> {
-  const url = new URL(`${toClientWsBaseUrl(baseUrl)}/client/ws`)
+  const url = new URL(`${toClientWsBaseUrl(baseUrl)}/desktop/ws`)
   url.searchParams.set('thread_id', threadId)
   const token = await resolveAccessToken()
   if (token) {

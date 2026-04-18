@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import aiohttp
+from dataclasses import dataclass
+from typing import Callable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from desktop_agent.config import DesktopAgentConfig
+
+
+_HOP_BY_HOP_HEADERS = {
+    "connection",
+    "content-length",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
+
+
+@dataclass(slots=True)
+class CoreHttpResult:
+    status: int
+    headers: dict[str, str]
+    body: bytes
+
+
+def filter_request_headers(headers: aiohttp.typedefs.LooseHeaders) -> dict[str, str]:
+    filtered: dict[str, str] = {}
+    for key, value in dict(headers).items():
+        name = str(key).strip()
+        if not name or name.lower() in _HOP_BY_HOP_HEADERS:
+            continue
+        if name.lower() in {"authorization", "x-api-key", "host", "origin"}:
+            continue
+        filtered[name] = str(value)
+    return filtered
+
+
+def filter_response_headers(headers: aiohttp.typedefs.LooseHeaders) -> dict[str, str]:
+    filtered: dict[str, str] = {}
+    for key, value in dict(headers).items():
+        name = str(key).strip()
+        if not name or name.lower() in _HOP_BY_HOP_HEADERS:
+            continue
+        if name.lower().startswith("access-control-"):
+            continue
+        filtered[name] = str(value)
+    return filtered
+
+
+def build_core_auth_headers(token: str) -> dict[str, str]:
+    resolved = str(token or "").strip()
+    if not resolved:
+        return {}
+    return {"Authorization": f"Bearer {resolved}"}
+
+
+def rewrite_url_to_local_desktop(url: str, config: DesktopAgentConfig) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    if parsed.path.startswith("/client/attachments/content/"):
+        local = urlsplit(config.local_bridge_base_url)
+        local_path = parsed.path.replace("/client/attachments/content/", "/desktop/attachments/content/", 1)
+        return urlunsplit((local.scheme, local.netloc, local_path, parsed.query, parsed.fragment))
+    if value.startswith("/client/attachments/content/"):
+        local = urlsplit(config.local_bridge_base_url)
+        local_path = value.replace("/client/attachments/content/", "/desktop/attachments/content/", 1)
+        return urlunsplit((local.scheme, local.netloc, local_path, "", ""))
+    return value
+
+
+def rewrite_attachment_ticket(core_payload: object, config: DesktopAgentConfig) -> object:
+    if not isinstance(core_payload, dict):
+        return core_payload
+    rewritten = dict(core_payload)
+    ticket_id = str(rewritten.get("ticket_id") or "").strip()
+    if ticket_id:
+        rewritten["upload_url"] = f"{config.local_bridge_base_url}/desktop/attachments/upload/{ticket_id}"
+    return rewritten
+
+
+def rewrite_download_ticket(core_payload: object, config: DesktopAgentConfig) -> object:
+    if not isinstance(core_payload, dict):
+        return core_payload
+    rewritten = dict(core_payload)
+    rewritten["download_url"] = rewrite_url_to_local_desktop(str(rewritten.get("download_url") or ""), config)
+    rewritten["fallback_download_url"] = rewrite_url_to_local_desktop(
+        str(rewritten.get("fallback_download_url") or ""),
+        config,
+    )
+    return rewritten
+
+
+class DesktopCoreClient:
+    def __init__(self, config: DesktopAgentConfig):
+        self._config = config
+        self._session: aiohttp.ClientSession | None = None
+
+    async def start(self) -> None:
+        if self._session is not None:
+            return
+        self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=15))
+
+    async def stop(self) -> None:
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+
+    def _build_core_http_url(self, core_path: str, query_string: str = "") -> str:
+        suffix = f"{core_path}{('?' + query_string) if query_string else ''}"
+        return f"{self._config.core_base_url.rstrip('/')}{suffix}"
+
+    def _build_core_ws_url(self, request, *, local_access_token: str) -> str:
+        scheme = "wss" if self._config.core_base_url.startswith("https://") else "ws"
+        base = self._config.core_base_url.rstrip("/")
+        query_items = [
+            (key, value)
+            for key, value in parse_qsl(request.rel_url.query_string, keep_blank_values=True)
+            if not (key == "access_token" and value == str(local_access_token or "").strip())
+        ]
+        query_string = urlencode(query_items)
+        return f"{scheme}://{base.split('://', 1)[1]}/client/ws{('?' + query_string) if query_string else ''}"
+
+    def _build_core_request_headers(self, request) -> dict[str, str]:
+        headers = filter_request_headers(request.headers)
+        headers.update(build_core_auth_headers(self._config.gateway_access_token))
+        return headers
+
+    async def request(self, request, *, method: str, core_path: str) -> CoreHttpResult:
+        if self._session is None:
+            raise RuntimeError("desktop_backend_unavailable")
+        body = await request.read()
+        response = await self._session.request(
+            method,
+            self._build_core_http_url(core_path, request.rel_url.query_string),
+            headers=self._build_core_request_headers(request),
+            data=body if body else None,
+            allow_redirects=False,
+        )
+        try:
+            payload = await response.read()
+            return CoreHttpResult(
+                status=response.status,
+                headers=filter_response_headers(response.headers),
+                body=payload,
+            )
+        finally:
+            response.release()
+
+    async def connect_client_ws(self, request, *, local_access_token: str) -> aiohttp.ClientWebSocketResponse:
+        if self._session is None:
+            raise RuntimeError("desktop_backend_unavailable")
+        return await self._session.ws_connect(
+            self._build_core_ws_url(request, local_access_token=local_access_token),
+            headers=self._build_core_request_headers(request),
+        )

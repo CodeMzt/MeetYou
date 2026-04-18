@@ -73,6 +73,24 @@ function Invoke-JsonGet([string]$Path) {
     return Invoke-RestMethod -Uri ($BaseUrl.TrimEnd("/") + $Path) -Method Get -Headers $headers -TimeoutSec 8
 }
 
+function Get-DesktopBackendBaseUrl {
+    $host = if ($env:MEETYOU_DESKTOP_LOCAL_HOST) { $env:MEETYOU_DESKTOP_LOCAL_HOST } else { "127.0.0.1" }
+    $port = if ($env:MEETYOU_DESKTOP_LOCAL_PORT) { $env:MEETYOU_DESKTOP_LOCAL_PORT } else { "38951" }
+    if (Test-Path $DesktopAgentConfig) {
+        try {
+            $payload = Get-Content $DesktopAgentConfig -Raw | ConvertFrom-Json
+            if ($payload.local_bridge_host) {
+                $host = [string]$payload.local_bridge_host
+            }
+            if ($payload.local_bridge_port) {
+                $port = [string]$payload.local_bridge_port
+            }
+        } catch {
+        }
+    }
+    return "http://$host`:$port"
+}
+
 function Wait-Health([int]$TimeoutSeconds = 60) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -201,6 +219,13 @@ function Run-ManualAcceptanceCheck {
     } catch {
         Write-Fail "/health failed: $($_.Exception.Message)"
         return 1
+    }
+
+    try {
+        $desktopStatus = Invoke-RestMethod -Uri ((Get-DesktopBackendBaseUrl) + "/desktop/status") -Method Get -TimeoutSec 5
+        Write-Ok ("/desktop/status ok, api_prefix: {0}" -f $desktopStatus.api_prefix)
+    } catch {
+        Write-Warn "/desktop/status not reachable yet (this is expected before Electron starts desktop backend)"
     }
 
     try {

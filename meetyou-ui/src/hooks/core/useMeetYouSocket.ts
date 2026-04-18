@@ -16,7 +16,7 @@ export function useMeetYouSocket(
 
   const refreshHealth = useCallback(async () => {
     try {
-      const response = await fetchWithAuth(`${baseUrl}/health`)
+      const response = await fetchWithAuth(`${baseUrl}/desktop/health`)
       if (!response.ok) {
         return
       }
@@ -55,28 +55,6 @@ export function useMeetYouSocket(
 
     void (async () => {
       const url = await createClientWsUrl(baseUrl, clientContext.threadId)
-      try {
-        const target = new URL(url)
-        const trace = (window.__meetyouAuthTrace ||= {
-          baseUrl,
-          entries: [],
-        })
-        trace.baseUrl = baseUrl
-        trace.entries.push({
-          ts: new Date().toISOString(),
-          method: 'WS',
-          url: target.toString(),
-          host: target.host,
-          attachAuth: Boolean(target.searchParams.get('access_token')),
-          tokenPresent: Boolean(target.searchParams.get('access_token')),
-          tokenSource: target.searchParams.get('access_token') ? 'ws-query' : 'none',
-        })
-        if (trace.entries.length > 80) {
-          trace.entries.splice(0, trace.entries.length - 80)
-        }
-      } catch {
-        // Ignore diagnostics failures.
-      }
       if (clientWsRef.current?.readyState === WebSocket.OPEN || clientWsRef.current?.readyState === WebSocket.CONNECTING) {
         return
       }

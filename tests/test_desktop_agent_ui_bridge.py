@@ -7,7 +7,7 @@ import aiohttp
 from aiohttp import ClientSession, web
 
 from desktop_agent.config import DesktopAgentConfig
-from desktop_agent.ui_bridge import LOCAL_BRIDGE_STATUS_PATH, DesktopUiBridge
+from desktop_agent.desktop_api import LOCAL_BRIDGE_STATUS_PATH, DesktopApiServer
 
 
 def _unused_port() -> int:
@@ -16,7 +16,7 @@ def _unused_port() -> int:
         return int(sock.getsockname()[1])
 
 
-class DesktopUiBridgeTests(unittest.IsolatedAsyncioTestCase):
+class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.core_port = _unused_port()
         self.bridge_port = _unused_port()
@@ -27,7 +27,7 @@ class DesktopUiBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.core_site = web.TCPSite(self.core_runner, host="127.0.0.1", port=self.core_port)
         await self.core_site.start()
 
-        self.bridge = DesktopUiBridge(
+        self.bridge = DesktopApiServer(
             DesktopAgentConfig(
                 core_base_url=self.core_base_url,
                 agent_access_token="agent-token",
@@ -47,7 +47,9 @@ class DesktopUiBridgeTests(unittest.IsolatedAsyncioTestCase):
         app.router.add_get("/health", self._handle_health)
         app.router.add_get("/client/workspaces", self._handle_workspaces)
         app.router.add_post("/client/attachments/upload-ticket", self._handle_upload_ticket)
+        app.router.add_put("/client/attachments/upload/{ticket_id}", self._handle_upload_content)
         app.router.add_get("/client/attachments/{attachment_id}/download-ticket", self._handle_download_ticket)
+        app.router.add_get("/client/attachments/content/{attachment_id}", self._handle_download_content)
         app.router.add_get("/client/ws", self._handle_client_ws)
         return app
 
@@ -98,6 +100,31 @@ class DesktopUiBridgeTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
+    async def _handle_upload_content(self, request: web.Request) -> web.Response:
+        self._assert_core_auth(request)
+        content = await request.read()
+        self.assertEqual(content, b"desktop-upload")
+        return web.json_response(
+            {
+                "attachment_id": "att_1",
+                "ticket_id": request.match_info["ticket_id"],
+                "status": "uploaded",
+                "size_bytes": len(content),
+                "sha256": "demo-sha",
+            }
+        )
+
+    async def _handle_download_content(self, request: web.Request) -> web.Response:
+        self._assert_core_auth(request)
+        self.assertEqual(request.query.get("ticket_id"), "down_1")
+        return web.Response(
+            body=b"desktop-download",
+            headers={
+                "Content-Type": "text/plain",
+                "Content-Disposition": 'attachment; filename="report.txt"',
+            },
+        )
+
     async def _handle_client_ws(self, request: web.Request) -> web.StreamResponse:
         self._assert_core_auth(request)
         self.assertEqual(request.query.get("thread_id"), "thr_1")
@@ -116,22 +143,20 @@ class DesktopUiBridgeTests(unittest.IsolatedAsyncioTestCase):
                 payload = await response.json()
         self.assertEqual(payload["local_bridge_base_url"], self.bridge_base_url)
         self.assertEqual(payload["core_base_url"], self.core_base_url)
-        self.assertTrue(payload["bridge_gateway_token_present"])
-        self.assertEqual(payload["bridge_gateway_token_source"], "gateway_only")
 
     async def test_http_proxy_requires_local_auth_and_rewrites_attachment_ticket_urls(self):
         async with ClientSession() as session:
-            async with session.get(f"{self.bridge_base_url}/client/workspaces") as unauthorized:
+            async with session.get(f"{self.bridge_base_url}/desktop/workspaces") as unauthorized:
                 self.assertEqual(unauthorized.status, 401)
 
             headers = {"Authorization": "Bearer local-token"}
-            async with session.get(f"{self.bridge_base_url}/client/workspaces", headers=headers) as response:
+            async with session.get(f"{self.bridge_base_url}/desktop/workspaces", headers=headers) as response:
                 self.assertEqual(response.status, 200)
                 payload = await response.json()
             self.assertEqual(payload[0]["workspace_id"], "personal")
 
             async with session.post(
-                f"{self.bridge_base_url}/client/attachments/upload-ticket",
+                f"{self.bridge_base_url}/desktop/attachments/upload-ticket",
                 headers=headers,
                 json={
                     "owner_type": "thread",
@@ -144,28 +169,41 @@ class DesktopUiBridgeTests(unittest.IsolatedAsyncioTestCase):
                 upload_payload = await upload_response.json()
             self.assertEqual(
                 upload_payload["upload_url"],
-                f"{self.bridge_base_url}/client/attachments/upload/up_1",
+                f"{self.bridge_base_url}/desktop/attachments/upload/up_1",
             )
 
+            async with session.put(
+                upload_payload["upload_url"],
+                headers=headers,
+                data=b"desktop-upload",
+            ) as upload_content_response:
+                self.assertEqual(upload_content_response.status, 200)
+                upload_content_payload = await upload_content_response.json()
+            self.assertEqual(upload_content_payload["status"], "uploaded")
+
             async with session.get(
-                f"{self.bridge_base_url}/client/attachments/att_1/download-ticket",
+                f"{self.bridge_base_url}/desktop/attachments/att_1/download-ticket",
                 headers=headers,
             ) as download_response:
                 self.assertEqual(download_response.status, 200)
                 download_payload = await download_response.json()
             self.assertEqual(
                 download_payload["download_url"],
-                f"{self.bridge_base_url}/client/attachments/content/att_1?ticket_id=down_1",
+                f"{self.bridge_base_url}/desktop/attachments/content/att_1?ticket_id=down_1",
             )
             self.assertEqual(
                 download_payload["fallback_download_url"],
-                f"{self.bridge_base_url}/client/attachments/content/att_1?ticket_id=down_1",
+                f"{self.bridge_base_url}/desktop/attachments/content/att_1?ticket_id=down_1",
             )
+
+            async with session.get(download_payload["download_url"], headers=headers) as download_content_response:
+                self.assertEqual(download_content_response.status, 200)
+                self.assertEqual(await download_content_response.read(), b"desktop-download")
 
     async def test_client_websocket_is_proxied_through_local_bridge(self):
         async with ClientSession() as session:
             websocket = await session.ws_connect(
-                f"{self.bridge_base_url}/client/ws?thread_id=thr_1&access_token=local-token"
+                f"{self.bridge_base_url}/desktop/ws?thread_id=thr_1&access_token=local-token"
             )
             try:
                 await websocket.send_str('{"text":"hello-bridge"}')
