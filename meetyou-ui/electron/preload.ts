@@ -1,5 +1,9 @@
 import { ipcRenderer, contextBridge } from 'electron'
 
+contextBridge.exposeInMainWorld('meetyouDesktopRuntime', {
+  bridgeBaseUrl: process.env.MEETYOU_DESKTOP_BRIDGE_BASE_URL || '',
+})
+
 contextBridge.exposeInMainWorld('ipcRenderer', {
   on(...args: Parameters<typeof ipcRenderer.on>) {
     const [channel, listener] = args
