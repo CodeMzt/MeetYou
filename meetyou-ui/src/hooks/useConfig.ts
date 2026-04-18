@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchWithAuth, readErrorMessage } from '../apiClient'
 import { buildConfigGroups, getConfigFieldSchema } from '../configSchema'
 import { parseUiProtocolSchemaEnvelope } from '../protocolClient'
+import { DEFAULT_BASE_URL } from '../windowBridge'
 import type {
   ConfigEntry,
   ConfigFieldSchema,
@@ -192,7 +193,7 @@ function sortFields(fields: ResolvedConfigField[]): ResolvedConfigField[] {
   })
 }
 
-export function useConfig(baseUrl: string = 'http://127.0.0.1:8000') {
+export function useConfig(baseUrl: string = DEFAULT_BASE_URL) {
   const [config, setConfig] = useState<Record<string, ConfigEntry>>({})
   const [uiSchema, setUiSchema] = useState<UiProtocolSchema | null>(null)
   const [formValues, setFormValues] = useState<Record<string, ConfigFormValue>>({})

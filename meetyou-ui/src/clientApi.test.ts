@@ -19,6 +19,7 @@ import {
   pinClientThreadProcedure,
   unpinClientThreadProcedure,
 } from './clientApi'
+import { DEFAULT_BASE_URL } from './windowBridge'
 
 const originalFetch = globalThis.fetch
 const originalLocalStorage = globalThis.localStorage
@@ -651,11 +652,11 @@ describe('clientApi', () => {
     ) as typeof fetch
 
     const { downloadClientAttachmentContent: downloadAttachment } = await import('./clientApi')
-    const blob = await downloadAttachment('http://127.0.0.1:8000/client/attachments/content/att_1?ticket_id=down_1')
+    const blob = await downloadAttachment(`${DEFAULT_BASE_URL}/client/attachments/content/att_1?ticket_id=down_1`)
 
     expect(await blob.text()).toBe('attachment-body')
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/client/attachments/content/att_1?ticket_id=down_1',
+      `${DEFAULT_BASE_URL}/client/attachments/content/att_1?ticket_id=down_1`,
       expect.objectContaining({
         headers: expect.any(Headers),
       }),
@@ -663,6 +664,32 @@ describe('clientApi', () => {
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] || []
     const headers = init?.headers as Headers
     expect(headers.get('Authorization')).toBe('Bearer test-token')
+  })
+
+  it('downloads direct attachment urls without local bridge auth headers', async () => {
+    vi.resetModules()
+    globalThis.localStorage = {
+      getItem: vi.fn().mockReturnValue('test-token'),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      key: vi.fn(),
+      length: 0,
+    } as unknown as Storage
+
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response('attachment-body', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      }),
+    ) as typeof fetch
+
+    const { downloadClientAttachmentContent: downloadAttachment } = await import('./clientApi')
+    await downloadAttachment('https://minio.example.com/presigned/att_1')
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] || []
+    const headers = new Headers(init?.headers)
+    expect(headers.get('Authorization')).toBeNull()
   })
 
   it('prefers direct browser download for presigned attachment tickets', () => {

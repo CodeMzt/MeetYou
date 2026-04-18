@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 DEFAULT_CONFIG_PATH = Path("user") / "desktop_agent.json"
+DEFAULT_LOCAL_BRIDGE_HOST = "127.0.0.1"
+DEFAULT_LOCAL_BRIDGE_PORT = 38951
 
 
 def _default_agent_id() -> str:
@@ -37,6 +39,10 @@ class DesktopAgentConfig:
     reconnect_delay_seconds: int = 3
     supports_offline_cache: bool = True
     transport_profile: str = "desktop_wss"
+    local_bridge_enabled: bool = True
+    local_bridge_host: str = DEFAULT_LOCAL_BRIDGE_HOST
+    local_bridge_port: int = DEFAULT_LOCAL_BRIDGE_PORT
+    local_bridge_access_token: str = ""
     config_file_path: str = str(DEFAULT_CONFIG_PATH)
 
     @property
@@ -46,6 +52,10 @@ class DesktopAgentConfig:
     @property
     def workspace_root(self) -> Path:
         return Path.cwd().resolve()
+
+    @property
+    def local_bridge_base_url(self) -> str:
+        return f"http://{self.local_bridge_host}:{self.local_bridge_port}"
 
     @property
     def resolved_read_roots(self) -> list[Path]:
@@ -69,6 +79,19 @@ def _resolve_local_path(root: Path, value: str) -> Path:
     if candidate.is_absolute():
         return candidate.resolve()
     return (root / candidate).resolve()
+
+
+def _to_bool(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def load_desktop_agent_config(config_file_path: str | None = None) -> DesktopAgentConfig:
@@ -107,5 +130,25 @@ def load_desktop_agent_config(config_file_path: str | None = None) -> DesktopAge
         reconnect_delay_seconds=int(os.environ.get("MEETYOU_AGENT_RECONNECT_SECONDS") or payload.get("reconnect_delay_seconds") or 3),
         supports_offline_cache=bool(payload.get("supports_offline_cache", True)),
         transport_profile=str(payload.get("transport_profile") or "desktop_wss"),
+        local_bridge_enabled=_to_bool(
+            os.environ.get("MEETYOU_DESKTOP_LOCAL_BRIDGE_ENABLED", payload.get("local_bridge_enabled")),
+            default=True,
+        ),
+        local_bridge_host=str(
+            os.environ.get("MEETYOU_DESKTOP_LOCAL_HOST")
+            or payload.get("local_bridge_host")
+            or DEFAULT_LOCAL_BRIDGE_HOST
+        ).strip()
+        or DEFAULT_LOCAL_BRIDGE_HOST,
+        local_bridge_port=int(
+            os.environ.get("MEETYOU_DESKTOP_LOCAL_PORT")
+            or payload.get("local_bridge_port")
+            or DEFAULT_LOCAL_BRIDGE_PORT
+        ),
+        local_bridge_access_token=str(
+            os.environ.get("MEETYOU_DESKTOP_LOCAL_TOKEN")
+            or payload.get("local_bridge_access_token")
+            or ""
+        ).strip(),
         config_file_path=str(file_path),
     )

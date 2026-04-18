@@ -4,14 +4,14 @@ import asyncio
 import sys
 
 from core.logger import setup_logger
+from desktop_agent.backend import DesktopAgentBackend
 from desktop_agent.config import load_desktop_agent_config
-from desktop_agent.runtime import DesktopAgentRuntime
 
 
 async def run_desktop_agent() -> None:
     config = load_desktop_agent_config()
-    runtime = DesktopAgentRuntime(config)
-    await runtime.run()
+    backend = DesktopAgentBackend(config)
+    await backend.run()
 
 
 def _print_usage() -> None:

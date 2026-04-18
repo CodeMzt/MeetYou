@@ -162,11 +162,14 @@ function Start-ManualAcceptanceStack {
         }
     }
 
-    if (-not $SkipDesktopAgent) {
+    if (-not $SkipDesktopAgent -and $SkipUi) {
         Write-Section "Start desktop-agent"
         $agentCommand = '"' + $PythonExe + '" "' + $MainPy + '" desktop-agent'
         Start-ComponentWindow -Title "MeetYou Desktop Agent" -WorkingDirectory $RepoRoot -CommandText $agentCommand
         Write-Ok "desktop-agent launched; use check mode to confirm online state"
+    } elseif (-not $SkipDesktopAgent) {
+        Write-Section "Desktop backend"
+        Write-Ok "desktop backend will be launched by Electron UI"
     } else {
         Write-Warn "desktop-agent start skipped"
     }
@@ -180,9 +183,9 @@ function Start-ManualAcceptanceStack {
     }
 
     Write-Section "Next steps"
-    Write-Host "1. Wait 10-20 seconds for desktop-agent / Electron to connect"
+    Write-Host "1. Wait 10-20 seconds for desktop backend / Electron to connect"
     Write-Host "2. Run: scripts\manual-acceptance.cmd check"
-    Write-Host "3. Follow docs\manual-startup-acceptance.md"
+    Write-Host "3. Follow docs\v3\operations\desktop-unified-acceptance.md"
     return 0
 }
 
@@ -237,12 +240,12 @@ function Run-ManualAcceptanceCheck {
     }
 
     if ($failed) {
-        Write-Warn "At least one check failed. See docs\manual-startup-acceptance.md"
+        Write-Warn "At least one check failed. See docs\v3\operations\desktop-unified-acceptance.md"
         return 1
     }
 
     Write-Section "Done"
-    Write-Host "API checks passed. Next, follow docs\manual-startup-acceptance.md for UI / procedure / operation validation."
+    Write-Host "API checks passed. Next, follow docs\v3\operations\desktop-unified-acceptance.md for UI / procedure / operation validation."
     return 0
 }
 

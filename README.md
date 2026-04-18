@@ -3,31 +3,32 @@
 MeetYou 是一个以 LLM 为核心的个人智能体系统，目标形态是“私人服务器本体 + 多客户端 + workspace 驱动的 Agent / 边缘节点治理”。当前最推荐的部署方式是：
 
 - Linux 云服务器运行 Core Service
-- Windows PC 运行桌面客户端与 `desktop-agent`
+- Windows PC 运行统一桌面端（Electron UI + `desktop-agent` backend）
 - 需要时在额外节点运行 `edge-agent`
 
 这份 README 以“Linux 云服务器部署 + Core / Agent 接入”为主线，面向首轮落地和生产化部署。
 
+当前生效中的设计文档与计划文档统一收口到 `docs/v3/`；V2 历史资料已归档到 `docs/archive/v2/`。
+
 ## 部署拓扑
 
 ```text
-Desktop UI --------------\
-Desktop Agent ------------> Core Service (Linux / Tencent Cloud)
-Feishu Client ------------/        |
-                                   |
-                            Memory / Tools / MCP / Heart
-                                   |
-                         workspace / operation / approval
-                                   |
-                           Edge Agents via /agent/ws
+Desktop UI -> Desktop Backend ------> Core Service (Linux / Tencent Cloud)
+Feishu Client ----------------------/        |
+                                            |
+                                     Memory / Tools / MCP / Heart
+                                            |
+                                  workspace / operation / approval
+                                            |
+                                    Edge Agents via /agent/ws
 ```
 
 角色边界：
 
 - `Core Service`：服务端主链，负责会话、路由、记忆、任务、工具调度、Gateway 与运行时状态
-- `desktop-agent`：运行在用户自己的设备上，承接本地文件、Shell、本地 MCP 与桌面能力
+- `desktop-agent`：桌面端本地后端，承接本地文件、Shell、本地 MCP、桌面能力以及 UI bridge
 - `edge-agent`：运行在远端边缘节点上，按 workspace 接入并提供该节点的能力
-- `meetyou-ui/`：桌面客户端前端，不建议部署到 Linux 服务器上作为生产主链
+- `meetyou-ui/`：桌面客户端前端，默认通过本地 desktop backend 与 Core 交互，不建议部署到 Linux 服务器上作为生产主链
 
 关键原则：
 
@@ -35,6 +36,7 @@ Feishu Client ------------/        |
 - Agent 正式实时入口是 `WSS /agent/ws`
 - 根路径 `GET /ws` 只保留兼容性错误，不再承载正式聊天流
 - 本地文件、Shell、本地 MCP 生命周期属于 Agent 边界，不要重新塞回 Core
+- 桌面 UI 默认先连本地 loopback bridge `http://127.0.0.1:38951`，而不是直接连 Core
 
 ## 适用平台
 
@@ -74,12 +76,59 @@ prompt/          系统提示词、模式提示词、技能提示词
 desktop_agent/   PC 客户端本地后端
 edge_agent/      边缘 Agent 运行时
 meetyou-ui/      Electron + React 桌面端
-docs/            协议与补充文档
+docs/            文档入口；当前真源在 docs/v3/，V2 归档在 docs/archive/v2/
 tests/           自动化回归测试
 user/            本地配置模板与运行态数据目录
 ```
 
 ## Linux 服务器部署
+
+当前仓库为 Core 提供两条官方部署路径：
+
+- Linux 主机 + `venv` / `systemd`
+- `Dockerfile` + `deploy/docker/compose.core-postgres.yml`
+
+更完整的 Phase 1 部署说明见 `docs/v3/operations/core-deployment.md`。
+
+### 0. 容器化快速启动（Core + PostgreSQL）
+
+```bash
+python scripts/prepare_core_runtime.py --profile docker --output-root deploy/docker/runtime
+```
+
+这一步会：
+
+- 创建 `deploy/docker/compose.env`
+- 在 `deploy/docker/runtime/user/` 下创建独立的 Docker 运行文件
+- 在 `deploy/docker/runtime/logs/` 下创建独立日志目录
+- 不修改你现有的本机 `user/` 运行态
+
+然后确认：
+
+1. `deploy/docker/compose.env` 中的 `MEETYOU_DATABASE_URL` 与 `POSTGRES_*` 保持一致
+2. 根目录 `.env` 中保留你现有的 API Key / Gateway / Agent 密钥
+
+启动前可先自检：
+
+```bash
+python scripts/check_core_runtime.py --profile docker --runtime-root deploy/docker/runtime
+```
+
+启动命令：
+
+```bash
+docker compose -f deploy/docker/compose.core-postgres.yml up -d --build
+curl http://127.0.0.1:8000/health
+```
+
+补充：
+
+- Docker Core 会先继承根目录 `.env` 的现有密钥，再叠加 `deploy/docker/compose.env` 中的 PostgreSQL 覆盖项
+- PostgreSQL 会映射到宿主机 `127.0.0.1:55432`
+- Core 会使用 `deploy/docker/runtime/user/`，不会碰你当前本机 `user/`
+- Windows 下可直接使用一键脚本：`scripts\docker-core-acceptance.cmd install-docker|prepare|start|check`
+
+如果你更偏向传统 Linux 宿主机部署，再继续看下面的 `venv` / `systemd` 路径。
 
 ### 1. 克隆仓库并创建虚拟环境
 
@@ -101,18 +150,19 @@ pip install -r requirements-core.txt
 
 ### 2. 初始化配置文件
 
-复制模板：
+最小初始化可直接执行：
 
 ```bash
-cp .env.example .env
-cp user/config.example.json user/config.json
-cp user/tools.example.json user/tools.json
-cp user/cmd_policy.example.json user/cmd_policy.json
-cp user/source_catalog.example.json user/source_catalog.json
-cp user/memory_graph.example.json user/memory_graph.json
+python scripts/prepare_core_runtime.py --profile host
 ```
 
-按需复制：
+启动前可先自检：
+
+```bash
+python scripts/check_core_runtime.py --profile host --env-file .env
+```
+
+按需补充：
 
 ```bash
 cp user/core_mcp_servers.example.json user/core_mcp_servers.json
@@ -122,6 +172,7 @@ cp user/desktop_agent.example.json user/desktop_agent.json
 
 说明：
 
+- `python scripts/prepare_core_runtime.py --profile host` 会复制 `.env.example` 和最小 Core 运行模板；如果你已经有本地配置，脚本不会覆盖，除非加 `--force`
 - `user/config.json` 不是可选文件，缺失时启动会直接报错
 - `.env` 放敏感密钥，`user/*.json` 放非敏感业务配置
 - 真实运行态文件不要提交回仓库
@@ -275,7 +326,7 @@ agent.ready
 
 ### `desktop-agent` 与 `edge-agent` 的差异
 
-- `desktop-agent`：主要运行在用户设备侧，代表本机能力
+- `desktop-agent`：主要运行在用户设备侧，代表本机能力，并作为桌面 UI 的本地 backend
 - `edge-agent`：运行在远端节点侧，代表该边缘节点能力
 - 两者都走同一条 `WSS /agent/ws` 主链
 - 两者的差异主要由 `agent_type`、`transport_profile`、`workspace_ids` 和本地能力边界决定
@@ -330,7 +381,10 @@ Agent WebSocket 还兼容 `access_token` query。
   "cmd_policy_path": "user/cmd_policy.json",
   "mcp_servers_path": "user/mcp_servers.json",
   "heartbeat_interval_seconds": 20,
-  "transport_profile": "desktop_wss"
+  "transport_profile": "desktop_wss",
+  "local_bridge_enabled": true,
+  "local_bridge_host": "127.0.0.1",
+  "local_bridge_port": 38951
 }
 ```
 
@@ -338,6 +392,7 @@ Agent WebSocket 还兼容 `access_token` query。
 
 - `desktop-agent` 应部署在用户自己的 Windows 电脑，而不是 Linux Core 服务器上
 - `mcp_servers_path` 指向的是本地 MCP 配置，不属于服务端 MCP
+- 正常桌面链路下，Electron UI 会优先托管这个 backend；`python -m desktop_agent` 主要保留给 backend-only 调试
 
 启动命令：
 
@@ -499,6 +554,12 @@ npm install
 npm run dev
 ```
 
+说明：
+
+- `npm run dev` 会拉起 Electron 开发窗口
+- Electron main 会优先尝试启动本地 desktop backend
+- renderer 默认通过 `http://127.0.0.1:38951` 与本地 backend 交互
+
 ### 桌面端构建
 
 ```bash
@@ -519,8 +580,8 @@ Linux 服务器首轮验收建议按这个顺序：
 2. `python -m service_runtime`
 3. `curl /health`
 4. 确认数据库 migration 成功
-5. 用一个客户端验证 `POST /client/messages` + `GET /client/ws`
-6. 启动一个 `python -m edge_agent` 或 `python -m desktop_agent`
+5. 用一个桌面 UI 或其他客户端验证 `POST /client/messages` + `GET /client/ws`
+6. 启动一个 `python -m edge_agent`，或启动桌面 UI 以自动托管 desktop backend
 7. 检查 `GET /client/workspaces/{workspace_id}/agents` 是否能看到在线 Agent
 
 如果你只做最小 Agent 验证，建议关注：
@@ -557,13 +618,16 @@ npm run test
 
 ## 相关文档
 
-- [docs/core-client-agent-architecture.md](docs/core-client-agent-architecture.md)
-- [docs/workspace-capability-model.md](docs/workspace-capability-model.md)
-- [docs/core-api-surfaces.md](docs/core-api-surfaces.md)
-- [docs/agent-protocol-v1.md](docs/agent-protocol-v1.md)
-- [docs/manual-startup-acceptance.md](docs/manual-startup-acceptance.md)
-- [docs/runtime-migration.md](docs/runtime-migration.md)
-- [docs/playwright-mcp.md](docs/playwright-mcp.md)
+- [docs/README.md](docs/README.md)
+- [docs/v3/README.md](docs/v3/README.md)
+- [docs/v3/operations/core-deployment.md](docs/v3/operations/core-deployment.md)
+- [docs/v3/design/architecture-baseline.md](docs/v3/design/architecture-baseline.md)
+- [docs/v3/design/desktop-unified-agent.md](docs/v3/design/desktop-unified-agent.md)
+- [docs/v3/design/deployment-and-platform.md](docs/v3/design/deployment-and-platform.md)
+- [docs/v3/operations/desktop-unified-acceptance.md](docs/v3/operations/desktop-unified-acceptance.md)
+- [docs/v3/design/bot-integration.md](docs/v3/design/bot-integration.md)
+- [docs/v3/plan/implementation-plan.md](docs/v3/plan/implementation-plan.md)
+- [docs/archive/v2/README.md](docs/archive/v2/README.md)
 - [user/README.md](user/README.md)
 
 ## License

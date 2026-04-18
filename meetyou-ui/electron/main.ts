@@ -1,8 +1,10 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { spawn, type ChildProcess } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
+  DESKTOP_BRIDGE_STATUS_PATH,
   DEFAULT_BASE_URL,
   WINDOW_EVENT_CHANNEL,
   WINDOW_HASH_ROUTE,
@@ -36,9 +38,95 @@ const DANXI_WEBVPN_LOGIN_URL = 'https://webvpn.fudan.edu.cn/login?cas_login=true
 const DANXI_WEBVPN_LOGIN_PREFIX = 'https://webvpn.fudan.edu.cn/login'
 const DANXI_LOGIN_PURPOSE = 'danxi.client.login.v1'
 const DANXI_WEBVPN_PURPOSE = 'danxi.client.webvpn_cookie.v1'
+const DESKTOP_BACKEND_READY_TIMEOUT_MS = 15000
+let desktopBackendProcess: ChildProcess | null = null
+let desktopBridgeAccessToken = ''
 
 function getWorkspaceRoot() {
   return path.resolve(app.getAppPath(), '..')
+}
+
+function resolveWorkspacePython() {
+  const envPython = String(process.env.MEETYOU_DESKTOP_PYTHON || '').trim()
+  if (envPython) {
+    return envPython
+  }
+  const candidates = [
+    path.join(getWorkspaceRoot(), '.venv', 'Scripts', 'python.exe'),
+    path.join(getWorkspaceRoot(), '.venv', 'bin', 'python'),
+  ]
+  const matched = candidates.find((candidate) => fs.existsSync(candidate))
+  if (matched) {
+    return matched
+  }
+  return process.platform === 'win32' ? 'python' : 'python3'
+}
+
+function resolveWorkspaceMainPy() {
+  return path.join(getWorkspaceRoot(), 'main.py')
+}
+
+async function waitForDesktopBackend(timeoutMs = DESKTOP_BACKEND_READY_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(`${DEFAULT_BASE_URL}${DESKTOP_BRIDGE_STATUS_PATH}`)
+      if (response.ok) {
+        return true
+      }
+    } catch {
+      // Retry until timeout.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  return false
+}
+
+async function ensureDesktopBackendStarted() {
+  if (await waitForDesktopBackend(500)) {
+    desktopBridgeAccessToken = ''
+    return
+  }
+  if (desktopBackendProcess && desktopBackendProcess.exitCode == null) {
+    return
+  }
+  const mainPy = resolveWorkspaceMainPy()
+  if (!fs.existsSync(mainPy)) {
+    console.warn(`[desktop-backend] main.py not found: ${mainPy}`)
+    return
+  }
+  desktopBridgeAccessToken = crypto.randomBytes(24).toString('hex')
+  desktopBackendProcess = spawn(resolveWorkspacePython(), [mainPy, 'desktop-agent'], {
+    cwd: getWorkspaceRoot(),
+    env: {
+      ...process.env,
+      MEETYOU_DESKTOP_LOCAL_TOKEN: desktopBridgeAccessToken,
+    },
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  desktopBackendProcess.once('error', (error) => {
+    console.warn(`[desktop-backend] failed to start: ${error.message}`)
+    desktopBackendProcess = null
+    desktopBridgeAccessToken = ''
+  })
+  desktopBackendProcess.once('exit', (code, signal) => {
+    console.warn(`[desktop-backend] exited code=${String(code)} signal=${String(signal)}`)
+    desktopBackendProcess = null
+    desktopBridgeAccessToken = ''
+  })
+  const ready = await waitForDesktopBackend()
+  if (!ready) {
+    console.warn('[desktop-backend] bridge did not become ready before timeout')
+  }
+}
+
+function stopDesktopBackend() {
+  if (desktopBackendProcess && desktopBackendProcess.exitCode == null) {
+    desktopBackendProcess.kill()
+  }
+  desktopBackendProcess = null
+  desktopBridgeAccessToken = ''
 }
 
 function readWorkspaceEnvValue(envNames: string[]): string {
@@ -652,7 +740,7 @@ function createWindow() {
     danxiAuthWin?.close()
   })
   ipcMain.removeHandler('get-gateway-access-token')
-  ipcMain.handle('get-gateway-access-token', () => readGatewayAccessToken())
+  ipcMain.handle('get-gateway-access-token', () => desktopBridgeAccessToken)
   ipcMain.removeHandler('encrypt-danxi-credentials')
   ipcMain.handle('encrypt-danxi-credentials', (_event, payload: Record<string, unknown>) => {
     const purpose = String(payload?.purpose || '').trim()
@@ -683,6 +771,10 @@ app.on('window-all-closed', () => {
   }
 })
 
+app.on('before-quit', () => {
+  stopDesktopBackend()
+})
+
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
@@ -693,6 +785,7 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.meetyou.app')
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await ensureDesktopBackendStarted()
   createWindow()
 })

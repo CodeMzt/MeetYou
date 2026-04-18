@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { fetchWithAuth, readErrorMessage } from '../apiClient';
+import { DEFAULT_BASE_URL } from '../windowBridge';
 
 export interface MemoryRecord {
   id: string;
@@ -63,7 +64,7 @@ export interface MemoryGraph {
   stats: MemoryStats;
 }
 
-export function useMemory(baseUrl: string = 'http://127.0.0.1:8000') {
+export function useMemory(baseUrl: string = DEFAULT_BASE_URL) {
   const [snapshot, setSnapshot] = useState<MemorySnapshot | null>(null);
   const [graph, setGraph] = useState<MemoryGraph | null>(null);
   const [loading, setLoading] = useState(true);

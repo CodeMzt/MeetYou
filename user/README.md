@@ -5,6 +5,7 @@
 仓库中保留以下模板文件，供初始化本地环境时复制：
 
 - `config.example.json` -> `config.json`
+- `config.docker.example.json` -> `config.json`（Core Docker / Compose 路径）
 - `tools.example.json` -> `tools.json`
 - `mcp_servers.example.json` -> `mcp_servers.json`
 - `cmd_policy.example.json` -> `cmd_policy.json`
@@ -14,6 +15,13 @@
 - `desktop_agent.example.json` -> `desktop_agent.json`
 - `edge_agent.example.json` -> `edge_agent.json`
 - `core_mcp_servers.example.json` -> `core_mcp_servers.json`
+
+也可以直接使用初始化脚本：
+
+- `python scripts/prepare_core_runtime.py --profile host`：复制 `.env.example`、`config.example.json` 与最小 Core 运行模板
+- `python scripts/prepare_core_runtime.py --profile docker --output-root deploy/docker/runtime`：在 `deploy/docker/runtime/` 下生成隔离的 Docker 运行模板
+- `python scripts/check_core_runtime.py --profile host --env-file .env`：在启动前检查 host 路径是否齐备
+- `python scripts/check_core_runtime.py --profile docker --runtime-root deploy/docker/runtime`：在启动前检查隔离 Docker 路径是否齐备
 
 `desktop_agent.json` 常用字段：
 
@@ -29,6 +37,8 @@
 - `cmd_policy_path`: 本地命令策略文件路径
 - `mcp_servers_path`: Desktop Agent 本地 MCP 配置文件路径
 - `transport_profile`: 当前统一 agent websocket transport 下的 profile，默认 `desktop_wss`
+- `local_bridge_enabled`: 是否开启桌面 UI 使用的本地 loopback bridge
+- `local_bridge_host` / `local_bridge_port`: 本地 bridge 监听地址，默认 `127.0.0.1:38951`
 
 `edge_agent.json` 常用字段：
 
@@ -45,6 +55,7 @@
 - `desktop-agent` 与 `edge-agent` 都通过同一条 `WSS /agent/ws` + `meetyou.agent.v1` 主链接入 Core
 - 两者都先发送 `agent.hello`，再完成 `agent.capabilities.snapshot` 与 `agent.ready` 握手，不存在独立 `POST /agent/register` 正式入口
 - `desktop-agent` 额外通过 `owner_client_*` 字段声明它归属于哪个桌面 Client；`edge-agent` 通常不带这组字段，而主要依赖 `workspace_ids`
+- 桌面 UI 默认不再直接访问 Core，而是通过 `desktop-agent` 暴露的 loopback bridge 与后端交互
 - 二者的差异主要由 `agent_type`、`transport_profile` 与本地能力边界决定，而不是走两套不同协议
 - Agent 鉴权优先读各自专用 env，再回退到共享 `MEETYOU_AGENT_ACCESS_TOKEN` 或 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 

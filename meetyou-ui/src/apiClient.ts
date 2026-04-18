@@ -1,6 +1,17 @@
 import { parseErrorEnvelope } from './protocolClient'
+import { DEFAULT_BASE_URL } from './windowBridge'
 
 let cachedAccessToken: string | null = null
+
+function shouldAttachAccessToken(url: string): boolean {
+  try {
+    const target = new URL(url, DEFAULT_BASE_URL)
+    const desktopBridge = new URL(DEFAULT_BASE_URL)
+    return target.origin === desktopBridge.origin
+  } catch {
+    return false
+  }
+}
 
 export function getAccessToken(): string {
   try {
@@ -15,25 +26,26 @@ export async function resolveAccessToken(): Promise<string> {
     return cachedAccessToken
   }
 
-  const localToken = getAccessToken().trim()
-  if (localToken) {
-    cachedAccessToken = localToken
-    return cachedAccessToken
-  }
-
   try {
-    const token = String((await window.ipcRenderer?.invoke?.('get-gateway-access-token')) || '').trim()
-    if (token) {
-      cachedAccessToken = token
+    const ipcToken = await window.ipcRenderer?.invoke?.('get-gateway-access-token')
+    if (typeof ipcToken === 'string') {
+      const token = ipcToken.trim()
+      cachedAccessToken = token || null
       try {
         localStorage.setItem('meetyou_access_token', token)
       } catch {
         // Ignore local storage failures in constrained contexts.
       }
-      return cachedAccessToken
+      return token
     }
   } catch {
     // Ignore IPC resolution failures and fall back to empty token.
+  }
+
+  const localToken = getAccessToken().trim()
+  if (localToken) {
+    cachedAccessToken = localToken
+    return cachedAccessToken
   }
 
   return ''
@@ -42,7 +54,7 @@ export async function resolveAccessToken(): Promise<string> {
 export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
   const token = await resolveAccessToken()
   const headers = new Headers(init?.headers)
-  if (token) {
+  if (token && shouldAttachAccessToken(url)) {
     headers.set('Authorization', `Bearer ${token}`)
   }
   return fetch(url, { ...init, headers })

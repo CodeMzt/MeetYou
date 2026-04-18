@@ -1,4 +1,5 @@
-export const DEFAULT_BASE_URL = 'http://127.0.0.1:8000'
+export const DEFAULT_BASE_URL = 'http://127.0.0.1:38951'
+export const DESKTOP_BRIDGE_STATUS_PATH = '/desktop/bridge/status'
 
 export const WINDOW_HASH_ROUTE = {
   dashboard: '#/dashboard',
