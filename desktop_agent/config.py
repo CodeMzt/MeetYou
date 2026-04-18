@@ -24,6 +24,7 @@ def _default_display_name() -> str:
 class DesktopAgentConfig:
     core_base_url: str = "http://127.0.0.1:8000"
     agent_access_token: str = ""
+    gateway_access_token: str = ""
     agent_id: str = field(default_factory=_default_agent_id)
     display_name: str = field(default_factory=_default_display_name)
     owner_client_id: str = "desktop-app"
@@ -109,6 +110,13 @@ def load_desktop_agent_config(config_file_path: str | None = None) -> DesktopAge
             os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
             or os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
             or payload.get("agent_access_token")
+            or ""
+        ).strip(),
+        gateway_access_token=str(
+            os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
+            or payload.get("gateway_access_token")
+            or payload.get("agent_access_token")
+            or os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
             or ""
         ).strip(),
         agent_id=str(os.environ.get("MEETYOU_AGENT_ID") or payload.get("agent_id") or _default_agent_id()).strip(),

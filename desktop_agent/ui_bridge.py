@@ -227,7 +227,7 @@ class DesktopUiBridge:
             return _build_error_response(status=503, code="desktop_bridge_unavailable", message="本地桌面后端尚未就绪。")
         target_url = self._build_core_http_url(request)
         headers = _filter_request_headers(request.headers)
-        headers.update(_build_core_auth_headers(self._config.agent_access_token))
+        headers.update(_build_core_auth_headers(self._config.gateway_access_token))
         body = await request.read()
         try:
             async with self._session.request(
@@ -263,7 +263,7 @@ class DesktopUiBridge:
         if self._session is None:
             return _build_error_response(status=503, code="desktop_bridge_unavailable", message="本地桌面后端尚未就绪。")
         headers = _filter_request_headers(request.headers)
-        headers.update(_build_core_auth_headers(self._config.agent_access_token))
+        headers.update(_build_core_auth_headers(self._config.gateway_access_token))
         try:
             upstream_ws = await self._session.ws_connect(self._build_core_ws_url(request), headers=headers)
         except Exception as exc:

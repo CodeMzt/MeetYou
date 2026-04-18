@@ -27,6 +27,7 @@
 
 - `core_base_url`: Core Service 基地址；runtime 会把它转换为正式入口 `WSS /agent/ws`
 - `agent_access_token`: Agent 专用访问令牌；留空时仍可由环境变量注入
+- `gateway_access_token`: 桌面 UI 经本地 bridge 访问 `client/*`、`operator/*`、`developer/*` 时使用的 Gateway 访问令牌；缺失时回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `agent_access_token`
 - `agent_id`: Desktop Agent 唯一标识
 - `workspace_ids`: 当前 Agent 声明加入的 workspace 列表
 - `owner_client_id`: 该 Desktop Agent 归属的 Client 标识，默认 `desktop-app`
