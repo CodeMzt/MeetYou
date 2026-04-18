@@ -777,6 +777,8 @@ function createWindow() {
   })
   ipcMain.removeHandler('get-desktop-bridge-base-url')
   ipcMain.handle('get-desktop-bridge-base-url', () => desktopBridgeBaseUrl)
+  ipcMain.removeHandler('get-desktop-bridge-access-token')
+  ipcMain.handle('get-desktop-bridge-access-token', () => desktopBridgeAccessToken)
   ipcMain.removeHandler('get-gateway-access-token')
   ipcMain.handle('get-gateway-access-token', () => desktopBridgeAccessToken)
   ipcMain.removeHandler('encrypt-danxi-credentials')

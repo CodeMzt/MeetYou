@@ -74,8 +74,8 @@ export function useMemory(baseUrl: string = DEFAULT_BASE_URL) {
     try {
       setLoading(true);
       const [resSnapshot, resGraph] = await Promise.all([
-        fetchWithAuth(`${baseUrl}/operator/memory?include_invalidated=${includeInvalidated}`),
-        fetchWithAuth(`${baseUrl}/operator/memory/graph?include_invalidated=${includeInvalidated}`),
+        fetchWithAuth(`${baseUrl}/desktop/memory?include_invalidated=${includeInvalidated}`),
+        fetchWithAuth(`${baseUrl}/desktop/memory/graph?include_invalidated=${includeInvalidated}`),
       ]);
       if (!resSnapshot.ok) {
         const failure = await readErrorMessage(resSnapshot, 'Failed to fetch memory snapshot');

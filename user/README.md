@@ -27,7 +27,7 @@
 
 - `core_base_url`: Core Service 基地址；runtime 会把它转换为正式入口 `WSS /agent/ws`
 - `agent_access_token`: Agent 专用访问令牌；留空时仍可由环境变量注入
-- `gateway_access_token`: 桌面 UI 经本地 bridge 访问 `client/*`、`operator/*`、`developer/*` 时使用的 Gateway 访问令牌；缺失时回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `agent_access_token`
+- `gateway_access_token`: desktop backend 内部访问 Core 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 时使用的 Gateway 访问令牌；缺失时回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `agent_access_token`
 - `agent_id`: Desktop Agent 唯一标识
 - `workspace_ids`: 当前 Agent 声明加入的 workspace 列表
 - `owner_client_id`: 该 Desktop Agent 归属的 Client 标识，默认 `desktop-app`
@@ -38,8 +38,8 @@
 - `cmd_policy_path`: 本地命令策略文件路径
 - `mcp_servers_path`: Desktop Agent 本地 MCP 配置文件路径
 - `transport_profile`: 当前统一 agent websocket transport 下的 profile，默认 `desktop_wss`
-- `local_bridge_enabled`: 是否开启桌面 UI 使用的本地 loopback bridge
-- `local_bridge_host` / `local_bridge_port`: 本地 bridge 监听地址，默认 `127.0.0.1:38951`
+- `local_bridge_enabled`: 是否开启桌面 UI 使用的本地 desktop backend HTTP / WS 入口
+- `local_bridge_host` / `local_bridge_port`: 本地 desktop backend 监听地址，默认 `127.0.0.1:38951`
 
 `edge_agent.json` 常用字段：
 
@@ -56,7 +56,7 @@
 - `desktop-agent` 与 `edge-agent` 都通过同一条 `WSS /agent/ws` + `meetyou.agent.v1` 主链接入 Core
 - 两者都先发送 `agent.hello`，再完成 `agent.capabilities.snapshot` 与 `agent.ready` 握手，不存在独立 `POST /agent/register` 正式入口
 - `desktop-agent` 额外通过 `owner_client_*` 字段声明它归属于哪个桌面 Client；`edge-agent` 通常不带这组字段，而主要依赖 `workspace_ids`
-- 桌面 UI 默认不再直接访问 Core，而是通过 `desktop-agent` 暴露的 loopback bridge 与后端交互
+- 桌面 UI 默认不再直接访问 Core，而是通过 `desktop-agent` 暴露的 loopback `/desktop/*` API 与后端交互
 - 二者的差异主要由 `agent_type`、`transport_profile` 与本地能力边界决定，而不是走两套不同协议
 - Agent 鉴权优先读各自专用 env，再回退到共享 `MEETYOU_AGENT_ACCESS_TOKEN` 或 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 

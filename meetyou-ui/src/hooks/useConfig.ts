@@ -208,8 +208,8 @@ export function useConfig(baseUrl: string = DEFAULT_BASE_URL) {
       try {
         setLoading(true)
         const [schemaResponse, configResponse] = await Promise.all([
-          fetchWithAuth(`${baseUrl}/operator/schema/ui`),
-          fetchWithAuth(`${baseUrl}/operator/config`),
+          fetchWithAuth(`${baseUrl}/desktop/config/schema`),
+          fetchWithAuth(`${baseUrl}/desktop/config`),
         ])
 
         if (!schemaResponse.ok) {
@@ -344,7 +344,7 @@ export function useConfig(baseUrl: string = DEFAULT_BASE_URL) {
       setSaving(true)
       setError(null)
 
-      const response = await fetchWithAuth(`${baseUrl}/operator/config`, {
+      const response = await fetchWithAuth(`${baseUrl}/desktop/config`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ updates }),

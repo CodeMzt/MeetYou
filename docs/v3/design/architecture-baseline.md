@@ -49,10 +49,11 @@
 
 ### 2.5 当前已落地的桌面端收口
 
-- `desktop_agent/` 现在除了 `WSS /agent/ws` runtime 外，还承载本地 Desktop UI bridge
+- `desktop_agent/` 现在除了 `WSS /agent/ws` runtime 外，还承载本地 Desktop UI backend
 - Electron main process 会优先拉起本地 desktop backend；renderer 默认改连 loopback 地址 `http://127.0.0.1:38951`
-- UI 到 Core 的 HTTP / WebSocket、附件 ticket 与 operator/debug 访问默认都经由本地 bridge，而不再直接命中 Core
-- 这次收口只改变桌面端内部拓扑，不改变 Core 的正式 `client/* + GET /client/ws` 与 `WSS /agent/ws` 契约
+- UI 不再直接调用 Core surface，而是改调本地 `/desktop/*` 与 `/desktop/ws` API
+- Desktop backend 内部继续负责连接 Core 的 `client/* + GET /client/ws` 与 `WSS /agent/ws`
+- 这次收口只改变桌面端内部拓扑，不改变 Core 的正式 surface 契约
 
 ## 3. V3 继续沿用的约束
 

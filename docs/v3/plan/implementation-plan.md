@@ -29,7 +29,7 @@ V3 默认继续沿用当前仓库已经稳定的运行边界：
 
 - Core 在服务器侧
 - Desktop Backend / Edge Agent 在用户设备或边缘节点侧
-- Desktop UI 默认经由本地 desktop bridge 访问 Desktop Backend，不再直连 Core
+- Desktop UI 默认通过本地 `/desktop/*` API 与 Desktop Backend 交互，不再直连 Core
 - Client 正式面仍是 `client/* + GET /client/ws`
 - Agent 走 `WSS /agent/ws`
 
@@ -45,7 +45,7 @@ V3 默认继续沿用当前仓库已经稳定的运行边界：
 ```text
 Phase 0  文档归档与 V3 基线建立
 Phase 1  部署简化与容器化基线
-Phase 2  桌面端一体化与本地 bridge 收口
+Phase 2  桌面端一体化与 Desktop API 收口
 Phase 3  QQBot / WeChatBot 接入
 Phase 4  性能与可维护性优化
 Phase 5  自动化测试、CI/CD 与可观测性
@@ -66,9 +66,9 @@ Phase 5  自动化测试、CI/CD 与可观测性
 
 ### Phase 2
 
-- `F320` Desktop Backend local bridge。范围：让 `desktop_agent` 同时承接 UI 到 Core 的 HTTP / WS 代理、附件 ticket URL 重写与 loopback bridge。边界：`desktop_agent/`、相关测试与文档。状态：进行中。
-- `F321` Electron 托管桌面后端。范围：由 Electron main 负责拉起、监控与关闭 desktop backend，桌面 UI 默认改连本地 bridge。边界：`meetyou-ui/electron/`、`meetyou-ui/src/`、`desktop_agent/`。状态：进行中。
-- `F322` UI 直连 Core 收口。范围：把 renderer 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 与 `GET /client/ws` 访问统一改经本地 backend。边界：`meetyou-ui/src/`、`desktop_agent/`、相关测试。状态：进行中。
+- `F320` Desktop Backend API。范围：让 `desktop_agent` 对 UI 暴露显式 `/desktop/*` 与 `/desktop/ws` API，而不是通配式 Core 代理。边界：`desktop_agent/`、相关测试与文档。状态：进行中。
+- `F321` Electron 托管桌面后端。范围：由 Electron main 负责拉起、监控与关闭 desktop backend，并把本地 backend 地址与令牌注入 renderer。边界：`meetyou-ui/electron/`、`meetyou-ui/src/`、`desktop_agent/`。状态：进行中。
+- `F322` UI 直连 Core 收口。范围：把 renderer 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 与 `GET /client/ws` 访问统一改成桌面 backend 自己的 `/desktop/*` 和 `/desktop/ws` 契约。边界：`meetyou-ui/src/`、`desktop_agent/`、相关测试。状态：进行中。
 - `F323` Desktop 平台能力与非 Windows 语义收口。范围：继续显式化 Windows 专属 capability、Linux / macOS 下的降级与禁用语义。边界：`desktop_agent/`、`platform_layer/`、文档与测试。状态：计划中。
 - `F324` Desktop Product 打包策略设计。范围：明确桌面产品内 UI + backend 的便携打包或安装路径，同时保持 Core / Edge 独立发布。边界：发布文档、构建脚本、`docs/v3/`。状态：计划中。
 
@@ -96,7 +96,7 @@ Phase 5  自动化测试、CI/CD 与可观测性
 
 1. 完成 Phase 0 的文档真源收口
 2. 补齐 Phase 1 的部署简化基线
-3. 优先推进 Phase 2 的桌面端一体化与本地 bridge 收口
+3. 优先推进 Phase 2 的桌面端一体化与 Desktop API 收口
 4. 以 Feishu 适配模式为参照推进 Phase 3 的 Bot 接入
 5. 在桌面主链与核心接入路径明确后，再推进 Phase 4、Phase 5 的系统性收口
 

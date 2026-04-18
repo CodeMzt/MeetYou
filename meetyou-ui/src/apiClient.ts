@@ -3,65 +3,6 @@ import { DEFAULT_BASE_URL } from './windowBridge'
 
 let cachedAccessToken: string | null = null
 
-declare global {
-  interface Window {
-    __meetyouAuthTrace?: {
-      baseUrl: string
-      entries: Array<{
-        ts: string
-        method: string
-        url: string
-        host: string
-        attachAuth: boolean
-        tokenPresent: boolean
-        tokenSource: string
-        status?: number
-        error?: string
-      }>
-    }
-  }
-}
-
-type TokenResolution = {
-  token: string
-  source: 'ipc' | 'localStorage' | 'none'
-}
-
-function traceAuth(entry: {
-  method: string
-  url: string
-  attachAuth: boolean
-  tokenPresent: boolean
-  tokenSource: string
-  status?: number
-  error?: string
-}) {
-  try {
-    const target = new URL(entry.url, DEFAULT_BASE_URL)
-    const container = (window.__meetyouAuthTrace ||= {
-      baseUrl: DEFAULT_BASE_URL,
-      entries: [],
-    })
-    container.baseUrl = DEFAULT_BASE_URL
-    container.entries.push({
-      ts: new Date().toISOString(),
-      method: entry.method,
-      url: target.toString(),
-      host: target.host,
-      attachAuth: entry.attachAuth,
-      tokenPresent: entry.tokenPresent,
-      tokenSource: entry.tokenSource,
-      status: entry.status,
-      error: entry.error,
-    })
-    if (container.entries.length > 80) {
-      container.entries.splice(0, container.entries.length - 80)
-    }
-  } catch {
-    // Ignore diagnostics failures.
-  }
-}
-
 function shouldAttachAccessToken(url: string): boolean {
   try {
     const target = new URL(url, DEFAULT_BASE_URL)
@@ -80,13 +21,16 @@ export function getAccessToken(): string {
   }
 }
 
-export async function resolveAccessTokenDetailed(): Promise<TokenResolution> {
+export async function resolveAccessToken(): Promise<string> {
   if (cachedAccessToken) {
-    return { token: cachedAccessToken, source: 'ipc' }
+    return cachedAccessToken
   }
 
   try {
-    const ipcToken = await window.ipcRenderer?.invoke?.('get-gateway-access-token')
+    let ipcToken = await window.ipcRenderer?.invoke?.('get-desktop-bridge-access-token')
+    if (typeof ipcToken !== 'string') {
+      ipcToken = await window.ipcRenderer?.invoke?.('get-gateway-access-token')
+    }
     if (typeof ipcToken === 'string') {
       const token = ipcToken.trim()
       cachedAccessToken = token || null
@@ -95,10 +39,7 @@ export async function resolveAccessTokenDetailed(): Promise<TokenResolution> {
       } catch {
         // Ignore local storage failures in constrained contexts.
       }
-      return {
-        token,
-        source: token ? 'ipc' : 'none',
-      }
+      return token
     }
   } catch {
     // Ignore IPC resolution failures and fall back to empty token.
@@ -107,51 +48,19 @@ export async function resolveAccessTokenDetailed(): Promise<TokenResolution> {
   const localToken = getAccessToken().trim()
   if (localToken) {
     cachedAccessToken = localToken
-    return {
-      token: cachedAccessToken,
-      source: 'localStorage',
-    }
+    return cachedAccessToken
   }
 
-  return { token: '', source: 'none' }
-}
-
-export async function resolveAccessToken(): Promise<string> {
-  const { token } = await resolveAccessTokenDetailed()
-  return token
+  return ''
 }
 
 export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
-  const tokenResult = await resolveAccessTokenDetailed()
-  const token = tokenResult.token
+  const token = await resolveAccessToken()
   const headers = new Headers(init?.headers)
-  const attachAuth = Boolean(token && shouldAttachAccessToken(url))
-  if (attachAuth) {
+  if (token && shouldAttachAccessToken(url)) {
     headers.set('Authorization', `Bearer ${token}`)
   }
-  const method = String(init?.method || 'GET').toUpperCase()
-  try {
-    const response = await fetch(url, { ...init, headers })
-    traceAuth({
-      method,
-      url,
-      attachAuth,
-      tokenPresent: Boolean(token),
-      tokenSource: tokenResult.source,
-      status: response.status,
-    })
-    return response
-  } catch (error) {
-    traceAuth({
-      method,
-      url,
-      attachAuth,
-      tokenPresent: Boolean(token),
-      tokenSource: tokenResult.source,
-      error: error instanceof Error ? error.message : String(error),
-    })
-    throw error
-  }
+  return fetch(url, { ...init, headers })
 }
 
 export async function readErrorMessage(
