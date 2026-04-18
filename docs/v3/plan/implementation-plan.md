@@ -67,7 +67,7 @@ Phase 5  自动化测试、CI/CD 与可观测性
 ### Phase 2
 
 - `F320` Desktop Backend API。范围：让 `desktop_agent` 对 UI 暴露显式 `/desktop/*` 与 `/desktop/ws` API，而不是通配式 Core 代理。边界：`desktop_agent/`、相关测试与文档。状态：进行中。
-- `F321` Electron 托管桌面后端。范围：由 Electron main 负责拉起、监控与关闭 desktop backend，并把本地 backend 地址与令牌注入 renderer。边界：`meetyou-ui/electron/`、`meetyou-ui/src/`、`desktop_agent/`。状态：进行中。
+- `F321` Electron 托管桌面后端。范围：由 Electron main 负责拉起、监控与关闭 desktop backend，并把本地 backend 地址与令牌注入 renderer；desktop runtime 在本地 session 建立后启动，避免重复连接注入。边界：`meetyou-ui/electron/`、`meetyou-ui/src/`、`desktop_agent/`。状态：进行中。
 - `F322` UI 直连 Core 收口。范围：把 renderer 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 与 `GET /client/ws` 访问统一改成桌面 backend 自己的 `/desktop/*` 和 `/desktop/ws` 契约。边界：`meetyou-ui/src/`、`desktop_agent/`、相关测试。状态：进行中。
 - `F323` Desktop 平台能力与非 Windows 语义收口。范围：继续显式化 Windows 专属 capability、Linux / macOS 下的降级与禁用语义。边界：`desktop_agent/`、`platform_layer/`、文档与测试。状态：计划中。
 - `F324` Desktop Product 打包策略设计。范围：明确桌面产品内 UI + backend 的便携打包或安装路径，同时保持 Core / Edge 独立发布。边界：发布文档、构建脚本、`docs/v3/`。状态：计划中。

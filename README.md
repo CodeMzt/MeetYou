@@ -571,6 +571,7 @@ npm run dev
 - `npm run dev` 会拉起 Electron 开发窗口
 - Electron main 会优先尝试启动本地 desktop backend
 - renderer 默认通过 `http://127.0.0.1:38951` 与本地 backend 交互
+- desktop backend 会在本地 desktop session 建立后再启动 `/agent/ws` runtime，避免重复连接注入消息
 
 ### 桌面端构建
 

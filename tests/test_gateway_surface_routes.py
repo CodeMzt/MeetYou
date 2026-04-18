@@ -186,7 +186,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual(session_resp.status_code, 200)
         self.assertEqual(session_resp.json()["thread_id"], thread_payload["thread_id"])
 
-    def test_create_session_binds_runtime_session_and_replays_connected_agent(self):
+    def test_create_session_binds_runtime_session_without_replaying_connected_agent(self):
         workspace = self.core_domain.services.workspace.get_by_workspace_id("personal")
         self.assertIsNotNone(workspace)
         registered = self.core_domain.services.agent.register_agent(
@@ -241,9 +241,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertEqual((binding.metadata or {}).get("thread_id"), thread_id)
         self.assertEqual((binding.metadata or {}).get("workspace_id"), "personal")
         self.assertEqual((binding.metadata or {}).get("client_id"), "electron-main")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["agent_id"], agent.agent_id)
-        self.assertEqual(calls[0]["workspace_ids"], ["personal"])
+        self.assertEqual(len(calls), 0)
 
     def test_workspace_agents_include_ready_agent(self):
         workspace = self.core_domain.services.workspace.get_by_workspace_id("desktop-main")
