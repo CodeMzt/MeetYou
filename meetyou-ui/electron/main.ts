@@ -36,8 +36,12 @@ let danxiAuthResolver: ((value: any) => void) | null = null
 
 const DANXI_WEBVPN_LOGIN_URL = 'https://webvpn.fudan.edu.cn/login?cas_login=true'
 const DANXI_WEBVPN_LOGIN_PREFIX = 'https://webvpn.fudan.edu.cn/login'
+const DANXI_WEBVPN_HOST = 'webvpn.fudan.edu.cn'
 const DANXI_LOGIN_PURPOSE = 'danxi.client.login.v1'
 const DANXI_WEBVPN_PURPOSE = 'danxi.client.webvpn_cookie.v1'
+const DANXI_AUTH_WINDOW_PARTITION = 'persist:danxi-auth'
+const DANXI_AUTH_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
 const DESKTOP_BACKEND_READY_TIMEOUT_MS = 15000
 const DEFAULT_DESKTOP_BRIDGE_HOST = '127.0.0.1'
 const DEFAULT_DESKTOP_BRIDGE_PORT = 38951
@@ -228,12 +232,27 @@ function buildCookieHeader(cookies: Array<{ name: string; value: string }>) {
     .join('; ')
 }
 
+function isDanxiAuthCaptureReady(currentUrl: string) {
+  if (!currentUrl) {
+    return false
+  }
+  try {
+    const parsed = new URL(currentUrl)
+    if (parsed.hostname !== DANXI_WEBVPN_HOST) {
+      return false
+    }
+    return parsed.pathname !== '/login'
+  } catch {
+    return false
+  }
+}
+
 async function tryResolveDanxiAuth(windowRef: BrowserWindow | null) {
   if (!windowRef || !danxiAuthResolver) {
     return false
   }
   const currentUrl = windowRef.webContents.getURL() || ''
-  if (currentUrl.startsWith(DANXI_WEBVPN_LOGIN_PREFIX)) {
+  if (!isDanxiAuthCaptureReady(currentUrl)) {
     return false
   }
   const cookies = await windowRef.webContents.session.cookies.get({ url: 'https://webvpn.fudan.edu.cn' })
@@ -519,11 +538,30 @@ function createDanxiAuthWindow() {
     icon: path.join(process.env.VITE_PUBLIC || '', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     autoHideMenuBar: true,
     title: 'Danxi WebVPN 登录',
+    backgroundColor: '#ffffff',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      partition: DANXI_AUTH_WINDOW_PARTITION,
     },
+  })
+  danxiAuthWin.show()
+  danxiAuthWin.focus()
+
+  danxiAuthWin.webContents.setUserAgent(DANXI_AUTH_USER_AGENT)
+  danxiAuthWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    console.warn(
+      `[danxi-auth] did-fail-load code=${String(errorCode)} mainFrame=${String(isMainFrame)} url=${validatedURL} error=${errorDescription}`,
+    )
+  })
+  danxiAuthWin.webContents.on('render-process-gone', (_event, details) => {
+    console.warn(`[danxi-auth] render-process-gone reason=${details.reason} exitCode=${String(details.exitCode)}`)
+  })
+  danxiAuthWin.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level >= 2) {
+      console.warn(`[danxi-auth] console level=${String(level)} line=${String(line)} source=${sourceId} message=${message}`)
+    }
   })
 
   danxiAuthWin.loadURL(DANXI_WEBVPN_LOGIN_URL)

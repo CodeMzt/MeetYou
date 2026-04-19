@@ -1,4 +1,5 @@
 import os
+import requests
 import unittest
 from unittest.mock import patch
 
@@ -30,7 +31,10 @@ class _FakeSession:
         self.calls.append({"method": method, "url": url, **kwargs})
         if not self._responses:
             raise AssertionError("No fake responses left")
-        return self._responses.pop(0)
+        next_response = self._responses.pop(0)
+        if isinstance(next_response, Exception):
+            raise next_response
+        return next_response
 
     def close(self):
         return None
@@ -130,6 +134,58 @@ class DanxiToolsTests(unittest.TestCase):
         self.assertTrue(translated.startswith("https://webvpn.fudan.edu.cn/https/"))
         self.assertTrue(translated.endswith("/api/holes"))
 
+    def test_request_uses_webvpn_cookie_automatically_when_direct_is_unavailable(self):
+        fake_http = _FakeSession([_FakeResponse(payload=[{"division_id": 1, "name": "综合"}])])
+        tools = DanxiTools()
+        tools._direct_connect_available = False
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=False,
+            webvpn_cookie="vpn=ok",
+            http=fake_http,
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        payload = tools.danxi_list_divisions()
+
+        self.assertEqual(payload["count"], 1)
+        self.assertTrue(state.use_webvpn)
+        self.assertTrue(fake_http.calls[0]["url"].startswith("https://webvpn.fudan.edu.cn/https/"))
+        self.assertEqual(fake_http.calls[0]["headers"]["Cookie"], "vpn=ok")
+
+    def test_request_retries_with_webvpn_cookie_when_direct_request_fails(self):
+        fake_http = _FakeSession(
+            [
+                requests.exceptions.ConnectionError("direct down"),
+                _FakeResponse(payload=[{"division_id": 1, "name": "综合"}], url="https://webvpn.fudan.edu.cn/https/demo/api"),
+            ]
+        )
+        tools = DanxiTools()
+        tools._direct_connect_available = True
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=False,
+            webvpn_cookie="vpn=ok",
+            http=fake_http,
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        payload = tools.danxi_list_divisions()
+
+        self.assertEqual(payload["count"], 1)
+        self.assertTrue(state.use_webvpn)
+        self.assertEqual(fake_http.calls[0]["url"], f"{tools.API_BASE}/divisions")
+        self.assertTrue(fake_http.calls[1]["url"].startswith("https://webvpn.fudan.edu.cn/https/"))
+        self.assertEqual(fake_http.calls[1]["headers"]["Cookie"], "vpn=ok")
+
     def test_persists_and_restores_encrypted_danxi_session_state(self):
         backend = _MemoryStateBackend()
         tools = DanxiTools()
@@ -213,6 +269,27 @@ class DanxiToolsTests(unittest.TestCase):
         self.assertTrue(status["has_webvpn_cookie"])
         self.assertEqual(status["transport"], "webvpn")
         self.assertTrue(status["webvpn_required"])
+
+    def test_session_status_treats_existing_webvpn_cookie_as_available_fallback(self):
+        tools = DanxiTools()
+        tools._direct_connect_available = False
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=False,
+            webvpn_cookie="vpn=ok",
+            http=_FakeSession([]),
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        status = tools.danxi_get_session_status()
+
+        self.assertTrue(status["webvpn_enabled"])
+        self.assertTrue(status["webvpn_required"])
+        self.assertEqual(status["transport"], "webvpn")
 
     def test_delete_reply_requires_confirmation(self):
         tools = DanxiTools()
