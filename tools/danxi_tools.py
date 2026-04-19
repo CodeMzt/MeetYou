@@ -159,11 +159,12 @@ class DanxiTools:
         profile = self._safe_load_profile(state)
         self._mark_session_validated(state)
         self._persist_sessions()
+        webvpn_enabled = self._is_webvpn_enabled(state)
         return {
             "session_key": state.session_key,
             "email": state.email,
             "transport": self._transport_label(state),
-            "webvpn_enabled": state.use_webvpn,
+            "webvpn_enabled": webvpn_enabled,
             "has_webvpn_cookie": bool(state.webvpn_cookie),
             "logged_in": bool(state.access_token),
             "token": {
@@ -208,12 +209,13 @@ class DanxiTools:
         state = self._get_session(session_key)
         self._ensure_restored_session_is_valid(state)
         direct_connect_available = self._can_connect_directly()
-        webvpn_required = bool(state.use_webvpn and not direct_connect_available)
+        webvpn_enabled = self._is_webvpn_enabled(state, direct_connect_available=direct_connect_available)
+        webvpn_required = bool(webvpn_enabled and not direct_connect_available)
         return {
             "session_key": state.session_key,
             "email": state.email,
             "transport": self._transport_label(state),
-            "webvpn_enabled": state.use_webvpn,
+            "webvpn_enabled": webvpn_enabled,
             "has_webvpn_cookie": bool(state.webvpn_cookie),
             "webvpn_required": webvpn_required,
             "direct_connect_available": direct_connect_available,
@@ -742,9 +744,14 @@ class DanxiTools:
         state.refresh_token = refresh
 
     def _transport_label(self, state: _DanxiSessionState) -> str:
-        if state.use_webvpn and not self._can_connect_directly():
+        if self._is_webvpn_enabled(state) and not self._can_connect_directly():
             return "webvpn"
         return "direct"
+
+    def _is_webvpn_enabled(self, state: _DanxiSessionState, *, direct_connect_available: bool | None = None) -> bool:
+        if direct_connect_available is None:
+            direct_connect_available = self._can_connect_directly()
+        return bool(state.use_webvpn or (state.webvpn_cookie and not direct_connect_available))
 
     def _can_connect_directly(self) -> bool:
         with self._lock:
@@ -762,7 +769,18 @@ class DanxiTools:
         return direct_available
 
     def _should_use_webvpn_proxy(self, state: _DanxiSessionState, url: str) -> bool:
-        return bool(state.use_webvpn and not self._can_connect_directly() and self._translate_url_to_webvpn(url))
+        translated = self._translate_url_to_webvpn(url)
+        if translated is None:
+            return False
+        if state.use_webvpn:
+            return True
+        return bool(state.webvpn_cookie and not self._can_connect_directly())
+
+    def _mark_webvpn_fallback_active(self, state: _DanxiSessionState) -> None:
+        if state.use_webvpn:
+            return
+        state.use_webvpn = True
+        self._persist_sessions()
 
     def _translate_url_to_webvpn(self, url: str) -> str | None:
         parsed = urlparse(url)
@@ -829,9 +847,9 @@ class DanxiTools:
     ) -> requests.Response:
         target_url = url
         headers = {"Accept": "application/json"}
+        translated = self._translate_url_to_webvpn(url)
         proxied = self._should_use_webvpn_proxy(state, url)
         if proxied:
-            translated = self._translate_url_to_webvpn(url)
             if translated is None:
                 raise DanxiError(f"当前 URL 不支持通过 WebVPN 代理: {url}")
             target_url = translated
@@ -852,7 +870,28 @@ class DanxiTools:
                 allow_redirects=True,
             )
         except requests.RequestException as exc:
-            raise DanxiError(f"Danxi 请求失败: {exc}") from exc
+            if not proxied and translated is not None and state.webvpn_cookie:
+                self._mark_webvpn_fallback_active(state)
+                headers = {"Accept": "application/json", "Cookie": state.webvpn_cookie}
+                if include_auth:
+                    headers["Authorization"] = f"Bearer {state.access_token}"
+                try:
+                    response = state.http.request(
+                        method.upper(),
+                        translated,
+                        params=params,
+                        json=json_body,
+                        headers=headers,
+                        timeout=(5, 20),
+                        allow_redirects=True,
+                    )
+                    proxied = True
+                except requests.RequestException as webvpn_exc:
+                    raise DanxiError(f"Danxi 请求失败: {webvpn_exc}") from webvpn_exc
+            else:
+                raise DanxiError(f"Danxi 请求失败: {exc}") from exc
+        if proxied:
+            self._mark_webvpn_fallback_active(state)
         if proxied and self._response_requires_webvpn_login(response):
             raise DanxiError("Danxi 已切到 WebVPN 路由，但当前没有有效的 WebVPN 登录态。请提供可用的 WebVPN cookie。")
         if response.status_code == 401 and include_auth and retry_on_unauthorized:

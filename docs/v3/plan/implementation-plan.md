@@ -71,6 +71,7 @@ Phase 5  自动化测试、CI/CD 与可观测性
 - `F322` UI 直连 Core 收口。范围：把 renderer 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 与 `GET /client/ws` 访问统一改成桌面 backend 自己的 `/desktop/*` 和 `/desktop/ws` 契约。边界：`meetyou-ui/src/`、`desktop_agent/`、相关测试。状态：进行中。
 - `F323` Desktop 平台能力与非 Windows 语义收口。范围：继续显式化 Windows 专属 capability、Linux / macOS 下的降级与禁用语义。边界：`desktop_agent/`、`platform_layer/`、文档与测试。状态：计划中。
 - `F324` Desktop Product 打包策略设计。范围：明确桌面产品内 UI + backend 的便携打包或安装路径，同时保持 Core / Edge 独立发布。边界：发布文档、构建脚本、`docs/v3/`。状态：计划中。
+- `F325` Danxi WebVPN fallback 收口。范围：沿用现有 Danxi 直连 + WebVPN 方案，在不引入新的通用代理配置面的前提下，让 Danxi 会话在直连不可用或直连请求失败时自动切到已有 WebVPN 登录态；同步收口 Danxi 状态返回口径、最小相关测试与计划文档。边界：`tools/danxi_tools.py`、Danxi 相关测试、`docs/v3/`。状态：已完成。
 
 ### Phase 3
 
@@ -102,14 +103,137 @@ Phase 5  自动化测试、CI/CD 与可观测性
 
 若当轮需求有明确优先级，以用户目标优先。
 
-## 8. 验证要求
+## 8. Phase 4 完成记录
+
+### 8.1 目标
+
+- 统一 Core / Agent 侧最小诊断字段，让 runtime health、telemetry、background status 与结构化日志能落在同一套排障口径上
+- 为 scheduler 与 memory search 抽出明确边界接口，避免 Phase 4 继续把行为、状态和调度细节堆回单一函数
+- 为后续长耗时任务异步化预留可复用的 dispatch plan，而不改变当前单体主链、正式协议和运行顺序
+
+### 8.2 已落地范围
+
+本轮已按 `F342 -> F340 -> F341` 顺序完成以下收口：
+
+- `F342`
+  - `ServiceRuntime health`、`background_status` 与 `gateway delivery telemetry` 共享诊断来源字段
+  - `StructuredFormatter` 兼容既有 `structured_data` 与遗留 `context` 扩展字段
+  - Agent runtime、Desktop Agent MCP 初始化失败、Heart 关键失败路径都补入结构化日志
+- `F340`
+  - 新增 `core/scheduled_task_dispatch.py`，把 scheduled task 的 control event / operation 元数据边界显式化
+  - 新增 `tools/memory_search.py`，把 memory search 的 query / structured recall 边界从 tool formatting 中拆出
+- `F341`
+  - scheduler 改用 `ScheduledTaskDispatchPlan` 生成 control event 和 operation metadata
+  - 预留 `dispatch_mode=inline_control_event` 与 `dispatch_queue=scheduled_task_controls`，后续可平滑切换到 queue/job，而当前仍走 event bus 主链
+
+### 8.3 逐文件改动清单
+
+- `docs/v3/design/runtime-diagnostics-and-performance.md`
+  - 记录 Phase 4 的热点路径、执行顺序、边界约束与已落地结果
+- `docs/v3/plan/implementation-plan.md`
+  - 将 `F340` / `F341` / `F342` 状态收口为已完成
+  - 把 Phase 4 的实际落地范围、代码边界与验证矩阵写回真源计划
+- `core/scheduled_task_dispatch.py`
+  - 抽出 scheduled task / reminder 的 dispatch plan 与 operation metadata 边界
+- `tools/memory_search.py`
+  - 抽出 memory search query 与 structured recall service
+- `core/background_status.py`
+  - 在系统问题快照中保留 `background_status_sources` 与 `job_failure_count`
+- `core/logger.py`
+  - 统一结构化日志字段解析，兼容遗留 `context` 扩展字段
+- `service_runtime/telemetry.py`
+  - 为 gateway delivery 失败保留 metadata 中的关联上下文字段
+- `service_runtime/service.py`
+  - 在 health metrics / checks 中保留背景状态来源数量与 job failure 计数
+- `agent_sdk/runtime.py`
+  - 为 handshake、capability call、call failure / completion 增补结构化日志字段
+- `desktop_agent/runtime.py`
+  - 为 MCP 初始化失败补充结构化日志
+- `edge_agent/runtime.py`
+  - 为 runtime 连接失败补充结构化日志
+- `core/heart.py`
+  - 使用 dispatch plan 驱动 scheduled control event 与 operation 预创建
+  - 在 scheduler / heartbeat 失败路径上补充结构化日志
+- `core/app.py`
+  - 复用 dispatch plan 创建 / 复用 scheduled operation，并统一 agent-connected 结构化日志字段
+- `tools/agent_memory.py`
+  - 接入 `MemorySearchService`，让 memory search tool 面与 retrieval service 面分离
+- `tests/test_service_runtime.py`
+  - 增补结构化日志兼容、诊断字段和 gateway delivery 关联上下文断言
+- `tests/test_heart_scheduler.py`
+  - 验证 scheduler control event 与 operation metadata 带有 dispatch reservation 字段
+- `tests/test_scheduled_control_flow.py`
+  - 验证 App 侧 scheduled operation 复用新的 dispatch metadata
+- `tests/test_scheduled_task_dispatch.py`
+  - 验证 dispatch plan 与 operation metadata 边界
+- `tests/test_memory_search_service.py`
+  - 验证 memory search service 的 structured recall 边界
+
+### 8.4 完成判定
+
+本轮完成后，Phase 4 视为已收口，因为：
+
+1. 诊断字段已覆盖 Core runtime、gateway delivery、Heart、Agent runtime 关键失败路径
+2. scheduler 与 memory search 已有明确的边界模块，不再只依赖内联实现细节
+3. 长耗时任务异步化已具备可复用的 dispatch reservation 字段，后续可在不改协议的前提下继续演进
+
+### 8.5 验证矩阵
+
+- `tests/test_service_runtime.py`
+- `tests/test_runtime_ws.py`
+- `tests/test_heartbeat_guardrails.py`
+- `tests/test_task_scheduler.py`
+- `tests/test_heart_scheduler.py`
+- `tests/test_brain_memory_prefetch.py`
+- `tests/test_scheduled_control_flow.py`
+- `tests/test_edge_agent_runtime.py`
+- `tests/test_desktop_agent_runtime.py`
+- `tests/test_scheduled_task_dispatch.py`
+- `tests/test_memory_search_service.py`
+
+## 9. Danxi WebVPN Fallback 收口记录
+
+### 9.1 目标
+
+- 保持当前 Danxi 仍以 Core 侧 `DanxiTools` 为唯一真实会话源，不把 Danxi 登录态拆到 Desktop Agent 或 renderer
+- 不新增 STUVPN / 通用代理配置面，继续沿用当前仓库已落地的 WebVPN 登录窗 + cookie 路由方案
+- 当 Danxi 直连不可用，或某次 Danxi 直连请求发生网络级失败时，如果当前会话已经具备可用的 WebVPN cookie，则自动切到 WebVPN 路由
+
+### 9.2 已落地范围
+
+- `tools/danxi_tools.py`
+  - 扩大 WebVPN 路由启用条件：已有 WebVPN cookie 且直连不可用时，不再要求显式 `use_webvpn=True` 才能走代理
+  - 增加 Danxi 直连请求失败后的自动 WebVPN 重试逻辑，避免已有 WebVPN 登录态时仍直接报错退出
+  - 收口 Danxi 会话状态口径，让 `transport`、`webvpn_enabled` 与 `webvpn_required` 能反映“已有 WebVPN fallback 可用”的事实
+- `meetyou-ui/electron/main.ts`
+  - 收紧 WebVPN cookie 捕获时机：只有认证窗真正回到 `webvpn.fudan.edu.cn` 的非登录页后，才把 cookie 回传给 Danxi，避免在 CAS/预登录阶段过早关闭窗口并注入无效 cookie
+  - 为 WebVPN 认证窗补充独立 session、Chrome UA 与加载失败日志，降低白屏/无响应时的排障成本
+- `tests/test_danxi_tools.py`
+  - 增补“直连不可用时自动走 WebVPN cookie”
+  - 增补“直连请求失败后自动重试 WebVPN”
+  - 增补“已有 WebVPN cookie 时会话状态反映 fallback 可用”
+
+### 9.3 边界说明
+
+- 本轮没有新增 Danxi/STUVPN 专用配置项，也没有把代理设置接入 `operator/config` / `/desktop/config`
+- 本轮继续沿用 Electron WebVPN 登录窗、`/desktop/danxi/*` -> `/client/danxi/*` -> Core `DanxiTools` 的现有跨端链路
+- `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 当前仍不是仓库内已接线的正式配置入口，本轮不把它们纳入产品行为承诺
+
+### 9.4 验证矩阵
+
+- `.venv\Scripts\python.exe -m unittest tests.test_danxi_tools`
+- `.venv\Scripts\python.exe -m unittest tests.test_gateway_surface_routes`
+- `cd meetyou-ui && npm run typecheck`
+- `cd meetyou-ui && npm run test -- src/clientApi.test.ts src/DanxiWindow.test.tsx`
+
+## 10. 验证要求
 
 - 文档改动若直接涉及部署主链、发布顺序或兼容窗口，至少跑 `tests/test_agent_release_compatibility.py`
 - 后端实现类改动按最小相关 `unittest` 模块执行
 - Frontend 改动先 `npm run typecheck`，再 `npm run test`
 - 只有在实际改到 Electron/Vite/build 链路时才补 `npm run build`
 
-## 9. 历史参考
+## 11. 历史参考
 
 V2 的实施细节、验收口径与迁移记录已归档到 `docs/archive/v2/`，包括：
 
