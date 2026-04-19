@@ -7,11 +7,12 @@ from tools.danxi_tools import DanxiError, DanxiTools, _DanxiSessionState
 
 
 class _FakeResponse:
-    def __init__(self, status_code=200, payload=None, url="https://forum.fduhole.com/api/test", text=""):
+    def __init__(self, status_code=200, payload=None, url="https://forum.fduhole.com/api/test", text="", headers=None):
         self.status_code = status_code
         self._payload = payload
         self.url = url
         self.text = text or ""
+        self.headers = dict(headers or {})
         self.ok = 200 <= status_code < 400
         self.reason = "OK" if self.ok else "ERROR"
 
@@ -185,6 +186,74 @@ class DanxiToolsTests(unittest.TestCase):
         self.assertEqual(fake_http.calls[0]["url"], f"{tools.API_BASE}/divisions")
         self.assertTrue(fake_http.calls[1]["url"].startswith("https://webvpn.fudan.edu.cn/https/"))
         self.assertEqual(fake_http.calls[1]["headers"]["Cookie"], "vpn=ok")
+
+    def test_request_refreshes_server_side_webvpn_cookie_when_proxy_login_page_is_returned(self):
+        fake_http = _FakeSession(
+            [
+                _FakeResponse(
+                    status_code=200,
+                    payload=ValueError("not json"),
+                    url="https://webvpn.fudan.edu.cn/https/demo/authserver/login?service=demo",
+                    text="<html><title>资源访问控制系统</title></html>",
+                    headers={"Content-Type": "text/html; charset=utf-8"},
+                ),
+                _FakeResponse(payload=[{"division_id": 1, "name": "综合"}], url="https://webvpn.fudan.edu.cn/https/demo/api"),
+            ]
+        )
+        tools = DanxiTools()
+        tools._direct_connect_available = False
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=True,
+            webvpn_cookie="vpn=stale",
+            http=fake_http,
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        def _refresh_cookie(target_state):
+            self.assertIs(target_state, state)
+            target_state.webvpn_cookie = "vpn=fresh"
+            return True
+
+        with patch.object(DanxiTools, "_refresh_webvpn_cookie_from_env", side_effect=_refresh_cookie) as refresh_cookie:
+            payload = tools.danxi_list_divisions()
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(refresh_cookie.call_count, 1)
+        self.assertEqual(fake_http.calls[0]["headers"]["Cookie"], "vpn=stale")
+        self.assertEqual(fake_http.calls[1]["headers"]["Cookie"], "vpn=fresh")
+
+    def test_request_uses_server_side_webvpn_login_when_cookie_missing(self):
+        fake_http = _FakeSession([_FakeResponse(payload=[{"division_id": 1, "name": "综合"}], url="https://webvpn.fudan.edu.cn/https/demo/api")])
+        tools = DanxiTools()
+        tools._direct_connect_available = False
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=True,
+            webvpn_cookie="",
+            http=fake_http,
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        def _refresh_cookie(target_state):
+            self.assertIs(target_state, state)
+            target_state.webvpn_cookie = "vpn=fresh"
+            return True
+
+        with patch.object(DanxiTools, "_refresh_webvpn_cookie_from_env", side_effect=_refresh_cookie) as refresh_cookie:
+            payload = tools.danxi_list_divisions()
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(refresh_cookie.call_count, 1)
+        self.assertEqual(fake_http.calls[0]["headers"]["Cookie"], "vpn=fresh")
 
     def test_persists_and_restores_encrypted_danxi_session_state(self):
         backend = _MemoryStateBackend()

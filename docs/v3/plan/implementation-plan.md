@@ -205,6 +205,7 @@ Phase 5  自动化测试、CI/CD 与可观测性
   - 扩大 WebVPN 路由启用条件：已有 WebVPN cookie 且直连不可用时，不再要求显式 `use_webvpn=True` 才能走代理
   - 增加 Danxi 直连请求失败后的自动 WebVPN 重试逻辑，避免已有 WebVPN 登录态时仍直接报错退出
   - 收口 Danxi 会话状态口径，让 `transport`、`webvpn_enabled` 与 `webvpn_required` 能反映“已有 WebVPN fallback 可用”的事实
+  - 当远端 Core 检测到浏览器提交的 WebVPN cookie 无法跨机复用时，允许使用服务端 `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 重建 WebVPN 会话并重试
 - `meetyou-ui/electron/main.ts`
   - 收紧 WebVPN cookie 捕获时机：只有认证窗真正回到 `webvpn.fudan.edu.cn` 的非登录页后，才把 cookie 回传给 Danxi，避免在 CAS/预登录阶段过早关闭窗口并注入无效 cookie
   - 为 WebVPN 认证窗补充独立 session、Chrome UA 与加载失败日志，降低白屏/无响应时的排障成本
@@ -217,7 +218,7 @@ Phase 5  自动化测试、CI/CD 与可观测性
 
 - 本轮没有新增 Danxi/STUVPN 专用配置项，也没有把代理设置接入 `operator/config` / `/desktop/config`
 - 本轮继续沿用 Electron WebVPN 登录窗、`/desktop/danxi/*` -> `/client/danxi/*` -> Core `DanxiTools` 的现有跨端链路
-- `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 当前仍不是仓库内已接线的正式配置入口，本轮不把它们纳入产品行为承诺
+- 当 Danxi 挂在远端 Core 且浏览器 cookie 无法跨机复用时，服务端可通过 `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 自建 WebVPN 会话；这两个环境变量因此成为 WebVPN 远端部署场景下的正式运行入口
 
 ### 9.4 验证矩阵
 
