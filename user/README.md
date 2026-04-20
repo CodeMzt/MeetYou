@@ -26,7 +26,7 @@
 `desktop_agent.json` 常用字段：
 
 - `core_base_url`: Core Service 基地址；runtime 会把它转换为正式入口 `WSS /agent/ws`
-- `agent_access_token`: Agent 专用访问令牌；留空时仍可由环境变量注入
+- `agent_access_token`: Agent 专用访问令牌；留空时仍可由 `MEETYOU_AGENT_ACCESS_TOKEN` 注入，不会回退到 Gateway token
 - `gateway_access_token`: desktop backend 内部访问 Core 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 时使用的 Gateway 访问令牌；缺失时回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `agent_access_token`
 - `agent_id`: Desktop Agent 唯一标识
 - `workspace_ids`: 当前 Agent 声明加入的 workspace 列表
@@ -44,7 +44,7 @@
 `edge_agent.json` 常用字段：
 
 - `core_base_url`: Core Service 基地址；runtime 会把它转换为正式入口 `WSS /agent/ws`
-- `agent_access_token`: Agent 专用访问令牌；也支持由环境变量注入
+- `agent_access_token`: Agent 专用访问令牌；也支持由 `MEETYOU_EDGE_ACCESS_TOKEN` / `MEETYOU_AGENT_ACCESS_TOKEN` 注入，不会回退到 Gateway token
 - `agent_id`: 边缘 Agent 唯一标识
 - `agent_type`: 当前边缘执行器类型，默认 `edge`
 - `workspace_ids`: 允许加入的 workspace 列表
@@ -58,7 +58,7 @@
 - `desktop-agent` 额外通过 `owner_client_*` 字段声明它归属于哪个桌面 Client；`edge-agent` 通常不带这组字段，而主要依赖 `workspace_ids`
 - 桌面 UI 默认不再直接访问 Core，而是通过 `desktop-agent` 暴露的 loopback `/desktop/*` API 与后端交互
 - 二者的差异主要由 `agent_type`、`transport_profile` 与本地能力边界决定，而不是走两套不同协议
-- Agent 鉴权优先读各自专用 env，再回退到共享 `MEETYOU_AGENT_ACCESS_TOKEN` 或 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+- Agent 鉴权优先读各自专用 env，再回退到共享 `MEETYOU_AGENT_ACCESS_TOKEN`；不会把 `MEETYOU_GATEWAY_ACCESS_TOKEN` 当作 `/agent/ws` 的 Agent token
 
 MCP 文件边界：
 

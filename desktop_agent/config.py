@@ -120,7 +120,6 @@ def load_desktop_agent_config(config_file_path: str | None = None) -> DesktopAge
         agent_access_token=str(
             payload.get("agent_access_token")
             or os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
-            or os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
             or ""
         ).strip(),
         gateway_access_token=str(

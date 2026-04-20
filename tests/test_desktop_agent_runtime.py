@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from core.credential_transport import encrypt_json_payload
 from desktop_agent.config import DesktopAgentConfig, load_desktop_agent_config
@@ -155,6 +157,42 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
                     os.environ["MEETYOU_GATEWAY_ACCESS_TOKEN"] = previous_gateway
 
         self.assertEqual(config.agent_access_token, "agent-from-file")
+        self.assertEqual(config.gateway_access_token, "gateway-from-dotenv")
+
+    def test_load_desktop_agent_config_does_not_use_gateway_token_for_agent_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "desktop_agent.json"
+            env_path = Path(tmp_dir) / ".env"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "core_base_url": "http://127.0.0.1:8000",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env_path.write_text("MEETYOU_GATEWAY_ACCESS_TOKEN=gateway-from-dotenv\n", encoding="utf-8")
+
+            previous_cwd = Path.cwd()
+            previous_agent = os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
+            previous_gateway = os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
+            os.chdir(tmp_dir)
+            os.environ.pop("MEETYOU_AGENT_ACCESS_TOKEN", None)
+            os.environ.pop("MEETYOU_GATEWAY_ACCESS_TOKEN", None)
+            try:
+                config = load_desktop_agent_config(str(config_path))
+            finally:
+                os.chdir(previous_cwd)
+                if previous_agent is None:
+                    os.environ.pop("MEETYOU_AGENT_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_AGENT_ACCESS_TOKEN"] = previous_agent
+                if previous_gateway is None:
+                    os.environ.pop("MEETYOU_GATEWAY_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_GATEWAY_ACCESS_TOKEN"] = previous_gateway
+
+        self.assertEqual(config.agent_access_token, "")
         self.assertEqual(config.gateway_access_token, "gateway-from-dotenv")
 
     def test_protocol_builders_include_expected_agent_payloads(self):
@@ -359,22 +397,31 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
 
                 # shell.exec
                 shell_ws = _FakeWs()
-                asyncio.run(
-                    runtime._handle_call_request(
-                        shell_ws,
-                        {
-                            "schema": "meetyou.agent.v1",
-                            "type": "capability.call.request",
-                            "message_id": "dispatch-shell",
-                            "payload": {
-                                "call_id": "call-shell",
-                                "capability_id": "agent.desktop-main-agent.shell.exec",
-                                "arguments": {"command": 'python -c "print(123)"'},
+
+                class _FakeProcess:
+                    def __init__(self):
+                        self.returncode = 0
+
+                    async def communicate(self):
+                        return b"123\n", b""
+
+                with mock.patch("desktop_agent.execution.asyncio.create_subprocess_shell", new=mock.AsyncMock(return_value=_FakeProcess())):
+                    asyncio.run(
+                        runtime._handle_call_request(
+                            shell_ws,
+                            {
+                                "schema": "meetyou.agent.v1",
+                                "type": "capability.call.request",
+                                "message_id": "dispatch-shell",
+                                "payload": {
+                                    "call_id": "call-shell",
+                                    "capability_id": "agent.desktop-main-agent.shell.exec",
+                                    "arguments": {"command": f'"{sys.executable}" -c "print(123)"'},
+                                },
                             },
-                        },
-                        object(),
+                            object(),
+                        )
                     )
-                )
                 self.assertEqual(shell_ws.sent[-1]["type"], "capability.call.result")
                 self.assertEqual(shell_ws.sent[-1]["payload"]["result"]["stdout"], "123")
             finally:

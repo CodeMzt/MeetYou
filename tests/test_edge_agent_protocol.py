@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,6 +63,43 @@ class EdgeAgentProtocolTests(unittest.TestCase):
             self.assertEqual(config.workspace_ids, ["home-lab", "study"])
             self.assertEqual(config.heartbeat_interval_seconds, 5)
             self.assertEqual(config.websocket_url, "ws://127.0.0.1:8000/agent/ws")
+
+    def test_load_edge_agent_config_reads_dotenv_without_gateway_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "edge_agent.json"
+            env_path = Path(tmp_dir) / ".env"
+            config_path.write_text(json.dumps({"core_base_url": "http://127.0.0.1:8000"}), encoding="utf-8")
+            env_path.write_text(
+                "MEETYOU_GATEWAY_ACCESS_TOKEN=gateway-from-dotenv\nMEETYOU_EDGE_ACCESS_TOKEN=edge-from-dotenv\n",
+                encoding="utf-8",
+            )
+
+            previous_cwd = Path.cwd()
+            previous_edge = os.environ.get("MEETYOU_EDGE_ACCESS_TOKEN")
+            previous_agent = os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
+            previous_gateway = os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
+            os.chdir(tmp_dir)
+            os.environ.pop("MEETYOU_EDGE_ACCESS_TOKEN", None)
+            os.environ.pop("MEETYOU_AGENT_ACCESS_TOKEN", None)
+            os.environ.pop("MEETYOU_GATEWAY_ACCESS_TOKEN", None)
+            try:
+                config = load_edge_agent_config(str(config_path))
+            finally:
+                os.chdir(previous_cwd)
+                if previous_edge is None:
+                    os.environ.pop("MEETYOU_EDGE_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_EDGE_ACCESS_TOKEN"] = previous_edge
+                if previous_agent is None:
+                    os.environ.pop("MEETYOU_AGENT_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_AGENT_ACCESS_TOKEN"] = previous_agent
+                if previous_gateway is None:
+                    os.environ.pop("MEETYOU_GATEWAY_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_GATEWAY_ACCESS_TOKEN"] = previous_gateway
+
+        self.assertEqual(config.agent_access_token, "edge-from-dotenv")
 
 
 if __name__ == "__main__":

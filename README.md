@@ -338,13 +338,13 @@ agent.ready
 `desktop-agent`：
 
 - 优先读取 `MEETYOU_AGENT_ACCESS_TOKEN`
-- 可回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+- 不再回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 
 `edge-agent`：
 
 - 优先读取 `MEETYOU_EDGE_ACCESS_TOKEN`
 - 再回退到 `MEETYOU_AGENT_ACCESS_TOKEN`
-- 最后回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+- 不再回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 
 WebSocket / HTTP 都支持：
 
@@ -437,6 +437,8 @@ python -m edge_agent
 - `npx.cmd`
 - `msedge`
 - Windows 盘符路径
+
+Core 在服务端拉起 `npx` 型 MCP 时会默认复用工作目录下的 `.npm-cache` 作为可写缓存；如部署环境需要自定义缓存位置，可设置 `MEETYOU_MCP_NPM_CACHE_DIR`。
 
 如果你想保留 Windows 浏览器体验，再在本机额外补 `msedge`、profile、缓存目录等参数。
 

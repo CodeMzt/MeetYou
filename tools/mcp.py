@@ -12,6 +12,7 @@ from contextlib import AsyncExitStack
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 try:
     from mcp.client.session import ClientSession
@@ -30,6 +31,11 @@ except ImportError:  # pragma: no cover - optional dependency
         raise RuntimeError("The optional 'mcp' package is not installed.")
 
 logger = logging.getLogger("meetyou.mcp")
+_DEFAULT_MCP_AUTH_ENV: dict[str, tuple[str, ...]] = {
+    "notion_knowledge": ("NOTION_TOKEN",),
+    "tavily_web": ("TAVILY_API_KEY",),
+}
+_NODE_PACKAGE_LAUNCHERS = {"npm", "npm.cmd", "npx", "npx.cmd"}
 
 
 def _resolve_server_process(
@@ -51,7 +57,81 @@ def _resolve_server_process(
     return command, resolved_args
 
 
-def _compose_server_env(server_env: dict | None = None) -> dict[str, str]:
+def _resolve_auth_env(server_name: str, info: dict) -> list[str]:
+    auth_env = [str(item).strip() for item in info.get("auth_env", []) if str(item).strip()]
+    if auth_env:
+        return auth_env
+    auth_env = [
+        str(item).strip()
+        for item in ((info.get("auth") or {}).get("env") or [])
+        if str(item).strip()
+    ]
+    if auth_env:
+        return auth_env
+    return list(_DEFAULT_MCP_AUTH_ENV.get(str(server_name or "").strip(), ()))
+
+
+def _resolve_cache_dir(candidate: str, *, default_relative: str) -> Path:
+    path = Path(str(candidate or default_relative)).expanduser()
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    return path
+
+
+def _ensure_directory(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write_probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+        return True
+    except Exception:
+        return False
+
+
+def _normalize_node_launcher_env(command: str, merged: dict[str, str]) -> dict[str, str]:
+    launcher_name = Path(str(command or "")).name.lower()
+    if launcher_name not in _NODE_PACKAGE_LAUNCHERS:
+        return merged
+
+    default_cache_dir = _resolve_cache_dir(
+        merged.get("MEETYOU_MCP_NPM_CACHE_DIR") or os.environ.get("MEETYOU_MCP_NPM_CACHE_DIR") or ".npm-cache",
+        default_relative=".npm-cache",
+    )
+    resolved_cache_dir = default_cache_dir
+    configured_cache_dir = str(merged.get("NPM_CONFIG_CACHE") or merged.get("npm_config_cache") or "").strip()
+    if configured_cache_dir:
+        candidate = _resolve_cache_dir(configured_cache_dir, default_relative=".npm-cache")
+        if _ensure_directory(candidate):
+            resolved_cache_dir = candidate
+        else:
+            _ensure_directory(default_cache_dir)
+    else:
+        _ensure_directory(default_cache_dir)
+
+    merged["NPM_CONFIG_CACHE"] = str(resolved_cache_dir)
+    merged["npm_config_cache"] = str(resolved_cache_dir)
+
+    xdg_cache_dir = resolved_cache_dir / "xdg"
+    _ensure_directory(xdg_cache_dir)
+    merged.setdefault("XDG_CACHE_HOME", str(xdg_cache_dir))
+
+    home_dir = str(merged.get("HOME") or "").strip()
+    if home_dir:
+        resolved_home_dir = _resolve_cache_dir(home_dir, default_relative=".npm-cache/home")
+        if not _ensure_directory(resolved_home_dir):
+            home_dir = ""
+    if not home_dir:
+        fallback_home_dir = resolved_cache_dir / "home"
+        _ensure_directory(fallback_home_dir)
+        merged["HOME"] = str(fallback_home_dir)
+
+    merged.setdefault("npm_config_update_notifier", "false")
+    merged.setdefault("npm_config_fund", "false")
+    return merged
+
+
+def _compose_server_env(command: str, server_env: dict | None = None) -> dict[str, str]:
     """
     Merge explicit MCP env overrides with the current process environment so
     per-server settings do not accidentally drop secrets loaded from `.env`.
@@ -59,7 +139,31 @@ def _compose_server_env(server_env: dict | None = None) -> dict[str, str]:
     merged = dict(os.environ)
     for key, value in (server_env or {}).items():
         merged[str(key)] = str(value)
-    return merged
+    return _normalize_node_launcher_env(command, merged)
+
+
+class _LoggerWriter:
+    def __init__(self, server_name: str):
+        self._server_name = str(server_name or "unknown")
+        self._buffer = ""
+
+    def write(self, text: str) -> int:
+        message = str(text or "")
+        if not message:
+            return 0
+        self._buffer += message
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            line = line.strip()
+            if line:
+                logger.warning("MCP server [%s] stderr: %s", self._server_name, line)
+        return len(message)
+
+    def flush(self) -> None:
+        line = self._buffer.strip()
+        if line:
+            logger.warning("MCP server [%s] stderr: %s", self._server_name, line)
+        self._buffer = ""
 
 
 class MCPClient:
@@ -70,7 +174,10 @@ class MCPClient:
         server_command: str,
         server_args: list[str] | None = None,
         server_env: dict | None = None,
+        *,
+        server_name: str = "",
     ):
+        self.server_name = str(server_name or server_command).strip() or "unknown"
         self.server_command = server_command
         self.server_args = server_args or []
         self.server_env = server_env or None
@@ -87,9 +194,10 @@ class MCPClient:
         params = StdioServerParameters(
             command=command,
             args=args,
-            env=_compose_server_env(self.server_env),
+            env=_compose_server_env(command, self.server_env),
+            cwd=Path.cwd(),
         )
-        stdio_ctx = stdio_client(params)
+        stdio_ctx = stdio_client(params, errlog=_LoggerWriter(self.server_name))
         read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_ctx)
 
         session_ctx = ClientSession(read_stream, write_stream)
@@ -144,13 +252,7 @@ class MCPManager:
         self.server_diagnostics = {}
 
         for name, info in mcp_servers.items():
-            auth_env = [str(item).strip() for item in info.get("auth_env", []) if str(item).strip()]
-            if not auth_env:
-                auth_env = [
-                    str(item).strip()
-                    for item in ((info.get("auth") or {}).get("env") or [])
-                    if str(item).strip()
-                ]
+            auth_env = _resolve_auth_env(name, info)
             missing_auth = [env_name for env_name in auth_env if not str(os.environ.get(env_name) or "").strip()]
             diagnostic = {
                 "server_name": name,
@@ -184,7 +286,7 @@ class MCPManager:
                 self.server_diagnostics[name] = diagnostic
                 continue
 
-            client = MCPClient(command, args, env)
+            client = MCPClient(command, args, env, server_name=name)
             try:
                 await client.init_mcp_session()
                 await client.load_mcp_tools()

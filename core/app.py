@@ -1435,6 +1435,11 @@ class App:
             runtime_payload = runtime_by_name.get(str(payload.get("server_name") or "").strip(), {})
             if runtime_payload:
                 payload["runtime"] = runtime_payload
+                runtime_status = str(runtime_payload.get("status") or "").strip()
+                if runtime_status:
+                    payload["status"] = runtime_status
+                    payload["usable"] = runtime_status == "enabled"
+                    payload["degraded"] = runtime_status in {"requires_auth", "unavailable"}
                 if runtime_payload.get("error") and not payload.get("error"):
                     payload["error"] = runtime_payload.get("error")
                 if runtime_payload.get("command") and not payload.get("command"):
@@ -1443,6 +1448,27 @@ class App:
                     payload["tool_count"] = int(runtime_payload.get("tool_count") or 0)
             enriched_core_servers.append(payload)
         boundary["core_mcp_servers"] = enriched_core_servers
+        summary = dict(boundary.get("summary") or {})
+        core_server_names = [
+            str(item.get("server_name") or "").strip()
+            for item in enriched_core_servers
+            if str(item.get("server_name") or "").strip()
+        ]
+        enabled_servers = [
+            name
+            for name in core_server_names
+            if str(runtime_by_name.get(name, {}).get("status") or "").strip() == "enabled"
+        ]
+        partial_failure_servers = sorted(
+            name
+            for name in core_server_names
+            if str(runtime_by_name.get(name, {}).get("status") or "").strip() in {"requires_auth", "unavailable"}
+        )
+        summary["configured_server_count"] = len(core_server_names) or len(configured_servers)
+        summary["enabled_count"] = len(enabled_servers)
+        summary["partial_failure_count"] = len(partial_failure_servers)
+        summary["partial_failure_servers"] = partial_failure_servers
+        boundary["summary"] = summary
         boundary["config"] = self.config.get_mcp_server_config_diagnostic()
         boundary["configured_server_names"] = configured_servers
         boundary["runtime_server_diagnostics"] = runtime_server_diagnostics

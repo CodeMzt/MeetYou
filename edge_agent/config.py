@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 DEFAULT_CONFIG_PATH = Path("user") / "edge_agent.json"
+DEFAULT_ENV_PATH = Path(".env")
 
 
 @dataclass(slots=True)
@@ -28,7 +29,17 @@ class EdgeAgentConfig:
         return f"{self.core_base_url.rstrip('/').replace('http://', 'ws://').replace('https://', 'wss://')}/agent/ws"
 
 
+def _load_env_file(env_file_path: Path = DEFAULT_ENV_PATH) -> None:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_file_path, override=True)
+    except ImportError:
+        return
+
+
 def load_edge_agent_config(config_file_path: str | None = None) -> EdgeAgentConfig:
+    _load_env_file()
     file_path = Path(config_file_path or DEFAULT_CONFIG_PATH)
     payload: dict[str, object] = {}
     if file_path.exists():
@@ -44,7 +55,6 @@ def load_edge_agent_config(config_file_path: str | None = None) -> EdgeAgentConf
         agent_access_token=str(
             os.environ.get("MEETYOU_EDGE_ACCESS_TOKEN")
             or os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
-            or os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
             or payload.get("agent_access_token")
             or ""
         ).strip(),
