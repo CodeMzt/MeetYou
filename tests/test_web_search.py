@@ -184,6 +184,61 @@ class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["sources"][0]["url"], "https://example.com/one")
         self.assertEqual(payload["sources"][0]["reader"], "tavily_extract")
 
+    async def test_search_web_accepts_underscore_tavily_tool_names(self):
+        manager = _FakeMCPManager(
+            responses={
+                "tavily_search": [
+                    json.dumps(
+                        {
+                            "answer": "Short answer",
+                            "results": [
+                                {
+                                    "title": "Source One",
+                                    "url": "https://example.com/one",
+                                    "content": "Snippet one",
+                                }
+                            ],
+                        }
+                    )
+                ],
+                "tavily_extract": [
+                    json.dumps(
+                        {
+                            "results": [
+                                {
+                                    "url": "https://example.com/one",
+                                    "title": "Source One",
+                                    "raw_content": "Full article one " * 20,
+                                }
+                            ]
+                        }
+                    )
+                ],
+            },
+            tool_map={
+                "tavily_search": "tavily_web",
+                "tavily_extract": "tavily_web",
+            },
+            server_diagnostics={
+                "tavily_web": {
+                    "server_name": "tavily_web",
+                    "status": "enabled",
+                    "tool_count": 2,
+                    "tool_names": ["tavily_search", "tavily_extract"],
+                    "usable": True,
+                }
+            },
+        )
+        tools = WebSearchTools(manager)
+
+        raw = await tools.search_web("example query")
+        payload = json.loads(raw)
+
+        self.assertEqual(payload["search_backend"], "tavily")
+        self.assertEqual(payload["sources"][0]["reader"], "tavily_extract")
+        self.assertEqual(manager.calls[0][0], "tavily_search")
+        self.assertEqual(manager.calls[1][0], "tavily_extract")
+
     async def test_search_web_surfaces_backend_text_errors(self):
         manager = _FakeMCPManager(
             responses={"tavily-search": ["Tavily API error: Invalid API key"]},
@@ -226,6 +281,29 @@ class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("failed to initialize", result.error.message)
         self.assertIn("spawn npx ENOENT", result.error.message)
         self.assertEqual(result.error.details["tavily_diagnostic"]["status"], "unavailable")
+
+    async def test_search_web_reports_enabled_tavily_without_supported_search_tool(self):
+        manager = _FakeMCPManager(
+            tool_map={"tavily_extract": "tavily_web"},
+            server_diagnostics={
+                "tavily_web": {
+                    "server_name": "tavily_web",
+                    "status": "enabled",
+                    "tool_count": 1,
+                    "tool_names": ["tavily_extract"],
+                    "usable": True,
+                }
+            },
+        )
+        tools = WebSearchTools(manager)
+
+        result = await tools.search_web("who won")
+
+        self.assertIsInstance(result, ToolCallResult)
+        self.assertFalse(result.ok)
+        self.assertIn("did not expose a supported search tool", result.error.message)
+        self.assertEqual(result.error.details["available_tool_names"], ["tavily_extract"])
+        self.assertEqual(result.error.details["tavily_diagnostic"]["status"], "enabled")
 
     async def test_search_web_reports_missing_auth_from_runtime_diagnostics(self):
         manager = _FakeMCPManager(

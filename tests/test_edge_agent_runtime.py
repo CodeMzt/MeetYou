@@ -19,6 +19,7 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             EdgeAgentConfig(
                 core_base_url="http://127.0.0.1:9",
                 agent_id="edge-test-agent",
+                agent_access_token="agent-secret",
                 reconnect_delay_seconds=1,
             )
         )
@@ -268,6 +269,33 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.code, "unsupported_required_agent_features")
         self.assertEqual(ctx.exception.details["unsupported_features"], ["experimental.delta"])
 
+    async def test_runtime_surface_ws_error_payload_as_handshake_error(self):
+        runtime = EdgeAgentRuntime(
+            EdgeAgentConfig(
+                core_base_url="http://127.0.0.1:8000",
+                agent_id="edge-test-agent",
+                workspace_ids=["home-lab"],
+            )
+        )
+
+        with self.assertRaises(AgentHandshakeRejected) as ctx:
+            await runtime._handle_server_message(
+                {
+                    "schema": "meetyou.ws.v1",
+                    "kind": "error",
+                    "error": {
+                        "code": "unauthorized",
+                        "message": "缺少有效 agent 访问令牌",
+                        "details": {"auth_type": "bearer_or_api_key_or_query"},
+                    },
+                },
+                False,
+                object(),
+            )
+
+        self.assertEqual(ctx.exception.code, "unauthorized")
+        self.assertEqual(ctx.exception.details["auth_type"], "bearer_or_api_key_or_query")
+
     async def test_complete_handshake_can_skip_snapshot_when_ack_does_not_require_it(self):
         runtime = EdgeAgentRuntime(
             EdgeAgentConfig(
@@ -333,6 +361,7 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             EdgeAgentConfig(
                 core_base_url="http://127.0.0.1:8000",
                 agent_id="edge-test-agent",
+                agent_access_token="agent-secret",
                 reconnect_delay_seconds=1,
             )
         )
@@ -345,11 +374,34 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             runtime.stop()
 
         runtime._run_connection = _fake_run_connection
-        with mock.patch("edge_agent.runtime.asyncio.sleep", new=mock.AsyncMock()) as sleep_mock:
+        with mock.patch("agent_sdk.runtime.asyncio.sleep", new=mock.AsyncMock()) as sleep_mock:
             await asyncio.wait_for(runtime.run(), timeout=2)
 
         self.assertEqual(len(attempts), 2)
         sleep_mock.assert_awaited_once_with(1)
+
+    async def test_runtime_waits_without_connecting_when_agent_token_missing(self):
+        runtime = EdgeAgentRuntime(
+            EdgeAgentConfig(
+                core_base_url="http://127.0.0.1:8000",
+                agent_id="edge-test-agent",
+                agent_access_token="",
+            )
+        )
+
+        run_connection = mock.AsyncMock()
+        runtime._run_connection = run_connection
+        runtime._stop_event = SimpleNamespace(wait=mock.AsyncMock(return_value=None))
+
+        with mock.patch.object(runtime._logger, "error") as error_mock:
+            await asyncio.wait_for(runtime.run(), timeout=2)
+
+        run_connection.assert_not_awaited()
+        error_mock.assert_called_once_with(
+            "%s runtime disabled: %s",
+            runtime.runtime_label,
+            runtime.missing_agent_access_token_message(),
+        )
 
 
 if __name__ == "__main__":
