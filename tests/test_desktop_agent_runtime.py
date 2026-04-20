@@ -53,13 +53,46 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
             self.assertEqual(config.agent_id, "desktop-main-agent")
             self.assertEqual(config.workspace_ids, ["personal", "study"])
             self.assertEqual(config.agent_access_token, "agent-secret")
-            self.assertEqual(config.gateway_access_token, "agent-secret")
+            self.assertEqual(config.gateway_access_token, "")
             self.assertEqual(config.owner_client_id, "desktop-app")
             self.assertEqual(config.websocket_url, "ws://192.168.1.50:8000/agent/ws")
             self.assertTrue(config.local_bridge_enabled)
             self.assertEqual(config.local_bridge_host, "127.0.0.1")
             self.assertEqual(config.local_bridge_port, 38951)
             self.assertEqual(config.local_bridge_base_url, "http://127.0.0.1:38951")
+
+    def test_load_desktop_agent_config_does_not_reuse_agent_token_for_ui_backend(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "desktop_agent.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "core_base_url": "http://127.0.0.1:8000",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            previous_cwd = Path.cwd()
+            previous_agent = os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
+            previous_gateway = os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
+            os.chdir(tmp_dir)
+            os.environ["MEETYOU_AGENT_ACCESS_TOKEN"] = "agent-from-env"
+            os.environ.pop("MEETYOU_GATEWAY_ACCESS_TOKEN", None)
+            try:
+                config = load_desktop_agent_config(str(config_path))
+            finally:
+                os.chdir(previous_cwd)
+                if previous_agent is None:
+                    os.environ.pop("MEETYOU_AGENT_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_AGENT_ACCESS_TOKEN"] = previous_agent
+                if previous_gateway is None:
+                    os.environ.pop("MEETYOU_GATEWAY_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_GATEWAY_ACCESS_TOKEN"] = previous_gateway
+
+        self.assertEqual(config.agent_access_token, "agent-from-env")
+        self.assertEqual(config.gateway_access_token, "")
 
     def test_load_desktop_agent_config_prefers_gateway_token_for_ui_backend(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

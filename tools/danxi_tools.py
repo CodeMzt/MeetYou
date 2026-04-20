@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -102,6 +103,7 @@ class DanxiTools:
     API_BASE = "https://forum.fduhole.com/api"
     AUTH_BASE = "https://auth.fduhole.com/api"
     DIRECT_CONNECT_TEST_URL = "https://forum.fduhole.com"
+    DIRECT_CONNECT_CACHE_TTL_SECONDS = 30.0
     WEBVPN_HOST = "webvpn.fudan.edu.cn"
     WEBVPN_LOGIN_PREFIX = f"https://{WEBVPN_HOST}/login"
     WEBVPN_LOGIN_URL = f"{WEBVPN_LOGIN_PREFIX}?cas_login=true"
@@ -121,6 +123,7 @@ class DanxiTools:
         self._active_session_key: str = ""
         self._host_cache: dict[str, str] = {}
         self._direct_connect_available: bool | None = None
+        self._direct_connect_last_checked_monotonic: float = 0.0
         self._lock = threading.RLock()
         self._state_backend = None
 
@@ -746,9 +749,13 @@ class DanxiTools:
             return "webvpn"
         return "direct"
 
-    def _can_connect_directly(self) -> bool:
+    def _can_connect_directly(self, *, force_refresh: bool = False) -> bool:
         with self._lock:
-            if self._direct_connect_available is not None:
+            if (
+                not force_refresh
+                and self._direct_connect_available is not None
+                and (time.monotonic() - self._direct_connect_last_checked_monotonic) < self.DIRECT_CONNECT_CACHE_TTL_SECONDS
+            ):
                 return self._direct_connect_available
         try:
             response = requests.get(self.DIRECT_CONNECT_TEST_URL, timeout=(1, 1))
@@ -759,10 +766,18 @@ class DanxiTools:
             direct_available = False
         with self._lock:
             self._direct_connect_available = direct_available
+            self._direct_connect_last_checked_monotonic = time.monotonic()
         return direct_available
 
-    def _should_use_webvpn_proxy(self, state: _DanxiSessionState, url: str) -> bool:
-        return bool(state.use_webvpn and not self._can_connect_directly() and self._translate_url_to_webvpn(url))
+    def _should_use_webvpn_proxy(
+        self,
+        state: _DanxiSessionState,
+        url: str,
+        *,
+        direct_connect_available: bool | None = None,
+    ) -> bool:
+        resolved_direct_connect = self._can_connect_directly() if direct_connect_available is None else direct_connect_available
+        return bool(state.use_webvpn and not resolved_direct_connect and self._translate_url_to_webvpn(url))
 
     def _translate_url_to_webvpn(self, url: str) -> str | None:
         parsed = urlparse(url)
@@ -826,12 +841,25 @@ class DanxiTools:
         json_body: dict[str, Any] | None = None,
         include_auth: bool = True,
         retry_on_unauthorized: bool = True,
+        force_webvpn: bool = False,
+        force_direct: bool = False,
     ) -> requests.Response:
         target_url = url
         headers = {"Accept": "application/json"}
-        proxied = self._should_use_webvpn_proxy(state, url)
+        translated = self._translate_url_to_webvpn(url)
+        direct_connect_available = self._can_connect_directly(force_refresh=force_webvpn or force_direct)
+        proxied = False
+        if force_webvpn:
+            if translated is None:
+                raise DanxiError(f"当前 URL 不支持通过 WebVPN 代理: {url}")
+            proxied = True
+        elif not force_direct:
+            proxied = self._should_use_webvpn_proxy(
+                state,
+                url,
+                direct_connect_available=direct_connect_available,
+            )
         if proxied:
-            translated = self._translate_url_to_webvpn(url)
             if translated is None:
                 raise DanxiError(f"当前 URL 不支持通过 WebVPN 代理: {url}")
             target_url = translated
@@ -852,8 +880,37 @@ class DanxiTools:
                 allow_redirects=True,
             )
         except requests.RequestException as exc:
+            if (
+                not proxied
+                and not force_direct
+                and state.use_webvpn
+                and state.webvpn_cookie
+                and translated is not None
+                and not self._can_connect_directly(force_refresh=True)
+            ):
+                return self._request(
+                    method,
+                    url,
+                    state=state,
+                    params=params,
+                    json_body=json_body,
+                    include_auth=include_auth,
+                    retry_on_unauthorized=retry_on_unauthorized,
+                    force_webvpn=True,
+                )
             raise DanxiError(f"Danxi 请求失败: {exc}") from exc
         if proxied and self._response_requires_webvpn_login(response):
+            if not force_webvpn and self._can_connect_directly(force_refresh=True):
+                return self._request(
+                    method,
+                    url,
+                    state=state,
+                    params=params,
+                    json_body=json_body,
+                    include_auth=include_auth,
+                    retry_on_unauthorized=retry_on_unauthorized,
+                    force_direct=True,
+                )
             raise DanxiError("Danxi 已切到 WebVPN 路由，但当前没有有效的 WebVPN 登录态。请提供可用的 WebVPN cookie。")
         if response.status_code == 401 and include_auth and retry_on_unauthorized:
             try:
@@ -873,6 +930,8 @@ class DanxiTools:
                 json_body=json_body,
                 include_auth=include_auth,
                 retry_on_unauthorized=False,
+                force_webvpn=force_webvpn,
+                force_direct=force_direct,
             )
         if response.status_code >= 400:
             detail = self._extract_error_detail(response)

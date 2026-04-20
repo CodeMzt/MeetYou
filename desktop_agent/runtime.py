@@ -44,6 +44,13 @@ class DesktopAgentRuntime(AgentRuntimeBase):
     def runtime_label(self) -> str:
         return "Desktop Agent"
 
+    def agent_access_token_source_hints(self) -> tuple[str, ...]:
+        config_path = str(getattr(self.config, "config_file_path", "")).strip()
+        hints = ["env `MEETYOU_AGENT_ACCESS_TOKEN`"]
+        if config_path:
+            hints.insert(0, f"config `{config_path}` -> `agent_access_token`")
+        return tuple(hints)
+
     async def startup(self) -> None:
         if self._mcp_init_task is None:
             self._mcp_init_task = asyncio.create_task(self._initialize_mcp_runtime())

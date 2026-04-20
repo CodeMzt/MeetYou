@@ -10,9 +10,11 @@ Responsibilities:
 
 from contextlib import AsyncExitStack
 import asyncio
+import io
 import logging
 import os
 from pathlib import Path
+import sys
 
 try:
     from mcp.client.session import ClientSession
@@ -143,9 +145,10 @@ def _compose_server_env(command: str, server_env: dict | None = None) -> dict[st
 
 
 class _LoggerWriter:
-    def __init__(self, server_name: str):
+    def __init__(self, server_name: str, *, fallback_stream=None):
         self._server_name = str(server_name or "unknown")
         self._buffer = ""
+        self._fallback_stream = fallback_stream if fallback_stream is not None else (getattr(sys, "__stderr__", None) or sys.stderr)
 
     def write(self, text: str) -> int:
         message = str(text or "")
@@ -164,6 +167,12 @@ class _LoggerWriter:
         if line:
             logger.warning("MCP server [%s] stderr: %s", self._server_name, line)
         self._buffer = ""
+
+    def fileno(self) -> int:
+        fileno = getattr(self._fallback_stream, "fileno", None)
+        if fileno is None:
+            raise io.UnsupportedOperation("fileno")
+        return int(fileno())
 
 
 class MCPClient:
@@ -259,6 +268,9 @@ class MCPManager:
                 "enabled": bool(info.get("enabled", True)),
                 "status": "declared",
                 "tool_count": 0,
+                "tool_names": [],
+                "usable": False,
+                "degraded": False,
                 "auth_env": auth_env,
                 "missing_auth": missing_auth,
                 "command": str(info.get("command") or "").strip(),
@@ -266,6 +278,7 @@ class MCPManager:
             if not info.get("enabled", True):
                 logger.info("Skipping disabled MCP server [%s]", name)
                 diagnostic["status"] = "not_enabled"
+                diagnostic["degraded"] = False
                 self.server_diagnostics[name] = diagnostic
                 continue
 
@@ -277,12 +290,14 @@ class MCPManager:
                 logger.error("Skipping MCP server [%s]: missing command", name)
                 diagnostic["status"] = "unavailable"
                 diagnostic["error"] = "missing_command"
+                diagnostic["degraded"] = True
                 self.server_diagnostics[name] = diagnostic
                 continue
 
             if missing_auth:
                 logger.info("Skipping MCP server [%s]: missing auth env %s", name, ", ".join(missing_auth))
                 diagnostic["status"] = "requires_auth"
+                diagnostic["degraded"] = True
                 self.server_diagnostics[name] = diagnostic
                 continue
 
@@ -294,6 +309,7 @@ class MCPManager:
                 logger.error("Failed to initialize MCP server [%s]: %s", name, exc)
                 diagnostic["status"] = "unavailable"
                 diagnostic["error"] = str(exc)
+                diagnostic["degraded"] = True
                 self.server_diagnostics[name] = diagnostic
                 try:
                     await client.shutdown_mcp_session()
@@ -310,6 +326,15 @@ class MCPManager:
             self.mcp_tools[name] = client.tools_schema or []
             diagnostic["status"] = "enabled"
             diagnostic["tool_count"] = len(self.mcp_tools[name])
+            diagnostic["tool_names"] = [
+                str((func.get("function") or {}).get("name") or "").strip()
+                for func in self.mcp_tools[name]
+                if str((func.get("function") or {}).get("name") or "").strip()
+            ]
+            diagnostic["usable"] = diagnostic["tool_count"] > 0
+            diagnostic["degraded"] = not diagnostic["usable"]
+            if not diagnostic["usable"]:
+                diagnostic["warning"] = "no_tools_exposed"
             for func in self.mcp_tools[name]:
                 self.tool_map[func["function"]["name"]] = name
             self.server_diagnostics[name] = diagnostic

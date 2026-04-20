@@ -75,6 +75,23 @@ class AgentRuntimeBase(ABC):
     async def shutdown(self) -> None:
         return None
 
+    def agent_access_token_source_hints(self) -> tuple[str, ...]:
+        config_path = str(getattr(self.config, "config_file_path", "")).strip()
+        hints = ["env `MEETYOU_AGENT_ACCESS_TOKEN`"]
+        if config_path:
+            hints.insert(0, f"config `{config_path}` -> `agent_access_token`")
+        return tuple(hints)
+
+    def missing_agent_access_token_message(self) -> str:
+        hints = ", ".join(self.agent_access_token_source_hints())
+        websocket_url = str(getattr(self.config, "websocket_url", "")).strip()
+        message = "missing required config item `agent_access_token`"
+        if hints:
+            message = f"{message}; expected one of: {hints}"
+        if websocket_url:
+            message = f"{message}; target={websocket_url}"
+        return message
+
     def stop(self) -> None:
         self._stop_event.set()
 
@@ -84,9 +101,9 @@ class AgentRuntimeBase(ABC):
             resolved_token = str(getattr(self.config, "agent_access_token", "")).strip()
             if not resolved_token:
                 self._logger.error(
-                    "%s runtime disabled: missing explicit agent access token for %s",
+                    "%s runtime disabled: %s",
                     self.runtime_label,
-                    getattr(self.config, "websocket_url", ""),
+                    self.missing_agent_access_token_message(),
                 )
                 await self._stop_event.wait()
                 return

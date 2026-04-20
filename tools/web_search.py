@@ -22,6 +22,8 @@ _MIN_TAVILY_RESULTS = 5
 _READ_TOP_K = 3
 _SNIPPET_LIMIT = 280
 _SUMMARY_LIMIT = 1200
+_TAVILY_SEARCH_TOOL_CANDIDATES = ("tavily-search", "tavily_search")
+_TAVILY_EXTRACT_TOOL_CANDIDATES = ("tavily-extract", "tavily_extract")
 
 _PLAYWRIGHT_BLOCK_PATTERNS = (
     "status of 429",
@@ -59,6 +61,10 @@ def _looks_like_url(value: str) -> bool:
         return False
     parsed = urlparse(value.strip())
     return bool(parsed.scheme and parsed.netloc)
+
+
+def _normalize_tool_name(value: str) -> str:
+    return re.sub(r"[-_\s]+", "_", str(value or "").strip().lower())
 
 
 def _guess_tavily_topic(query: str) -> str:
@@ -299,10 +305,32 @@ class WebSearchTools:
     def _tavily_unavailable_result(self) -> ToolCallResult:
         diagnostic = self._get_tavily_diagnostic()
         status = str(diagnostic.get("status") or "").strip()
+        resolved_search_tool = self._resolve_tavily_search_tool_name()
         details: dict[str, Any] = {}
 
         if diagnostic:
             details["tavily_diagnostic"] = diagnostic
+
+        if status == "enabled" and not resolved_search_tool:
+            available_tool_names = [
+                str(item).strip()
+                for item in diagnostic.get("tool_names", [])
+                if str(item).strip()
+            ]
+            if available_tool_names:
+                details["available_tool_names"] = available_tool_names
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_unavailable",
+                category=ToolErrorCategory.DEPENDENCY,
+                message=(
+                    "Web search is unavailable because Tavily MCP initialized, "
+                    "but it did not expose a supported search tool."
+                ),
+                details=details or None,
+            )
 
         if status == "requires_auth":
             missing_auth = [
@@ -359,13 +387,59 @@ class WebSearchTools:
         )
 
     def has_tavily_search(self) -> bool:
-        return "tavily-search" in self._mcp_manager.tool_map
+        return self._resolve_tavily_search_tool_name() is not None
 
     def has_tavily_extract(self) -> bool:
-        return "tavily-extract" in self._mcp_manager.tool_map
+        return self._resolve_tavily_extract_tool_name() is not None
 
     def has_playwright(self) -> bool:
         return "browser_navigate" in self._mcp_manager.tool_map and "browser_snapshot" in self._mcp_manager.tool_map
+
+    def _get_server_tool_names(self, server_name: str) -> list[str]:
+        tool_map = getattr(self._mcp_manager, "tool_map", {}) or {}
+        return [
+            str(tool_name).strip()
+            for tool_name, mapped_server in tool_map.items()
+            if str(tool_name).strip() and str(mapped_server or "").strip() == server_name
+        ]
+
+    def _resolve_server_tool_name(
+        self,
+        server_name: str,
+        *,
+        exact_candidates: tuple[str, ...],
+        keyword: str,
+    ) -> str | None:
+        tool_names = self._get_server_tool_names(server_name)
+        if not tool_names:
+            return None
+        candidate_map = {
+            _normalize_tool_name(candidate): candidate
+            for candidate in exact_candidates
+            if str(candidate).strip()
+        }
+        for tool_name in tool_names:
+            if _normalize_tool_name(tool_name) in candidate_map:
+                return tool_name
+        normalized_keyword = _normalize_tool_name(keyword)
+        for tool_name in tool_names:
+            if normalized_keyword in _normalize_tool_name(tool_name):
+                return tool_name
+        return None
+
+    def _resolve_tavily_search_tool_name(self) -> str | None:
+        return self._resolve_server_tool_name(
+            "tavily_web",
+            exact_candidates=_TAVILY_SEARCH_TOOL_CANDIDATES,
+            keyword="search",
+        )
+
+    def _resolve_tavily_extract_tool_name(self) -> str | None:
+        return self._resolve_server_tool_name(
+            "tavily_web",
+            exact_candidates=_TAVILY_EXTRACT_TOOL_CANDIDATES,
+            keyword="extract",
+        )
 
     async def _emit_activity(
         self,
@@ -396,8 +470,11 @@ class WebSearchTools:
         extract_error: str | None = None
 
         if self.has_tavily_extract():
+            extract_tool_name = self._resolve_tavily_extract_tool_name()
             try:
-                text = await self._call_mcp_text("tavily-extract", {"urls": [url]})
+                if not extract_tool_name:
+                    raise RuntimeError("Tavily extract tool is unavailable")
+                text = await self._call_mcp_text(extract_tool_name, {"urls": [url]})
                 backend_error = _extract_tavily_error(text)
                 if backend_error:
                     raise RuntimeError(backend_error)
@@ -469,6 +546,9 @@ class WebSearchTools:
 
         if not self.has_tavily_search():
             return self._tavily_unavailable_result()
+        search_tool_name = self._resolve_tavily_search_tool_name()
+        if not search_tool_name:
+            return self._tavily_unavailable_result()
 
         try:
             safe_max_results = max(_MIN_TAVILY_RESULTS, min(int(max_results), _MAX_SEARCH_RESULTS))
@@ -486,7 +566,7 @@ class WebSearchTools:
 
         try:
             search_text = await self._call_mcp_text(
-                "tavily-search",
+                search_tool_name,
                 {
                     "query": normalized_query,
                     "max_results": safe_max_results,
