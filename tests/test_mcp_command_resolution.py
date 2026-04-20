@@ -3,6 +3,7 @@ import sys
 import os
 import types
 import asyncio
+import io
 import tempfile
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,7 +20,7 @@ sys.modules.setdefault("mcp.client", mcp_client_module)
 sys.modules.setdefault("mcp.client.session", mcp_client_session_module)
 sys.modules.setdefault("mcp.client.stdio", mcp_client_stdio_module)
 
-from tools.mcp import MCPManager, _compose_server_env, _resolve_server_process
+from tools.mcp import MCPManager, _LoggerWriter, _compose_server_env, _resolve_server_process
 
 
 class MCPCommandResolutionTests(unittest.TestCase):
@@ -103,6 +104,21 @@ class MCPCommandResolutionTests(unittest.TestCase):
         diagnostic = manager.get_server_diagnostic("tavily_web")
         self.assertEqual(diagnostic["status"], "requires_auth")
         self.assertEqual(diagnostic["missing_auth"], ["TAVILY_API_KEY"])
+
+    def test_logger_writer_exposes_fileno_from_fallback_stream(self):
+        class _FallbackStream:
+            def fileno(self):
+                return 123
+
+        writer = _LoggerWriter("filesystem_tools", fallback_stream=_FallbackStream())
+
+        self.assertEqual(writer.fileno(), 123)
+
+    def test_logger_writer_raises_when_fallback_stream_has_no_fileno(self):
+        writer = _LoggerWriter("filesystem_tools", fallback_stream=object())
+
+        with self.assertRaises(io.UnsupportedOperation):
+            writer.fileno()
 
 
 if __name__ == "__main__":

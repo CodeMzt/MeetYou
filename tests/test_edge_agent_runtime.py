@@ -391,12 +391,17 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         run_connection = mock.AsyncMock()
         runtime._run_connection = run_connection
-        task = asyncio.create_task(runtime.run())
-        await asyncio.sleep(0.05)
-        runtime.stop()
-        await asyncio.wait_for(task, timeout=2)
+        runtime._stop_event = SimpleNamespace(wait=mock.AsyncMock(return_value=None))
+
+        with mock.patch.object(runtime._logger, "error") as error_mock:
+            await asyncio.wait_for(runtime.run(), timeout=2)
 
         run_connection.assert_not_awaited()
+        error_mock.assert_called_once_with(
+            "%s runtime disabled: %s",
+            runtime.runtime_label,
+            runtime.missing_agent_access_token_message(),
+        )
 
 
 if __name__ == "__main__":

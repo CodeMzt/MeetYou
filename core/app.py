@@ -1436,16 +1436,27 @@ class App:
             if runtime_payload:
                 payload["runtime"] = runtime_payload
                 runtime_status = str(runtime_payload.get("status") or "").strip()
+                runtime_usable = runtime_payload.get("usable")
                 if runtime_status:
                     payload["status"] = runtime_status
-                    payload["usable"] = runtime_status == "enabled"
-                    payload["degraded"] = runtime_status in {"requires_auth", "unavailable"}
+                    payload["usable"] = (
+                        bool(runtime_usable)
+                        if isinstance(runtime_usable, bool)
+                        else runtime_status == "enabled"
+                    )
+                    payload["degraded"] = runtime_status in {"requires_auth", "unavailable"} or (
+                        runtime_status == "enabled" and payload["usable"] is False
+                    )
                 if runtime_payload.get("error") and not payload.get("error"):
                     payload["error"] = runtime_payload.get("error")
                 if runtime_payload.get("command") and not payload.get("command"):
                     payload["command"] = runtime_payload.get("command")
                 if runtime_payload.get("tool_count") is not None:
                     payload["tool_count"] = int(runtime_payload.get("tool_count") or 0)
+                if runtime_payload.get("tool_names") is not None:
+                    payload["tool_names"] = list(runtime_payload.get("tool_names") or [])
+                if runtime_payload.get("warning") and not payload.get("warning"):
+                    payload["warning"] = runtime_payload.get("warning")
             enriched_core_servers.append(payload)
         boundary["core_mcp_servers"] = enriched_core_servers
         summary = dict(boundary.get("summary") or {})
@@ -1458,11 +1469,16 @@ class App:
             name
             for name in core_server_names
             if str(runtime_by_name.get(name, {}).get("status") or "").strip() == "enabled"
+            and runtime_by_name.get(name, {}).get("usable", True) is not False
         ]
         partial_failure_servers = sorted(
             name
             for name in core_server_names
             if str(runtime_by_name.get(name, {}).get("status") or "").strip() in {"requires_auth", "unavailable"}
+            or (
+                str(runtime_by_name.get(name, {}).get("status") or "").strip() == "enabled"
+                and runtime_by_name.get(name, {}).get("usable") is False
+            )
         )
         summary["configured_server_count"] = len(core_server_names) or len(configured_servers)
         summary["enabled_count"] = len(enabled_servers)

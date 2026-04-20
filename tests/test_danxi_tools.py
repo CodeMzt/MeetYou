@@ -1,6 +1,9 @@
 import os
+import time
 import unittest
 from unittest.mock import patch
+
+import requests
 
 from tools.danxi_tools import DanxiError, DanxiTools, _DanxiSessionState
 
@@ -196,6 +199,7 @@ class DanxiToolsTests(unittest.TestCase):
     def test_set_webvpn_cookie_updates_session_status(self):
         tools = DanxiTools()
         tools._direct_connect_available = False
+        tools._direct_connect_last_checked_monotonic = time.monotonic()
         state = _DanxiSessionState(
             session_key="default",
             email="user@example.com",
@@ -213,6 +217,82 @@ class DanxiToolsTests(unittest.TestCase):
         self.assertTrue(status["has_webvpn_cookie"])
         self.assertEqual(status["transport"], "webvpn")
         self.assertTrue(status["webvpn_required"])
+
+    def test_request_falls_back_to_webvpn_when_direct_probe_becomes_stale(self):
+        class _FailoverSession:
+            def __init__(self):
+                self.calls = []
+                self.headers = {}
+
+            def request(self, method, url, **kwargs):
+                self.calls.append({"method": method, "url": url, **kwargs})
+                if url.startswith(DanxiTools.DIRECT_CONNECT_TEST_URL):
+                    raise requests.exceptions.ConnectionError("direct unavailable")
+                return _FakeResponse(payload=[{"division_id": 1, "name": "综合"}], url=url)
+
+            def close(self):
+                return None
+
+        fake_http = _FailoverSession()
+        tools = DanxiTools()
+        tools._direct_connect_available = True
+        tools._direct_connect_last_checked_monotonic = time.monotonic()
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=True,
+            webvpn_cookie="vpn=ok",
+            http=fake_http,
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        with patch("tools.danxi_tools.requests.get", side_effect=requests.exceptions.ConnectionError("direct unavailable")):
+            payload = tools.danxi_list_divisions()
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(len(fake_http.calls), 2)
+        self.assertEqual(fake_http.calls[0]["url"], f"{tools.API_BASE}/divisions")
+        self.assertTrue(fake_http.calls[1]["url"].startswith("https://webvpn.fudan.edu.cn/https/"))
+        self.assertEqual(fake_http.calls[1]["headers"]["Cookie"], "vpn=ok")
+        self.assertFalse(tools._direct_connect_available)
+
+    def test_request_falls_back_to_direct_when_webvpn_cookie_is_invalid_but_direct_restores(self):
+        fake_http = _FakeSession(
+            [
+                _FakeResponse(
+                    payload="webvpn login",
+                    url=DanxiTools.WEBVPN_LOGIN_URL,
+                    text="need webvpn login",
+                ),
+                _FakeResponse(payload=[{"division_id": 1, "name": "综合"}]),
+            ]
+        )
+        tools = DanxiTools()
+        tools._direct_connect_available = False
+        tools._direct_connect_last_checked_monotonic = time.monotonic()
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=True,
+            webvpn_cookie="vpn=expired",
+            http=fake_http,
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        with patch("tools.danxi_tools.requests.get", return_value=_FakeResponse(status_code=200, payload=None)):
+            payload = tools.danxi_list_divisions()
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(len(fake_http.calls), 2)
+        self.assertTrue(fake_http.calls[0]["url"].startswith("https://webvpn.fudan.edu.cn/https/"))
+        self.assertEqual(fake_http.calls[1]["url"], f"{tools.API_BASE}/divisions")
+        self.assertTrue(tools._direct_connect_available)
 
     def test_delete_reply_requires_confirmation(self):
         tools = DanxiTools()
