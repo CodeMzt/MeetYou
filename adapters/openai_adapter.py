@@ -88,9 +88,84 @@ def _extract_error_message(error_body: dict[str, Any] | None, status: int) -> st
 
 
 class OpenAIAdapter(LLMAdapter):
+    @staticmethod
+    def _assistant_call_ids(message: dict[str, Any]) -> list[str]:
+        call_ids: list[str] = []
+        for tool_call in message.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            call_id = str(tool_call.get("id") or "").strip()
+            if call_id:
+                call_ids.append(call_id)
+        if call_ids:
+            return call_ids
+
+        for provider_item in message.get("provider_items") or []:
+            if not isinstance(provider_item, dict) or provider_item.get("type") != "function_call":
+                continue
+            call_id = str(provider_item.get("call_id") or provider_item.get("id") or "").strip()
+            if call_id:
+                call_ids.append(call_id)
+        return call_ids
+
+    @classmethod
+    def _sanitize_tool_message_history(cls, messages: list[dict]) -> list[dict]:
+        sanitized: list[dict] = []
+        pending_assistant: dict[str, Any] | None = None
+        pending_call_ids: list[str] = []
+        pending_tool_messages: list[dict[str, Any]] = []
+        seen_tool_call_ids: set[str] = set()
+
+        def drop_pending() -> None:
+            nonlocal pending_assistant, pending_call_ids, pending_tool_messages, seen_tool_call_ids
+            pending_assistant = None
+            pending_call_ids = []
+            pending_tool_messages = []
+            seen_tool_call_ids = set()
+
+        def flush_pending() -> None:
+            if pending_assistant is None:
+                return
+            sanitized.append(pending_assistant)
+            sanitized.extend(pending_tool_messages)
+            drop_pending()
+
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+
+            role = str(message.get("role") or "")
+            assistant_call_ids = cls._assistant_call_ids(message) if role == "assistant" else []
+            if assistant_call_ids:
+                drop_pending()
+                pending_assistant = message
+                pending_call_ids = assistant_call_ids
+                pending_tool_messages = []
+                seen_tool_call_ids = set()
+                continue
+
+            if pending_assistant is not None:
+                if role != "tool":
+                    drop_pending()
+                    sanitized.append(message)
+                    continue
+                tool_call_id = str(message.get("tool_call_id") or "").strip()
+                if tool_call_id in pending_call_ids and tool_call_id not in seen_tool_call_ids:
+                    pending_tool_messages.append(message)
+                    seen_tool_call_ids.add(tool_call_id)
+                    if len(seen_tool_call_ids) == len(pending_call_ids):
+                        flush_pending()
+                continue
+
+            if role == "tool":
+                continue
+            sanitized.append(message)
+
+        return sanitized
+
     def format_messages(self, messages: list[dict]) -> list[dict]:
         formatted = []
-        for msg in messages:
+        for msg in self._sanitize_tool_message_history(messages):
             new_msg = {"role": msg["role"]}
             content = msg.get("content")
 
@@ -175,7 +250,7 @@ class OpenAIAdapter(LLMAdapter):
         instructions: list[str] = []
         input_items: list[dict[str, Any]] = []
 
-        for msg in messages:
+        for msg in self._sanitize_tool_message_history(messages):
             role = str(msg.get("role") or "user")
             content = msg.get("content")
 

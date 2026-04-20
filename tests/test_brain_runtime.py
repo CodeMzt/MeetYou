@@ -335,6 +335,37 @@ class SilentAnswerAdapter:
         yield StreamEvent(type="text", text="done")
 
 
+class FailingSecondRoundAdapter:
+    def __init__(self):
+        self.call_count = 0
+
+    async def stream_chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
+        del session, api_url, api_key, model, messages, tools, kwargs
+        self.call_count += 1
+        if self.call_count == 1:
+            yield StreamEvent(
+                type="tool_calls",
+                tool_calls=[
+                    ToolCallInfo(
+                        id="tool-1",
+                        name="lookup_profile",
+                        arguments_str='{"name":"Alex"}',
+                    )
+                ],
+            )
+            yield StreamEvent(
+                type="usage",
+                usage={
+                    "prompt_tokens": 8,
+                    "completion_tokens": 1,
+                    "reasoning_tokens": 0,
+                    "total_tokens": 9,
+                },
+            )
+            return
+        raise RuntimeError("tool follow-up failed")
+
+
 class SummaryUsageContextManager(FakeContextManager):
     async def trim_history(self, chat_history, model, session, api_url, api_key, reserve_ratio: float = 0.75):
         return {
@@ -1608,6 +1639,42 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 brain.get_reply_control_snapshot("session-regenerate")["last_completed_command"]["action"],
                 "regenerate",
+            )
+        finally:
+            await brain.close_brain()
+
+    async def test_mark_reply_turn_failed_restores_checkpoint_after_tool_round_error(self):
+        brain = Brain(
+            FailingSecondRoundAdapter(),
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            with self.assertRaises(RuntimeError):
+                async for _ in brain.input_brain(
+                    "session-turn-failure",
+                    {"role": "user", "content": "介绍一下 Alex"},
+                    "key",
+                    "url",
+                    "gpt-4o",
+                ):
+                    pass
+
+            session = brain.get_or_create_session("session-turn-failure")
+            self.assertTrue(any(message.get("tool_calls") for message in session.chat_history))
+            self.assertTrue(any(message.get("role") == "tool" for message in session.chat_history))
+
+            brain.mark_reply_turn_failed("session-turn-failure", turn_id=str(session.runtime_state.turn_id or ""))
+
+            self.assertEqual(len(session.chat_history), 1)
+            self.assertEqual(session.chat_history[0]["role"], "system")
+            self.assertEqual(
+                brain.get_reply_control_snapshot("session-turn-failure")["last_finish_reason"],
+                "failed",
             )
         finally:
             await brain.close_brain()
