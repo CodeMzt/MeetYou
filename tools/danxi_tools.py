@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import threading
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from Crypto.Cipher import AES
+from Crypto.Cipher import PKCS1_v1_5
+from Crypto.PublicKey import RSA
 
 from core.credential_transport import CredentialTransportError, decrypt_json_payload, encrypt_json_payload
 
@@ -97,17 +99,21 @@ class _DanxiSessionState:
     user_profile: dict[str, Any] | None = None
     restored_from_persistence: bool = False
     restore_validated: bool = False
+    floor_hole_cache: dict[int, int] = field(default_factory=dict)
 
 
 class DanxiTools:
     API_BASE = "https://forum.fduhole.com/api"
     AUTH_BASE = "https://auth.fduhole.com/api"
     DIRECT_CONNECT_TEST_URL = "https://forum.fduhole.com"
-    DIRECT_CONNECT_CACHE_TTL_SECONDS = 30.0
     WEBVPN_HOST = "webvpn.fudan.edu.cn"
     WEBVPN_LOGIN_PREFIX = f"https://{WEBVPN_HOST}/login"
     WEBVPN_LOGIN_URL = f"{WEBVPN_LOGIN_PREFIX}?cas_login=true"
+    WEBVPN_IDP_BASE = "https://id.fudan.edu.cn/idp"
     _WEBVPN_KEY = b"wrdvpnisthebest!"
+    _DIRECT_REQUEST_TIMEOUT = (5, 20)
+    _WEBVPN_REQUEST_TIMEOUT = (10, 45)
+    _WEBVPN_LOGIN_PAGE_TIMEOUT = (10, 90)
     _WEBVPN_ALLOWED_HOSTS = {
         "www.fduhole.com",
         "auth.fduhole.com",
@@ -123,7 +129,6 @@ class DanxiTools:
         self._active_session_key: str = ""
         self._host_cache: dict[str, str] = {}
         self._direct_connect_available: bool | None = None
-        self._direct_connect_last_checked_monotonic: float = 0.0
         self._lock = threading.RLock()
         self._state_backend = None
 
@@ -162,11 +167,12 @@ class DanxiTools:
         profile = self._safe_load_profile(state)
         self._mark_session_validated(state)
         self._persist_sessions()
+        webvpn_enabled = self._is_webvpn_enabled(state)
         return {
             "session_key": state.session_key,
             "email": state.email,
             "transport": self._transport_label(state),
-            "webvpn_enabled": state.use_webvpn,
+            "webvpn_enabled": webvpn_enabled,
             "has_webvpn_cookie": bool(state.webvpn_cookie),
             "logged_in": bool(state.access_token),
             "token": {
@@ -211,12 +217,13 @@ class DanxiTools:
         state = self._get_session(session_key)
         self._ensure_restored_session_is_valid(state)
         direct_connect_available = self._can_connect_directly()
-        webvpn_required = bool(state.use_webvpn and not direct_connect_available)
+        webvpn_enabled = self._is_webvpn_enabled(state, direct_connect_available=direct_connect_available)
+        webvpn_required = bool(webvpn_enabled and not direct_connect_available)
         return {
             "session_key": state.session_key,
             "email": state.email,
             "transport": self._transport_label(state),
-            "webvpn_enabled": state.use_webvpn,
+            "webvpn_enabled": webvpn_enabled,
             "has_webvpn_cookie": bool(state.webvpn_cookie),
             "webvpn_required": webvpn_required,
             "direct_connect_available": direct_connect_available,
@@ -476,7 +483,110 @@ class DanxiTools:
         state = self._get_session(session_key)
         params = _compact_dict({"not_read": bool(unread_only), "start_time": _iso8601_utc(start_time)})
         data = self._request_json("GET", f"{self.API_BASE}/messages", state=state, params=params)
-        return {"count": len(data) if isinstance(data, list) else 0, "items": data}
+        items = self._normalize_message_items(data, state=state) if isinstance(data, list) else data
+        return {"count": len(items) if isinstance(items, list) else 0, "items": items}
+
+    def _normalize_message_items(self, items: list[Any], *, state: _DanxiSessionState) -> list[Any]:
+        normalized: list[Any] = []
+        for item in items:
+            if not isinstance(item, dict):
+                normalized.append(item)
+                continue
+            normalized.append(self._normalize_message_item(item, state=state))
+        return normalized
+
+    def _normalize_message_item(self, item: dict[str, Any], *, state: _DanxiSessionState) -> dict[str, Any]:
+        normalized = dict(item)
+        related_hole_id = self._extract_message_hole_id(normalized)
+        if related_hole_id is not None:
+            normalized["related_hole_id"] = related_hole_id
+            return normalized
+
+        related_floor_id = self._extract_message_floor_id(normalized)
+        if related_floor_id is None:
+            return normalized
+        normalized["related_floor_id"] = related_floor_id
+
+        hole_id = state.floor_hole_cache.get(related_floor_id)
+        if hole_id is None:
+            hole_id = self._resolve_hole_id_from_floor(related_floor_id, state=state)
+            if hole_id is not None:
+                state.floor_hole_cache[related_floor_id] = hole_id
+        if hole_id is not None:
+            normalized["related_hole_id"] = hole_id
+        return normalized
+
+    def _extract_message_hole_id(self, item: dict[str, Any]) -> int | None:
+        for key in ("hole_id", "post_id", "target_hole_id", "related_hole_id", "reply_hole_id", "thread_hole_id"):
+            candidate = item.get(key)
+            if isinstance(candidate, int) and candidate > 0:
+                return candidate
+            if isinstance(candidate, str) and candidate.isdigit():
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+        for key in ("url", "link"):
+            parsed = self._extract_id_from_message_path(item.get(key), marker="/api/holes/")
+            if parsed is None:
+                parsed = self._extract_id_from_message_path(item.get(key), marker="/holes/")
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _extract_message_floor_id(self, item: dict[str, Any]) -> int | None:
+        for key in ("floor_id", "reply_floor_id", "related_floor_id"):
+            candidate = item.get(key)
+            if isinstance(candidate, int) and candidate > 0:
+                return candidate
+            if isinstance(candidate, str) and candidate.isdigit():
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+        for key in ("url", "link"):
+            parsed = self._extract_id_from_message_path(item.get(key), marker="/api/floors/")
+            if parsed is None:
+                parsed = self._extract_id_from_message_path(item.get(key), marker="/floors/")
+            if parsed is not None:
+                return parsed
+        return None
+
+    @staticmethod
+    def _extract_id_from_message_path(value: Any, *, marker: str) -> int | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        path = urlparse(text).path or text
+        if marker not in path:
+            return None
+        suffix = path.split(marker, 1)[1]
+        digits = []
+        for char in suffix:
+            if char.isdigit():
+                digits.append(char)
+                continue
+            break
+        if not digits:
+            return None
+        parsed = int("".join(digits))
+        return parsed if parsed > 0 else None
+
+    def _resolve_hole_id_from_floor(self, floor_id: int, *, state: _DanxiSessionState) -> int | None:
+        try:
+            payload = self._request_json("GET", f"{self.API_BASE}/floors/{int(floor_id)}", state=state)
+        except Exception as exc:
+            logger.debug("Failed to resolve Danxi floor %s to hole id: %s", floor_id, exc)
+            return None
+        if not isinstance(payload, dict):
+            return None
+        for key in ("hole_id", "post_id"):
+            candidate = payload.get(key)
+            if isinstance(candidate, int) and candidate > 0:
+                return candidate
+            if isinstance(candidate, str) and candidate.isdigit():
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+        return None
 
     def danxi_mark_message_read(
         self,
@@ -493,6 +603,16 @@ class DanxiTools:
             json_body={"has_read": bool(has_read)},
         )
         return {"status_code": response.status_code, "ok": response.ok, "message_id": int(message_id), "has_read": bool(has_read)}
+
+    def danxi_resolve_message_target(self, floor_id: int, *, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        hole_id = state.floor_hole_cache.get(int(floor_id))
+        if hole_id is None:
+            hole_id = self._resolve_hole_id_from_floor(int(floor_id), state=state)
+            if hole_id is None:
+                raise DanxiError(f"无法根据楼层 {int(floor_id)} 解析关联帖子。")
+            state.floor_hole_cache[int(floor_id)] = hole_id
+        return {"floor_id": int(floor_id), "hole_id": int(hole_id)}
 
     def danxi_summarize_post(self, hole_id: int, *, session_key: str = "", floor_limit: int = 50) -> dict[str, Any]:
         post_payload = self.danxi_get_post(hole_id, session_key=session_key)
@@ -745,17 +865,18 @@ class DanxiTools:
         state.refresh_token = refresh
 
     def _transport_label(self, state: _DanxiSessionState) -> str:
-        if state.use_webvpn and not self._can_connect_directly():
+        if self._is_webvpn_enabled(state) and not self._can_connect_directly():
             return "webvpn"
         return "direct"
 
-    def _can_connect_directly(self, *, force_refresh: bool = False) -> bool:
+    def _is_webvpn_enabled(self, state: _DanxiSessionState, *, direct_connect_available: bool | None = None) -> bool:
+        if direct_connect_available is None:
+            direct_connect_available = self._can_connect_directly()
+        return bool(state.use_webvpn or (state.webvpn_cookie and not direct_connect_available))
+
+    def _can_connect_directly(self) -> bool:
         with self._lock:
-            if (
-                not force_refresh
-                and self._direct_connect_available is not None
-                and (time.monotonic() - self._direct_connect_last_checked_monotonic) < self.DIRECT_CONNECT_CACHE_TTL_SECONDS
-            ):
+            if self._direct_connect_available is not None:
                 return self._direct_connect_available
         try:
             response = requests.get(self.DIRECT_CONNECT_TEST_URL, timeout=(1, 1))
@@ -766,18 +887,207 @@ class DanxiTools:
             direct_available = False
         with self._lock:
             self._direct_connect_available = direct_available
-            self._direct_connect_last_checked_monotonic = time.monotonic()
         return direct_available
 
-    def _should_use_webvpn_proxy(
-        self,
-        state: _DanxiSessionState,
-        url: str,
-        *,
-        direct_connect_available: bool | None = None,
-    ) -> bool:
-        resolved_direct_connect = self._can_connect_directly() if direct_connect_available is None else direct_connect_available
-        return bool(state.use_webvpn and not resolved_direct_connect and self._translate_url_to_webvpn(url))
+    def _should_use_webvpn_proxy(self, state: _DanxiSessionState, url: str) -> bool:
+        translated = self._translate_url_to_webvpn(url)
+        if translated is None:
+            return False
+        if state.use_webvpn:
+            return True
+        return bool(state.webvpn_cookie and not self._can_connect_directly())
+
+    def _mark_webvpn_fallback_active(self, state: _DanxiSessionState) -> None:
+        if state.use_webvpn:
+            return
+        state.use_webvpn = True
+        self._persist_sessions()
+
+    @staticmethod
+    def _resolve_stuvpn_credentials() -> tuple[str, str]:
+        username = str(os.getenv("STUVPN_FUDAN_USER", "")).strip()
+        password = str(os.getenv("STUVPN_FUDAN_PASSWORD", "")).strip()
+        return username, password
+
+    def _refresh_webvpn_cookie_from_env(self, state: _DanxiSessionState) -> bool:
+        username, password = self._resolve_stuvpn_credentials()
+        if not username or not password:
+            return False
+        cookie_header = self._login_webvpn_with_stuvpn(state.http, username, password)
+        if not cookie_header:
+            return False
+        state.webvpn_cookie = cookie_header
+        state.use_webvpn = True
+        self._persist_sessions()
+        return True
+
+    def _login_webvpn_with_stuvpn(self, session: requests.Session, username: str, password: str) -> str:
+        login_page = session.get(
+            self.WEBVPN_LOGIN_URL,
+            headers=self._webvpn_browser_headers(),
+            timeout=self._WEBVPN_LOGIN_PAGE_TIMEOUT,
+            allow_redirects=True,
+        )
+        login_page.raise_for_status()
+        lck, entity_id = self._parse_webvpn_login_context(login_page.url)
+
+        auth_methods = self._post_webvpn_idp_json(
+            session,
+            "/authn/queryAuthMethods",
+            {"lck": lck, "entityId": entity_id},
+        )
+        chains = auth_methods.get("data") if isinstance(auth_methods.get("data"), list) else []
+        password_chain = next(
+            (
+                item
+                for item in chains
+                if isinstance(item, dict) and "userAndPwd" in (item.get("moduleCodes") or [])
+            ),
+            None,
+        )
+        if not isinstance(password_chain, dict):
+            raise DanxiError("当前 WebVPN 登录链路未返回可用的用户名密码认证方式。")
+
+        auth_chain_code = str(password_chain.get("authChainCode") or "").strip()
+        verify_code_state = self._post_webvpn_idp_json(
+            session,
+            "/authn/verifyCodeIsNeed",
+            {
+                "lang": "zh_CN",
+                "loginName": username,
+                "chainCode": auth_chain_code,
+                "authModuleCode": "userAndPwd",
+            },
+        )
+        if bool(verify_code_state.get("result")):
+            raise DanxiError("当前 WebVPN 登录需要额外验证码，暂不支持自动完成。")
+
+        public_key_payload = self._post_webvpn_idp_json(session, "/authn/getJsPublicKey", {})
+        public_key = str(public_key_payload.get("data") or "").strip()
+        if not public_key:
+            raise DanxiError("当前 WebVPN 登录未返回可用的加密公钥。")
+
+        auth_execute = self._post_webvpn_idp_json(
+            session,
+            "/authn/authExecute",
+            {
+                "authModuleCode": "userAndPwd",
+                "authChainCode": auth_chain_code,
+                "entityId": auth_methods.get("entityId") or entity_id,
+                "requestType": auth_methods.get("requestType") or "chain_type",
+                "lck": auth_methods.get("lck") or lck,
+                "authPara": {
+                    "loginName": username,
+                    "password": self._encrypt_webvpn_password(password, public_key),
+                    "verifyCode": "",
+                },
+            },
+        )
+        if str(auth_execute.get("code") or "") != "200":
+            raise DanxiError(f"WebVPN 登录失败：authExecute 返回 {auth_execute.get('code')}")
+        login_token = str(auth_execute.get("loginToken") or "").strip()
+        if not login_token:
+            raise DanxiError("WebVPN 登录失败：缺少 loginToken。")
+
+        auth_center = session.post(
+            f"{self.WEBVPN_IDP_BASE}/authCenter/authnEngine?locale=zh-CN",
+            data={"loginToken": login_token},
+            headers={"User-Agent": self._webvpn_browser_headers()["User-Agent"]},
+            timeout=self._WEBVPN_REQUEST_TIMEOUT,
+            allow_redirects=True,
+        )
+        auth_center.raise_for_status()
+        redirect_url = self._extract_webvpn_auth_center_redirect(auth_center.text, auth_center.url)
+        final_page = session.get(
+            redirect_url,
+            headers=self._webvpn_browser_headers(),
+            timeout=self._WEBVPN_REQUEST_TIMEOUT,
+            allow_redirects=True,
+        )
+        final_page.raise_for_status()
+        cookie_header = self._build_webvpn_cookie_header(session)
+        if not cookie_header:
+            raise DanxiError("WebVPN 登录成功，但未生成可用的 WebVPN cookie。")
+        return cookie_header
+
+    @staticmethod
+    def _webvpn_browser_headers() -> dict[str, str]:
+        return {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+        }
+
+    @staticmethod
+    def _parse_webvpn_login_context(redirect_url: str) -> tuple[str, str]:
+        fragment = urlparse(redirect_url).fragment or ""
+        _, _, query = fragment.partition("?")
+        parsed = parse_qs(query)
+        lck = str((parsed.get("lck") or [""])[0]).strip()
+        entity_id = str((parsed.get("entityId") or [""])[0]).strip()
+        if not lck or not entity_id:
+            raise DanxiError("WebVPN 登录页缺少必要的登录上下文。")
+        return lck, entity_id
+
+    def _post_webvpn_idp_json(self, session: requests.Session, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        response = session.post(
+            f"{self.WEBVPN_IDP_BASE}{path}",
+            json=payload,
+            headers=self._webvpn_browser_headers(),
+            timeout=self._WEBVPN_REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise DanxiError(f"WebVPN 登录返回了异常响应：{path}")
+        return data
+
+    @staticmethod
+    def _encrypt_webvpn_password(password: str, public_key_b64: str) -> str:
+        public_key = RSA.import_key(base64.b64decode(public_key_b64))
+        cipher = PKCS1_v1_5.new(public_key)
+        encrypted = cipher.encrypt(password.encode("utf-8"))
+        return base64.b64encode(encrypted).decode("ascii")
+
+    @staticmethod
+    def _extract_webvpn_auth_center_redirect(html: str, base_url: str) -> str:
+        marker = 'locationValue = "'
+        start = html.find(marker)
+        if start >= 0:
+            start += len(marker)
+            end = html.find('"', start)
+            if end > start:
+                return urljoin(base_url, html[start:end].replace("&amp;", "&"))
+
+        action_marker = 'form id ="logon" method = "GET" action="'
+        action_start = html.find(action_marker)
+        ticket_marker = 'name="ticket" value="'
+        ticket_start = html.find(ticket_marker)
+        if action_start >= 0 and ticket_start >= 0:
+            action_start += len(action_marker)
+            action_end = html.find('"', action_start)
+            ticket_start += len(ticket_marker)
+            ticket_end = html.find('"', ticket_start)
+            if action_end > action_start and ticket_end > ticket_start:
+                action = html[action_start:action_end].replace("&amp;", "&")
+                ticket = html[ticket_start:ticket_end].replace("&amp;", "&")
+                separator = "&" if "?" in action else "?"
+                return f"{action}{separator}ticket={ticket}"
+
+        raise DanxiError("WebVPN 登录完成后未找到可继续跳转的凭据。")
+
+    def _build_webvpn_cookie_header(self, session: requests.Session) -> str:
+        cookie_parts: list[str] = []
+        for cookie in session.cookies:
+            if self.WEBVPN_HOST not in str(cookie.domain or ""):
+                continue
+            cookie_parts.append(f"{cookie.name}={cookie.value}")
+        return "; ".join(cookie_parts)
+
+    def _request_timeout(self, *, proxied: bool) -> tuple[int, int]:
+        return self._WEBVPN_REQUEST_TIMEOUT if proxied else self._DIRECT_REQUEST_TIMEOUT
 
     def _translate_url_to_webvpn(self, url: str) -> str | None:
         parsed = urlparse(url)
@@ -841,24 +1151,14 @@ class DanxiTools:
         json_body: dict[str, Any] | None = None,
         include_auth: bool = True,
         retry_on_unauthorized: bool = True,
-        force_webvpn: bool = False,
-        force_direct: bool = False,
+        retry_on_webvpn_refresh: bool = True,
     ) -> requests.Response:
         target_url = url
         headers = {"Accept": "application/json"}
         translated = self._translate_url_to_webvpn(url)
-        direct_connect_available = self._can_connect_directly(force_refresh=force_webvpn or force_direct)
-        proxied = False
-        if force_webvpn:
-            if translated is None:
-                raise DanxiError(f"当前 URL 不支持通过 WebVPN 代理: {url}")
-            proxied = True
-        elif not force_direct:
-            proxied = self._should_use_webvpn_proxy(
-                state,
-                url,
-                direct_connect_available=direct_connect_available,
-            )
+        proxied = self._should_use_webvpn_proxy(state, url)
+        if proxied and not state.webvpn_cookie and retry_on_webvpn_refresh:
+            self._refresh_webvpn_cookie_from_env(state)
         if proxied:
             if translated is None:
                 raise DanxiError(f"当前 URL 不支持通过 WebVPN 代理: {url}")
@@ -876,18 +1176,11 @@ class DanxiTools:
                 params=params,
                 json=json_body,
                 headers=headers,
-                timeout=(5, 20),
+                timeout=self._request_timeout(proxied=proxied),
                 allow_redirects=True,
             )
         except requests.RequestException as exc:
-            if (
-                not proxied
-                and not force_direct
-                and state.use_webvpn
-                and state.webvpn_cookie
-                and translated is not None
-                and not self._can_connect_directly(force_refresh=True)
-            ):
+            if proxied and retry_on_webvpn_refresh and self._refresh_webvpn_cookie_from_env(state):
                 return self._request(
                     method,
                     url,
@@ -896,11 +1189,43 @@ class DanxiTools:
                     json_body=json_body,
                     include_auth=include_auth,
                     retry_on_unauthorized=retry_on_unauthorized,
-                    force_webvpn=True,
+                    retry_on_webvpn_refresh=False,
                 )
-            raise DanxiError(f"Danxi 请求失败: {exc}") from exc
+            if not proxied and translated is not None and state.webvpn_cookie:
+                self._mark_webvpn_fallback_active(state)
+                headers = {"Accept": "application/json", "Cookie": state.webvpn_cookie}
+                if include_auth:
+                    headers["Authorization"] = f"Bearer {state.access_token}"
+                try:
+                    response = state.http.request(
+                        method.upper(),
+                        translated,
+                        params=params,
+                        json=json_body,
+                        headers=headers,
+                        timeout=self._request_timeout(proxied=True),
+                        allow_redirects=True,
+                    )
+                    proxied = True
+                except requests.RequestException as webvpn_exc:
+                    if retry_on_webvpn_refresh and self._refresh_webvpn_cookie_from_env(state):
+                        return self._request(
+                            method,
+                            url,
+                            state=state,
+                            params=params,
+                            json_body=json_body,
+                            include_auth=include_auth,
+                            retry_on_unauthorized=retry_on_unauthorized,
+                            retry_on_webvpn_refresh=False,
+                        )
+                    raise DanxiError(f"Danxi 请求失败: {webvpn_exc}") from webvpn_exc
+            else:
+                raise DanxiError(f"Danxi 请求失败: {exc}") from exc
+        if proxied:
+            self._mark_webvpn_fallback_active(state)
         if proxied and self._response_requires_webvpn_login(response):
-            if not force_webvpn and self._can_connect_directly(force_refresh=True):
+            if retry_on_webvpn_refresh and self._refresh_webvpn_cookie_from_env(state):
                 return self._request(
                     method,
                     url,
@@ -909,7 +1234,7 @@ class DanxiTools:
                     json_body=json_body,
                     include_auth=include_auth,
                     retry_on_unauthorized=retry_on_unauthorized,
-                    force_direct=True,
+                    retry_on_webvpn_refresh=False,
                 )
             raise DanxiError("Danxi 已切到 WebVPN 路由，但当前没有有效的 WebVPN 登录态。请提供可用的 WebVPN cookie。")
         if response.status_code == 401 and include_auth and retry_on_unauthorized:
@@ -930,8 +1255,6 @@ class DanxiTools:
                 json_body=json_body,
                 include_auth=include_auth,
                 retry_on_unauthorized=False,
-                force_webvpn=force_webvpn,
-                force_direct=force_direct,
             )
         if response.status_code >= 400:
             detail = self._extract_error_detail(response)
@@ -940,7 +1263,18 @@ class DanxiTools:
 
     def _response_requires_webvpn_login(self, response: requests.Response) -> bool:
         final_url = str(response.url or "")
-        return final_url.startswith(self.WEBVPN_LOGIN_PREFIX) or "id.fudan.edu.cn" in final_url
+        lowered_url = final_url.lower()
+        if final_url.startswith(self.WEBVPN_LOGIN_PREFIX) or "id.fudan.edu.cn" in lowered_url:
+            return True
+        if "authserver/login" in lowered_url or "cas_login=true" in lowered_url:
+            return True
+        content_type = str(response.headers.get("Content-Type") or "").lower()
+        body = str(response.text or "")
+        lowered_body = body[:2000].lower()
+        if "html" in content_type or lowered_body.startswith("<!doctype html") or "<html" in lowered_body:
+            if "authserver" in lowered_body or "资源访问控制系统" in body[:500]:
+                return True
+        return False
 
     def _extract_error_detail(self, response: requests.Response) -> str:
         try:

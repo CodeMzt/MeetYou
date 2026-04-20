@@ -456,6 +456,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                     },
                     "danxi_search_posts": lambda self, query, **_: {"query": query, "floor_hits": 1, "hole_ids": [10], "hits_by_hole": {10: [{"hole_id": 10}]}, "items": [{"hole_id": 10}]},
                     "danxi_list_messages": lambda self, **_: {"count": 1, "items": [{"message_id": 9, "content": "ping"}]},
+                    "danxi_resolve_message_target": lambda self, floor_id, **_: {"floor_id": floor_id, "hole_id": 10},
                     "_can_connect_directly": lambda self: False,
                 },
             )(),
@@ -534,6 +535,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
             )
             self.assertEqual(self.client.get("/client/danxi/search?query=test", headers=self._auth_headers()).json()["query"], "test")
             self.assertEqual(self.client.get("/client/danxi/messages", headers=self._auth_headers()).json()["count"], 1)
+            self.assertEqual(self.client.get("/client/danxi/floors/77/target", headers=self._auth_headers()).json()["hole_id"], 10)
         self.assertEqual(calls["login"]["email"], "user@example.com")
         self.assertEqual(calls["login"]["password"], "secret")
         self.assertTrue(calls["login"]["use_webvpn"])
