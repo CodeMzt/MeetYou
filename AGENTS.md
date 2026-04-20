@@ -26,7 +26,7 @@
 - Agent 正式实时入口是 `WSS /agent/ws`。
 - 桌面前端默认服务地址是本地 desktop backend `http://127.0.0.1:38951`，定义在 `meetyou-ui/src/windowBridge.ts`。
 - Gateway 鉴权是可选的；启用后 HTTP / WebSocket 接受 `Authorization: Bearer ...` 或 `X-API-Key`。
-- `desktop-agent` 与 `edge-agent` 都会优先读 `MEETYOU_AGENT_ACCESS_TOKEN`；`desktop-agent` / `edge-agent` 也支持各自的专用 env，并可回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`。
+- `desktop-agent` 与 `edge-agent` 都会优先读各自的专用 Agent token env；Agent `/agent/ws` 不再回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`，避免在 Core 分离 Agent/Gateway 鉴权时误用错误令牌。
 - 公开 mode 现为 `general`、`research`、`documents`、`study`、`automation`、`danxi`；`auto`、`normal`、`office` 只保留内部兼容映射，不再作为公开产品枚举扩散。
 
 ## 配置与状态
@@ -35,7 +35,7 @@
 - `user/` 是本地运行态目录；Git 只保留 `*.example.json` 模板和 `user/README.md`。
 - `user/core_mcp_servers.json` 只给 Core 侧安全 MCP；`user/mcp_servers.json` 只给 Desktop Agent 本地 MCP。缺少前者不代表后者缺失。
 - `desktop-agent` 默认读取 `user/desktop_agent.json`；本地能力边界主要看 `read_roots`、`trusted_write_roots`、`cmd_policy_path`、`mcp_servers_path`，桌面一体化边界还要看 `local_bridge_*` 配置。
-- `desktop-agent` 到 Core 的 `/agent/ws` 继续优先使用 `MEETYOU_AGENT_ACCESS_TOKEN`；desktop backend 内部访问 Core 的 client/operator/runtime/developer surface 时优先使用 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `user/desktop_agent.json` 中的 `gateway_access_token`。
+- `desktop-agent` 到 Core 的 `/agent/ws` 只使用显式 Agent token（`user/desktop_agent.json` 中的 `agent_access_token` 或 `MEETYOU_AGENT_ACCESS_TOKEN`）；desktop backend 内部访问 Core 的 client/operator/runtime/developer surface 时优先使用 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `user/desktop_agent.json` 中的 `gateway_access_token`。
 - `edge-agent` 默认读取 `user/edge_agent.json`；边缘能力边界主要看 `workspace_ids`、`agent_type`、`transport_profile`。
 - 正式持久化已经切到 PostgreSQL；`bootstrap_core_domain()` 会在 service 启动时跑 Alembic migration。不要再假设 `user/*.json` 是唯一真相源。
 - Danxi 默认优先直连 `forum.fduhole.com` / `auth.fduhole.com`；校外网络下可按 `docs/archive/v2/MeetYou项目工具接入.pdf` 通过 WebVPN URL 代理访问。当前前端已提供 Electron 内嵌 WebVPN 登录窗，采用“用户手动登录、程序自动提取 cookie”模式；不要在未确认页面参数的情况下硬写高风险 WebVPN 表单自动提交。

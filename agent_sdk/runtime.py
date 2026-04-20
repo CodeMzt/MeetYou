@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -74,17 +75,58 @@ class AgentRuntimeBase(ABC):
     async def shutdown(self) -> None:
         return None
 
+    def agent_access_token_source_hints(self) -> tuple[str, ...]:
+        config_path = str(getattr(self.config, "config_file_path", "")).strip()
+        hints = ["env `MEETYOU_AGENT_ACCESS_TOKEN`"]
+        if config_path:
+            hints.insert(0, f"config `{config_path}` -> `agent_access_token`")
+        return tuple(hints)
+
+    def missing_agent_access_token_message(self) -> str:
+        hints = ", ".join(self.agent_access_token_source_hints())
+        websocket_url = str(getattr(self.config, "websocket_url", "")).strip()
+        message = "missing required config item `agent_access_token`"
+        if hints:
+            message = f"{message}; expected one of: {hints}"
+        if websocket_url:
+            message = f"{message}; target={websocket_url}"
+        return message
+
     def stop(self) -> None:
         self._stop_event.set()
 
     async def run(self) -> None:
         try:
             await self.startup()
+            resolved_token = str(getattr(self.config, "agent_access_token", "")).strip()
+            if not resolved_token:
+                self._logger.error(
+                    "%s runtime disabled: %s",
+                    self.runtime_label,
+                    self.missing_agent_access_token_message(),
+                )
+                await self._stop_event.wait()
+                return
             while not self._stop_event.is_set():
                 try:
                     await self._run_connection()
                 except asyncio.CancelledError:
                     raise
+                except AgentHandshakeRejected as exc:
+                    self._logger.error(
+                        "%s connection rejected: [%s] %s",
+                        self.runtime_label,
+                        exc.code,
+                        exc.message,
+                    )
+                    if exc.details:
+                        self._logger.info("%s rejection details: %s", self.runtime_label, exc.details)
+                    self._logger.error(
+                        "%s runtime paused until restart because the handshake failure is not retryable.",
+                        self.runtime_label,
+                    )
+                    await self._stop_event.wait()
+                    break
                 except Exception as exc:
                     self._logger.exception("%s connection failed: %s", self.runtime_label, exc)
                 if not self._stop_event.is_set():
@@ -123,7 +165,7 @@ class AgentRuntimeBase(ABC):
                             break
                 finally:
                     heartbeat_task.cancel()
-                    with __import__("contextlib").suppress(asyncio.CancelledError):
+                    with contextlib.suppress(asyncio.CancelledError):
                         await heartbeat_task
                     if self._active_ws is ws:
                         self._active_ws = None
@@ -143,7 +185,10 @@ class AgentRuntimeBase(ABC):
                     return ready_received
                 continue
             if message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
-                raise RuntimeError(f"{self.runtime_label} websocket closed before agent.hello.ack")
+                raise RuntimeError(
+                    f"{self.runtime_label} websocket closed before agent.hello.ack "
+                    f"(ws_type={message.type}, close_code={getattr(ws, 'close_code', None)})"
+                )
 
     async def _send_capability_snapshot(self, ws) -> None:
         await ws.send_json(self.build_capabilities_snapshot_message(revision=self._capability_revision))
@@ -168,6 +213,13 @@ class AgentRuntimeBase(ABC):
             await ws.send_json(self.build_heartbeat_message(metrics=self.collect_metrics()))
 
     async def _handle_server_message(self, payload: dict[str, Any], ready_received: bool, ws, session=None) -> bool:
+        if str(payload.get("kind") or "").strip() == "error":
+            error_payload = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+            raise AgentHandshakeRejected(
+                str(error_payload.get("code") or "agent_runtime_error"),
+                str(error_payload.get("message") or f"{self.runtime_label} runtime error"),
+                details=error_payload.get("details") if isinstance(error_payload.get("details"), dict) else {},
+            )
         schema = str(payload.get("schema") or "")
         if schema != self.protocol_schema:
             return ready_received
