@@ -14,6 +14,7 @@ import {
   listDanxiMessages,
   listDanxiPosts,
   loginDanxiSession,
+  resolveDanxiMessageTarget,
   searchDanxiPosts,
   updateDanxiReply,
   updateDanxiWebvpnCookie,
@@ -25,6 +26,7 @@ import type {
   DanxiSummaryResponse,
   DanxiUserProfileResponse,
 } from './types'
+import { getMessageRelatedFloorId, getMessageRelatedHoleId } from './utils/danxiUtils'
 import ConfirmModal from './components/common/ConfirmModal'
 import SubWindow from './components/layout/SubWindow'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
@@ -47,6 +49,21 @@ const EMPTY_PAYLOAD: DanxiWindowPayload = {
 }
 
 const DANXI_READ_LIMIT = 10
+
+export function resolveDanxiAuthAction(options: {
+  sessionLoggedIn: boolean
+  email: string
+  password: string
+}): 'fresh_login' | 'update_cookie' | 'need_credentials' {
+  const hasManualCredentials = Boolean(options.email.trim() && options.password.trim())
+  if (hasManualCredentials) {
+    return 'fresh_login'
+  }
+  if (options.sessionLoggedIn) {
+    return 'update_cookie'
+  }
+  return 'need_credentials'
+}
 
 function getMessageCursor(response: DanxiListResponse): string {
   const lastItem = response.items[response.items.length - 1] as Record<string, unknown> | undefined
@@ -285,14 +302,19 @@ export default function DanxiWindow() {
       try {
         setBusy(true)
         setError(null)
-        if (session?.logged_in) {
+        const authAction = resolveDanxiAuthAction({
+          sessionLoggedIn: Boolean(session?.logged_in),
+          email,
+          password,
+        })
+        if (authAction === 'update_cookie') {
           const nextSession = await updateDanxiWebvpnCookie(payload.baseUrl, { cookie_header: data.cookie_header })
           setSession(nextSession)
           await loadReadonlyData(payload.baseUrl)
           setSuccess('WebVPN 登录态已更新。')
           return
         }
-        if (!email.trim() || !password.trim()) {
+        if (authAction === 'need_credentials') {
           setFailure('请先填写 Danxi 邮箱和密码，再进行 WebVPN 登录。')
           return
         }
@@ -387,11 +409,22 @@ export default function DanxiWindow() {
   }, [refreshSelectedPost, setFailure])
 
   const handleOpenMessagePost = useCallback(
-    async (holeId: number) => {
+    async (message: Record<string, unknown>) => {
+      const directHoleId = getMessageRelatedHoleId(message)
+      const relatedFloorId = getMessageRelatedFloorId(message)
+      let resolvedHoleId = directHoleId
+      if (resolvedHoleId === null && relatedFloorId !== null) {
+        const target = await resolveDanxiMessageTarget(payload.baseUrl, relatedFloorId)
+        resolvedHoleId = target.hole_id
+      }
+      if (resolvedHoleId === null) {
+        setFailure('当前消息缺少可跳转的帖子信息。')
+        return
+      }
       setViewMode('posts')
-      await handleSelectPost(holeId)
+      await handleSelectPost(resolvedHoleId)
     },
-    [handleSelectPost],
+    [handleSelectPost, payload.baseUrl, setFailure],
   )
 
   const handleSearch = useCallback(async () => {
