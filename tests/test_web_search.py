@@ -22,9 +22,15 @@ class _FakeResult:
 
 
 class _FakeMCPManager:
-    def __init__(self, responses: dict[str, list[str]] | None = None, tool_map: dict[str, str] | None = None):
+    def __init__(
+        self,
+        responses: dict[str, list[str]] | None = None,
+        tool_map: dict[str, str] | None = None,
+        server_diagnostics: dict[str, dict] | None = None,
+    ):
         self.responses = responses or {}
         self.tool_map = tool_map or {}
+        self.server_diagnostics = server_diagnostics or {}
         self.calls: list[tuple[str, dict]] = []
 
     async def call_mcp_tool(self, tool_name: str, arguments: dict):
@@ -36,6 +42,10 @@ class _FakeMCPManager:
         if text.startswith("RAISE:"):
             raise RuntimeError(text.split(":", 1)[1])
         return _FakeResult(text)
+
+    def get_server_diagnostic(self, server_name: str):
+        payload = self.server_diagnostics.get(server_name)
+        return dict(payload) if isinstance(payload, dict) else None
 
 
 class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
@@ -195,6 +205,47 @@ class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, ToolCallResult)
         self.assertFalse(result.ok)
         self.assertIn("Tavily", result.error.message)
+
+    async def test_search_web_surfaces_runtime_init_failure_diagnostics(self):
+        manager = _FakeMCPManager(
+            tool_map={},
+            server_diagnostics={
+                "tavily_web": {
+                    "server_name": "tavily_web",
+                    "status": "unavailable",
+                    "error": "spawn npx ENOENT",
+                }
+            },
+        )
+        tools = WebSearchTools(manager)
+
+        result = await tools.search_web("who won")
+
+        self.assertIsInstance(result, ToolCallResult)
+        self.assertFalse(result.ok)
+        self.assertIn("failed to initialize", result.error.message)
+        self.assertIn("spawn npx ENOENT", result.error.message)
+        self.assertEqual(result.error.details["tavily_diagnostic"]["status"], "unavailable")
+
+    async def test_search_web_reports_missing_auth_from_runtime_diagnostics(self):
+        manager = _FakeMCPManager(
+            tool_map={},
+            server_diagnostics={
+                "tavily_web": {
+                    "server_name": "tavily_web",
+                    "status": "requires_auth",
+                    "missing_auth": ["TAVILY_API_KEY"],
+                }
+            },
+        )
+        tools = WebSearchTools(manager)
+
+        result = await tools.search_web("who won")
+
+        self.assertIsInstance(result, ToolCallResult)
+        self.assertFalse(result.ok)
+        self.assertIn("missing auth env", result.error.message)
+        self.assertIn("TAVILY_API_KEY", result.error.message)
 
     async def test_search_web_rejects_direct_url_queries(self):
         manager = _FakeMCPManager(tool_map={"tavily-search": "tavily_web"})
