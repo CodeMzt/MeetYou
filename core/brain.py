@@ -741,6 +741,12 @@ class Brain:
         state = self._reply_control_state(session)
         active_turn = state.get("active_turn") if isinstance(state.get("active_turn"), dict) else None
         if active_turn is not None and str(active_turn.get("turn_id") or "") == str(turn_id or ""):
+            checkpoint_id = str(active_turn.get("checkpoint_id") or "")
+            if checkpoint_id:
+                try:
+                    self._restore_reply_checkpoint(session, checkpoint_id)
+                except ValueError:
+                    pass
             state["active_turn"] = None
             state["pending_command"] = None
             state["last_finish_reason"] = "failed"
