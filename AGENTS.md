@@ -39,6 +39,7 @@
 - `edge-agent` 默认读取 `user/edge_agent.json`；边缘能力边界主要看 `workspace_ids`、`agent_type`、`transport_profile`。
 - 正式持久化已经切到 PostgreSQL；`bootstrap_core_domain()` 会在 service 启动时跑 Alembic migration。不要再假设 `user/*.json` 是唯一真相源。
 - Danxi 默认优先直连 `forum.fduhole.com` / `auth.fduhole.com`；校外网络下可按 `docs/archive/v2/MeetYou项目工具接入.pdf` 通过 WebVPN URL 代理访问。当前前端已提供 Electron 内嵌 WebVPN 登录窗，采用“用户手动登录、程序自动提取 cookie”模式；不要在未确认页面参数的情况下硬写高风险 WebVPN 表单自动提交。
+- 当 Danxi 运行在远端 Core 且浏览器抓取的 WebVPN cookie 无法跨机复用时，`DanxiTools` 会在检测到代理登录态失效后，尝试使用服务端环境变量 `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 在服务端重建 WebVPN 会话并重试；如未配置这两个变量，则仍按原始 cookie 路径报错。
 - Danxi 二阶段已经补齐会话安全持久化：Danxi JWT / refresh token / WebVPN cookie 会以加密封装形式写入状态后端，并在启动后尝试自动恢复；会话失效、撤销或损坏时应自动清理并提示重新登录。
 - Danxi 登录与 WebVPN cookie 更新只接受 `encrypted_credentials` 加密传输；共享密钥优先取 `MEETYOU_CREDENTIAL_SECRET`，缺失时才回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `MEETYOU_AGENT_ACCESS_TOKEN`。不要新增或恢复明文凭证跨边界路径。
 

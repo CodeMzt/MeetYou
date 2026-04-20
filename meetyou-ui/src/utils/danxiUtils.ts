@@ -130,8 +130,31 @@ export function getMessageRelatedHoleId(item: DanxiRecord): number | null {
   for (const text of textCandidates) {
     const matched =
       text.match(/(?:hole|post|帖子)\s*#?\s*(\d{1,10})/i) ||
-      text.match(/#(\d{1,10})/) ||
+      text.match(/\/api\/holes\/(\d{1,10})/i) ||
       text.match(/\/holes\/(\d{1,10})/i)
+    if (matched?.[1]) {
+      const candidate = toPositiveInt(matched[1])
+      if (candidate !== null) {
+        return candidate
+      }
+    }
+  }
+
+  return null
+}
+
+export function getMessageRelatedFloorId(item: DanxiRecord): number | null {
+  const directKeys = ['floor_id', 'reply_floor_id', 'related_floor_id']
+  for (const key of directKeys) {
+    const candidate = toPositiveInt(item[key])
+    if (candidate !== null) {
+      return candidate
+    }
+  }
+
+  const textCandidates = [stringifyFallback(item.url), stringifyFallback(item.link)].filter(Boolean)
+  for (const text of textCandidates) {
+    const matched = text.match(/\/api\/floors\/(\d{1,10})/i) || text.match(/\/floors\/(\d{1,10})/i)
     if (matched?.[1]) {
       const candidate = toPositiveInt(matched[1])
       if (candidate !== null) {
