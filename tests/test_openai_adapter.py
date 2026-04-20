@@ -55,6 +55,106 @@ class FakeSession:
 
 
 class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def test_format_messages_drops_dangling_tool_call_sequences(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter.format_messages(
+            [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_1",
+                            "function": {
+                                "name": "search_web",
+                                "arguments": '{"query":"weather"}',
+                            },
+                        }
+                    ],
+                    "provider_items": [
+                        {
+                            "type": "function_call",
+                            "id": "fc_1",
+                            "call_id": "call_1",
+                            "name": "search_web",
+                            "arguments": '{"query":"weather"}',
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "Let me try again."},
+                {"role": "tool", "content": "orphan", "tool_call_id": "call_orphan"},
+            ]
+        )
+
+        self.assertEqual(
+            formatted,
+            [
+                {"role": "user", "content": "What's the weather?"},
+                {"role": "assistant", "content": "Let me try again."},
+            ],
+        )
+
+    def test_responses_input_preserves_complete_tool_exchange(self):
+        adapter = OpenAIAdapter()
+
+        payload = adapter._format_responses_input(
+            [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_1",
+                            "function": {
+                                "name": "search_web",
+                                "arguments": '{"query":"weather"}',
+                            },
+                        }
+                    ],
+                    "provider_items": [
+                        {
+                            "type": "function_call",
+                            "id": "fc_1",
+                            "call_id": "call_1",
+                            "name": "search_web",
+                            "arguments": '{"query":"weather"}',
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "content": '{"temperature":"20C"}',
+                    "tool_call_id": "call_1",
+                },
+            ]
+        )
+
+        self.assertEqual(payload["instructions"], "You are helpful.")
+        self.assertEqual(
+            payload["input"],
+            [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "search_web",
+                    "arguments": '{"query":"weather"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": '{"temperature":"20C"}',
+                },
+            ],
+        )
+
     async def test_official_openai_stream_uses_responses_api_and_summary_mode(self):
         adapter = OpenAIAdapter()
         session = FakeSession(
