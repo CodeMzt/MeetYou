@@ -286,6 +286,78 @@ class WebSearchTools:
     def __init__(self, mcp_manager):
         self._mcp_manager = mcp_manager
 
+    def _get_tavily_diagnostic(self) -> dict[str, Any]:
+        getter = getattr(self._mcp_manager, "get_server_diagnostic", None)
+        if callable(getter):
+            payload = getter("tavily_web")
+            if isinstance(payload, dict):
+                return dict(payload)
+        diagnostics = getattr(self._mcp_manager, "server_diagnostics", {}) or {}
+        payload = diagnostics.get("tavily_web")
+        return dict(payload) if isinstance(payload, dict) else {}
+
+    def _tavily_unavailable_result(self) -> ToolCallResult:
+        diagnostic = self._get_tavily_diagnostic()
+        status = str(diagnostic.get("status") or "").strip()
+        details: dict[str, Any] = {}
+
+        if diagnostic:
+            details["tavily_diagnostic"] = diagnostic
+
+        if status == "requires_auth":
+            missing_auth = [
+                str(item).strip()
+                for item in diagnostic.get("missing_auth", [])
+                if str(item).strip()
+            ]
+            missing_auth_text = ", ".join(missing_auth) if missing_auth else "required auth env vars"
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_unavailable",
+                category=ToolErrorCategory.DEPENDENCY,
+                message=f"Web search is unavailable because Tavily MCP is missing auth env: {missing_auth_text}.",
+                details=details,
+            )
+
+        if status == "not_enabled":
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_unavailable",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Web search is unavailable because Tavily MCP is disabled in Core MCP config.",
+                details=details,
+            )
+
+        if status == "unavailable":
+            error_text = str(diagnostic.get("error") or "").strip()
+            message = "Web search is unavailable because Tavily MCP failed to initialize."
+            if error_text:
+                message = f"{message} Runtime error: {error_text}"
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_unavailable",
+                category=ToolErrorCategory.DEPENDENCY,
+                message=message,
+                details=details,
+                retryable=True,
+            )
+
+        return ToolCallResult.failure(
+            tool_name="search_web",
+            source=ToolSourceType.BUILTIN,
+            action_risk="read",
+            code="web_search_unavailable",
+            category=ToolErrorCategory.DEPENDENCY,
+            message="Web search is unavailable because Tavily MCP is not configured or TAVILY_API_KEY is missing.",
+            details=details or None,
+        )
+
     def has_tavily_search(self) -> bool:
         return "tavily-search" in self._mcp_manager.tool_map
 
@@ -396,14 +468,7 @@ class WebSearchTools:
             )
 
         if not self.has_tavily_search():
-            return ToolCallResult.failure(
-                tool_name="search_web",
-                source=ToolSourceType.BUILTIN,
-                action_risk="read",
-                code="web_search_unavailable",
-                category=ToolErrorCategory.DEPENDENCY,
-                message="Web search is unavailable because Tavily MCP is not configured or TAVILY_API_KEY is missing.",
-            )
+            return self._tavily_unavailable_result()
 
         try:
             safe_max_results = max(_MIN_TAVILY_RESULTS, min(int(max_results), _MAX_SEARCH_RESULTS))
