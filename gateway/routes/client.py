@@ -24,6 +24,7 @@ from gateway.models import (
     ClientApprovalDecisionRequest,
     ClientDanxiActionResponse,
     ClientDanxiListResponse,
+    ClientDanxiMessageTargetResponse,
     ClientDanxiPostResponse,
     ClientDanxiProfileResponse,
     ClientDanxiReplyCreateRequest,
@@ -993,6 +994,14 @@ def build_client_router(gateway) -> APIRouter:
                     start_time=start_time,
                 )
             )
+        except Exception as exc:
+            _danxi_raise_http_error(gateway, exc)
+
+    @router.get("/danxi/floors/{floor_id}/target", response_model=ClientDanxiMessageTargetResponse)
+    async def danxi_message_target(floor_id: int, request: Request, session_key: str = ""):
+        gateway._require_http_auth(request)
+        try:
+            return ClientDanxiMessageTargetResponse(**_DANXI_TOOLS.danxi_resolve_message_target(floor_id, session_key=session_key))
         except Exception as exc:
             _danxi_raise_http_error(gateway, exc)
 

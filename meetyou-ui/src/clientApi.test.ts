@@ -5,6 +5,7 @@ import {
   fetchRuntimeUsageSnapshot,
   getDanxiPostSummary,
   getDanxiProfile,
+  resolveDanxiMessageTarget,
   getDanxiSessionStatus,
   getClientProcedureDetail,
   getClientThreadProcedureContext,
@@ -599,6 +600,24 @@ describe('clientApi', () => {
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       5,
       'http://127.0.0.1:8000/desktop/danxi/posts/101/summary?floor_limit=20',
+      expect.anything(),
+    )
+  })
+
+  it('resolves Danxi message floor target via desktop API', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ floor_id: 5732346, hole_id: 632931 }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const target = await resolveDanxiMessageTarget('http://127.0.0.1:8000', 5732346)
+
+    expect(target.floor_id).toBe(5732346)
+    expect(target.hole_id).toBe(632931)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/desktop/danxi/floors/5732346/target?session_key=default',
       expect.anything(),
     )
   })

@@ -210,6 +210,11 @@ export interface DanxiSummaryResponse {
   generated_at: string
 }
 
+export interface DanxiMessageTargetResponse {
+  floor_id: number
+  hole_id: number
+}
+
 export interface ClientMessage {
   message_id: string
   thread_id: string

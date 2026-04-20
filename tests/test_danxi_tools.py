@@ -360,6 +360,71 @@ class DanxiToolsTests(unittest.TestCase):
         self.assertTrue(status["webvpn_required"])
         self.assertEqual(status["transport"], "webvpn")
 
+    def test_list_messages_resolves_floor_urls_to_related_hole_ids(self):
+        fake_http = _FakeSession(
+            [
+                _FakeResponse(
+                    payload=[
+                        {
+                            "message_id": 1,
+                            "message": "您的内容有新回复",
+                            "url": "/api/floors/5732346",
+                        },
+                        {
+                            "message_id": 2,
+                            "message": "您的内容被引用了",
+                            "description": "##5736896\n引用内容",
+                            "url": "/api/floors/5732346",
+                        },
+                    ]
+                ),
+                _FakeResponse(payload={"floor_id": 5732346, "hole_id": 632931}),
+            ]
+        )
+        tools = DanxiTools()
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=False,
+            webvpn_cookie="",
+            http=fake_http,
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        payload = tools.danxi_list_messages()
+
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual(payload["items"][0]["related_floor_id"], 5732346)
+        self.assertEqual(payload["items"][0]["related_hole_id"], 632931)
+        self.assertEqual(payload["items"][1]["related_hole_id"], 632931)
+        self.assertEqual(len(fake_http.calls), 2)
+        self.assertEqual(fake_http.calls[1]["url"], f"{tools.API_BASE}/floors/5732346")
+
+    def test_resolve_message_target_reuses_cached_floor_mapping(self):
+        fake_http = _FakeSession([])
+        tools = DanxiTools()
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=False,
+            webvpn_cookie="",
+            http=fake_http,
+            access_token="token-old",
+        )
+        state.floor_hole_cache[5732346] = 632931
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        payload = tools.danxi_resolve_message_target(5732346)
+
+        self.assertEqual(payload["floor_id"], 5732346)
+        self.assertEqual(payload["hole_id"], 632931)
+        self.assertEqual(fake_http.calls, [])
+
     def test_delete_reply_requires_confirmation(self):
         tools = DanxiTools()
         with self.assertRaises(DanxiError):

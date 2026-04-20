@@ -99,6 +99,7 @@ class _DanxiSessionState:
     user_profile: dict[str, Any] | None = None
     restored_from_persistence: bool = False
     restore_validated: bool = False
+    floor_hole_cache: dict[int, int] = field(default_factory=dict)
 
 
 class DanxiTools:
@@ -482,7 +483,110 @@ class DanxiTools:
         state = self._get_session(session_key)
         params = _compact_dict({"not_read": bool(unread_only), "start_time": _iso8601_utc(start_time)})
         data = self._request_json("GET", f"{self.API_BASE}/messages", state=state, params=params)
-        return {"count": len(data) if isinstance(data, list) else 0, "items": data}
+        items = self._normalize_message_items(data, state=state) if isinstance(data, list) else data
+        return {"count": len(items) if isinstance(items, list) else 0, "items": items}
+
+    def _normalize_message_items(self, items: list[Any], *, state: _DanxiSessionState) -> list[Any]:
+        normalized: list[Any] = []
+        for item in items:
+            if not isinstance(item, dict):
+                normalized.append(item)
+                continue
+            normalized.append(self._normalize_message_item(item, state=state))
+        return normalized
+
+    def _normalize_message_item(self, item: dict[str, Any], *, state: _DanxiSessionState) -> dict[str, Any]:
+        normalized = dict(item)
+        related_hole_id = self._extract_message_hole_id(normalized)
+        if related_hole_id is not None:
+            normalized["related_hole_id"] = related_hole_id
+            return normalized
+
+        related_floor_id = self._extract_message_floor_id(normalized)
+        if related_floor_id is None:
+            return normalized
+        normalized["related_floor_id"] = related_floor_id
+
+        hole_id = state.floor_hole_cache.get(related_floor_id)
+        if hole_id is None:
+            hole_id = self._resolve_hole_id_from_floor(related_floor_id, state=state)
+            if hole_id is not None:
+                state.floor_hole_cache[related_floor_id] = hole_id
+        if hole_id is not None:
+            normalized["related_hole_id"] = hole_id
+        return normalized
+
+    def _extract_message_hole_id(self, item: dict[str, Any]) -> int | None:
+        for key in ("hole_id", "post_id", "target_hole_id", "related_hole_id", "reply_hole_id", "thread_hole_id"):
+            candidate = item.get(key)
+            if isinstance(candidate, int) and candidate > 0:
+                return candidate
+            if isinstance(candidate, str) and candidate.isdigit():
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+        for key in ("url", "link"):
+            parsed = self._extract_id_from_message_path(item.get(key), marker="/api/holes/")
+            if parsed is None:
+                parsed = self._extract_id_from_message_path(item.get(key), marker="/holes/")
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _extract_message_floor_id(self, item: dict[str, Any]) -> int | None:
+        for key in ("floor_id", "reply_floor_id", "related_floor_id"):
+            candidate = item.get(key)
+            if isinstance(candidate, int) and candidate > 0:
+                return candidate
+            if isinstance(candidate, str) and candidate.isdigit():
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+        for key in ("url", "link"):
+            parsed = self._extract_id_from_message_path(item.get(key), marker="/api/floors/")
+            if parsed is None:
+                parsed = self._extract_id_from_message_path(item.get(key), marker="/floors/")
+            if parsed is not None:
+                return parsed
+        return None
+
+    @staticmethod
+    def _extract_id_from_message_path(value: Any, *, marker: str) -> int | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        path = urlparse(text).path or text
+        if marker not in path:
+            return None
+        suffix = path.split(marker, 1)[1]
+        digits = []
+        for char in suffix:
+            if char.isdigit():
+                digits.append(char)
+                continue
+            break
+        if not digits:
+            return None
+        parsed = int("".join(digits))
+        return parsed if parsed > 0 else None
+
+    def _resolve_hole_id_from_floor(self, floor_id: int, *, state: _DanxiSessionState) -> int | None:
+        try:
+            payload = self._request_json("GET", f"{self.API_BASE}/floors/{int(floor_id)}", state=state)
+        except Exception as exc:
+            logger.debug("Failed to resolve Danxi floor %s to hole id: %s", floor_id, exc)
+            return None
+        if not isinstance(payload, dict):
+            return None
+        for key in ("hole_id", "post_id"):
+            candidate = payload.get(key)
+            if isinstance(candidate, int) and candidate > 0:
+                return candidate
+            if isinstance(candidate, str) and candidate.isdigit():
+                parsed = int(candidate)
+                if parsed > 0:
+                    return parsed
+        return None
 
     def danxi_mark_message_read(
         self,
@@ -499,6 +603,16 @@ class DanxiTools:
             json_body={"has_read": bool(has_read)},
         )
         return {"status_code": response.status_code, "ok": response.ok, "message_id": int(message_id), "has_read": bool(has_read)}
+
+    def danxi_resolve_message_target(self, floor_id: int, *, session_key: str = "") -> dict[str, Any]:
+        state = self._get_session(session_key)
+        hole_id = state.floor_hole_cache.get(int(floor_id))
+        if hole_id is None:
+            hole_id = self._resolve_hole_id_from_floor(int(floor_id), state=state)
+            if hole_id is None:
+                raise DanxiError(f"无法根据楼层 {int(floor_id)} 解析关联帖子。")
+            state.floor_hole_cache[int(floor_id)] = hole_id
+        return {"floor_id": int(floor_id), "hole_id": int(hole_id)}
 
     def danxi_summarize_post(self, hole_id: int, *, session_key: str = "", floor_limit: int = 50) -> dict[str, Any]:
         post_payload = self.danxi_get_post(hole_id, session_key=session_key)

@@ -690,6 +690,11 @@ class ClientDanxiProfileResponse(BaseModel):
     profile: dict[str, Any] | None = None
 
 
+class ClientDanxiMessageTargetResponse(BaseModel):
+    floor_id: int
+    hole_id: int
+
+
 class ClientDanxiReplyCreateRequest(BaseModel):
     session_key: str = "default"
     content: str = ""
