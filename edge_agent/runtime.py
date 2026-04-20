@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from agent_sdk.protocol import AGENT_SCHEMA
@@ -31,21 +30,6 @@ class EdgeAgentRuntime(AgentRuntimeBase):
     @property
     def runtime_label(self) -> str:
         return "Edge Agent"
-
-    async def run(self) -> None:
-        try:
-            await self.startup()
-            while not self._stop_event.is_set():
-                try:
-                    await self._run_connection()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    logger.exception("Edge Agent connection failed: %s", exc)
-                if not self._stop_event.is_set():
-                    await asyncio.sleep(self.config.reconnect_delay_seconds)
-        finally:
-            await self.shutdown()
 
     def build_hello_message(self) -> dict:
         return build_hello(self.config)
