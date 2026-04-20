@@ -6,6 +6,7 @@ import type {
   ClientAvailableAgent,
   DanxiActionResponse,
   DanxiListResponse,
+  DanxiMessageTargetResponse,
   DanxiPostResponse,
   DanxiSearchResponse,
   DanxiSessionStatus,
@@ -320,6 +321,17 @@ export async function listDanxiMessages(
   })
   const response = await fetchWithAuth(url.toString())
   return readJsonOrThrow<DanxiListResponse>(response, '加载 Danxi 消息失败')
+}
+
+export async function resolveDanxiMessageTarget(
+  baseUrl: string,
+  floorId: number,
+  sessionKey = 'default',
+): Promise<DanxiMessageTargetResponse> {
+  const response = await fetchWithAuth(
+    `${buildDesktopUrl(baseUrl, `/danxi/floors/${floorId}/target`)}?session_key=${encodeURIComponent(sessionKey)}`,
+  )
+  return readJsonOrThrow<DanxiMessageTargetResponse>(response, '解析 Danxi 消息跳转目标失败')
 }
 
 export async function updateOperatorWorkspaceGovernance(

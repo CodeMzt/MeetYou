@@ -116,6 +116,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("GET", "/desktop/danxi/posts/{hole_id}/summary", lambda request: f"/client/danxi/posts/{request.match_info['hole_id']}/summary"),
         DesktopApiRoute("GET", "/desktop/danxi/search", lambda _request: "/client/danxi/search"),
         DesktopApiRoute("GET", "/desktop/danxi/messages", lambda _request: "/client/danxi/messages"),
+        DesktopApiRoute("GET", "/desktop/danxi/floors/{floor_id}/target", lambda request: f"/client/danxi/floors/{request.match_info['floor_id']}/target"),
         DesktopApiRoute("GET", "/desktop/config/schema", lambda _request: "/operator/schema/ui"),
         DesktopApiRoute("GET", "/desktop/config", lambda _request: "/operator/config"),
         DesktopApiRoute("PATCH", "/desktop/config", lambda _request: "/operator/config"),

@@ -1,13 +1,19 @@
 import { Bell, ChevronDown, CornerDownRight } from 'lucide-react'
 import type { DanxiListResponse } from '../../types'
-import { getMessageDescription, getMessageRelatedHoleId, getMessageTimestamp, getMessageTitle } from '../../utils/danxiUtils'
+import {
+  getMessageDescription,
+  getMessageRelatedFloorId,
+  getMessageRelatedHoleId,
+  getMessageTimestamp,
+  getMessageTitle,
+} from '../../utils/danxiUtils'
 import styles from './DanxiMessageView.module.css'
 
 interface DanxiMessageViewProps {
   messages: DanxiListResponse
   busy: boolean
   onLoadMore: () => void
-  onOpenPost: (holeId: number) => void
+  onOpenPost: (message: Record<string, unknown>) => void
 }
 
 export default function DanxiMessageView({ messages, busy, onLoadMore, onOpenPost }: DanxiMessageViewProps) {
@@ -39,27 +45,29 @@ export default function DanxiMessageView({ messages, busy, onLoadMore, onOpenPos
         {messages.items.map((item, index) => {
           const msg = item as Record<string, unknown>
           const relatedHoleId = getMessageRelatedHoleId(msg)
+          const relatedFloorId = getMessageRelatedFloorId(msg)
+          const canOpenRelatedPost = relatedHoleId !== null || relatedFloorId !== null
           return (
             <button
               key={`message-${index}`}
               type="button"
-              className={`${styles.messageItem} ${relatedHoleId !== null ? styles.messageItemLinkable : ''}`}
+              className={`${styles.messageItem} ${canOpenRelatedPost ? styles.messageItemLinkable : ''}`}
               onClick={() => {
-                if (relatedHoleId !== null) {
-                  onOpenPost(relatedHoleId)
+                if (canOpenRelatedPost) {
+                  onOpenPost(msg)
                 }
               }}
-              disabled={relatedHoleId === null}
+              disabled={!canOpenRelatedPost}
             >
               <div className={styles.messageMeta}>
                 <span className={styles.messageSubject}>{getMessageTitle(msg)}</span>
                 <span className={styles.messageTime}>{getMessageTimestamp(msg)}</span>
               </div>
               {getMessageDescription(msg) ? <div className={styles.messageDesc}>{getMessageDescription(msg)}</div> : null}
-              {relatedHoleId !== null ? (
+              {canOpenRelatedPost ? (
                 <span className={styles.messageJumpHint}>
                   <CornerDownRight size={13} />
-                  跳转到帖子 #{relatedHoleId}
+                  {relatedHoleId !== null ? `跳转到帖子 #${relatedHoleId}` : `根据楼层 #${relatedFloorId} 打开关联帖子`}
                 </span>
               ) : null}
             </button>
