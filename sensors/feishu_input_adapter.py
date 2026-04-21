@@ -17,6 +17,19 @@ from core.io_protocol import (
 
 logger = logging.getLogger("meetyou.feishu_input")
 
+_DANXI_MODE_KEYWORDS = (
+    "danxi",
+    "旦夕",
+    "fduhole",
+    "论坛",
+    "帖子",
+    "楼层",
+    "分区",
+    "收藏",
+    "订阅",
+    "webvpn",
+)
+
 
 def _parse_confirm_response(text: str) -> bool | None:
     normalized = text.strip().lower()
@@ -26,6 +39,16 @@ def _parse_confirm_response(text: str) -> bool | None:
         return True
     if normalized in rejected_tokens:
         return False
+    return None
+
+
+def _infer_preferred_mode(text: str) -> str | None:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return None
+    for keyword in _DANXI_MODE_KEYWORDS:
+        if keyword.lower() in normalized:
+            return "danxi"
     return None
 
 
@@ -238,6 +261,7 @@ class FeishuInputAdapter:
                     "chat_id": chat_id,
                     "chat_type": message.get("chat_type", ""),
                 },
+                preferred_mode=_infer_preferred_mode(text),
             )
             return
 

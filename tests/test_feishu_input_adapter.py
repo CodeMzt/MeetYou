@@ -175,7 +175,68 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(fake_client.messages[0][0], "hello from feishu")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["chat_id"], "oc_test")
+        self.assertIsNone(fake_client.messages[0][1]["preferred_mode"])
         self.assertTrue(self.event_bus.inbound_queue.empty())
+
+    async def test_handle_event_prefers_danxi_mode_for_danxi_keywords(self):
+        class _FakeOutput:
+            def get_pending_confirm_request(self, chat_id: str):
+                return None
+
+            def resolve_human_input(self, chat_id: str, raw_text: str):
+                return None
+
+            async def send_client_event(self, chat_id: str, payload: dict):
+                return None
+
+        class _FakeGatewayClient:
+            def __init__(self):
+                self.messages = []
+
+            async def start(self):
+                return None
+
+            async def send_message(self, text: str, **kwargs):
+                self.messages.append((text, kwargs))
+
+        adapter = FeishuInputAdapter(
+            self.event_bus,
+            self.session_manager,
+            FakeConfig(
+                {
+                    "feishu_chat_registry_path": str(self.registry_path),
+                    "feishu_app_id": "",
+                    "feishu_app_secret": "",
+                }
+            ),
+            output_adapter=_FakeOutput(),
+        )
+        fake_client = _FakeGatewayClient()
+
+        async def _fake_get_client(chat_id: str):
+            return fake_client
+
+        adapter._get_gateway_client = _fake_get_client  # type: ignore[assignment]
+
+        payload = {
+            "event": {
+                "message": {
+                    "chat_id": "oc_test",
+                    "content": json.dumps({"text": "请帮我看一下旦夕论坛这个帖子"}, ensure_ascii=False),
+                    "message_id": "msg-danxi-1",
+                    "chat_type": "p2p",
+                },
+                "sender": {
+                    "sender_id": {
+                        "user_id": "user-1",
+                    }
+                },
+            }
+        }
+
+        await adapter.handle_event(payload)
+
+        self.assertEqual(fake_client.messages[0][1]["preferred_mode"], "danxi")
 
     async def test_handle_event_sends_confirm_over_gateway_client(self):
         class _FakeOutput:
