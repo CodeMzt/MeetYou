@@ -104,7 +104,7 @@ class FastAPIGateway:
         self._health_getter = health_getter
         self._agent_connection_prompt_getter = agent_connection_prompt_getter
         self._agent_connection_event_handler = agent_connection_event_handler
-        self._agent_access_token = str(agent_access_token or "").strip() or str(access_token or "").strip()
+        self._agent_access_token = str(agent_access_token or "").strip()
         self._access_token = str(access_token or "").strip()
         self._cors_origins = tuple(
             origin
