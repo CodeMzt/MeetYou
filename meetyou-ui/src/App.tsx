@@ -81,7 +81,13 @@ export default function App() {
       try {
         const status = await getDanxiSessionStatus(baseUrl)
         if (!cancelled) {
-          setDanxiStatusText(status.logged_in ? `已连接 · ${status.transport || 'direct'}` : '未连接')
+          setDanxiStatusText(
+            status.logged_in
+              ? `已连接 · ${status.transport || 'direct'}`
+              : status.connection_error
+                ? '连接异常'
+                : '未连接',
+          )
         }
       } catch {
         if (!cancelled) {

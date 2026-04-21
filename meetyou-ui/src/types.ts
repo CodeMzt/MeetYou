@@ -159,6 +159,7 @@ export interface DanxiSessionStatus {
   webvpn_required: boolean
   direct_connect_available: boolean
   logged_in: boolean
+  connection_error?: string | null
   user_profile: Record<string, unknown> | null
 }
 

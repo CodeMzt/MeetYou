@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -107,6 +108,7 @@ class _DanxiSessionState:
     user_profile: dict[str, Any] | None = None
     restored_from_persistence: bool = False
     restore_validated: bool = False
+    last_connection_error: str = ""
     floor_hole_cache: dict[int, int] = field(default_factory=dict)
 
 
@@ -226,6 +228,7 @@ class DanxiTools:
         direct_connect_available = self._can_connect_directly()
         webvpn_enabled = self._is_webvpn_enabled(state, direct_connect_available=direct_connect_available)
         webvpn_required = bool(webvpn_enabled and not direct_connect_available)
+        connection_ok, connection_error = self._probe_session_connectivity(state)
         return {
             "session_key": state.session_key,
             "email": state.email,
@@ -234,7 +237,8 @@ class DanxiTools:
             "has_webvpn_cookie": bool(state.webvpn_cookie),
             "webvpn_required": webvpn_required,
             "direct_connect_available": direct_connect_available,
-            "logged_in": bool(state.access_token),
+            "logged_in": connection_ok,
+            "connection_error": connection_error or None,
             "user_profile": state.user_profile,
         }
 
@@ -733,6 +737,23 @@ class DanxiTools:
     def _mark_session_validated(self, state: _DanxiSessionState) -> None:
         state.restored_from_persistence = False
         state.restore_validated = True
+        state.last_connection_error = ""
+
+    def _probe_session_connectivity(self, state: _DanxiSessionState) -> tuple[bool, str]:
+        if not state.access_token:
+            state.last_connection_error = ""
+            return False, ""
+        try:
+            profile = self._request_json("GET", f"{self.API_BASE}/users/me", state=state)
+        except Exception as exc:
+            message = str(exc) or "Danxi 会话暂时不可用。"
+            state.last_connection_error = message
+            return False, message
+        if isinstance(profile, dict):
+            state.user_profile = profile
+        self._mark_session_validated(state)
+        self._persist_sessions()
+        return True, ""
 
     def _restore_persisted_sessions(self) -> None:
         if self._state_backend is None:
@@ -932,9 +953,14 @@ class DanxiTools:
         username, password = self._resolve_stuvpn_credentials()
         if not username or not password:
             return False
-        cookie_header = self._login_webvpn_with_stuvpn(state.http, username, password)
-        if not cookie_header:
-            return False
+        login_session = requests.Session()
+        login_session.headers.update({"Accept": "application/json", "User-Agent": "MeetYou-Danxi/1.0"})
+        try:
+            cookie_header = self._login_webvpn_with_stuvpn(login_session, username, password)
+            if not cookie_header:
+                return False
+        finally:
+            login_session.close()
         state.webvpn_cookie = cookie_header
         state.use_webvpn = True
         self._persist_sessions()
@@ -948,7 +974,7 @@ class DanxiTools:
             allow_redirects=True,
         )
         login_page.raise_for_status()
-        lck, entity_id = self._parse_webvpn_login_context(login_page.url)
+        lck, entity_id = self._extract_webvpn_login_context_from_page(login_page.url, login_page.text)
 
         auth_methods = self._post_webvpn_idp_json(
             session,
@@ -1041,14 +1067,34 @@ class DanxiTools:
 
     @staticmethod
     def _parse_webvpn_login_context(redirect_url: str) -> tuple[str, str]:
-        fragment = urlparse(redirect_url).fragment or ""
-        _, _, query = fragment.partition("?")
-        parsed = parse_qs(query)
-        lck = str((parsed.get("lck") or [""])[0]).strip()
-        entity_id = str((parsed.get("entityId") or [""])[0]).strip()
-        if not lck or not entity_id:
-            raise DanxiError("WebVPN 登录页缺少必要的登录上下文。")
-        return lck, entity_id
+        parsed_url = urlparse(redirect_url)
+        candidates = []
+        fragment = parsed_url.fragment or ""
+        _, _, fragment_query = fragment.partition("?")
+        if fragment_query:
+            candidates.append(fragment_query)
+        if parsed_url.query:
+            candidates.append(parsed_url.query)
+        for query in candidates:
+            parsed = parse_qs(query)
+            lck = str((parsed.get("lck") or [""])[0]).strip()
+            entity_id = str((parsed.get("entityId") or [""])[0]).strip()
+            if lck and entity_id:
+                return lck, entity_id
+        raise DanxiError("WebVPN 登录页缺少必要的登录上下文。")
+
+    @classmethod
+    def _extract_webvpn_login_context_from_page(cls, redirect_url: str, html: str = "") -> tuple[str, str]:
+        try:
+            return cls._parse_webvpn_login_context(redirect_url)
+        except DanxiError:
+            pass
+        text = str(html or "")
+        lck_match = re.search(r'(?:"|\b)lck(?:"|\b)\s*[:=]\s*"?(context_[^"&<\s]+)', text)
+        entity_match = re.search(r'(?:"|\b)entityId(?:"|\b)\s*[:=]\s*"?(https://[^"&<\s]+)', text)
+        if lck_match and entity_match:
+            return lck_match.group(1).strip(), entity_match.group(1).strip()
+        raise DanxiError("WebVPN 登录页缺少必要的登录上下文。")
 
     def _post_webvpn_idp_json(self, session: requests.Session, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = session.post(
