@@ -38,6 +38,16 @@ def _load_env_file(env_file_path: Path = DEFAULT_ENV_PATH) -> None:
         return
 
 
+def _resolve_agent_access_token(payload: dict[str, object]) -> str:
+    return str(
+        os.environ.get("MEETYOU_EDGE_ACCESS_TOKEN")
+        or os.environ.get("MEETYOU_AGENT_WS_ACCESS_TOKEN")
+        or os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
+        or payload.get("agent_access_token")
+        or ""
+    ).strip()
+
+
 def load_edge_agent_config(config_file_path: str | None = None) -> EdgeAgentConfig:
     _load_env_file()
     file_path = Path(config_file_path or DEFAULT_CONFIG_PATH)
@@ -52,12 +62,7 @@ def load_edge_agent_config(config_file_path: str | None = None) -> EdgeAgentConf
             or payload.get("core_base_url")
             or "http://127.0.0.1:8000"
         ).strip(),
-        agent_access_token=str(
-            os.environ.get("MEETYOU_EDGE_ACCESS_TOKEN")
-            or os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
-            or payload.get("agent_access_token")
-            or ""
-        ).strip(),
+        agent_access_token=_resolve_agent_access_token(payload),
         agent_id=str(os.environ.get("MEETYOU_EDGE_AGENT_ID") or payload.get("agent_id") or "edge-agent").strip(),
         display_name=str(os.environ.get("MEETYOU_EDGE_DISPLAY_NAME") or payload.get("display_name") or "Edge Agent").strip(),
         agent_type=str(os.environ.get("MEETYOU_EDGE_AGENT_TYPE") or payload.get("agent_type") or "edge").strip(),

@@ -1,6 +1,5 @@
 {
   "core_base_url": "http://127.0.0.1:8000",
-  "agent_access_token": "",
   "agent_id": "edge-home-lab-agent",
   "display_name": "Home Lab Edge Agent",
   "agent_type": "edge",

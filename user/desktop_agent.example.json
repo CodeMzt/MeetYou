@@ -1,6 +1,5 @@
 {
   "core_base_url": "http://127.0.0.1:8000",
-  "agent_access_token": "",
   "gateway_access_token": "",
   "agent_id": "desktop-main-agent",
   "display_name": "Desktop Main Agent",

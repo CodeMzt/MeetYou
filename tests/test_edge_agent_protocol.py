@@ -101,6 +101,46 @@ class EdgeAgentProtocolTests(unittest.TestCase):
 
         self.assertEqual(config.agent_access_token, "edge-from-dotenv")
 
+    def test_load_edge_agent_config_prefers_agent_ws_env_over_legacy_env_and_config(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "edge_agent.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "core_base_url": "http://127.0.0.1:8000",
+                        "agent_access_token": "edge-from-file",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            previous_cwd = Path.cwd()
+            previous_ws = os.environ.get("MEETYOU_AGENT_WS_ACCESS_TOKEN")
+            previous_agent = os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN")
+            previous_edge = os.environ.get("MEETYOU_EDGE_ACCESS_TOKEN")
+            os.chdir(tmp_dir)
+            os.environ.pop("MEETYOU_EDGE_ACCESS_TOKEN", None)
+            os.environ["MEETYOU_AGENT_WS_ACCESS_TOKEN"] = "edge-from-ws-env"
+            os.environ["MEETYOU_AGENT_ACCESS_TOKEN"] = "edge-from-legacy-env"
+            try:
+                config = load_edge_agent_config(str(config_path))
+            finally:
+                os.chdir(previous_cwd)
+                if previous_ws is None:
+                    os.environ.pop("MEETYOU_AGENT_WS_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_AGENT_WS_ACCESS_TOKEN"] = previous_ws
+                if previous_agent is None:
+                    os.environ.pop("MEETYOU_AGENT_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_AGENT_ACCESS_TOKEN"] = previous_agent
+                if previous_edge is None:
+                    os.environ.pop("MEETYOU_EDGE_ACCESS_TOKEN", None)
+                else:
+                    os.environ["MEETYOU_EDGE_ACCESS_TOKEN"] = previous_edge
+
+        self.assertEqual(config.agent_access_token, "edge-from-ws-env")
+
 
 if __name__ == "__main__":
     unittest.main()

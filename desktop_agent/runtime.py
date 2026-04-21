@@ -46,9 +46,12 @@ class DesktopAgentRuntime(AgentRuntimeBase):
 
     def agent_access_token_source_hints(self) -> tuple[str, ...]:
         config_path = str(getattr(self.config, "config_file_path", "")).strip()
-        hints = ["env `MEETYOU_AGENT_ACCESS_TOKEN`"]
+        hints = [
+            "env `MEETYOU_AGENT_WS_ACCESS_TOKEN`",
+            "env `MEETYOU_AGENT_ACCESS_TOKEN`",
+        ]
         if config_path:
-            hints.insert(0, f"config `{config_path}` -> `agent_access_token`")
+            hints.append(f"config `{config_path}` -> `agent_access_token`")
         return tuple(hints)
 
     async def startup(self) -> None:

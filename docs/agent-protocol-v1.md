@@ -64,8 +64,8 @@ Agent 不使用 Client Token。
 
 - Agent HTTP / WebSocket 与 Client 面分开鉴权，启用后接受 `Authorization: Bearer ...` 或 `X-API-Key`
 - WebSocket 额外兼容 `access_token` query 参数，便于非浏览器 runtime 连接
-- `desktop-agent` 默认优先读取 `MEETYOU_AGENT_ACCESS_TOKEN`，不会回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
-- `edge-agent` 默认优先读取 `MEETYOU_EDGE_ACCESS_TOKEN`，再回退到 `MEETYOU_AGENT_ACCESS_TOKEN`，不会回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+- `desktop-agent` 默认优先读取 `MEETYOU_AGENT_WS_ACCESS_TOKEN`，再回退到 `MEETYOU_AGENT_ACCESS_TOKEN`，不会回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
+- `edge-agent` 默认优先读取 `MEETYOU_EDGE_ACCESS_TOKEN`，再回退到 `MEETYOU_AGENT_WS_ACCESS_TOKEN` / `MEETYOU_AGENT_ACCESS_TOKEN`，不会回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 - base URL 也支持按 runtime 覆盖：`desktop-agent` 使用 `MEETYOU_AGENT_BASE_URL`，`edge-agent` 优先使用 `MEETYOU_EDGE_BASE_URL`，再回退到共享 base URL 或配置文件
 - 后续增强仍可考虑设备证书或 mTLS，但不属于当前正式主链要求
 
