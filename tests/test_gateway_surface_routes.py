@@ -541,12 +541,62 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertTrue(calls["login"]["use_webvpn"])
         self.assertEqual(calls["cookie"]["cookie_header"], "vpn=ok")
 
+    def test_client_danxi_login_can_fall_back_to_core_env_credentials_without_encrypted_payload(self):
+        calls: dict[str, dict] = {}
+        with patch.object(
+            client_routes,
+            "_DANXI_TOOLS",
+            new=type(
+                "_FakeDanxiTools",
+                (),
+                {
+                    "danxi_login": lambda self, **kwargs: (
+                        calls.setdefault("login", dict(kwargs)),
+                        {
+                            "session_key": "default",
+                            "email": "env-user@example.com",
+                            "transport": "webvpn",
+                            "webvpn_enabled": True,
+                            "has_webvpn_cookie": False,
+                            "token": {"has_access_token": True, "has_refresh_token": False, "raw_keys": ["access"]},
+                            "user_profile": {"user_id": 1},
+                        },
+                    )[1],
+                    "_can_connect_directly": lambda self: False,
+                },
+            )(),
+        ):
+            response = self.client.post(
+                "/client/danxi/session/login",
+                json={
+                    "session_key": "default",
+                    "use_webvpn": True,
+                },
+                headers=self._auth_headers(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["email"], "env-user@example.com")
+        self.assertEqual(calls["login"]["email"], "")
+        self.assertEqual(calls["login"]["password"], "")
+        self.assertTrue(calls["login"]["use_webvpn"])
+
     def test_client_danxi_login_rejects_when_credential_secret_is_missing(self):
+        with patch.dict(os.environ, {"MEETYOU_CREDENTIAL_SECRET": "seed-secret"}, clear=False):
+            encrypted_payload = encrypt_json_payload(
+                {
+                    "email": "user@example.com",
+                    "password": "secret",
+                    "session_key": "default",
+                },
+                purpose="danxi.client.login.v1",
+            )
         with patch.dict(
             os.environ,
             {
                 "MEETYOU_CREDENTIAL_SECRET": "",
                 "MEETYOU_GATEWAY_ACCESS_TOKEN": "",
+                "MEETYOU_AGENT_WS_ACCESS_TOKEN": "",
                 "MEETYOU_AGENT_ACCESS_TOKEN": "",
             },
             clear=False,
@@ -555,14 +605,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                 "/client/danxi/session/login",
                 json={
                     "session_key": "default",
-                    "encrypted_credentials": {
-                        "version": "v1",
-                        "alg": "aes-256-gcm",
-                        "purpose": "danxi.client.login.v1",
-                        "iv": "AA==",
-                        "ciphertext": "AA==",
-                        "tag": "AA==",
-                    },
+                    "encrypted_credentials": encrypted_payload,
                 },
                 headers=self._auth_headers(),
             )

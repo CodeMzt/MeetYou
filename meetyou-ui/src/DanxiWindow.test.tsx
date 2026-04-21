@@ -34,13 +34,13 @@ describe('DanxiWindow', () => {
     ).toBe('update_cookie')
   })
 
-  it('requires credentials when there is no logged in session to reuse', () => {
+  it('falls back to a fresh core-side login when there is no logged in session to reuse', () => {
     expect(
       resolveDanxiAuthAction({
         sessionLoggedIn: false,
         email: '',
         password: '',
       }),
-    ).toBe('need_credentials')
+    ).toBe('fresh_login')
   })
 })
