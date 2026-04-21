@@ -257,7 +257,7 @@ export default function DanxiWindow() {
         direct_connect_available: nextSession.direct_connect_available,
         profile: nextSession.user_profile,
       })
-      setError(null)
+      setError(nextSession.connection_error ?? null)
       if (nextSession.logged_in) {
         await loadReadonlyData(payload.baseUrl)
       } else {
