@@ -337,12 +337,14 @@ agent.ready
 
 `desktop-agent`：
 
-- 优先读取 `MEETYOU_AGENT_ACCESS_TOKEN`
+- 优先读取 `MEETYOU_AGENT_WS_ACCESS_TOKEN`
+- 再回退到 `MEETYOU_AGENT_ACCESS_TOKEN`
 - 不再回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 
 `edge-agent`：
 
 - 优先读取 `MEETYOU_EDGE_ACCESS_TOKEN`
+- 再回退到 `MEETYOU_AGENT_WS_ACCESS_TOKEN`
 - 再回退到 `MEETYOU_AGENT_ACCESS_TOKEN`
 - 不再回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 
@@ -369,7 +371,6 @@ Agent WebSocket 还兼容 `access_token` query。
 ```json
 {
   "core_base_url": "https://your-domain.example",
-  "agent_access_token": "replace-with-agent-token",
   "gateway_access_token": "replace-with-gateway-token",
   "agent_id": "desktop-main-agent",
   "display_name": "Desktop Main Agent",
@@ -409,7 +410,6 @@ python -m desktop_agent
 ```json
 {
   "core_base_url": "https://your-domain.example",
-  "agent_access_token": "replace-with-edge-token",
   "agent_id": "edge-home-lab-agent",
   "display_name": "Home Lab Edge Agent",
   "agent_type": "edge",

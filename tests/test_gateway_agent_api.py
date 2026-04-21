@@ -71,6 +71,7 @@ class GatewayAgentApiTests(unittest.TestCase):
                 "updated_at": "2026-04-08T00:00:00Z",
             },
             core_domain=self.core_domain,
+            agent_access_token=self.access_token,
             access_token=self.access_token,
         )
         self.client = TestClient(self.gateway.app)

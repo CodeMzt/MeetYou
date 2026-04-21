@@ -35,6 +35,7 @@ class EdgeAgentRuntime(AgentRuntimeBase):
         config_path = str(getattr(self.config, "config_file_path", "")).strip()
         hints = [
             "env `MEETYOU_EDGE_ACCESS_TOKEN`",
+            "env `MEETYOU_AGENT_WS_ACCESS_TOKEN`",
             "env `MEETYOU_AGENT_ACCESS_TOKEN`",
         ]
         if config_path:

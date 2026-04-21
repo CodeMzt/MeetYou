@@ -35,10 +35,11 @@
 - `user/` 是本地运行态目录；Git 只保留 `*.example.json` 模板和 `user/README.md`。
 - `user/core_mcp_servers.json` 只给 Core 侧安全 MCP；`user/mcp_servers.json` 只给 Desktop Agent 本地 MCP。缺少前者不代表后者缺失。
 - `desktop-agent` 默认读取 `user/desktop_agent.json`；本地能力边界主要看 `read_roots`、`trusted_write_roots`、`cmd_policy_path`、`mcp_servers_path`，桌面一体化边界还要看 `local_bridge_*` 配置。
-- `desktop-agent` 到 Core 的 `/agent/ws` 只使用显式 Agent token（`user/desktop_agent.json` 中的 `agent_access_token` 或 `MEETYOU_AGENT_ACCESS_TOKEN`）；desktop backend 内部访问 Core 的 client/operator/runtime/developer surface 时优先使用 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `user/desktop_agent.json` 中的 `gateway_access_token`。
+- `desktop-agent` 到 Core 的 `/agent/ws` 只使用显式 Agent token（优先 `MEETYOU_AGENT_WS_ACCESS_TOKEN`，其次 `MEETYOU_AGENT_ACCESS_TOKEN`，最后兼容 `user/desktop_agent.json` 中的 `agent_access_token`）；desktop backend 内部访问 Core 的 client/operator/runtime/developer surface 时优先使用 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `user/desktop_agent.json` 中的 `gateway_access_token`。
 - `edge-agent` 默认读取 `user/edge_agent.json`；边缘能力边界主要看 `workspace_ids`、`agent_type`、`transport_profile`。
 - 正式持久化已经切到 PostgreSQL；`bootstrap_core_domain()` 会在 service 启动时跑 Alembic migration。不要再假设 `user/*.json` 是唯一真相源。
 - Danxi 默认优先直连 `forum.fduhole.com` / `auth.fduhole.com`；校外网络下可按 `docs/archive/v2/MeetYou项目工具接入.pdf` 通过 WebVPN URL 代理访问。当前前端已提供 Electron 内嵌 WebVPN 登录窗，采用“用户手动登录、程序自动提取 cookie”模式；不要在未确认页面参数的情况下硬写高风险 WebVPN 表单自动提交。
+- Danxi 主登录与远端 Core 侧 WebVPN 主链统一优先使用服务端环境变量 `DANXI_MAIL` / `DANXI_PASSWORD` 与 `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD`；桌面端手动输入 Danxi 账号密码或手动抓取 WebVPN cookie 仅保留为备用路径。
 - 当 Danxi 运行在远端 Core 且浏览器抓取的 WebVPN cookie 无法跨机复用时，`DanxiTools` 会在检测到代理登录态失效后，尝试使用服务端环境变量 `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 在服务端重建 WebVPN 会话并重试；如未配置这两个变量，则仍按原始 cookie 路径报错。
 - Danxi 二阶段已经补齐会话安全持久化：Danxi JWT / refresh token / WebVPN cookie 会以加密封装形式写入状态后端，并在启动后尝试自动恢复；会话失效、撤销或损坏时应自动清理并提示重新登录。
 - Danxi 登录与 WebVPN cookie 更新只接受 `encrypted_credentials` 加密传输；共享密钥优先取 `MEETYOU_CREDENTIAL_SECRET`，缺失时才回退到 `MEETYOU_GATEWAY_ACCESS_TOKEN` 或 `MEETYOU_AGENT_ACCESS_TOKEN`。不要新增或恢复明文凭证跨边界路径。
