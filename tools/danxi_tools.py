@@ -60,6 +60,14 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _first_env(*names: str) -> str:
+    for name in names:
+        value = str(os.getenv(name, "")).strip()
+        if value:
+            return value
+    return ""
+
+
 def _coerce_datetime(value: str | None) -> datetime | None:
     raw = str(value or "").strip()
     if not raw:
@@ -145,10 +153,9 @@ class DanxiTools:
         use_webvpn: bool | None = None,
         webvpn_cookie: str = "",
     ) -> dict[str, Any]:
-        resolved_email = str(email or os.getenv("MEETYOU_DANXI_EMAIL", "")).strip()
-        resolved_password = str(password or os.getenv("MEETYOU_DANXI_PASSWORD", "")).strip()
+        resolved_email, resolved_password = self._resolve_danxi_credentials(email, password)
         if not resolved_email or not resolved_password:
-            raise DanxiError("Danxi 登录需要 email 和 password，或对应环境变量。")
+            raise DanxiError("Danxi 登录需要 email 和 password，或配置 DANXI_MAIL / DANXI_PASSWORD 环境变量。")
         if use_webvpn is None:
             use_webvpn = _env_bool("MEETYOU_DANXI_USE_WEBVPN", default=False)
         resolved_webvpn_cookie = str(webvpn_cookie or os.getenv("MEETYOU_DANXI_WEBVPN_COOKIE", "")).strip()
@@ -902,6 +909,18 @@ class DanxiTools:
             return
         state.use_webvpn = True
         self._persist_sessions()
+
+    @staticmethod
+    def _resolve_danxi_credentials(email: str = "", password: str = "") -> tuple[str, str]:
+        manual_email = str(email or "").strip()
+        manual_password = str(password or "").strip()
+        if manual_email or manual_password:
+            if not manual_email or not manual_password:
+                raise DanxiError("Danxi 手动登录需要同时提供 email 和 password。")
+            return manual_email, manual_password
+        env_email = _first_env("DANXI_MAIL", "MEETYOU_DANXI_EMAIL")
+        env_password = _first_env("DANXI_PASSWORD", "MEETYOU_DANXI_PASSWORD")
+        return env_email, env_password
 
     @staticmethod
     def _resolve_stuvpn_credentials() -> tuple[str, str]:

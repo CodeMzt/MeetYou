@@ -53,6 +53,51 @@ class _MemoryStateBackend:
 
 
 class DanxiToolsTests(unittest.TestCase):
+    def test_login_uses_danxi_env_credentials_when_manual_credentials_missing(self):
+        tools = DanxiTools()
+        tools._direct_connect_available = True
+
+        def _fake_login(state):
+            self.assertEqual(state.email, "env-user@example.com")
+            self.assertEqual(state.password, "env-secret")
+            state.access_token = "token-a"
+            return {"access": "token-a", "refresh": ""}
+
+        with patch.dict(
+            os.environ,
+            {
+                "DANXI_MAIL": "env-user@example.com",
+                "DANXI_PASSWORD": "env-secret",
+                "MEETYOU_DANXI_EMAIL": "legacy@example.com",
+                "MEETYOU_DANXI_PASSWORD": "legacy-secret",
+            },
+            clear=False,
+        ), patch.object(DanxiTools, "_post_auth_login", side_effect=_fake_login), patch.object(
+            DanxiTools,
+            "_safe_load_profile",
+            return_value={"user_id": 7, "email": "env-user@example.com"},
+        ):
+            payload = tools.danxi_login()
+
+        self.assertEqual(payload["email"], "env-user@example.com")
+        self.assertTrue(payload["logged_in"])
+
+    def test_login_requires_complete_manual_credentials_before_overriding_env_defaults(self):
+        tools = DanxiTools()
+
+        with patch.dict(
+            os.environ,
+            {
+                "DANXI_MAIL": "env-user@example.com",
+                "DANXI_PASSWORD": "env-secret",
+            },
+            clear=False,
+        ):
+            with self.assertRaises(DanxiError) as error_context:
+                tools.danxi_login(email="manual@example.com", password="")
+
+        self.assertIn("同时提供", str(error_context.exception))
+
     def test_login_and_list_posts_uses_cached_session(self):
         tools = DanxiTools()
         tools._direct_connect_available = True

@@ -642,11 +642,17 @@ class ClientWorkspaceResponse(BaseModel):
 class ClientDanxiSessionLoginRequest(BaseModel):
     session_key: str = "default"
     encrypted_credentials: dict[str, Any] | None = None
+    use_webvpn: bool | None = None
+    email: str = ""
+    password: str = ""
+    webvpn_cookie: str = ""
 
 
 class ClientDanxiWebvpnCookiePatchRequest(BaseModel):
     session_key: str = "default"
     encrypted_credentials: dict[str, Any] | None = None
+    cookie_header: str = ""
+    enable_webvpn: bool = True
 
 
 class ClientDanxiSessionResponse(BaseModel):

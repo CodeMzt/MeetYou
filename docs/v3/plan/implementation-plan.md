@@ -206,9 +206,14 @@ Phase 5  自动化测试、CI/CD 与可观测性
   - 增加 Danxi 直连请求失败后的自动 WebVPN 重试逻辑，避免已有 WebVPN 登录态时仍直接报错退出
   - 收口 Danxi 会话状态口径，让 `transport`、`webvpn_enabled` 与 `webvpn_required` 能反映“已有 WebVPN fallback 可用”的事实
   - 当远端 Core 检测到浏览器提交的 WebVPN cookie 无法跨机复用时，允许使用服务端 `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 重建 WebVPN 会话并重试
+  - Danxi 主登录默认优先读取服务端 `DANXI_MAIL` / `DANXI_PASSWORD`；桌面端手动输入邮箱密码只保留为备用覆盖路径
+- `gateway/routes/client.py`
+  - `POST /client/danxi/session/login` 允许在不下发 `encrypted_credentials` 时走远端 Core 环境变量主登录，同时继续拒绝明文邮箱、密码与 cookie 跨边界提交
 - `meetyou-ui/electron/main.ts`
   - 收紧 WebVPN cookie 捕获时机：只有认证窗真正回到 `webvpn.fudan.edu.cn` 的非登录页后，才把 cookie 回传给 Danxi，避免在 CAS/预登录阶段过早关闭窗口并注入无效 cookie
   - 为 WebVPN 认证窗补充独立 session、Chrome UA 与加载失败日志，降低白屏/无响应时的排障成本
+- `meetyou-ui/src/DanxiWindow.tsx`
+  - 当桌面端尚未持有 Danxi 会话时，WebVPN 手动登录结果会优先触发一次新的 Core 侧登录，而不是强制要求先手填 Danxi 凭证
 - `tests/test_danxi_tools.py`
   - 增补“直连不可用时自动走 WebVPN cookie”
   - 增补“直连请求失败后自动重试 WebVPN”
@@ -218,6 +223,7 @@ Phase 5  自动化测试、CI/CD 与可观测性
 
 - 本轮没有新增 Danxi/STUVPN 专用配置项，也没有把代理设置接入 `operator/config` / `/desktop/config`
 - 本轮继续沿用 Electron WebVPN 登录窗、`/desktop/danxi/*` -> `/client/danxi/*` -> Core `DanxiTools` 的现有跨端链路
+- Danxi 主登录环境变量以 `DANXI_MAIL` / `DANXI_PASSWORD` 为准；旧的 `MEETYOU_DANXI_EMAIL` / `MEETYOU_DANXI_PASSWORD` 仅保留兼容兜底
 - 当 Danxi 挂在远端 Core 且浏览器 cookie 无法跨机复用时，服务端可通过 `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 自建 WebVPN 会话；这两个环境变量因此成为 WebVPN 远端部署场景下的正式运行入口
 
 ### 9.4 验证矩阵
@@ -225,6 +231,7 @@ Phase 5  自动化测试、CI/CD 与可观测性
 - `.venv\Scripts\python.exe -m unittest tests.test_danxi_tools`
 - `.venv\Scripts\python.exe -m unittest tests.test_gateway_surface_routes`
 - `cd meetyou-ui && npm run typecheck`
+- `cd meetyou-ui && npm run test -- src/DanxiWindow.test.tsx`
 - `cd meetyou-ui && npm run test -- src/clientApi.test.ts src/DanxiWindow.test.tsx`
 
 ## 10. 验证要求

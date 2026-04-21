@@ -54,7 +54,7 @@ export function resolveDanxiAuthAction(options: {
   sessionLoggedIn: boolean
   email: string
   password: string
-}): 'fresh_login' | 'update_cookie' | 'need_credentials' {
+}): 'fresh_login' | 'update_cookie' {
   const hasManualCredentials = Boolean(options.email.trim() && options.password.trim())
   if (hasManualCredentials) {
     return 'fresh_login'
@@ -62,7 +62,7 @@ export function resolveDanxiAuthAction(options: {
   if (options.sessionLoggedIn) {
     return 'update_cookie'
   }
-  return 'need_credentials'
+  return 'fresh_login'
 }
 
 function getMessageCursor(response: DanxiListResponse): string {
@@ -312,10 +312,6 @@ export default function DanxiWindow() {
           setSession(nextSession)
           await loadReadonlyData(payload.baseUrl)
           setSuccess('WebVPN 登录态已更新。')
-          return
-        }
-        if (authAction === 'need_credentials') {
-          setFailure('请先填写 Danxi 邮箱和密码，再进行 WebVPN 登录。')
           return
         }
         const nextSession = await loginDanxiSession(payload.baseUrl, {

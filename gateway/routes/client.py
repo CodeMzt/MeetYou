@@ -121,32 +121,46 @@ def _danxi_action_response(payload: dict[str, Any], message: str) -> ClientDanxi
 
 
 def _resolve_danxi_login_payload(payload: ClientDanxiSessionLoginRequest) -> dict[str, Any]:
-    if not payload.encrypted_credentials:
+    if payload.encrypted_credentials:
+        decrypted = decrypt_json_payload(payload.encrypted_credentials, purpose=_DANXI_LOGIN_PURPOSE)
+        return {
+            "email": str(decrypted.get("email") or ""),
+            "password": str(decrypted.get("password") or ""),
+            "session_key": str(decrypted.get("session_key") or payload.session_key or "default"),
+            "use_webvpn": decrypted.get("use_webvpn"),
+            "webvpn_cookie": str(decrypted.get("webvpn_cookie") or ""),
+        }
+    if payload.email or payload.password or payload.webvpn_cookie:
         raise CredentialTransportError(
             "credential_encrypted_required",
             "Danxi 登录请求必须提供 encrypted_credentials，已禁用明文跨边界凭证传输。",
         )
-    decrypted = decrypt_json_payload(payload.encrypted_credentials, purpose=_DANXI_LOGIN_PURPOSE)
     return {
-        "email": str(decrypted.get("email") or ""),
-        "password": str(decrypted.get("password") or ""),
-        "session_key": str(decrypted.get("session_key") or payload.session_key or "default"),
-        "use_webvpn": decrypted.get("use_webvpn"),
-        "webvpn_cookie": str(decrypted.get("webvpn_cookie") or ""),
+        "email": "",
+        "password": "",
+        "session_key": str(payload.session_key or "default"),
+        "use_webvpn": payload.use_webvpn,
+        "webvpn_cookie": "",
     }
 
 
 def _resolve_danxi_webvpn_cookie_payload(payload: ClientDanxiWebvpnCookiePatchRequest) -> dict[str, Any]:
-    if not payload.encrypted_credentials:
+    if payload.encrypted_credentials:
+        decrypted = decrypt_json_payload(payload.encrypted_credentials, purpose=_DANXI_WEBVPN_PURPOSE)
+        return {
+            "session_key": str(decrypted.get("session_key") or payload.session_key or "default"),
+            "cookie_header": str(decrypted.get("cookie_header") or ""),
+            "enable_webvpn": bool(decrypted.get("enable_webvpn", True)),
+        }
+    if payload.cookie_header:
         raise CredentialTransportError(
             "credential_encrypted_required",
             "Danxi WebVPN 登录态更新必须提供 encrypted_credentials，已禁用明文跨边界凭证传输。",
         )
-    decrypted = decrypt_json_payload(payload.encrypted_credentials, purpose=_DANXI_WEBVPN_PURPOSE)
     return {
-        "session_key": str(decrypted.get("session_key") or payload.session_key or "default"),
-        "cookie_header": str(decrypted.get("cookie_header") or ""),
-        "enable_webvpn": bool(decrypted.get("enable_webvpn", True)),
+        "session_key": str(payload.session_key or "default"),
+        "cookie_header": "",
+        "enable_webvpn": bool(payload.enable_webvpn),
     }
 
 
