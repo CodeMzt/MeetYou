@@ -188,3 +188,5 @@ memory_tasks.json.bak
 tmp_*.py
 meetyou-ui/node_modules/
 meetyou-ui/dist-electron/
+deploy/docker/compose.env
+deploy/docker/runtime/
