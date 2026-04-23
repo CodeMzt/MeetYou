@@ -27,10 +27,7 @@ export async function resolveAccessToken(): Promise<string> {
   }
 
   try {
-    let ipcToken = await window.ipcRenderer?.invoke?.('get-desktop-bridge-access-token')
-    if (typeof ipcToken !== 'string') {
-      ipcToken = await window.ipcRenderer?.invoke?.('get-gateway-access-token')
-    }
+    const ipcToken = await window.ipcRenderer?.invoke?.('get-desktop-bridge-access-token')
     if (typeof ipcToken === 'string') {
       const token = ipcToken.trim()
       cachedAccessToken = token || null

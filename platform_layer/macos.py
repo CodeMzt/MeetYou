@@ -18,6 +18,31 @@ class MacOSPlatformAdapter(PlatformAdapter):
 
     _DEFAULT_IGNORE = ["kernel_task", "launchd", "WindowServer"]
 
+    def describe_capabilities(self) -> dict:
+        return {
+            "ui_context": {
+                "status": "disabled",
+                "availability": "disabled",
+                "supported_platforms": ["windows"],
+                "windows_only": True,
+                "notes": "macOS 下不提供 UI Automation 替代实现；get_ui_context() 固定返回 ui_automation_not_implemented_on_macos。",
+            },
+            "running_apps": {
+                "status": "enabled",
+                "availability": "full",
+                "supported_platforms": ["windows", "linux", "macos"],
+                "windows_only": False,
+                "notes": "macOS 下继续提供运行进程感知。",
+            },
+            "system_vitals": {
+                "status": "enabled",
+                "availability": "full",
+                "supported_platforms": ["windows", "linux", "macos"],
+                "windows_only": False,
+                "notes": "macOS 下继续提供 CPU、内存与电池状态。",
+            },
+        }
+
     def get_ui_context(self) -> dict:
         return {"status": "ui_automation_not_implemented_on_macos"}
 

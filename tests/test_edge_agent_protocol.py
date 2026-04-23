@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from edge_agent.config import EdgeAgentConfig, load_edge_agent_config
 from edge_agent.protocol import build_capabilities_snapshot, build_heartbeat, build_hello, build_static_capabilities
@@ -40,6 +41,16 @@ class EdgeAgentProtocolTests(unittest.TestCase):
         self.assertEqual(snapshot["payload"]["capabilities"][0]["workspace_ids"], ["home-lab"])
         self.assertEqual(heartbeat["type"], "agent.heartbeat")
         self.assertEqual(heartbeat["payload"]["metrics"]["workspace_count"], 1)
+
+    def test_build_hello_normalizes_macos_host_os(self):
+        config = EdgeAgentConfig(
+            agent_id="edge-1",
+            display_name="Edge One",
+            workspace_ids=["home-lab"],
+        )
+        with mock.patch("edge_agent.protocol.platform.system", return_value="Darwin"):
+            hello = build_hello(config)
+        self.assertEqual(hello["payload"]["host"]["os"], "macos")
 
     def test_load_edge_agent_config(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -53,14 +53,39 @@ function getWorkspaceRoot() {
   return path.resolve(app.getAppPath(), '..')
 }
 
+function getDesktopRuntimeRoot() {
+  if (!app.isPackaged) {
+    return getWorkspaceRoot()
+  }
+  return path.join(app.getPath('userData'), 'meetyou-runtime')
+}
+
+function getDesktopConfigPath() {
+  const explicit = String(process.env.MEETYOU_DESKTOP_AGENT_CONFIG || '').trim()
+  if (explicit) {
+    return explicit
+  }
+  return path.join(getDesktopRuntimeRoot(), 'user', 'desktop_agent.json')
+}
+
 function readDesktopAgentConfigValue<T = unknown>(key: string): T | null {
-  const configPath = path.join(getWorkspaceRoot(), 'user', 'desktop_agent.json')
+  const configPath = getDesktopConfigPath()
   try {
     const payload = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>
     return (payload[key] as T | undefined) ?? null
   } catch {
     return null
   }
+}
+
+function resolveCoreBaseUrl() {
+  return String(
+    process.env.MEETYOU_AGENT_BASE_URL ||
+    process.env.MEETYOU_CORE_BASE_URL ||
+    readWorkspaceEnvValue(['MEETYOU_AGENT_BASE_URL', 'MEETYOU_CORE_BASE_URL']) ||
+    readDesktopAgentConfigValue<string>('core_base_url') ||
+    'http://127.0.0.1:8000',
+  ).trim() || 'http://127.0.0.1:8000'
 }
 
 function resolveDesktopBridgeBaseUrl() {
@@ -102,6 +127,96 @@ function resolveWorkspaceMainPy() {
   return path.join(getWorkspaceRoot(), 'main.py')
 }
 
+function resolvePackagedBackendExecutable() {
+  const binaryName = process.platform === 'win32' ? 'desktop_agent.exe' : 'desktop_agent'
+  return path.join(process.resourcesPath, 'desktop-backend', 'desktop_agent', binaryName)
+}
+
+function ensureJsonFile(filePath: string, payload: Record<string, unknown>) {
+  if (fs.existsSync(filePath)) {
+    return
+  }
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8')
+}
+
+function copyFileIfMissing(source: string, destination: string) {
+  if (!fs.existsSync(source) || fs.existsSync(destination)) {
+    return
+  }
+  fs.mkdirSync(path.dirname(destination), { recursive: true })
+  fs.copyFileSync(source, destination)
+}
+
+function readJsonFile(filePath: string): Record<string, unknown> | null {
+  try {
+    const payload = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+function writeJsonFile(filePath: string, payload: Record<string, unknown>) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8')
+}
+
+function getPackagedRuntimeTemplateRoot() {
+  return path.join(process.resourcesPath, 'runtime-template')
+}
+
+function isLoopbackCoreUrl(value: unknown) {
+  const text = String(value || '').trim()
+  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/i.test(text)
+}
+
+function maybeMigrateDefaultCoreUrlFromTemplate(configPath: string, templateConfigPath: string) {
+  const current = readJsonFile(configPath)
+  const template = readJsonFile(templateConfigPath)
+  const templateCoreUrl = String(template?.core_base_url || '').trim()
+  if (!current || !templateCoreUrl || isLoopbackCoreUrl(templateCoreUrl)) {
+    return
+  }
+  if (!current.core_base_url || isLoopbackCoreUrl(current.core_base_url)) {
+    current.core_base_url = templateCoreUrl
+    writeJsonFile(configPath, current)
+  }
+}
+
+function ensurePackagedRuntimeFiles() {
+  if (!app.isPackaged) {
+    return
+  }
+  const runtimeRoot = getDesktopRuntimeRoot()
+  const userDir = path.join(runtimeRoot, 'user')
+  const templateUserDir = path.join(getPackagedRuntimeTemplateRoot(), 'user')
+  fs.mkdirSync(userDir, { recursive: true })
+  copyFileIfMissing(path.join(templateUserDir, 'cmd_policy.json'), path.join(userDir, 'cmd_policy.json'))
+  copyFileIfMissing(path.join(templateUserDir, 'mcp_servers.json'), path.join(userDir, 'mcp_servers.json'))
+  copyFileIfMissing(path.join(templateUserDir, 'desktop_agent.json'), getDesktopConfigPath())
+  ensureJsonFile(path.join(userDir, 'cmd_policy.json'), {
+    mode: 'blacklist',
+    blacklist_patterns: [],
+  })
+  ensureJsonFile(path.join(userDir, 'mcp_servers.json'), {})
+  ensureJsonFile(getDesktopConfigPath(), {
+    core_base_url: resolveCoreBaseUrl(),
+    owner_client_id: 'desktop-app',
+    owner_client_type: 'electron',
+    owner_client_display_name: 'Desktop App',
+    workspace_ids: ['personal', 'desktop-main', 'study'],
+    read_roots: [runtimeRoot],
+    trusted_write_roots: [runtimeRoot],
+    cmd_policy_path: 'user/cmd_policy.json',
+    mcp_servers_path: 'user/mcp_servers.json',
+    local_bridge_enabled: true,
+    local_bridge_host: DEFAULT_DESKTOP_BRIDGE_HOST,
+    local_bridge_port: DEFAULT_DESKTOP_BRIDGE_PORT,
+  })
+  maybeMigrateDefaultCoreUrlFromTemplate(getDesktopConfigPath(), path.join(templateUserDir, 'desktop_agent.json'))
+}
+
 async function waitForDesktopBackend(timeoutMs = DESKTOP_BACKEND_READY_TIMEOUT_MS) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -128,6 +243,41 @@ async function ensureDesktopBackendStarted() {
     return
   }
   if (desktopBackendProcess && desktopBackendProcess.exitCode == null) {
+    return
+  }
+  ensurePackagedRuntimeFiles()
+  if (app.isPackaged) {
+    const backendExecutable = resolvePackagedBackendExecutable()
+    if (!fs.existsSync(backendExecutable)) {
+      console.warn(`[desktop-backend] packaged backend executable not found: ${backendExecutable}`)
+      return
+    }
+    desktopBridgeAccessToken = crypto.randomBytes(24).toString('hex')
+    const runtimeRoot = getDesktopRuntimeRoot()
+    desktopBackendProcess = spawn(backendExecutable, [], {
+      cwd: runtimeRoot,
+      env: {
+        ...process.env,
+        MEETYOU_DESKTOP_LOCAL_TOKEN: desktopBridgeAccessToken,
+        MEETYOU_DESKTOP_AGENT_CONFIG: getDesktopConfigPath(),
+      },
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    desktopBackendProcess.once('error', (error) => {
+      console.warn(`[desktop-backend] failed to start packaged backend: ${error.message}`)
+      desktopBackendProcess = null
+      desktopBridgeAccessToken = ''
+    })
+    desktopBackendProcess.once('exit', (code, signal) => {
+      console.warn(`[desktop-backend] packaged backend exited code=${String(code)} signal=${String(signal)}`)
+      desktopBackendProcess = null
+      desktopBridgeAccessToken = ''
+    })
+    const ready = await waitForDesktopBackend()
+    if (!ready) {
+      console.warn('[desktop-backend] packaged bridge did not become ready before timeout')
+    }
     return
   }
   const mainPy = resolveWorkspaceMainPy()
@@ -170,7 +320,7 @@ function stopDesktopBackend() {
 }
 
 function readWorkspaceEnvValue(envNames: string[]): string {
-  const envPath = path.join(getWorkspaceRoot(), '.env')
+  const envPath = path.join(getDesktopRuntimeRoot(), '.env')
   try {
     const content = fs.readFileSync(envPath, 'utf-8')
     for (const envName of envNames) {
@@ -818,7 +968,7 @@ function createWindow() {
   ipcMain.removeHandler('get-desktop-bridge-access-token')
   ipcMain.handle('get-desktop-bridge-access-token', () => desktopBridgeAccessToken)
   ipcMain.removeHandler('get-gateway-access-token')
-  ipcMain.handle('get-gateway-access-token', () => desktopBridgeAccessToken)
+  ipcMain.handle('get-gateway-access-token', () => readGatewayAccessToken())
   ipcMain.removeHandler('encrypt-danxi-credentials')
   ipcMain.handle('encrypt-danxi-credentials', (_event, payload: Record<string, unknown>) => {
     const purpose = String(payload?.purpose || '').trim()

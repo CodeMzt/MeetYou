@@ -711,6 +711,24 @@ describe('clientApi', () => {
     expect(headers.get('Authorization')).toBeNull()
   })
 
+  it('creates websocket urls against desktop bridge instead of Core client ws', async () => {
+    vi.resetModules()
+    globalThis.localStorage = {
+      getItem: vi.fn().mockReturnValue('local-bridge-token'),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      key: vi.fn(),
+      length: 0,
+    } as unknown as Storage
+    ;(globalThis as { window?: Window }).window = {} as Window
+
+    const { createClientWsUrl: createWsUrl } = await import('./clientApi')
+    const url = await createWsUrl('http://127.0.0.1:38951', 'thr_1')
+
+    expect(url).toBe('ws://127.0.0.1:38951/desktop/ws?thread_id=thr_1&access_token=local-bridge-token')
+  })
+
   it('prefers direct browser download for presigned attachment tickets', () => {
     const plan = resolveClientAttachmentDownloadPlan({
       attachment_id: 'att_1',

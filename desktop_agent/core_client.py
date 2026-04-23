@@ -136,9 +136,28 @@ class DesktopCoreClient:
         if self._session is None:
             raise RuntimeError("desktop_backend_unavailable")
         body = await request.read()
+        return await self.request_with_body(
+            request,
+            method=method,
+            core_path=core_path,
+            body=body if body else None,
+            query_string=request.rel_url.query_string,
+        )
+
+    async def request_with_body(
+        self,
+        request,
+        *,
+        method: str,
+        core_path: str,
+        body: bytes | None = None,
+        query_string: str = "",
+    ) -> CoreHttpResult:
+        if self._session is None:
+            raise RuntimeError("desktop_backend_unavailable")
         response = await self._session.request(
             method,
-            self._build_core_http_url(core_path, request.rel_url.query_string),
+            self._build_core_http_url(core_path, query_string),
             headers=self._build_core_request_headers(request),
             data=body if body else None,
             allow_redirects=False,

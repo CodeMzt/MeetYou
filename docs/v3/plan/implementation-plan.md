@@ -1,5 +1,11 @@
 # MeetYou V3 Implementation Plan
 
+## V3 Finalization Delta: Heartbeat, F324, Phase 5
+
+This pass closes the deployable V3 baseline around heartbeat idle poke, Windows-first desktop backend packaging, and the Phase 5 CI/observability baseline. Idle poke is configurable, no longer runs as a normal full-context transient turn, can compact context once, persists visible proactive messages when a client thread exists, and is manageable through `manage_heartbeat_settings` plus the schema-backed config APIs. F324 now uses `scripts/build-desktop-backend.ps1` to place a PyInstaller one-dir backend under `meetyou-ui/resources/desktop-backend`, which Electron packaged mode starts from `process.resourcesPath`. Phase 5 adds Linux CI and a manual Windows desktop release workflow.
+
+Remaining risk: the Windows installer path is wired but still needs a real artifact acceptance run before documenting it as a production release channel. macOS/Linux desktop installers remain design boundaries, not accepted deliverables.
+
 ## 1. 目的
 
 本文档是 MeetYou V3 的统一实施计划书，服务于后续设计、编码、验证与阶段验收。
@@ -22,7 +28,7 @@ V3 的目标聚焦三条主线：
 
 1. 把桌面端收口为 Electron UI + desktop backend 一体化产品
 2. 简化部署与跨平台支持
-3. 基于既有 QQBot / WeChatBot 方案落地新的外部客户端接入
+3. 基于 WeChat Bot 方案落地新的外部客户端接入
 4. 提升性能、自动化验证、可维护性与可观测性
 
 V3 默认继续沿用当前仓库已经稳定的运行边界：
@@ -46,7 +52,7 @@ V3 默认继续沿用当前仓库已经稳定的运行边界：
 Phase 0  文档归档与 V3 基线建立
 Phase 1  部署简化与容器化基线
 Phase 2  桌面端一体化与 Desktop API 收口
-Phase 3  QQBot / WeChatBot 接入
+Phase 3  WeChat Bot 接入
 Phase 4  性能与可维护性优化
 Phase 5  自动化测试、CI/CD 与可观测性
 ```
@@ -66,24 +72,33 @@ Phase 5  自动化测试、CI/CD 与可观测性
 
 ### Phase 2
 
-- `F320` Desktop Backend API。范围：让 `desktop_agent` 对 UI 暴露显式 `/desktop/*` 与 `/desktop/ws` API，而不是通配式 Core 代理。边界：`desktop_agent/`、相关测试与文档。状态：进行中。
-- `F321` Electron 托管桌面后端。范围：由 Electron main 负责拉起、监控与关闭 desktop backend，并把本地 backend 地址与令牌注入 renderer；desktop runtime 在本地 session 建立后启动，避免重复连接注入。边界：`meetyou-ui/electron/`、`meetyou-ui/src/`、`desktop_agent/`。状态：进行中。
-- `F322` UI 直连 Core 收口。范围：把 renderer 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 与 `GET /client/ws` 访问统一改成桌面 backend 自己的 `/desktop/*` 和 `/desktop/ws` 契约。边界：`meetyou-ui/src/`、`desktop_agent/`、相关测试。状态：进行中。
-- `F323` Desktop 平台能力与非 Windows 语义收口。范围：继续显式化 Windows 专属 capability、Linux / macOS 下的降级与禁用语义。边界：`desktop_agent/`、`platform_layer/`、文档与测试。状态：计划中。
-- `F324` Desktop Product 打包策略设计。范围：明确桌面产品内 UI + backend 的便携打包或安装路径，同时保持 Core / Edge 独立发布。边界：发布文档、构建脚本、`docs/v3/`。状态：计划中。
+- `F320` Desktop Backend API。范围：让 `desktop_agent` 对 UI 暴露显式 `/desktop/*` 与 `/desktop/ws` API，而不是通配式 Core 代理。边界：`desktop_agent/`、相关测试与文档。状态：已完成。
+- `F321` Electron 托管桌面后端。范围：由 Electron main 负责拉起、监控与关闭 desktop backend，并把本地 backend 地址与访问令牌注入 renderer；desktop runtime 在本地 session 建立后启动，避免重复连接注入。边界：`meetyou-ui/electron/`、`meetyou-ui/src/`、`desktop_agent/`。状态：已完成。
+- `F322` UI 直连 Core 收口。范围：把 renderer 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 与 `GET /client/ws` 访问统一改成桌面 backend 自己的 `/desktop/*` 和 `/desktop/ws` 契约。边界：`meetyou-ui/src/`、`desktop_agent/`、相关测试。状态：已完成。
+- `F323` Desktop 平台能力与非 Windows 语义收口。范围：继续显式化 Windows 专属 capability、Linux / macOS 下的降级与禁用语义。边界：`desktop_agent/`、`platform_layer/`、文档与测试。状态：已完成，当前已统一 `host_os` 口径为 `windows` / `linux` / `macos`，并把 Windows 专属 UI 感知与 Linux / macOS 下的禁用语义收口到代码、测试与 V3 文档。
+- `F324` Desktop Product 打包策略设计。范围：明确桌面产品内 UI + backend 的便携打包或安装路径，同时保持 Core / Edge 独立发布。边界：发布文档、构建脚本、`docs/v3/`。状态：部分完成，当前已完成 Desktop Product 打包边界与现有 `electron-builder` 基础核对，确认仓库已具备 Electron UI 安装包基础，但尚未落地随包分发的 Python backend 资产、安装脚本与发布验证流程，因此暂不承诺“可脱离仓库独立安装”的完整桌面产品交付。
 - `F325` Danxi WebVPN fallback 收口。范围：沿用现有 Danxi 直连 + WebVPN 方案，在不引入新的通用代理配置面的前提下，让 Danxi 会话在直连不可用或直连请求失败时自动切到已有 WebVPN 登录态；同步收口 Danxi 状态返回口径、最小相关测试与计划文档。边界：`tools/danxi_tools.py`、Danxi 相关测试、`docs/v3/`。状态：已完成。
 
 ### Phase 3
 
-- `F330` QQBot / WeChatBot transport 接入骨架。范围：新增平台 transport client 或 webhook 适配入口。边界：`adapters/`、`sensors/`。状态：计划中。
-- `F331` Bot -> Client 主链桥接。范围：复用或扩展 `clients/gateway_client.py`，让新 Bot 通过正式 Client API 与 `/client/ws` 接入。边界：`clients/`、`sensors/`、Gateway 相关测试。状态：计划中。
-- `F332` Bot 交互语义补齐。范围：confirm、human input、附件与低风险用户操作的正式桥接。边界：`sensors/`、`clients/`、相关测试与文档。状态：计划中。
+- `F330` WeChat iLink transport 接入骨架。范围：新增官方 iLink client、二维码登录 session manager、`getupdates` 长轮询与 `sendmessage` 文本发送封装。边界：`adapters/`、`sensors/`、必要的 token/state 持久化与测试。状态：已完成，真实扫码登录与文本闭环已通过本机联调。
+- `F331` Bot -> Client 主链桥接。范围：复用或扩展 `clients/gateway_client.py`，让 iLink 入站消息通过正式 Client API 与 `/client/ws` 接入。边界：`clients/`、`sensors/`、Gateway 相关测试。状态：已完成，真实入站文本已进入 `Client API + GET /client/ws` 主链，会话键为 `wechat:account:{ilink_bot_id}:user:{from_user_id}`。
+- `F332` Bot 交互语义补齐。范围：`context_token` 缓存、入站去重、自发消息过滤、长文本分片、confirm、human input、附件与低风险用户操作的正式桥接。边界：`sensors/`、`clients/`、相关测试与文档。状态：文本、去重、`context_token`、自发消息过滤与交互请求骨架已完成；媒体能力待 CDN 加解密链路补齐后扩展。
+
+当前 Task 清单：
+
+- [x] `Task 1` 建立 `docs/v3/design/bot-integration.md`，并将 `Phase 3` 范围收口为仅支持 `WeChat Bot`
+- [x] `Task 2` 对齐官方 iLink / OpenClaw Weixin channel 说明，确认扫码登录、长轮询 `getupdates`、`sendmessage` + `context_token` 是新的默认方案
+- [x] `Task 3` 删除旧第三方微信接入方案的 transport、callback、Docker 服务、验收脚本、配置项、测试与文档说明
+- [x] `Task 4` 结合官方说明与 `docs/wechatbot.txt` 重写 `docs/v3/design/bot-integration.md`
+- [x] `Task 5` 实现 iLink session manager、long poller、input adapter 与 output service
+- [x] `Task 6` 完成真实扫码登录与文本闭环联调
 
 ### Phase 4
 
-- `F340` 高负载模块边界审视。范围：梳理 gateway、task scheduler、memory search 等潜在瓶颈的拆分接口。边界：`core/`、`gateway/`、设计文档。状态：计划中。
-- `F341` 长耗时任务异步化设计。范围：为长耗时任务预留队列化或异步化接口，不破坏当前单体主链。边界：`core/`、`gateway/`、设计文档。状态：计划中。
-- `F342` 运行诊断与日志收口。范围：统一 Core / Agent 侧排障信息的最小可观测基线。边界：后端、Agent、文档。状态：计划中。
+- `F340` 高负载模块边界审视。范围：梳理 gateway、task scheduler、memory search 等潜在瓶颈的拆分接口。边界：`core/`、`gateway/`、设计文档。状态：已完成。
+- `F341` 长耗时任务异步化设计。范围：为长耗时任务预留队列化或异步化接口，不破坏当前单体主链。边界：`core/`、`gateway/`、设计文档。状态：已完成。
+- `F342` 运行诊断与日志收口。范围：统一 Core / Agent 侧排障信息的最小可观测基线。边界：后端、Agent、文档。状态：已完成。
 
 ### Phase 5
 
@@ -234,14 +249,63 @@ Phase 5  自动化测试、CI/CD 与可观测性
 - `cd meetyou-ui && npm run test -- src/DanxiWindow.test.tsx`
 - `cd meetyou-ui && npm run test -- src/clientApi.test.ts src/DanxiWindow.test.tsx`
 
-## 10. 验证要求
+## 10. Phase 2 收口记录
+
+### 10.1 当前状态
+
+本轮已对 Phase 2 的 `F320`-`F324` 做统一核对与收口：
+
+- `F320` 已完成：`desktop_agent` 已对 UI 暴露显式 `/desktop/*` 与 `/desktop/ws` 契约，并有本地鉴权、附件 URL 改写与 session 启动 runtime 的测试覆盖。
+- `F321` 已完成：Electron main 已负责拉起、监控与关闭 desktop backend；renderer 只持有本地 `local_bridge_access_token`，desktop runtime 在 session 建立后启动。
+- `F322` 已完成：renderer 默认通过本地 `/desktop/*` 与 `/desktop/ws` 访问 backend，不再直接面向 Core 的 `client/*`、`operator/*`、`developer/*`、`runtime/*` 与 `GET /client/ws`。
+- `F323` 已完成：`host_os` 已统一为 `windows` / `linux` / `macos`；Windows 专属 UI 感知能力有显式可用性说明，Linux / macOS 明确按禁用语义处理。
+- `F324` 部分完成：仓库已具备 Electron UI 安装包基础和桌面产品边界说明，但仍未提供随包分发的 Python backend 资产、安装脚本与完整发布验收流程，因此当前不承诺“脱离仓库即可独立安装”的完整 Desktop Product 交付。
+
+### 10.2 已落地范围
+
+- `desktop_agent/desktop_api.py`
+  - 对 UI 暴露显式 `/desktop/*` 与 `/desktop/ws` 路径，不再依赖 catch-all Core 代理。
+- `meetyou-ui/src/clientApi.ts`
+  - 统一通过本地 desktop backend 访问聊天、配置、运行时、Danxi、附件与实时流。
+- `meetyou-ui/electron/main.ts`
+  - 托管 desktop backend 进程，并区分本地 bridge token 与 gateway token 的注入边界。
+- `desktop_agent/backend.py`
+  - 保持 local bridge 模式下“session 后启动 runtime”的时序；关闭时停止 runtime 与 API server。
+- `platform_layer/*`
+  - 为 Windows / Linux / macOS 提供统一平台命名与显式 capability 语义。
+- `docs/v3/design/desktop-unified-agent.md`
+  - 收口 `/desktop/ws`、附件链路、本地 token 与 backend-only 调试入口的桌面契约。
+- `docs/v3/design/deployment-and-platform.md`
+  - 收口非 Windows 平台语义，以及 Desktop Product 打包边界、当前限制与待建设项。
+- `docs/v3/operations/desktop-unified-acceptance.md`
+  - 收口桌面主链人工验收步骤、连接提示不重复、退出行为与非 Windows 验收重点。
+
+### 10.3 验证矩阵
+
+- 后端回归：
+  - `.venv\Scripts\python.exe -m unittest tests.test_desktop_agent_ui_bridge tests.test_desktop_agent_backend tests.test_platform_layer tests.test_desktop_agent_runtime tests.test_edge_agent_protocol tests.test_agent_release_compatibility`
+- 前端回归：
+  - `cd meetyou-ui && npm run typecheck`
+  - `cd meetyou-ui && npm run test -- src/clientApi.test.ts`
+- 桌面链路验收口径：
+  - 非 Core 改动优先使用远程 Core 做桌面链路验收，例如 `scripts\manual-acceptance.cmd check -BaseUrl https://your-remote-core.example`
+  - `scripts\manual-acceptance.cmd start` 仅作为仓库内全链路本地联调入口，不是 Phase 2 非 Core 收口的默认前提
+
+### 10.4 当前风险与未覆盖项
+
+- 当前自动化验证已覆盖 `/desktop/*`、`/desktop/ws`、Electron 托管时序、平台语义与打包边界文档。
+- 本轮没有补远程 Core 环境下的桌面 UI 实机验收记录，因此还缺一轮基于真实部署形态的截图级与交互级验收。
+- 之前尝试过仓库内本地联调脚本，但该路径依赖本机额外拉起 `service`，不应作为 Phase 2 非 Core 收口的必要阻塞条件。
+- 因此当前剩余缺口应表述为“尚未补远程 Core 场景下的桌面主链实机验收”，而不是“本地 service 未启动成功”。
+
+## 11. 验证要求
 
 - 文档改动若直接涉及部署主链、发布顺序或兼容窗口，至少跑 `tests/test_agent_release_compatibility.py`
 - 后端实现类改动按最小相关 `unittest` 模块执行
 - Frontend 改动先 `npm run typecheck`，再 `npm run test`
 - 只有在实际改到 Electron/Vite/build 链路时才补 `npm run build`
 
-## 11. 历史参考
+## 12. 历史参考
 
 V2 的实施细节、验收口径与迁移记录已归档到 `docs/archive/v2/`，包括：
 

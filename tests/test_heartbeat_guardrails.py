@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import time
@@ -10,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.heart import Heart
 from core.io_protocol import EventTarget, SourceKind, make_source
 from core.session_manager import SessionManager
+from tools import system_tools
 
 
 class _FakeMemory:
@@ -62,6 +64,9 @@ class _FakeEventBus:
 
 
 class _FakeConfig:
+    def __init__(self, overrides=None):
+        self.overrides = dict(overrides or {})
+
     def get(self, key: str):
         defaults = {
             "heartbeat_interval": 180,
@@ -70,7 +75,12 @@ class _FakeConfig:
             "heartbeat_api_url": "",
             "heartbeat_api_key": "",
             "heart_model": "",
+            "heartbeat_idle_poke_enabled": True,
+            "heartbeat_idle_poke_after_seconds": 3600,
+            "heartbeat_idle_poke_cooldown_seconds": 3600,
+            "heartbeat_idle_context_compaction_enabled": True,
         }
+        defaults.update(self.overrides)
         return defaults.get(key)
 
     def get_prompt(self, name: str):
@@ -102,10 +112,10 @@ class _FakeHeartbeatRunner:
 
 
 class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
-    def _make_heart(self, payload=None):
+    def _make_heart(self, payload=None, config=None):
         return Heart(
             adapter=object(),
-            config=_FakeConfig(),
+            config=config or _FakeConfig(),
             tools_manager=_FakeToolsManager(),
             memory=_FakeMemory(),
             task_manager=_FakeTaskManager(payload),
@@ -135,6 +145,38 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("scheduler", payload["jobs"])
         self.assertIn("background_status_sources", payload)
         self.assertIn("heart.job_runtime", payload["background_status_sources"])
+
+    async def test_idle_poke_can_be_disabled_by_hot_config(self):
+        config = _FakeConfig({"heartbeat_idle_poke_enabled": False})
+        heart = self._make_heart(config=config)
+        await heart.refresh_config()
+        manager = SessionManager()
+        session_id = manager.get_or_create_session(make_source(SourceKind.WEB.value, "tab-a"), "web:1")
+        binding = manager.get_binding(session_id)
+        binding.metadata["last_active_at"] = time.time() - 3700
+        binding.default_target = EventTarget(kind="web", id="tab-a")
+        heart.set_session_manager(manager)
+
+        payload = await heart.get_background_status()
+
+        self.assertFalse(payload["heartbeat_idle_poke_enabled"])
+        self.assertFalse(payload["idle_poke_eligible"])
+
+    async def test_idle_poke_after_seconds_is_dynamic(self):
+        config = _FakeConfig({"heartbeat_idle_poke_after_seconds": 7200})
+        heart = self._make_heart(config=config)
+        await heart.refresh_config()
+        manager = SessionManager()
+        session_id = manager.get_or_create_session(make_source(SourceKind.WEB.value, "tab-a"), "web:1")
+        binding = manager.get_binding(session_id)
+        binding.metadata["last_active_at"] = time.time() - 3700
+        binding.default_target = EventTarget(kind="web", id="tab-a")
+        heart.set_session_manager(manager)
+
+        self.assertFalse((await heart.get_background_status())["idle_poke_eligible"])
+        config.overrides["heartbeat_idle_poke_after_seconds"] = 3000
+        await heart.refresh_config()
+        self.assertTrue((await heart.get_background_status())["idle_poke_eligible"])
 
     async def test_idle_poke_is_silenced_when_not_eligible(self):
         heart = self._make_heart()
@@ -439,6 +481,66 @@ class HeartbeatGuardrailTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(heart._last_heartbeat_signal_kind, "system_issue")
         self.assertEqual(heart._last_heartbeat_signal_fingerprint, "system_issue:repeated:task-1")
+
+    async def test_idle_poke_signal_uses_direct_delivery_metadata(self):
+        event_bus = _FakeEventBus()
+        heart = Heart(
+            adapter=object(),
+            config=_HeartbeatProcessorConfig(),
+            tools_manager=_FakeToolsManager(),
+            memory=_FakeMemory(),
+            task_manager=_FakeTaskManager(),
+            event_bus=event_bus,
+            exception_router=None,
+        )
+        heart._http_session = object()
+        heart._agent_runner = _FakeHeartbeatRunner(
+            [
+                '{"decision":"notify","signal_kind":"idle_poke","message":"idle poke eligible","reasons":["idle"],"confidence":"medium"}',
+            ],
+            event_bus.shutdown_event,
+        )
+        manager = SessionManager()
+        session_id = manager.get_or_create_session(make_source(SourceKind.WEB.value, "tab-a"), "web:1")
+        binding = manager.get_binding(session_id)
+        binding.metadata["last_active_at"] = time.time() - 3700
+        binding.default_target = EventTarget(kind="web", id="tab-a")
+        heart.set_session_manager(manager)
+        await heart.refresh_config()
+
+        await heart.heartbeat_processor()
+
+        event = event_bus.inbound_queue.get_nowait()
+        self.assertTrue(event.metadata["heartbeat_direct_delivery"])
+        self.assertTrue(event.metadata["heartbeat_context_compaction_enabled"])
+        self.assertEqual(event.metadata["recent_user_session_id"], session_id)
+
+    async def test_manage_heartbeat_settings_tool_get_and_update(self):
+        async def provider():
+            return {"settings": {"heartbeat_idle_poke_enabled": True}}
+
+        async def updater(updates):
+            return {"applied_keys": sorted(updates)}
+
+        system_tools.set_heartbeat_settings_provider(provider)
+        system_tools.set_heartbeat_settings_updater(updater)
+
+        get_payload = json.loads(await system_tools.manage_heartbeat_settings("get"))
+        update_payload = json.loads(
+            await system_tools.manage_heartbeat_settings(
+                "update",
+                {
+                    "heartbeat_idle_poke_enabled": False,
+                    "unknown": 1,
+                },
+            )
+        )
+
+        self.assertTrue(get_payload["ok"])
+        self.assertEqual(get_payload["settings"]["heartbeat_idle_poke_enabled"], True)
+        self.assertTrue(update_payload["ok"])
+        self.assertEqual(update_payload["requested_keys"], ["heartbeat_idle_poke_enabled"])
+        self.assertEqual(update_payload["rejected_keys"], ["unknown"])
 
 
 if __name__ == "__main__":

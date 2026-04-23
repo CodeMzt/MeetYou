@@ -46,6 +46,11 @@ Feishu Client ----------------------/        |
 
 当前仓库仍保留一些 Windows 优先能力，例如 `uiautomation`、PowerShell launcher、`.cmd` 脚本和 Electron 的部分窗口行为；但 `requirements.txt` 中相关依赖已改为按平台条件安装，Linux 部署 Core 时不会再因 `uiautomation`、`pywin32` 被直接阻塞。
 
+当前平台语义再补充两点：
+
+- `platform_layer` 里的 UI 焦点/控件感知属于 Windows 专属能力；Linux / macOS 下显式禁用，不提供替代实现，调用会分别返回 `ui_automation_not_implemented_on_linux` / `ui_automation_not_implemented_on_macos`
+- `desktop-agent` 当前暴露的文件读写、Shell 执行、workspace 分析能力仍按跨平台能力处理；也就是说 Linux / macOS 可以继续承接这些 capability，但不应承诺 Windows 那套 UI Automation 级别的桌面感知
+
 ## 环境要求
 
 Linux 云服务器至少需要：
@@ -92,6 +97,8 @@ user/            本地配置模板与运行态数据目录
 
 ### 0. 容器化快速启动（Core + PostgreSQL）
 
+这里的 PostgreSQL 是可选的部署进程，不是第二套数据模型。如果你的 Linux 服务器已经有 PostgreSQL，可以在 `deploy/docker/compose.env` 中把 `MEETYOU_DATABASE_URL` 指向现有数据库，再按需调整 Compose 服务。
+
 ```bash
 python scripts/prepare_core_runtime.py --profile docker --output-root deploy/docker/runtime
 ```
@@ -117,16 +124,16 @@ python scripts/check_core_runtime.py --profile docker --runtime-root deploy/dock
 启动命令：
 
 ```bash
-docker compose -f deploy/docker/compose.core-postgres.yml up -d --build
+docker compose --env-file deploy/docker/compose.env -f deploy/docker/compose.core-postgres.yml up -d --build
 curl http://127.0.0.1:8000/health
 ```
 
 补充：
 
-- Docker Core 会先继承根目录 `.env` 的现有密钥，再叠加 `deploy/docker/compose.env` 中的 PostgreSQL 覆盖项
+- Docker Core 会先继承根目录 `.env` 的现有密钥，再叠加 `deploy/docker/compose.env` 与 `deploy/docker/runtime/core.env`
 - PostgreSQL 会映射到宿主机 `127.0.0.1:55432`
 - Core 会使用 `deploy/docker/runtime/user/`，不会碰你当前本机 `user/`
-- Windows 下可直接使用一键脚本：`scripts\docker-core-acceptance.cmd install-docker|prepare|start|check`
+- Windows 下可直接使用一键脚本：`scripts\docker-core-acceptance.cmd prepare|check|start|logs`
 
 如果你更偏向传统 Linux 宿主机部署，再继续看下面的 `venv` / `systemd` 路径。
 
@@ -397,6 +404,12 @@ Agent WebSocket 还兼容 `access_token` query。
 - 正常桌面链路下，Electron UI 会优先托管这个 backend；`python -m desktop_agent` 主要保留给 backend-only 调试
 - 如果 Core 开启了 Gateway 鉴权，desktop backend 内部访问 Core client/operator/runtime/developer surface 时需要有效的 `gateway_access_token`；建议直接在 `.env` 中配置 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 
+非 Windows 说明：
+
+- `desktop-agent` 的文件、Shell、workspace 能力可以在 Linux / macOS 下继续工作
+- 但当前仓库没有为 Linux / macOS 提供和 Windows 等价的桌面 UI Automation / 焦点感知实现
+- 因此 Linux / macOS 只能作为“无 UI Automation 的降级桌面后端”，不要把它当成与 Windows 等价的桌面自动化节点
+
 启动命令：
 
 ```bash
@@ -467,6 +480,8 @@ Core 在服务端拉起 `npx` 型 MCP 时会默认复用工作目录下的 `.npm
 - `GET /desktop/workspaces`
 - `GET /desktop/runtime/usage`
 - `GET /desktop/runtime/debug`
+
+WeChat Bot 已切换为官方 iLink 路径：启用 `enable_wechat_bot` 后通过二维码登录获取 `bot_token`，使用 `POST /ilink/bot/getupdates` 长轮询接收入站消息，并用 `POST /ilink/bot/sendmessage` 携带 `context_token` 回发文本回复。当前已落地最小文本闭环骨架，真实扫码验收记录见 `docs/v3/design/bot-integration.md`。
 
 兼容说明：
 
@@ -584,8 +599,12 @@ npm run build
 
 说明：
 
-- 当前桌面端整体仍偏 Windows
-- Linux 服务器部署的核心目标应是 Core Service，而不是 Electron UI
+- 当前脚本会执行 `tsc && vite build && electron-builder`
+- `electron-builder` 当前仅显式声明 Windows `nsis` 目标，产物输出目录是 `meetyou-ui/release/`
+- 该构建已经覆盖 Electron UI 与 `dist-electron` 主进程代码，但还没有把 Python runtime、`main.py`、`desktop_agent/` 依赖与初始化模板一起打进安装包
+- Electron main 当前仍会在运行时从工作区目录解析 `.venv` 或系统 Python，再执行 `python main.py desktop-agent`
+- 因此现阶段应把它理解为“Electron 安装包基础已具备”，而不是“完整 Desktop Product 可脱离仓库独立安装”
+- 当前桌面端整体仍偏 Windows；Linux 服务器部署的核心目标应是 Core Service，而不是 Electron UI
 
 ## 验证建议
 

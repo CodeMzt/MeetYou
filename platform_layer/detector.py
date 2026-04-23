@@ -12,6 +12,28 @@ from platform_layer.base import PlatformAdapter
 
 logger = logging.getLogger("meetyou.platform.detector")
 
+_SUPPORTED_PLATFORM_IDS = {
+    "Windows": "windows",
+    "Linux": "linux",
+    "Darwin": "macos",
+}
+
+
+def normalize_platform_system(os_name: str) -> str:
+    """
+    将 `platform.system()` 返回值统一映射到仓库内部使用的 host_os 枚举。
+
+    Returns:
+        str: `windows` / `linux` / `macos`
+
+    Raises:
+        PlatformError: 不支持的操作系统
+    """
+    normalized = _SUPPORTED_PLATFORM_IDS.get(str(os_name or "").strip())
+    if normalized:
+        return normalized
+    raise PlatformError(f"不支持的操作系统: {os_name}")
+
 
 def detect_platform() -> PlatformAdapter:
     """
@@ -24,21 +46,21 @@ def detect_platform() -> PlatformAdapter:
         PlatformError: 不支持的操作系统
     """
     os_name = platform.system()
+    normalized = normalize_platform_system(os_name)
 
-    if os_name == "Windows":
+    if normalized == "windows":
         from platform_layer.windows import WindowsPlatformAdapter
         logger.info("检测到 Windows 平台")
         return WindowsPlatformAdapter()
 
-    elif os_name == "Linux":
+    elif normalized == "linux":
         from platform_layer.linux import LinuxPlatformAdapter
         logger.info("检测到 Linux 平台")
         return LinuxPlatformAdapter()
 
-    elif os_name == "Darwin":
+    elif normalized == "macos":
         from platform_layer.macos import MacOSPlatformAdapter
         logger.info("检测到 macOS 平台")
         return MacOSPlatformAdapter()
 
-    else:
-        raise PlatformError(f"不支持的操作系统: {os_name}")
+    raise PlatformError(f"不支持的操作系统: {os_name}")

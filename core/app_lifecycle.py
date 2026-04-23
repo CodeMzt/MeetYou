@@ -24,6 +24,18 @@ from core.status import RuntimeStatus
 from gateway.api import FastAPIGateway
 from sensors.feishu_input_adapter import FeishuInputAdapter
 from sensors.feishu_output_adapter import FeishuOutputAdapter
+from sensors.wechat_ilink_adapter import (
+    DEFAULT_TOKEN_FILE,
+    WeChatIlinkStateStore,
+    WeChatInputAdapter,
+    WeChatOutputService,
+    WeChatSessionManager,
+)
+from adapters.wechat_ilink_client import (
+    DEFAULT_CHANNEL_VERSION,
+    DEFAULT_ILINK_BASE_URL,
+    WeChatIlinkClient,
+)
 from tools import system_tools
 
 logger = logging.getLogger("meetyou.app.lifecycle")
@@ -175,6 +187,8 @@ async def setup_app_runtime(app) -> None:
     await app._refresh_brain_runtime()
     await app.heart.init_heart()
     system_tools.set_background_status_provider(app.heart.get_background_status)
+    system_tools.set_heartbeat_settings_provider(app.get_heartbeat_settings)
+    system_tools.set_heartbeat_settings_updater(app.update_heartbeat_settings)
 
     host = app.config.get("gateway_host") or "127.0.0.1"
     port = int(app.config.get("gateway_port") or 8000)
@@ -224,6 +238,37 @@ async def setup_app_runtime(app) -> None:
         await app.feishu_input.run()
         logger.info("Feishu Bot 已通过 Client API + client/ws 正式主链接入。")
 
+    if app.config.get_bool("enable_wechat_bot"):
+        wechat_client = WeChatIlinkClient(
+            base_url=str(app.config.get("wechat_ilink_base_url") or DEFAULT_ILINK_BASE_URL),
+            channel_version=str(app.config.get("wechat_ilink_channel_version") or DEFAULT_CHANNEL_VERSION),
+        )
+        wechat_state_store = WeChatIlinkStateStore(
+            str(app.config.get("wechat_ilink_token_file") or DEFAULT_TOKEN_FILE)
+        )
+        wechat_session_manager = WeChatSessionManager(
+            config=app.config,
+            client=wechat_client,
+            state_store=wechat_state_store,
+        )
+        app.wechat_output = WeChatOutputService(
+            config=app.config,
+            client=wechat_client,
+            session_manager=wechat_session_manager,
+            state_store=wechat_state_store,
+        )
+        app.wechat_input = WeChatInputAdapter(
+            app.event_bus,
+            app.session_manager,
+            app.config,
+            ilink_client=wechat_client,
+            state_store=wechat_state_store,
+            ilink_session_manager=wechat_session_manager,
+            output_adapter=app.wechat_output,
+        )
+        await app.wechat_input.run()
+        logger.info("WeChat iLink Bot 已通过 Client API + client/ws 正式主链接入。")
+
     app.status_manager.set_global(RuntimeStatus.IDLE.value, "")
     logger.info("Service runtime initialized")
 
@@ -259,6 +304,8 @@ async def shutdown_app_runtime(app) -> None:
         await app.feishu_input.close()
     if app.feishu_output is not None:
         await app.feishu_output.close()
+    if app.wechat_input is not None:
+        await app.wechat_input.close()
     await app.mcp_manager.close_mcp_servers()
     await app.brain.close_brain()
     await app.heart.close_heart()

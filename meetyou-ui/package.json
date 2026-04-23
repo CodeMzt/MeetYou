@@ -13,17 +13,33 @@
       "dist/**/*",
       "dist-electron/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "resources/desktop-backend",
+        "to": "desktop-backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/runtime-template",
+        "to": "runtime-template",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "mac": {
-      "icon": "build/icon.icns"
+      "icon": "public/icon.png"
     },
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "public/icon.ico",
       "target": [
         "nsis"
       ]
     },
     "linux": {
-      "icon": "build/icon.png"
+      "icon": "public/icon.png"
     }
   },
   "scripts": {

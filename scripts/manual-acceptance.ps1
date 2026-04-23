@@ -120,6 +120,11 @@ function Show-Help {
     Write-Host "  -SkipService"
     Write-Host "  -SkipDesktopAgent"
     Write-Host "  -SkipUi"
+    Write-Host ""
+    Write-Host "Notes:"
+    Write-Host "  - 对于非 Core 改动，优先让桌面端直接连接已运行的远程 Core："
+    Write-Host "    scripts\manual-acceptance.cmd check -BaseUrl https://your-remote-core.example"
+    Write-Host "  - scripts\manual-acceptance.cmd start 主要用于仓库内全链路本地联调，会尝试在本机拉起 service"
 }
 
 function Validate-Environment {
