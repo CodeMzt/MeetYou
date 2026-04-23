@@ -38,6 +38,8 @@ jobs:
           python -m pip install -r requirements-core.txt
           python -m pip install -r requirements-desktop-agent.txt
           python -m pip install -r requirements-edge-agent.txt
+      - name: Prepare core runtime templates
+        run: python scripts/prepare_core_runtime.py --profile host
       - name: Run backend regression slice
         run: |
           python -m unittest \
