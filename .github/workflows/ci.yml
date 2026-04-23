@@ -39,7 +39,12 @@ jobs:
           python -m pip install -r requirements-desktop-agent.txt
           python -m pip install -r requirements-edge-agent.txt
       - name: Prepare core runtime templates
-        run: python scripts/prepare_core_runtime.py --profile host
+        run: |
+          cp user/config.example.json user/config.json
+          cp user/tools.example.json user/tools.json
+          cp user/cmd_policy.example.json user/cmd_policy.json
+          cp user/source_catalog.example.json user/source_catalog.json
+          cp user/memory_graph.example.json user/memory_graph.json
       - name: Run backend regression slice
         run: |
           python -m unittest \
