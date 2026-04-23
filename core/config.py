@@ -34,18 +34,44 @@ _REMOVED_CONFIG_KEYS = {"enable_gateway", "source_profiles"}
 _ENV_ASSIGNMENT_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 _BOOLEAN_TRUE_VALUES = {"1", "true", "yes", "on"}
 _BOOLEAN_FALSE_VALUES = {"0", "false", "no", "off"}
-_BOOLEAN_KEYS = {"enable_feishu_bot", "thinking_enabled"}
+_BOOLEAN_KEYS = {
+    "enable_feishu_bot",
+    "enable_wechat_bot",
+    "thinking_enabled",
+    "heartbeat_idle_poke_enabled",
+    "heartbeat_idle_context_compaction_enabled",
+}
 _INTEGER_KEYS = {
     "gateway_port",
     "heartbeat_interval",
+    "heartbeat_idle_poke_after_seconds",
+    "heartbeat_idle_poke_cooldown_seconds",
     "housekeeping_interval",
     "scheduler_interval",
     "thinking_budget_tokens",
+    "wechat_ilink_login_poll_interval_seconds",
+    "wechat_ilink_max_text_chars",
+    "wechat_ilink_poll_timeout_ms",
 }
-_POSITIVE_INTEGER_KEYS = {"heartbeat_interval", "housekeeping_interval", "scheduler_interval"}
+_POSITIVE_INTEGER_KEYS = {
+    "heartbeat_interval",
+    "heartbeat_idle_poke_after_seconds",
+    "heartbeat_idle_poke_cooldown_seconds",
+    "housekeeping_interval",
+    "scheduler_interval",
+    "wechat_ilink_login_poll_interval_seconds",
+    "wechat_ilink_max_text_chars",
+    "wechat_ilink_poll_timeout_ms",
+}
 _JSON_OBJECT_KEYS = {"assistant_modes", "mode_router", "document_parsers", "office_integrations"}
 _LIST_KEYS = {"trusted_write_roots", "feishu_broadcast_chat_ids", "gateway_cors_origins"}
-_URL_KEYS = {"api_url", "embedding_api_url", "heartbeat_api_url", "mcp_registry_url"}
+_URL_KEYS = {
+    "api_url",
+    "embedding_api_url",
+    "heartbeat_api_url",
+    "mcp_registry_url",
+    "wechat_ilink_base_url",
+}
 _PROVIDER_KEYS = {"api_provider", "heartbeat_api_provider"}
 _THINKING_EFFORT_VALUES = set(THINKING_EFFORT_VALUES)
 _SUPPORTED_PROVIDERS = set(SUPPORTED_PROVIDER_VALUES)
@@ -63,6 +89,14 @@ _ENV_KEY_MAP = {
     "feishu_app_secret": "MEETYOU_FEISHU_APP_SECRET",
     "notion_token": "NOTION_TOKEN",
     "tavily_api_key": "TAVILY_API_KEY",
+}
+_ENV_OVERRIDE_KEY_MAP = {
+    "enable_wechat_bot": "MEETYOU_WECHAT_ENABLE",
+    "wechat_ilink_base_url": "MEETYOU_WECHAT_ILINK_BASE_URL",
+    "wechat_ilink_channel_version": "MEETYOU_WECHAT_CHANNEL_VERSION",
+    "wechat_ilink_token_file": "MEETYOU_WECHAT_TOKEN_FILE",
+    "wechat_ilink_qr_output_path": "MEETYOU_WECHAT_LOGIN_QR_PATH",
+    "wechat_ilink_poll_timeout_ms": "MEETYOU_WECHAT_POLL_TIMEOUT_MS",
 }
 
 _KNOWN_CONFIG_KEYS = set(CONFIG_FIELD_KEYS)
@@ -114,7 +148,7 @@ class ConfigManager(ConfigRepository):
         try:
             from dotenv import load_dotenv
 
-            load_dotenv(self._env_file_path, override=True)
+            load_dotenv(self._env_file_path, override=False)
         except ImportError:
             logger.info("python-dotenv 未安装，仅使用系统环境变量")
 
@@ -321,6 +355,10 @@ class ConfigManager(ConfigRepository):
                     return env_val
         if key in _ENV_KEY_MAP:
             env_val = os.environ.get(_ENV_KEY_MAP[key])
+            if env_val:
+                return env_val
+        if key in _ENV_OVERRIDE_KEY_MAP:
+            env_val = os.environ.get(_ENV_OVERRIDE_KEY_MAP[key])
             if env_val:
                 return env_val
         return self._config.get(key, default)
@@ -543,6 +581,20 @@ class ConfigManager(ConfigRepository):
                 "env_key": env_key,
             }
 
+        if key in _ENV_OVERRIDE_KEY_MAP:
+            env_key = _ENV_OVERRIDE_KEY_MAP[key]
+            value = os.environ.get(env_key, "")
+            if value:
+                return {
+                    "key": key,
+                    "value": value,
+                    "raw_value": value,
+                    "is_secret": False,
+                    "has_value": True,
+                    "source": "env",
+                    "env_key": env_key,
+                }
+
         exists = key in self._config
         return {
             "key": key,
@@ -555,7 +607,7 @@ class ConfigManager(ConfigRepository):
         }
 
     def snapshot(self) -> dict[str, dict[str, Any]]:
-        keys = sorted(set(self._config) | _KNOWN_CONFIG_KEYS | set(_ENV_KEY_MAP))
+        keys = sorted(set(self._config) | _KNOWN_CONFIG_KEYS | set(_ENV_KEY_MAP) | set(_ENV_OVERRIDE_KEY_MAP))
         return {key: self.describe_key(key) for key in keys if self.is_manageable_key(key)}
 
     def get_mcp_servers(self) -> dict[str, Any]:

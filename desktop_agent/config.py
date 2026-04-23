@@ -115,11 +115,13 @@ def _resolve_agent_access_token(payload: dict[str, object]) -> str:
 
 
 def load_desktop_agent_config(config_file_path: str | None = None) -> DesktopAgentConfig:
-    _load_env_file()
-    file_path = Path(config_file_path or DEFAULT_CONFIG_PATH)
+    requested_path = config_file_path or os.environ.get("MEETYOU_DESKTOP_AGENT_CONFIG") or DEFAULT_CONFIG_PATH
+    file_path = Path(requested_path)
+    env_root = file_path.parent.parent if file_path.parent.name == "user" else file_path.parent
+    _load_env_file(env_root / DEFAULT_ENV_PATH)
     payload: dict[str, object] = {}
     if file_path.exists():
-        payload = json.loads(file_path.read_text(encoding="utf-8"))
+        payload = json.loads(file_path.read_text(encoding="utf-8-sig"))
 
     workspace_ids = payload.get("workspace_ids") if isinstance(payload.get("workspace_ids"), list) else None
     env_workspace_ids = os.environ.get("MEETYOU_AGENT_WORKSPACES", "").strip()

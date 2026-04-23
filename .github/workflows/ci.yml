@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-and-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: meetyou-ui/package-lock.json
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-core.txt
+          python -m pip install -r requirements-desktop-agent.txt
+          python -m pip install -r requirements-edge-agent.txt
+      - name: Run backend regression slice
+        run: |
+          python -m unittest \
+            tests.test_heartbeat_guardrails \
+            tests.test_heartbeat_signal_routing \
+            tests.test_memory_redesign \
+            tests.test_config_manager \
+            tests.test_gateway_config_api \
+            tests.test_desktop_agent_runtime \
+            tests.test_edge_agent_protocol \
+            tests.test_agent_release_compatibility
+      - name: Install frontend dependencies
+        working-directory: meetyou-ui
+        run: npm ci
+      - name: Frontend typecheck
+        working-directory: meetyou-ui
+        run: npm run typecheck
+      - name: Frontend tests
+        working-directory: meetyou-ui
+        run: npm run test
