@@ -159,7 +159,7 @@ class DanxiTools:
         if not resolved_email or not resolved_password:
             raise DanxiError("Danxi 登录需要 email 和 password，或配置 DANXI_MAIL / DANXI_PASSWORD 环境变量。")
         if use_webvpn is None:
-            use_webvpn = _env_bool("MEETYOU_DANXI_USE_WEBVPN", default=False)
+            use_webvpn = self._resolve_default_use_webvpn()
         resolved_webvpn_cookie = str(webvpn_cookie or os.getenv("MEETYOU_DANXI_WEBVPN_COOKIE", "")).strip()
         state = _DanxiSessionState(
             session_key=str(session_key or "default").strip() or "default",
@@ -169,6 +169,8 @@ class DanxiTools:
             webvpn_cookie=resolved_webvpn_cookie,
         )
         state.http.headers.update({"Accept": "application/json", "User-Agent": "MeetYou-Danxi/1.0"})
+        if state.use_webvpn and not state.webvpn_cookie:
+            self._refresh_webvpn_cookie_from_env(state)
         payload = self._post_auth_login(state)
         with self._lock:
             self._sessions[state.session_key] = state
@@ -223,7 +225,7 @@ class DanxiTools:
         return self.danxi_get_session_status(state.session_key)
 
     def danxi_get_session_status(self, session_key: str = "") -> dict[str, Any]:
-        state = self._get_session(session_key)
+        state = self._get_session_or_login_from_env(session_key)
         self._ensure_restored_session_is_valid(state)
         direct_connect_available = self._can_connect_directly()
         webvpn_enabled = self._is_webvpn_enabled(state, direct_connect_available=direct_connect_available)
@@ -714,6 +716,17 @@ class DanxiTools:
             raise DanxiError(f"找不到 Danxi 会话: {resolved}")
         return state
 
+    def _get_session_or_login_from_env(self, session_key: str) -> _DanxiSessionState:
+        try:
+            return self._get_session(session_key)
+        except DanxiError:
+            env_email, env_password = self._resolve_danxi_credentials()
+            if not env_email or not env_password:
+                raise
+            resolved_key = str(session_key or "default").strip() or "default"
+            self.danxi_login(session_key=resolved_key)
+            return self._get_session(resolved_key)
+
     def _ensure_restored_session_is_valid(self, state: _DanxiSessionState) -> None:
         if not state.restored_from_persistence or state.restore_validated:
             return
@@ -948,6 +961,14 @@ class DanxiTools:
         username = str(os.getenv("STUVPN_FUDAN_USER", "")).strip()
         password = str(os.getenv("STUVPN_FUDAN_PASSWORD", "")).strip()
         return username, password
+
+    def _resolve_default_use_webvpn(self) -> bool:
+        if _env_bool("MEETYOU_DANXI_USE_WEBVPN", default=False):
+            return True
+        username, password = self._resolve_stuvpn_credentials()
+        if not username or not password:
+            return False
+        return not self._can_connect_directly()
 
     def _refresh_webvpn_cookie_from_env(self, state: _DanxiSessionState) -> bool:
         username, password = self._resolve_stuvpn_credentials()

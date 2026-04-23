@@ -31,6 +31,7 @@ class SourceKind(str, Enum):
     CLI = "cli"
     HEART = "heart"
     FEISHU = "feishu"
+    WECHAT = "wechat"
     WEB = "web"
     SYSTEM = "system"
 
@@ -39,6 +40,7 @@ class TargetKind(str, Enum):
     CURRENT_SESSION = "current_session"
     CLI = "cli"
     FEISHU = "feishu"
+    WECHAT = "wechat"
     WEB = "web"
     BROADCAST = "broadcast"
     INTERNAL = "internal"

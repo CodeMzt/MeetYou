@@ -30,6 +30,21 @@ class RuntimeEntrypointTests(unittest.TestCase):
             service_runtime_main.main([])
         run_runtime_entry.assert_called_once_with("service")
 
+    def test_service_runtime_entry_exits_nonzero_on_start_failure(self):
+        class _FailingRuntime:
+            def __init__(self, command):
+                self.command = command
+
+            async def run(self):
+                raise RuntimeError("boom")
+
+        with mock.patch("service_runtime.main.setup_logger"):
+            with mock.patch("service_runtime.main.ServiceRuntime", _FailingRuntime):
+                with self.assertRaises(SystemExit) as captured:
+                    service_runtime_main.run_runtime_entry("service")
+
+        self.assertEqual(captured.exception.code, 1)
+
     def test_desktop_agent_main_runs_runtime(self):
         fake_coroutine = object()
         with mock.patch("desktop_agent.main.setup_logger") as setup_logger:

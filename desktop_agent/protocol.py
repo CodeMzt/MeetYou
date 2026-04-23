@@ -16,6 +16,7 @@ from agent_sdk.protocol import (
     build_call_result_message,
 )
 from desktop_agent.config import DesktopAgentConfig
+from platform_layer.detector import normalize_platform_system
 
 
 def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -74,6 +75,7 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
 
 
 def build_hello(config: DesktopAgentConfig) -> dict[str, Any]:
+    host_os = normalize_platform_system(platform.system())
     return build_agent_hello(
         agent_id=config.agent_id,
         agent_type="desktop",
@@ -86,7 +88,7 @@ def build_hello(config: DesktopAgentConfig) -> dict[str, Any]:
         supports_offline_cache=config.supports_offline_cache,
         host={
             "hostname": socket.gethostname(),
-            "os": platform.system().lower(),
+            "os": host_os,
             "arch": platform.machine().lower(),
         },
     )

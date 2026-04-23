@@ -21,6 +21,8 @@ from core.public_contract import (
 )
 
 from gateway.models import (
+    AckPayload,
+    AckResponse,
     ClientApprovalDecisionRequest,
     ClientDanxiActionResponse,
     ClientDanxiListResponse,

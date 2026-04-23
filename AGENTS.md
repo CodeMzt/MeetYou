@@ -90,7 +90,6 @@
 - 前端构建：在 `meetyou-ui/` 下执行 `npm run build`（实际脚本是 `tsc && vite build && electron-builder`）
 - 后端单测按模块跑：`.venv\Scripts\python.exe -m unittest tests.test_service_runtime`
 - 后端全量测试：`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`
-- 冒烟检查：`python smoke_check.py`
 - 人工拉起/检查主链：`scripts\manual-acceptance.cmd start`、`scripts\manual-acceptance.cmd check`
 
 ## 完成边界
@@ -109,8 +108,8 @@
 
 - 后端改动：先跑最小相关 `unittest` 模块；只有跨目录或跨子系统时再跑 `discover`。
 - 前端改动：先 `npm run typecheck`，再 `npm run test`；只有碰 Electron/Vite/build 链路时再跑 `npm run build`。当有实质功能需要测试，需要进行真实的功能测试，不能仅停留在编译测试。
-- Cross-surface 改动：先 backend，再 frontend；涉及 API/协议或 service 主链时，再补 `python smoke_check.py`。
-- 文档改动如果直接涉及 Agent 协议兼容、发布/回滚流程或部署主链，至少跑 `tests/test_agent_release_compatibility.py`；若同时改了 service 主链口径，再补 `python smoke_check.py`。
+- Cross-surface 改动：先 backend，再 frontend；涉及 API/协议或 service 主链时，再补最小相关 runtime/gateway unittest 或 `scripts\manual-acceptance.cmd check`。
+- 文档改动如果直接涉及 Agent 协议兼容、发布/回滚流程或部署主链，至少跑 `tests/test_agent_release_compatibility.py`；若同时改了 service 主链口径，再补 `tests/test_service_runtime.py` 或相关运行入口测试。
 - 桌面主链改动：在需要真实链路时跑 `scripts\manual-acceptance.cmd check`；要完整拉起 service + UI（由 Electron 托管 desktop backend）时用 `scripts\manual-acceptance.cmd start`。如需 backend-only 调试，再单独拉起 `python -m desktop_agent`。
 - 仓库里没有已配置好的 lint、pre-commit 或 CI workflow，不要在说明里假设这些检查存在。
 - Danxi 改动：先跑 `tests/test_danxi_tools.py`、`tests/test_assistant_modes.py`、`tests/test_gateway_surface_routes.py` 最小相关后端用例，再跑前端 `npm run typecheck` 和 `npm run test`；若做真链路，只执行少量顺序化浏览/搜索/发帖或回帖验证，并记录是否走 WebVPN。

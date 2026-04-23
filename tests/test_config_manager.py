@@ -21,6 +21,8 @@ class ConfigManagerTests(unittest.TestCase):
             "MEETYOU_FEISHU_APP_ID": os.environ.get("MEETYOU_FEISHU_APP_ID"),
             "MEETYOU_FEISHU_APP_SECRET": os.environ.get("MEETYOU_FEISHU_APP_SECRET"),
         }
+        for key in self._old_env:
+            os.environ.pop(key, None)
         self._temp_dir = tempfile.TemporaryDirectory()
         self.temp_root = Path(self._temp_dir.name)
         os.chdir(self.temp_root)
@@ -94,6 +96,20 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(entry["source"], "env")
         self.assertEqual(entry["env_key"], "MEETYOU_AGENT_WS_ACCESS_TOKEN")
         self.assertTrue(entry["has_value"])
+
+    def test_process_env_overrides_dotenv_file(self):
+        (self.temp_root / ".env").write_text(
+            "MEETYOU_DATABASE_URL=postgresql+psycopg://from-dotenv\n",
+            encoding="utf-8",
+        )
+        os.environ["MEETYOU_DATABASE_URL"] = "postgresql+psycopg://from-process-env"
+
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        self.assertEqual(config.get("database_url"), "postgresql+psycopg://from-process-env")
 
     def test_missing_core_mcp_config_logs_boundary_message(self):
         with self.assertLogs("meetyou.config", level="INFO") as captured:
@@ -194,6 +210,37 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertIn("MEETYOU_API_KEY='new-secret'", (self.temp_root / ".env").read_text(encoding="utf-8"))
         self.assertTrue((self.temp_root / "user" / "config.json.bak").exists())
         self.assertTrue((self.temp_root / ".env.bak").exists())
+
+    def test_heartbeat_idle_settings_are_manageable_and_typed(self):
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        applied_keys, warnings = config.apply_updates(
+            {
+                "heartbeat_idle_poke_enabled": "false",
+                "heartbeat_idle_poke_after_seconds": "1800",
+                "heartbeat_idle_poke_cooldown_seconds": 900,
+                "heartbeat_idle_context_compaction_enabled": "true",
+            }
+        )
+        config.reload()
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            set(applied_keys),
+            {
+                "heartbeat_idle_poke_enabled",
+                "heartbeat_idle_poke_after_seconds",
+                "heartbeat_idle_poke_cooldown_seconds",
+                "heartbeat_idle_context_compaction_enabled",
+            },
+        )
+        self.assertIs(config.get("heartbeat_idle_poke_enabled"), False)
+        self.assertEqual(config.get("heartbeat_idle_poke_after_seconds"), 1800)
+        self.assertEqual(config.get("heartbeat_idle_poke_cooldown_seconds"), 900)
+        self.assertIs(config.get("heartbeat_idle_context_compaction_enabled"), True)
 
     def test_apply_updates_rejects_invalid_values_without_polluting_files(self):
         config = ConfigManager(

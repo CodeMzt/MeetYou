@@ -112,6 +112,12 @@ Electron main process 负责：
 - 实时消息：`/desktop/ws`
 - 其余 UI 动作都归到 `/desktop/*`
 
+renderer 侧实时流契约进一步固定为：
+
+- 只升级本地 desktop backend 的 `ws://127.0.0.1:38951/desktop/ws?thread_id=...`
+- 如需鉴权，只携带本地 `local_bridge_access_token`
+- Desktop backend 在内部再转接到 Core 的 `GET /client/ws`，renderer 不直接感知 Core WebSocket 地址或 Core token
+
 ### 5.3 附件链路
 
 桌面 UI 不再使用 Core 附件 URL。
@@ -121,6 +127,12 @@ Desktop backend 负责：
 - 把 Core 的 upload ticket 转换为本地 `/desktop/attachments/upload/{ticket_id}`
 - 把 Core 的 proxy download URL 转换为本地 `/desktop/attachments/content/{attachment_id}`
 - 保留对象存储 presigned URL 这类真正应该让浏览器直下的地址
+
+因此附件口径固定为：
+
+- upload ticket 与 complete/删除/列表等控制面 API 始终走 `/desktop/attachments/*`
+- 需要 backend 代管鉴权或代理下载时，renderer 只访问本地 `/desktop/attachments/content/{attachment_id}`
+- 只有 download ticket 明确返回对象存储 presigned URL 时，renderer 才允许直接请求该对象地址；这属于附件内容直下例外，不代表 UI 恢复直连 Core
 
 ### 5.4 鉴权边界
 
