@@ -43,6 +43,17 @@ export interface ClientAttachmentDownloadPlan {
   fileName: string
 }
 
+export interface MemoryClearResult {
+  ok: boolean
+  cleared_record_count: number
+  cleared_edge_count: number
+  cleared_session_summary_count: number
+  cleared_global_summary: boolean
+  cleared_session_count: number
+  active_session_count: number
+  updated_at: string
+}
+
 function buildDesktopUrl(baseUrl: string, path: string): string {
   return `${baseUrl}/desktop${path}`
 }
@@ -679,6 +690,13 @@ export async function fetchRuntimeUsageSnapshot(
     throw new Error('解析 token / context 快照失败')
   }
   return snapshot
+}
+
+export async function clearDesktopMemory(baseUrl: string): Promise<MemoryClearResult> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/memory'), {
+    method: 'DELETE',
+  })
+  return readJsonOrThrow<MemoryClearResult>(response, 'Failed to clear memory')
 }
 
 export async function createClientWsUrl(baseUrl: string, threadId: string): Promise<string> {

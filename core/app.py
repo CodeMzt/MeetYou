@@ -246,6 +246,7 @@ class App:
         system_tools.set_background_status_provider(self.heart.get_background_status)
         system_tools.set_heartbeat_settings_provider(self.get_heartbeat_settings)
         system_tools.set_heartbeat_settings_updater(self.update_heartbeat_settings)
+        system_tools.set_temporary_reply_emitter(self.emit_temporary_reply)
 
         self.session_manager = SessionManager()
         self.heart.set_session_manager(self.session_manager)
@@ -710,6 +711,7 @@ class App:
         system_tools.set_background_status_provider(self.heart.get_background_status)
         system_tools.set_heartbeat_settings_provider(self.get_heartbeat_settings)
         system_tools.set_heartbeat_settings_updater(self.update_heartbeat_settings)
+        system_tools.set_temporary_reply_emitter(self.emit_temporary_reply)
 
     async def _refresh_mode_runtime(self):
         self.mode_manager = AssistantModeManager(self.config)
@@ -1400,6 +1402,16 @@ class App:
             include_invalidated=include_invalidated,
         )
 
+    async def clear_memory_state(self) -> dict[str, Any]:
+        memory_result = await self.memory.clear_all()
+        session_result = self.brain.clear_all_conversation_state()
+        return {
+            "ok": True,
+            **memory_result,
+            **session_result,
+            "updated_at": utcnow_iso(),
+        }
+
     async def _sync_config_state_to_db(self) -> None:
         await sync_config_state_to_db(self)
 
@@ -1877,6 +1889,38 @@ class App:
             "rejected_keys": rejected,
             "snapshot": await self.get_heartbeat_settings(),
         }
+
+    async def emit_temporary_reply(
+        self,
+        content: str,
+        *,
+        session_id: str = "",
+        source=None,
+        turn_id: str = "",
+    ) -> dict[str, Any]:
+        del source
+        text = str(content or "").strip()
+        if not text:
+            return {"delivered": False, "reason": "empty_content"}
+        context = get_event_context()
+        resolved_session_id = str(session_id or context.get("session_id") or "").strip()
+        if not resolved_session_id:
+            return {"delivered": False, "reason": "session_unavailable"}
+        bridge = self._get_client_thread_bridge()
+        result = await bridge.publish_temporary_assistant_message(
+            resolved_session_id,
+            content=text,
+            turn_id=str(turn_id or context.get("turn_id") or "").strip(),
+        )
+        if result.get("delivered"):
+            logger.info(
+                "Temporary reply emitted",
+                extra={
+                    "session_id": resolved_session_id,
+                    "turn_id": str(turn_id or context.get("turn_id") or "").strip(),
+                },
+            )
+        return result
 
     async def apply_config_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
         snapshot = self.config.begin_transaction()

@@ -204,6 +204,7 @@ async def setup_app_runtime(app) -> None:
         config_updater=app.apply_config_updates,
         memory_snapshot_getter=app.get_memory_snapshot,
         memory_graph_getter=app.get_memory_graph,
+        memory_clearer=app.clear_memory_state,
         runtime_state_getter=app.get_runtime_state,
         runtime_usage_getter=app.get_runtime_usage,
         runtime_debug_getter=app.get_runtime_debug,

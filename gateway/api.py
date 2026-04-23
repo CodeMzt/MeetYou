@@ -29,6 +29,7 @@ from gateway.models import (
     ErrorResponse,
     HealthEnvelopeResponse,
     HealthResponse,
+    MemoryClearResponse,
     MemoryGraphResponse,
     MemorySnapshotResponse,
     RuntimeEnvelopePayload,
@@ -63,6 +64,7 @@ class FastAPIGateway:
         config_updater=None,
         memory_snapshot_getter=None,
         memory_graph_getter=None,
+        memory_clearer=None,
         runtime_state_getter=None,
         runtime_usage_getter=None,
         runtime_debug_getter=None,
@@ -85,6 +87,7 @@ class FastAPIGateway:
             config_updater=config_updater,
             memory_snapshot_getter=memory_snapshot_getter,
             memory_graph_getter=memory_graph_getter,
+            memory_clearer=memory_clearer,
             runtime_state_getter=runtime_state_getter,
             runtime_usage_getter=runtime_usage_getter,
             runtime_debug_getter=runtime_debug_getter,
@@ -98,6 +101,7 @@ class FastAPIGateway:
         self._config_updater = config_updater
         self._memory_snapshot_getter = memory_snapshot_getter
         self._memory_graph_getter = memory_graph_getter
+        self._memory_clearer = memory_clearer
         self._runtime_state_getter = runtime_state_getter
         self._runtime_usage_getter = runtime_usage_getter
         self._runtime_debug_getter = runtime_debug_getter
@@ -558,6 +562,12 @@ class FastAPIGateway:
                 include_invalidated=include_invalidated,
             )
             return MemoryGraphResponse(**payload)
+
+        @self.app.delete("/memory", response_model=MemoryClearResponse)
+        async def clear_memory(request: Request):
+            self._require_http_auth(request)
+            payload = await self._resolve(self._memory_clearer)
+            return MemoryClearResponse(**payload)
 
         @self.app.get("/runtime/state", response_model=RuntimeEnvelopeResponse)
         async def get_runtime_state(request: Request, session_id: str = ""):

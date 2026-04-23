@@ -10,6 +10,7 @@ from types import SimpleNamespace
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.brain import Brain
+from core.runtime_context import bind_event_context, reset_event_context
 from core.tool_runtime import ToolCallResult
 import core.tool_runtime.executor as tool_executor_module
 from core.tools_manager import ToolsManager
@@ -340,6 +341,48 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.tool_name, "lookup_profile")
         self.assertEqual(result.content.data, {"ok": True})
         self.assertIn('"tool_name": "lookup_profile"', brain._tool_message_content(result))
+
+    async def test_emit_temporary_reply_uses_runtime_context(self):
+        manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
+        delivered = {}
+
+        async def emitter(content, session_id="", source=None, turn_id=""):
+            delivered.update(
+                {
+                    "content": content,
+                    "session_id": session_id,
+                    "source": source,
+                    "turn_id": turn_id,
+                }
+            )
+            return {
+                "delivered": True,
+                "session_id": session_id,
+                "turn_id": turn_id,
+            }
+
+        real_system_tools.set_temporary_reply_emitter(emitter)
+        self.addCleanup(real_system_tools.set_temporary_reply_emitter, None)
+        token = bind_event_context(
+            session_id="session-ctx",
+            turn_id="turn-ctx",
+            source={"kind": "thread", "thread_id": "thr-1"},
+        )
+        try:
+            result = await manager.call_tool(
+                "emit_temporary_reply",
+                {"content": "Working on it"},
+                route_context={"tool_bundle": ["emit_temporary_reply"], "mcp_servers": [], "current_mode": "general"},
+            )
+        finally:
+            reset_event_context(token)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(delivered["content"], "Working on it")
+        self.assertEqual(delivered["session_id"], "session-ctx")
+        self.assertEqual(delivered["turn_id"], "turn-ctx")
+        self.assertEqual(result.content.data["delivered"], True)
+        self.assertEqual(result.content.data["session_id"], "session-ctx")
 
 
 if __name__ == "__main__":
