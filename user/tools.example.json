@@ -120,6 +120,25 @@
           ]
         }
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "emit_temporary_reply",
+        "description": "Send a short temporary assistant reply to the current user while the turn continues. Keep it brief; it will be replaced by the final answer.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "A short temporary reply, ideally one sentence."
+            }
+          },
+          "required": [
+            "content"
+          ]
+        }
+      }
     }
   ],
   "chain_tools": [

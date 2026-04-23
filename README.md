@@ -219,6 +219,7 @@ cp user/desktop_agent.example.json user/desktop_agent.json
 - `assistant_modes` / `mode_router`：模式与工具路由
 - `object_store_backend`：附件存储后端，推荐生产环境接入对象存储
 - `source_catalog_path`：研究来源目录
+- `tools_schema_path`：默认应指向 `user/tools.json`；V3 当前把 `manage_heartbeat_settings` 与 `emit_temporary_reply` 放进 `common_tools`，供所有助手节点共享使用
 
 重要限制：
 
@@ -351,6 +352,7 @@ V3 里补齐的空闲心跳（idle poke）属于 `Core Heart` 的一部分，当
 - 首次触发 idle poke 且会话尚未压缩时，会顺带执行一次持久化上下文压缩，后续正常会话也复用这份摘要
 - 当前配置项包括 `heartbeat_idle_poke_enabled`、`heartbeat_idle_poke_after_seconds`、`heartbeat_idle_poke_cooldown_seconds`、`heartbeat_idle_context_compaction_enabled`
 - 运行态可通过 `manage_heartbeat_settings`、`/operator/config`、桌面端设置中心查看或更新
+- 需要在思考过程中先给用户一个短暂答复时，可调用 `emit_temporary_reply`；这类消息会实时显示在当前 assistant turn 上，并在正式回答到来后被替换，不写入长期消息历史
 
 ### `desktop-agent` 与 `edge-agent` 的差异
 
@@ -487,6 +489,7 @@ Core 在服务端拉起 `npx` 型 MCP 时会默认复用工作目录下的 `.npm
 - `GET /client/workspaces/{workspace_id}/agents`
 - `GET /operator/config`
 - `GET /operator/memory`
+- `DELETE /operator/memory`
 - `GET /runtime/state`
 - `GET /runtime/usage`
 - `GET /developer/runtime/debug`
@@ -496,11 +499,18 @@ Core 在服务端拉起 `npx` 型 MCP 时会默认复用工作目录下的 `.npm
 
 - `GET /desktop/status`
 - `GET /desktop/health`
+- `DELETE /desktop/memory`
 - `POST /desktop/messages`
 - `GET /desktop/ws`
 - `GET /desktop/workspaces`
 - `GET /desktop/runtime/usage`
 - `GET /desktop/runtime/debug`
+
+关于记忆清除：
+
+- `DELETE /operator/memory` 与 `DELETE /desktop/memory` 会清空 Memory Graph、working summaries 和 Brain 的会话内记忆态
+- 该操作不会删除 thread/message 历史；它只清除后续推理会继续引用的记忆层
+- 桌面端当前在 Memory Dashboard 暴露一键清除入口，并要求用户输入确认短语后才执行
 
 WeChat Bot 已切换为官方 iLink 路径：启用 `enable_wechat_bot` 后通过二维码登录获取 `bot_token`，使用 `POST /ilink/bot/getupdates` 长轮询接收入站消息，并用 `POST /ilink/bot/sendmessage` 携带 `context_token` 回发文本回复。当前已落地最小文本闭环骨架，真实扫码验收记录见 `docs/v3/design/bot-integration.md`。
 

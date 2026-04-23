@@ -1,4 +1,13 @@
-import type { ChatTurn, ClientMessage, ConfirmRequestPayload, HumanInputRequestPayload, RuntimeDebugSnapshot, RuntimeStateSnapshot, RuntimeUsageSnapshot, TurnActivity } from './types'
+import type {
+  ChatTurn,
+  ClientMessage,
+  ConfirmRequestPayload,
+  HumanInputRequestPayload,
+  RuntimeDebugSnapshot,
+  RuntimeStateSnapshot,
+  RuntimeUsageSnapshot,
+  TurnActivity,
+} from './types'
 
 const MAX_ACTIVITY_ITEMS = 48
 const RETAINED_ACTIVITY_ITEMS = 32
@@ -65,6 +74,7 @@ export function createUserTurn(content: string, turnId = ''): ChatTurn {
     isStreaming: false,
     createdAt: Date.now(),
     trimmedActivityCount: 0,
+    temporary: false,
   }
 }
 
@@ -85,18 +95,26 @@ export function createSystemTurn(
     createdAt: Date.now(),
     error: isError ? content : undefined,
     attachments,
+    temporary: false,
   }
+}
+
+function buildMessageError(status: string | undefined, role: ChatTurn['role']): string | undefined {
+  if (status !== 'failed') {
+    return undefined
+  }
+  return role === 'assistant' ? 'Assistant response failed.' : 'Message delivery failed.'
 }
 
 function findTurnIndex(turns: ChatTurn[], streamId: string, turnId: string): number {
   if (turnId) {
-    const byTurnId = turns.findIndex((t) => t.turnId === turnId && t.role === 'assistant')
+    const byTurnId = turns.findIndex((turn) => turn.turnId === turnId && turn.role === 'assistant')
     if (byTurnId !== -1) {
       return byTurnId
     }
   }
   if (streamId) {
-    return turns.findIndex((t) => t.streamId === streamId && t.role === 'assistant')
+    return turns.findIndex((turn) => turn.streamId === streamId && turn.role === 'assistant')
   }
   return -1
 }
@@ -117,6 +135,7 @@ function upsertAssistantTurn(turns: ChatTurn[], streamId: string, turnId: string
     activities: [],
     isStreaming: true,
     createdAt: Date.now(),
+    temporary: false,
   }
   return { turns: [...turns, newTurn], index: turns.length }
 }
@@ -166,22 +185,29 @@ function appendSystemTurn(turns: ChatTurn[], nextTurn: ChatTurn): ChatTurn[] {
 }
 
 function hydrateClientMessages(messages: ClientMessage[]): ChatTurn[] {
-  return messages.map((m) => ({
-    id: m.message_id,
+  return messages.map((message) => ({
+    id: message.message_id,
     streamId: '',
-    turnId: m.message_id,
-    role: m.role,
-    content: m.content,
+    turnId: message.role === 'assistant' ? message.message_id : '',
+    role: message.role,
+    content: message.content,
     reasoning: '',
     activities: [],
     isStreaming: false,
-    createdAt: Date.parse(m.created_at) || Date.now(),
-    error: m.status === 'failed' ? '消息发送失败' : undefined,
+    createdAt: Date.parse(message.created_at) || Date.now(),
+    error: buildMessageError(message.status, message.role),
+    temporary: Boolean(message.temporary),
   }))
 }
 
 function appendClientMessage(turns: ChatTurn[], message: ClientMessage): ChatTurn[] {
-  const existing = turns.findIndex((t) => t.id === message.message_id || t.turnId === message.message_id)
+  const logicalTurnId = message.role === 'assistant' ? message.message_id : ''
+  const existing = turns.findIndex(
+    (turn) =>
+      turn.id === message.message_id ||
+      (logicalTurnId && turn.turnId === logicalTurnId) ||
+      (message.temporary && message.role === 'assistant' && turn.temporary && turn.content === message.content),
+  )
   if (existing !== -1) {
     return turns
   }
@@ -190,14 +216,15 @@ function appendClientMessage(turns: ChatTurn[], message: ClientMessage): ChatTur
     {
       id: message.message_id,
       streamId: '',
-      turnId: message.message_id,
+      turnId: logicalTurnId,
       role: message.role,
       content: message.content,
       reasoning: '',
       activities: [],
       isStreaming: false,
       createdAt: Date.parse(message.created_at) || Date.now(),
-      error: message.status === 'failed' ? '消息发送失败' : undefined,
+      error: buildMessageError(message.status, message.role),
+      temporary: Boolean(message.temporary),
     },
   ]
 }
@@ -205,18 +232,36 @@ function appendClientMessage(turns: ChatTurn[], message: ClientMessage): ChatTur
 function completeStreamMessage(turns: ChatTurn[], message: ClientMessage, streamId: string, turnId: string): ChatTurn[] {
   const index = findTurnIndex(turns, streamId, turnId)
   if (index === -1) {
-    return appendClientMessage(turns, message)
+    return [
+      ...turns,
+      {
+        id: message.message_id,
+        streamId: streamId || '',
+        turnId: turnId || '',
+        role: message.role,
+        content: message.content,
+        reasoning: '',
+        activities: [],
+        isStreaming: Boolean(message.temporary),
+        createdAt: Date.parse(message.created_at) || Date.now(),
+        error: buildMessageError(message.status, message.role),
+        temporary: Boolean(message.temporary),
+      },
+    ]
   }
 
   const nextTurns = [...turns]
   const current = nextTurns[index]
+  const isTemporary = Boolean(message.temporary)
   nextTurns[index] = {
     ...current,
-    id: message.message_id || current.id,
-    turnId: message.message_id || current.turnId,
-    content: current.content || message.content,
-    isStreaming: false,
-    error: message.status === 'failed' ? '回复生成失败' : current.error,
+    id: isTemporary ? current.id : message.message_id || current.id,
+    streamId: streamId || current.streamId,
+    turnId: turnId || current.turnId,
+    content: message.content || current.content,
+    isStreaming: isTemporary,
+    error: buildMessageError(message.status, message.role) || current.error,
+    temporary: isTemporary,
   }
   return nextTurns
 }
@@ -224,10 +269,18 @@ function completeStreamMessage(turns: ChatTurn[], message: ClientMessage, stream
 function appendTurnContent(turns: ChatTurn[], action: Extract<ChatAction, { type: 'append_message' }>): ChatTurn[] {
   const { turns: nextTurns, index } = upsertAssistantTurn(turns, action.streamId, action.turnId)
   const current = nextTurns[index]
+  const replaceTemporaryAnswer = action.channel === 'answer' && Boolean(current.temporary)
   nextTurns[index] = {
     ...current,
-    content: action.channel === 'answer' ? current.content + action.content : current.content,
+    content:
+      action.channel === 'answer'
+        ? replaceTemporaryAnswer
+          ? action.content
+          : current.content + action.content
+        : current.content,
     reasoning: action.channel === 'reasoning' ? current.reasoning + action.content : current.reasoning,
+    temporary: action.channel === 'answer' ? false : current.temporary,
+    isStreaming: true,
   }
   return nextTurns
 }
@@ -388,7 +441,7 @@ export function reduceChatState(state: ChatState, action: ChatAction): ChatState
     case 'set_confirm_request': {
       const turnId = action.turnId || state.runtimeSnapshot?.turn_id
       const nextMessages = [...state.messages]
-      const index = nextMessages.findIndex((m) => m.turnId === turnId)
+      const index = nextMessages.findIndex((message) => message.turnId === turnId)
       if (index !== -1) {
         nextMessages[index] = { ...nextMessages[index], confirmRequest: action.payload }
       }
@@ -397,7 +450,7 @@ export function reduceChatState(state: ChatState, action: ChatAction): ChatState
     case 'set_human_input_request': {
       const turnId = action.turnId || state.runtimeSnapshot?.turn_id
       const nextMessages = [...state.messages]
-      const index = nextMessages.findIndex((m) => m.turnId === turnId)
+      const index = nextMessages.findIndex((message) => message.turnId === turnId)
       if (index !== -1) {
         nextMessages[index] = { ...nextMessages[index], humanInputRequest: action.payload }
       }
@@ -406,7 +459,7 @@ export function reduceChatState(state: ChatState, action: ChatAction): ChatState
     case 'resolve_confirm': {
       const nextMessages = [...state.messages]
       const index = nextMessages.findIndex(
-        (m) => m.confirmRequest?.requestId === action.requestId || m.turnId === action.turnId,
+        (message) => message.confirmRequest?.requestId === action.requestId || message.turnId === action.turnId,
       )
       if (index !== -1) {
         nextMessages[index] = {
@@ -419,7 +472,7 @@ export function reduceChatState(state: ChatState, action: ChatAction): ChatState
     case 'resolve_human_input': {
       const nextMessages = [...state.messages]
       const index = nextMessages.findIndex(
-        (m) => m.humanInputRequest?.requestId === action.requestId || m.turnId === action.turnId,
+        (message) => message.humanInputRequest?.requestId === action.requestId || message.turnId === action.turnId,
       )
       if (index !== -1) {
         nextMessages[index] = {

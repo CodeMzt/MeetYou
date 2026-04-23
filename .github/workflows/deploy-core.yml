@@ -1,0 +1,19 @@
+name: Deploy MeetYou Core
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.CORE_HOST }}
+          username: ${{ secrets.CORE_USER }}
+          key: ${{ secrets.CORE_SSH_KEY }}
+          script: |
+            /opt/meetyou/scripts/deploy-core.sh

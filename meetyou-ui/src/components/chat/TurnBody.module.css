@@ -3,6 +3,19 @@
   overflow-wrap: break-word;
 }
 
+.temporaryBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-full);
+  background: var(--border-focus);
+  color: var(--text-accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .placeholder {
   font-size: 14px;
   color: var(--text-secondary);

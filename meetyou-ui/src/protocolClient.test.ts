@@ -299,6 +299,7 @@ describe('protocolClient', () => {
           status: 'completed',
           channel: 'message',
           created_at: '2026-04-08T00:00:02Z',
+          temporary: true,
         },
       },
     })
@@ -309,6 +310,7 @@ describe('protocolClient', () => {
     expect(delta.kind === 'message_delta' ? delta.delta : '').toBe('partial')
     expect(completed.kind).toBe('message_completed')
     expect(completed.kind === 'message_completed' ? completed.message.content : '').toBe('done')
+    expect(completed.kind === 'message_completed' ? completed.message.temporary : false).toBe(true)
   })
 
   it('parses bridged client websocket message events with nested message fallback', () => {

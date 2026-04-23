@@ -12,6 +12,7 @@ import logging
 import re
 
 from core.io_protocol import EventTarget, TargetKind
+from core.runtime_context import get_event_context
 
 logger = logging.getLogger("meetyou.system_tools")
 
@@ -22,6 +23,7 @@ _event_bus = None
 _background_status_provider = None
 _heartbeat_settings_provider = None
 _heartbeat_settings_updater = None
+_temporary_reply_emitter = None
 _agent_dispatcher = None
 _allow_local_fallback = True
 
@@ -88,6 +90,11 @@ def set_heartbeat_settings_provider(provider):
 def set_heartbeat_settings_updater(updater):
     global _heartbeat_settings_updater
     _heartbeat_settings_updater = updater
+
+
+def set_temporary_reply_emitter(emitter):
+    global _temporary_reply_emitter
+    _temporary_reply_emitter = emitter
 
 
 def set_agent_dispatcher(dispatcher):
@@ -404,3 +411,35 @@ async def manage_heartbeat_settings(action: str = "get", updates: dict | None = 
         ensure_ascii=False,
         indent=2,
     )
+
+
+async def emit_temporary_reply(content: str, session_id: str = "", source=None) -> str:
+    text = re.sub(r"\s+", " ", str(content or "").strip())
+    if not text:
+        return json.dumps({"ok": False, "error": "content is required"}, ensure_ascii=False, indent=2)
+    if len(text) > 120:
+        text = text[:117].rstrip() + "..."
+
+    emitter = _temporary_reply_emitter
+    if emitter is None:
+        return json.dumps(
+            {"ok": False, "error": "temporary reply emitter is not available"},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    context = get_event_context()
+    resolved_session_id = str(session_id or context.get("session_id") or "").strip()
+    result = emitter(
+        text,
+        session_id=resolved_session_id,
+        source=source if source is not None else context.get("source"),
+        turn_id=str(context.get("turn_id") or "").strip(),
+    )
+    if asyncio.iscoroutine(result):
+        result = await result
+    payload = dict(result or {})
+    payload.setdefault("ok", bool(payload.get("delivered")))
+    payload.setdefault("content", text)
+    payload.setdefault("session_id", resolved_session_id)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
