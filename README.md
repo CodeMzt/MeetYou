@@ -234,6 +234,7 @@ MEETYOU_API_KEY=
 MEETYOU_HEARTBEAT_API_KEY=
 MEETYOU_EMBEDDING_API_KEY=
 MEETYOU_GATEWAY_ACCESS_TOKEN=
+MEETYOU_AGENT_WS_ACCESS_TOKEN=
 MEETYOU_AGENT_ACCESS_TOKEN=
 MEETYOU_EDGE_ACCESS_TOKEN=
 MEETYOU_DATABASE_URL=postgresql+psycopg://postgres:password@127.0.0.1:5432/meetyou
@@ -246,15 +247,27 @@ MEETYOU_FEISHU_APP_SECRET=
 说明：
 
 - `MEETYOU_GATEWAY_ACCESS_TOKEN`：Gateway / WebSocket 访问令牌
+- `MEETYOU_AGENT_WS_ACCESS_TOKEN`：`desktop-agent` 连接 `/agent/ws` 的首选令牌
 - `MEETYOU_AGENT_ACCESS_TOKEN`：共享 Agent 访问令牌；`desktop-agent` 与 `edge-agent` 都可回退到它
 - `MEETYOU_EDGE_ACCESS_TOKEN`：仅给 `edge-agent` 的专用覆盖令牌
 - `MEETYOU_DATABASE_URL`：正式持久化数据库连接串
 
-如果使用 Danxi / WebVPN 凭证加密链路，还建议单独配置：
+如果使用 Danxi / WebVPN，建议在 Core Service 所在环境额外配置：
 
 ```env
 MEETYOU_CREDENTIAL_SECRET=
+DANXI_MAIL=
+DANXI_PASSWORD=
+STUVPN_FUDAN_USER=
+STUVPN_FUDAN_PASSWORD=
+MEETYOU_DANXI_USE_WEBVPN=false
 ```
+
+说明：
+
+- `DANXI_MAIL` / `DANXI_PASSWORD` 用于 Core 侧 Danxi 默认会话自动登录。
+- `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 用于服务端在 WebVPN cookie 失效或校外网络需要代理时自动重建 WebVPN 会话。
+- Danxi 前端只保留手动输入与内嵌 WebVPN 登录窗作为备用路径；跨边界凭证传输统一走 `encrypted_credentials`，密钥优先使用 `MEETYOU_CREDENTIAL_SECRET`。
 
 ### 5. 准备 PostgreSQL
 
@@ -330,6 +343,14 @@ agent.ready
 - `agent heartbeat`：`/agent/ws` 上的在线状态与运行指标上报
 
 二者不是同一件事。
+
+V3 里补齐的空闲心跳（idle poke）属于 `Core Heart` 的一部分，当前口径是：
+
+- 默认启用 1 小时空闲主动触达，可通过配置动态关闭或调整间隔
+- 心跳不再回放整段长上下文，而是基于 `conversation_summary`、最近少量非 transient 消息和最近 idle poke 记录生成简短主动消息
+- 首次触发 idle poke 且会话尚未压缩时，会顺带执行一次持久化上下文压缩，后续正常会话也复用这份摘要
+- 当前配置项包括 `heartbeat_idle_poke_enabled`、`heartbeat_idle_poke_after_seconds`、`heartbeat_idle_poke_cooldown_seconds`、`heartbeat_idle_context_compaction_enabled`
+- 运行态可通过 `manage_heartbeat_settings`、`/operator/config`、桌面端设置中心查看或更新
 
 ### `desktop-agent` 与 `edge-agent` 的差异
 
@@ -601,9 +622,11 @@ npm run build
 
 - 当前脚本会执行 `tsc && vite build && electron-builder`
 - `electron-builder` 当前仅显式声明 Windows `nsis` 目标，产物输出目录是 `meetyou-ui/release/`
-- 该构建已经覆盖 Electron UI 与 `dist-electron` 主进程代码，但还没有把 Python runtime、`main.py`、`desktop_agent/` 依赖与初始化模板一起打进安装包
-- Electron main 当前仍会在运行时从工作区目录解析 `.venv` 或系统 Python，再执行 `python main.py desktop-agent`
-- 因此现阶段应把它理解为“Electron 安装包基础已具备”，而不是“完整 Desktop Product 可脱离仓库独立安装”
+- V3 当前的 Windows 打包口径是“Electron UI + PyInstaller one-dir `desktop_agent` backend + runtime template”一起进入安装包
+- 打包前先执行 `scripts\\build-desktop-backend.ps1`，生成 `desktop_agent.exe` 和 `meetyou-ui/resources/runtime-template/`
+- packaged mode 下，Electron main 会优先从 `process.resourcesPath` 启动内置 desktop backend；开发态才回退到工作区里的 `python main.py desktop-agent`
+- 安装包首次运行会把 runtime template 复制到 `app.getPath('userData')/meetyou-runtime`，并在这里维护可写的 `desktop_agent.json`、`mcp_servers.json`、`cmd_policy.json` 与 `.env`
+- `.env` 中的 Core 地址、Gateway token、Agent token、Danxi/WebVPN 相关密钥应由 runtime template 或用户运行目录提供；不要依赖安装包外的仓库路径
 - 当前桌面端整体仍偏 Windows；Linux 服务器部署的核心目标应是 Core Service，而不是 Electron UI
 
 ## 验证建议
@@ -632,8 +655,9 @@ Linux 服务器首轮验收建议按这个顺序：
 
 ```bash
 python -m unittest tests.test_config_manager
-python -m unittest tests.test_gateway_agent_api
-python -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime
+python -m unittest tests.test_gateway_surface_routes
+python -m unittest tests.test_danxi_tools
+python -m unittest tests.test_desktop_agent_runtime tests.test_edge_agent_protocol tests.test_edge_agent_runtime
 ```
 
 如果你在 Windows 上做桌面端联调，再补：
@@ -642,13 +666,23 @@ python -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime
 cd meetyou-ui
 npm run typecheck
 npm run test
+npm run build
+```
+
+如果你要验证当前 Windows 安装包链路，推荐顺序是：
+
+```bash
+scripts\build-desktop-backend.ps1
+cd meetyou-ui
+npm run build
+scripts\manual-acceptance.cmd check
 ```
 
 说明：
 
-- 当前仓库没有现成的 Linux / 腾讯云一键验收脚本
 - `scripts/manual-acceptance.cmd` 和 PowerShell 路径主要服务 Windows 桌面链路
-- 本次仓库内验证主要覆盖文档/模板一致性与本地自动化测试，仍建议在真实 Linux 云服务器上完成一次 `service -> client/ws -> agent/ws` 联机验收
+- Linux / 腾讯云侧仍建议至少做一次真实 `service -> client/ws -> agent/ws` 联机验收
+- Windows 打包验证应重点确认：图标正确、desktop backend 能拉起、设置中心能加载、远端 Core 可连通、Danxi 会话可自动恢复或自动使用 Core 环境变量建会话
 
 ## 相关文档
 

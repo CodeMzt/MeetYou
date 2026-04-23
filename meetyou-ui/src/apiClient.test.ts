@@ -8,6 +8,7 @@ const originalLocalStorage = globalThis.localStorage
 describe('apiClient', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.useRealTimers()
     globalThis.fetch = originalFetch
     globalThis.localStorage = originalLocalStorage
   })
@@ -104,6 +105,33 @@ describe('apiClient', () => {
     const [, init] = fetchMock.mock.calls[0]
     const headers = new Headers(init?.headers)
     expect(headers.get('Authorization')).toBeNull()
+  })
+
+  it('falls back to stored bridge token when desktop token IPC stalls', async () => {
+    vi.resetModules()
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+    globalThis.fetch = fetchMock as typeof fetch
+    globalThis.localStorage = {
+      getItem: vi.fn().mockReturnValue('stored-bridge-token'),
+      setItem: vi.fn(),
+    } as unknown as Storage
+    globalThis.window = Object.assign(globalThis.window || {}, {
+      ipcRenderer: {
+        invoke: vi.fn().mockReturnValue(new Promise(() => undefined)),
+      },
+    }) as Window & typeof globalThis
+
+    const { fetchWithAuth: freshFetchWithAuth } = await import('./apiClient')
+    const pendingFetch = freshFetchWithAuth(`${DEFAULT_BASE_URL}/desktop/config`)
+
+    await vi.advanceTimersByTimeAsync(1500)
+    await pendingFetch
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0]
+    const headers = new Headers(init?.headers)
+    expect(headers.get('Authorization')).toBe('Bearer stored-bridge-token')
   })
 
   it('reads structured error message from backend envelope', async () => {
