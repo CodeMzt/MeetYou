@@ -152,7 +152,7 @@ V3 应继续维护：
 
 - Windows packaged path 已完成；macOS / Linux 仅保留设计边界，未形成经过验收的桌面产品发布口径
 - 签名、自动更新、安装后诊断 UI 仍未纳入本轮验收
-- runtime template 只继承构建机 `user\desktop_agent.json` 的 `core_base_url` 等非密钥运行配置；`gateway_access_token`、`agent_access_token` 不会打入安装包，需要由环境变量、安装后配置或受控分发另行提供
+- runtime template 会继承构建机 `user\desktop_agent.json` 的 `core_base_url`，并从 `.env` 中抽取桌面连接远端 Core 所需的 `MEETYOU_GATEWAY_ACCESS_TOKEN` / `MEETYOU_AGENT_WS_ACCESS_TOKEN` 等受控 key；因此个人打包产物应按含凭证 artifact 管理，不要公开分发
 
 待建设项：
 
@@ -186,6 +186,6 @@ V3 可以探索：
 
 Core Service remains the server-side deployment unit and owns PostgreSQL migration plus protocol negotiation. Desktop Product is the user-device application: Electron UI plus a local `desktop_agent` backend. Edge Agent remains independently released.
 
-Windows desktop packaging is now repository-wired through `scripts/build-desktop-backend.ps1`, `packaging/desktop-agent/desktop_agent.spec`, and `meetyou-ui` `extraResources`. Packaged Electron starts `process.resourcesPath/desktop-backend/desktop_agent/desktop_agent.exe` first and uses `app.getPath('userData')/meetyou-runtime` as the writable runtime root. The build script also prepares a UTF-8-no-BOM runtime template so the installed desktop backend inherits the intended remote Core URL without bundling access tokens. Development mode still falls back to `python main.py desktop-agent`.
+Windows desktop packaging is now repository-wired through `scripts/build-desktop-backend.ps1`, `packaging/desktop-agent/desktop_agent.spec`, and `meetyou-ui` `extraResources`. Packaged Electron starts `process.resourcesPath/desktop-backend/desktop_agent/desktop_agent.exe` first and uses `app.getPath('userData')/meetyou-runtime` as the writable runtime root. The build script also prepares a UTF-8-no-BOM runtime template so the installed desktop backend inherits the intended remote Core URL and the selected desktop/Core access env keys. Development mode still falls back to `python main.py desktop-agent`.
 
 Do not claim accepted macOS/Linux installers yet. Their agent runtime boundary is designed, but this pass only wires the Windows-first installer path.

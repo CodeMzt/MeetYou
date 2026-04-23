@@ -190,8 +190,10 @@ function ensurePackagedRuntimeFiles() {
   }
   const runtimeRoot = getDesktopRuntimeRoot()
   const userDir = path.join(runtimeRoot, 'user')
-  const templateUserDir = path.join(getPackagedRuntimeTemplateRoot(), 'user')
+  const templateRoot = getPackagedRuntimeTemplateRoot()
+  const templateUserDir = path.join(templateRoot, 'user')
   fs.mkdirSync(userDir, { recursive: true })
+  copyFileIfMissing(path.join(templateRoot, '.env'), path.join(runtimeRoot, '.env'))
   copyFileIfMissing(path.join(templateUserDir, 'cmd_policy.json'), path.join(userDir, 'cmd_policy.json'))
   copyFileIfMissing(path.join(templateUserDir, 'mcp_servers.json'), path.join(userDir, 'mcp_servers.json'))
   copyFileIfMissing(path.join(templateUserDir, 'desktop_agent.json'), getDesktopConfigPath())
@@ -469,7 +471,7 @@ function createRuntimeDebugWindow() {
   if (VITE_DEV_SERVER_URL) {
     runtimeDebugWin.loadURL(`${VITE_DEV_SERVER_URL}${WINDOW_HASH_ROUTE.runtimeDebug}`)
   } else {
-    runtimeDebugWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.runtimeDebug.slice(2) })
+    runtimeDebugWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.runtimeDebug.slice(1) })
   }
 
   runtimeDebugWin.on('closed', () => {
@@ -517,7 +519,7 @@ function createSettingsWindow() {
   if (VITE_DEV_SERVER_URL) {
     settingsWin.loadURL(`${VITE_DEV_SERVER_URL}${WINDOW_HASH_ROUTE.settings}`)
   } else {
-    settingsWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.settings.slice(2) })
+    settingsWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.settings.slice(1) })
   }
 
   settingsWin.on('closed', () => {
@@ -565,7 +567,7 @@ function createWorkspaceWindow() {
   if (VITE_DEV_SERVER_URL) {
     workspaceWin.loadURL(`${VITE_DEV_SERVER_URL}${WINDOW_HASH_ROUTE.workspace}`)
   } else {
-    workspaceWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.workspace.slice(2) })
+    workspaceWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.workspace.slice(1) })
   }
 
   workspaceWin.on('closed', () => {
@@ -613,7 +615,7 @@ function createAttachmentsWindow() {
   if (VITE_DEV_SERVER_URL) {
     attachmentsWin.loadURL(`${VITE_DEV_SERVER_URL}${WINDOW_HASH_ROUTE.attachments}`)
   } else {
-    attachmentsWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.attachments.slice(2) })
+    attachmentsWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.attachments.slice(1) })
   }
 
   attachmentsWin.on('closed', () => {
@@ -660,7 +662,7 @@ function createDanxiWindow() {
   if (VITE_DEV_SERVER_URL) {
     danxiWin.loadURL(`${VITE_DEV_SERVER_URL}${WINDOW_HASH_ROUTE.danxi}`)
   } else {
-    danxiWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.danxi.slice(2) })
+    danxiWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.danxi.slice(1) })
   }
 
   danxiWin.on('closed', () => {
@@ -774,7 +776,7 @@ function createContextWindow() {
   if (VITE_DEV_SERVER_URL) {
     contextWin.loadURL(`${VITE_DEV_SERVER_URL}${WINDOW_HASH_ROUTE.context}`)
   } else {
-    contextWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.context.slice(2) })
+    contextWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.context.slice(1) })
   }
 
   contextWin.on('closed', () => {
@@ -822,7 +824,7 @@ function createDashboardWindow() {
   if (VITE_DEV_SERVER_URL) {
     dashboardWin.loadURL(`${VITE_DEV_SERVER_URL}${WINDOW_HASH_ROUTE.dashboard}`)
   } else {
-    dashboardWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.dashboard.slice(2) })
+    dashboardWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.dashboard.slice(1) })
   }
 
   dashboardWin.on('closed', () => {

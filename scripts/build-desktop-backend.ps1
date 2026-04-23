@@ -96,5 +96,31 @@ if (Test-Path $McpServersSource) {
     Copy-Item -LiteralPath $McpServersSource -Destination (Join-Path $RuntimeUserDir "mcp_servers.json") -Force
 }
 
+$RuntimeEnvKeys = @(
+    "MEETYOU_GATEWAY_ACCESS_TOKEN",
+    "MEETYOU_AGENT_WS_ACCESS_TOKEN",
+    "MEETYOU_AGENT_ACCESS_TOKEN",
+    "MEETYOU_CREDENTIAL_SECRET",
+    "MEETYOU_AGENT_BASE_URL",
+    "MEETYOU_CORE_BASE_URL"
+)
+$RuntimeEnvSource = Join-Path $RepoRoot ".env"
+if (Test-Path $RuntimeEnvSource) {
+    $RuntimeEnvLines = @()
+    foreach ($Line in Get-Content $RuntimeEnvSource) {
+        foreach ($Key in $RuntimeEnvKeys) {
+            if ($Line -match ("^\s*" + [regex]::Escape($Key) + "\s*=")) {
+                $RuntimeEnvLines += $Line
+                break
+            }
+        }
+    }
+    if ($RuntimeEnvLines.Count -gt 0) {
+        Write-Utf8NoBomFile `
+            -Path (Join-Path $RuntimeTemplateDir ".env") `
+            -Content (($RuntimeEnvLines -join "`n") + "`n")
+    }
+}
+
 Write-Host "Desktop backend built: $ExePath"
 Write-Host "Desktop runtime template prepared: $RuntimeTemplateDir"
