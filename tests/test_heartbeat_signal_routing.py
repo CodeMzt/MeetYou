@@ -101,6 +101,26 @@ class HeartbeatSignalRoutingTests(unittest.TestCase):
         self.assertEqual(target.kind, TargetKind.FEISHU.value)
         self.assertEqual(target.id, "chat-live")
 
+    def test_recent_user_delivery_allows_offline_thread_for_idle_poke(self):
+        manager = SessionManager()
+        manager.bind_runtime_session(
+            make_source(SourceKind.WEB.value, "tab-offline"),
+            "web:offline",
+            metadata={"thread_id": "thr-offline"},
+        )
+        manager.set_default_target("web:offline", EventTarget(kind=TargetKind.WEB.value, id="tab-offline"))
+
+        app = App.__new__(App)
+        app.session_manager = manager
+        app.core_services = None
+        app.gateway = _FakeGateway(threads=set())
+
+        self.assertIsNone(App._recent_user_delivery(app))
+        session_id, target = App._recent_user_delivery(app, require_deliverable=False)
+
+        self.assertEqual(session_id, "web:offline")
+        self.assertEqual(target.kind, TargetKind.WEB.value)
+
     def test_signal_input_keeps_normal_conversation_style(self):
         app = App.__new__(App)
         event = InboundEvent(

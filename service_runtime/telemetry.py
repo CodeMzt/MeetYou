@@ -114,6 +114,10 @@ class RuntimeTelemetryRecorder:
         self.set_gauge("background_repeated_failure_task_count", len(payload.get("repeated_failure_tasks") or []))
         self.set_gauge("background_inbound_queue_size", int(payload.get("inbound_queue_size", 0) or 0))
         self.set_gauge("background_job_failure_count", len(payload.get("job_failures") or []))
+        self.set_gauge("heartbeat_idle_poke_after_seconds", int(payload.get("heartbeat_idle_poke_after_seconds") or 0))
+        self.set_gauge("heartbeat_idle_poke_cooldown_seconds", int(payload.get("heartbeat_idle_poke_cooldown_seconds") or 0))
+        self.set_gauge("heartbeat_idle_poke_enabled", 1 if payload.get("heartbeat_idle_poke_enabled") else 0)
+        self.set_gauge("heartbeat_idle_poke_eligible", 1 if payload.get("idle_poke_eligible") else 0)
 
         current_issues: set[str] = set()
         issue_specs = (

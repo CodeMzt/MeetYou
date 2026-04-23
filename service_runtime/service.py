@@ -227,6 +227,10 @@ class ServiceRuntime:
             metrics["core_mcp_configured_count"] = int(core_mcp_summary.get("configured_server_count", 0) or 0)
             metrics["core_mcp_enabled_count"] = int(core_mcp_summary.get("enabled_count", 0) or 0)
             metrics["core_mcp_partial_failures_count"] = int(core_mcp_summary.get("partial_failure_count", 0) or 0)
+            metrics["heartbeat_idle_poke_enabled"] = bool(background_status.get("heartbeat_idle_poke_enabled"))
+            metrics["heartbeat_idle_poke_after_seconds"] = int(background_status.get("heartbeat_idle_poke_after_seconds") or 0)
+            metrics["heartbeat_idle_poke_cooldown_seconds"] = int(background_status.get("heartbeat_idle_poke_cooldown_seconds") or 0)
+            metrics["heartbeat_idle_poke_eligible"] = bool(background_status.get("idle_poke_eligible"))
 
             self._mark_component(
                 "background_jobs",
@@ -311,6 +315,21 @@ class ServiceRuntime:
                             "enabled_count": int(core_mcp_summary.get("enabled_count", 0) or 0),
                             "partial_failure_count": int(core_mcp_summary.get("partial_failure_count", 0) or 0),
                             "partial_failure_servers": list(core_mcp_summary.get("partial_failure_servers") or []),
+                        },
+                    ),
+                    (
+                        "heartbeat_idle_poke",
+                        RuntimeHealthStatus.READY.value,
+                        "Idle heartbeat proactive poke configuration visible",
+                        {
+                            "enabled": bool(background_status.get("heartbeat_idle_poke_enabled")),
+                            "eligible": bool(background_status.get("idle_poke_eligible")),
+                            "after_seconds": int(background_status.get("heartbeat_idle_poke_after_seconds") or 0),
+                            "cooldown_seconds": int(background_status.get("heartbeat_idle_poke_cooldown_seconds") or 0),
+                            "context_compaction_enabled": bool(background_status.get("heartbeat_idle_context_compaction_enabled")),
+                            "last_idle_poke_at": str(background_status.get("last_idle_poke_at") or ""),
+                            "last_proactive_delivery_at": str(background_status.get("last_proactive_delivery_at") or ""),
+                            "last_proactive_delivery_status": str(background_status.get("last_proactive_delivery_status") or ""),
                         },
                     ),
                 ]

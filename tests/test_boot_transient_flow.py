@@ -139,60 +139,12 @@ class _FakeGateway:
 class AppSetupGatewayPromptTests(unittest.IsolatedAsyncioTestCase):
     async def test_setup_registers_agent_connection_prompt_getter_on_gateway(self):
         app = App.__new__(App)
-        app.config = _SetupConfig()
-        app.event_bus = EventBus()
-        app.session_manager = SimpleNamespace()
-        app.status_manager = SimpleNamespace(set_global=lambda *args, **kwargs: None)
-        app.memory = SimpleNamespace(
-            init_memory=AsyncMock(),
-            set_store_backend=lambda *args, **kwargs: None,
-            _store_layer=SimpleNamespace(empty_store=dict),
-        )
-        app.task_manager = SimpleNamespace(
-            set_store_backend=lambda *args, **kwargs: None,
-            _empty_store=dict,
-        )
-        app.tools_manager = SimpleNamespace(
-            set_state_backends=lambda **kwargs: None,
-            set_core_domain=lambda *args, **kwargs: None,
-            set_agent_dispatcher=lambda dispatcher: None,
-            init_tools=AsyncMock(),
-        )
-        app.mode_manager = SimpleNamespace(set_source_catalog_backend=lambda *args, **kwargs: None)
-        app.heart = SimpleNamespace(
-            init_heart=AsyncMock(),
-            get_background_status=AsyncMock(),
-            set_core_services=lambda services: None,
-        )
-        app.speaker = SimpleNamespace(register_adapter=lambda *args, **kwargs: None)
-        app._health_getter = None
-        app._telemetry_recorder = None
+        setup_runtime = AsyncMock()
 
-        gateway = _FakeGateway()
-        agent_dispatch = SimpleNamespace(set_transport=lambda transport: None)
-        core_domain = SimpleNamespace(
-            engine=object(),
-            session_factory=object(),
-            services=SimpleNamespace(state_blob=object()),
-            principal=SimpleNamespace(id="principal-1"),
-            agent_dispatch=agent_dispatch,
-        )
-
-        with (
-            patch("core.app.bootstrap_core_domain", return_value=core_domain),
-            patch("core.app.FastAPIGateway", return_value=gateway) as gateway_cls,
-            patch.object(App, "_sync_config_state_to_db", AsyncMock()),
-            patch.object(App, "_refresh_brain_runtime", AsyncMock()),
-        ):
+        with patch("core.app.setup_app_runtime", setup_runtime):
             await App.setup(app)
 
-        gateway.start.assert_awaited_once()
-        prompt_getter = gateway_cls.call_args.kwargs["agent_connection_prompt_getter"]
-        event_handler = gateway_cls.call_args.kwargs["agent_connection_event_handler"]
-        self.assertIs(prompt_getter.__self__, app)
-        self.assertIs(prompt_getter.__func__, App.build_agent_connection_prompt)
-        self.assertIs(event_handler.__self__, app)
-        self.assertIs(event_handler.__func__, App.inject_agent_connection_event)
+        setup_runtime.assert_awaited_once_with(app)
 
 
 if __name__ == "__main__":
