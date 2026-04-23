@@ -91,6 +91,77 @@ class DanxiToolsTests(unittest.TestCase):
         self.assertEqual(payload["email"], "env-user@example.com")
         self.assertTrue(payload["logged_in"])
 
+    def test_session_status_auto_logs_in_from_env_credentials_when_missing_session(self):
+        tools = DanxiTools()
+        tools._direct_connect_available = True
+
+        def _fake_login(state):
+            self.assertEqual(state.email, "env-user@example.com")
+            self.assertEqual(state.password, "env-secret")
+            state.access_token = "token-a"
+            return {"access": "token-a", "refresh": ""}
+
+        with patch.dict(
+            os.environ,
+            {
+                "DANXI_MAIL": "env-user@example.com",
+                "DANXI_PASSWORD": "env-secret",
+            },
+            clear=False,
+        ), patch.object(DanxiTools, "_post_auth_login", side_effect=_fake_login), patch.object(
+            DanxiTools,
+            "_safe_load_profile",
+            return_value={"user_id": 7, "email": "env-user@example.com"},
+        ), patch.object(
+            DanxiTools,
+            "_request_json",
+            return_value={"user_id": 7, "email": "env-user@example.com"},
+        ):
+            status = tools.danxi_get_session_status()
+
+        self.assertEqual(status["session_key"], "default")
+        self.assertEqual(status["email"], "env-user@example.com")
+        self.assertTrue(status["logged_in"])
+
+    def test_login_uses_stuvpn_webvpn_env_when_direct_connection_is_unavailable(self):
+        tools = DanxiTools()
+        tools._direct_connect_available = False
+
+        def _refresh_cookie(state):
+            state.webvpn_cookie = "vpn=fresh"
+            state.use_webvpn = True
+            return True
+
+        def _fake_login(state):
+            self.assertTrue(state.use_webvpn)
+            self.assertEqual(state.webvpn_cookie, "vpn=fresh")
+            state.access_token = "token-a"
+            return {"access": "token-a", "refresh": ""}
+
+        with patch.dict(
+            os.environ,
+            {
+                "DANXI_MAIL": "env-user@example.com",
+                "DANXI_PASSWORD": "env-secret",
+                "STUVPN_FUDAN_USER": "vpn-user",
+                "STUVPN_FUDAN_PASSWORD": "vpn-secret",
+            },
+            clear=False,
+        ), patch.object(DanxiTools, "_refresh_webvpn_cookie_from_env", side_effect=_refresh_cookie) as refresh_cookie, patch.object(
+            DanxiTools,
+            "_post_auth_login",
+            side_effect=_fake_login,
+        ), patch.object(
+            DanxiTools,
+            "_safe_load_profile",
+            return_value={"user_id": 7, "email": "env-user@example.com"},
+        ):
+            payload = tools.danxi_login()
+
+        refresh_cookie.assert_called_once()
+        self.assertTrue(payload["webvpn_enabled"])
+        self.assertTrue(payload["has_webvpn_cookie"])
+
     def test_login_requires_complete_manual_credentials_before_overriding_env_defaults(self):
         tools = DanxiTools()
 
