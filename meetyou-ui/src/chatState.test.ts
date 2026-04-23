@@ -139,7 +139,93 @@ describe('chatState', () => {
       },
     })
 
-    expect(state.messages[0]?.content).toBe('hel')
+    expect(state.messages[0]?.content).toBe('hello')
+    expect(state.messages[0]?.isStreaming).toBe(false)
+  })
+
+  it('keeps temporary assistant replies on the active turn until final answer arrives', () => {
+    let state = reduceChatState(createInitialChatState(), {
+      type: 'complete_stream_message',
+      streamId: 'stream-1',
+      turnId: 'turn-1',
+      message: {
+        message_id: 'msg_temp',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        workspace_id: 'personal',
+        client_id: '',
+        role: 'assistant',
+        content: 'working on it',
+        status: 'completed',
+        channel: 'message',
+        created_at: '2026-04-08T00:00:01Z',
+        temporary: true,
+      },
+    })
+
+    expect(state.messages[0]?.temporary).toBe(true)
+    expect(state.messages[0]?.isStreaming).toBe(true)
+    expect(state.messages[0]?.content).toBe('working on it')
+
+    state = reduceChatState(state, {
+      type: 'append_message',
+      role: 'assistant',
+      content: 'final answer',
+      streamId: 'stream-1',
+      turnId: 'turn-1',
+      channel: 'answer',
+      phase: 'chunk',
+      eventId: 'evt-2',
+      activeTurnId: 'turn-1',
+    })
+
+    expect(state.messages[0]?.temporary).toBe(false)
+    expect(state.messages[0]?.content).toBe('final answer')
+    expect(state.messages[0]?.isStreaming).toBe(true)
+  })
+
+  it('applies final completed payload after a temporary reply without changing the logical turn id', () => {
+    let state = reduceChatState(createInitialChatState(), {
+      type: 'complete_stream_message',
+      streamId: 'stream-1',
+      turnId: 'turn-1',
+      message: {
+        message_id: 'msg_temp',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        workspace_id: 'personal',
+        client_id: '',
+        role: 'assistant',
+        content: 'working on it',
+        status: 'completed',
+        channel: 'message',
+        created_at: '2026-04-08T00:00:01Z',
+        temporary: true,
+      },
+    })
+
+    state = reduceChatState(state, {
+      type: 'complete_stream_message',
+      streamId: 'stream-1',
+      turnId: 'turn-1',
+      message: {
+        message_id: 'msg_final',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        workspace_id: 'personal',
+        client_id: '',
+        role: 'assistant',
+        content: 'done',
+        status: 'completed',
+        channel: 'message',
+        created_at: '2026-04-08T00:00:02Z',
+      },
+    })
+
+    expect(state.messages[0]?.id).toBe('msg_final')
+    expect(state.messages[0]?.turnId).toBe('turn-1')
+    expect(state.messages[0]?.temporary).toBe(false)
+    expect(state.messages[0]?.content).toBe('done')
     expect(state.messages[0]?.isStreaming).toBe(false)
   })
 

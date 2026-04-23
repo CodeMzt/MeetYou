@@ -245,6 +245,56 @@ class ClientThreadBridge:
             },
         )
 
+    async def publish_temporary_assistant_message(
+        self,
+        session_id: str,
+        *,
+        content: str,
+        turn_id: str = "",
+        stream_id: str = "",
+    ) -> dict[str, Any]:
+        text = str(content or "").strip()
+        if not text:
+            return {"delivered": False, "reason": "empty_content"}
+        gateway, core_services, thread_row, _, binding_metadata, publish_session_id = self._resolve_thread_context(session_id)
+        if gateway is None or core_services is None or thread_row is None:
+            return {"delivered": False, "reason": "thread_unavailable"}
+        workspace_row = core_services.workspace.get_by_id(thread_row.workspace_id)
+        message_id = f"msg_temp_{uuid4().hex}"
+        effective_turn_id = str(turn_id or "").strip()
+        payload_session_id = publish_session_id or session_id
+        message_payload = {
+            "message_id": message_id,
+            "thread_id": thread_row.thread_id,
+            "session_id": payload_session_id,
+            "workspace_id": getattr(workspace_row, "workspace_id", ""),
+            "client_id": str(binding_metadata.get("client_id") or ""),
+            "role": "assistant",
+            "content": text,
+            "status": "completed",
+            "channel": "message",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "temporary": True,
+        }
+        await gateway.publish_client_thread_event(
+            thread_row.thread_id,
+            event_type="message.completed",
+            payload={
+                "thread_id": thread_row.thread_id,
+                "session_id": payload_session_id,
+                "message": message_payload,
+                "stream_id": str(stream_id or ""),
+                "turn_id": effective_turn_id,
+            },
+        )
+        return {
+            "delivered": True,
+            "thread_id": thread_row.thread_id,
+            "session_id": payload_session_id,
+            "turn_id": effective_turn_id,
+            "message_id": message_id,
+        }
+
     async def publish_confirm_request(self, event, *, approval_context: dict[str, Any] | None = None) -> None:
         gateway, core_services, thread_row, _, _, _ = self._resolve_thread_context(event.session_id)
         if gateway is None or core_services is None or thread_row is None:

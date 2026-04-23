@@ -176,6 +176,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("GET", "/desktop/danxi/floors/{floor_id}/target", lambda request: f"/client/danxi/floors/{request.match_info['floor_id']}/target"),
         DesktopApiRoute("GET", "/desktop/memory", lambda _request: "/operator/memory"),
         DesktopApiRoute("GET", "/desktop/memory/graph", lambda _request: "/operator/memory/graph"),
+        DesktopApiRoute("DELETE", "/desktop/memory", lambda _request: "/operator/memory"),
         DesktopApiRoute("PATCH", "/desktop/workspaces/{workspace_id}", lambda request: f"/operator/workspaces/{request.match_info['workspace_id']}"),
         DesktopApiRoute("GET", "/desktop/source-profiles", lambda _request: "/operator/source-profiles"),
         DesktopApiRoute("GET", "/desktop/runtime/usage", lambda _request: "/runtime/usage"),

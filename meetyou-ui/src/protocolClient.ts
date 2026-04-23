@@ -69,6 +69,7 @@ function toClientMessage(value: unknown): ClientMessage | null {
     status: toString(record.status) || 'completed',
     channel: toString(record.channel) || 'message',
     created_at: toString(record.created_at),
+    temporary: toBoolean(record.temporary),
   }
 }
 

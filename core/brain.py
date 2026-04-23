@@ -29,7 +29,7 @@ from core.assistant_modes import (
 from core.brain_session import BrainSession
 from core.public_contract import to_internal_assistant_mode
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
-from core.status import ContextBreakdown, RuntimeStatus, SessionUsageTotals, UsageCounters, utcnow_iso
+from core.status import ContextBreakdown, RuntimeStateSnapshot, RuntimeStatus, SessionUsageTotals, UsageCounters, UsageSnapshot, utcnow_iso
 from core.tool_runtime import ToolCallResult, ToolErrorCategory, ToolSourceType, normalize_tool_result
 from tools.object_operations import redacted_object_debug_entry
 
@@ -356,6 +356,35 @@ class Brain:
         session = self._sessions.pop(session_id, None)
         if session is not None:
             await self._save_session_context(session)
+
+    def clear_all_conversation_state(self) -> dict[str, Any]:
+        base_history = [dict(message) for message in self._base_messages]
+        cleared_session_count = 0
+        active_session_count = 0
+        for session in self._sessions.values():
+            if (
+                len(session.chat_history) > self._base_message_count()
+                or bool(session.metadata)
+                or bool(session.active_stream_id)
+                or bool(session.usage_snapshot.session_totals.turn_count)
+            ):
+                cleared_session_count += 1
+            if str(session.runtime_state.status or RuntimeStatus.IDLE.value) not in {
+                RuntimeStatus.IDLE.value,
+                RuntimeStatus.HEARTBEAT.value,
+            }:
+                active_session_count += 1
+            session.chat_history = [dict(message) for message in base_history]
+            session.active_stream_id = ""
+            session.metadata = {}
+            session.runtime_state = RuntimeStateSnapshot(session_id=session.session_id)
+            session.usage_snapshot = UsageSnapshot(session_id=session.session_id)
+            session.touch()
+        self._global_context = ""
+        return {
+            "cleared_session_count": cleared_session_count,
+            "active_session_count": active_session_count,
+        }
 
     async def _save_session_context(self, session: BrainSession):
         await self._persist_session_context(session)
