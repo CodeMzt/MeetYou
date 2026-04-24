@@ -19,7 +19,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     aiohttp = None
 
-from adapters.base import MODEL_CONTEXT_LIMITS
+from core.model_capabilities import get_model_capability_resolver
 
 logger = logging.getLogger("meetyou.source_catalog")
 
@@ -199,13 +199,9 @@ FALLBACK_SOURCE_PROFILES = {
 
 
 def _fallback_context_limit(model_name: str) -> int:
-    normalized = str(model_name or "").strip()
-    if normalized in MODEL_CONTEXT_LIMITS:
-        return int(MODEL_CONTEXT_LIMITS[normalized])
-    for key, limit in MODEL_CONTEXT_LIMITS.items():
-        if normalized.startswith(key):
-            return int(limit)
-    return 8192
+    resolver = get_model_capability_resolver()
+    capability, _ = resolver.resolve(provider="openai", model=str(model_name or "").strip().lower())
+    return int(capability.context_window)
 
 
 def _normalize_domain(value: str) -> str:

@@ -1,0 +1,60 @@
+{
+  "version": "2026-04-24",
+  "entries": [
+    {
+      "provider": "openai",
+      "model_pattern": "gpt-5.4*",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "source": "registry",
+      "source_url": "https://platform.openai.com/docs/models/compare",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "OpenAI /models payload does not provide stable context fields; prefer versioned registry fallback."
+    },
+    {
+      "provider": "deepseek",
+      "model_pattern": "deepseek-v4-flash*",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "source": "registry",
+      "source_url": "https://api-docs.deepseek.com/",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Docs fallback because DeepSeek /models does not expose token limits."
+    },
+    {
+      "provider": "deepseek",
+      "model_pattern": "deepseek-v4-pro*",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "source": "registry",
+      "source_url": "https://api-docs.deepseek.com/",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Docs fallback because DeepSeek /models does not expose token limits."
+    },
+    {
+      "provider": "deepseek",
+      "model_pattern": "deepseek-chat*",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "source": "registry",
+      "source_url": "https://api-docs.deepseek.com/",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Compatibility mapping to deepseek-v4-flash."
+    },
+    {
+      "provider": "deepseek",
+      "model_pattern": "deepseek-reasoner*",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "source": "registry",
+      "source_url": "https://api-docs.deepseek.com/",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Compatibility mapping to deepseek-v4-flash."
+    }
+  ]
+}

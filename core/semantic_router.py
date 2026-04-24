@@ -435,6 +435,10 @@ _SKILL_EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("trend_watch", "track hot topics, compare breaking developments, and produce a sourced summary"),
         ("news_digest", "追踪时政热点、交叉核验来源并输出摘要"),
     ),
+    "model_capability_refresh": (
+        ("model_limits", "check model context window and output token limits from official provider sources"),
+        ("model_updates", "追踪模型上下文上限、模型更新和 DeepSeek 新版本能力"),
+    ),
 }
 
 _CONTEXT_EXAMPLES = (
@@ -942,6 +946,26 @@ class KeywordFallbackAdapter:
                 ),
             )
             value = bool(matches)
+        elif normalized_name == "model_capability_refresh":
+            matches = _contains_any(
+                lowered,
+                (
+                    "model context",
+                    "context window",
+                    "output limit",
+                    "token limit",
+                    "model update",
+                    "deepseek",
+                    "gemini",
+                    "anthropic models",
+                    "openai compare",
+                    "模型上下文",
+                    "模型更新",
+                    "输出上限",
+                    "token 上限",
+                ),
+            )
+            value = bool(matches)
         return SemanticDecisionResult(
             value=value,
             confidence="high" if value else "low",
@@ -1098,6 +1122,7 @@ class SemanticRouterAgent:
             "knowledge_synthesis",
             "office_coordination",
             "hotspot_tracking",
+            "model_capability_refresh",
         ):
             decision = self.evaluate_skill_activation(
                 skill_name,

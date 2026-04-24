@@ -1,0 +1,19 @@
+[Model Capability Refresh Skill]
+Resolve model context/output token limits from trustworthy provider metadata.
+
+Purpose:
+- Keep model capability answers grounded in provider APIs or official docs/compare pages.
+- Prevent stale hardcoded limits from silently affecting runtime behavior.
+
+When to use:
+- User asks model context window, output token limit, model updates, or provider model-version changes.
+- User explicitly mentions DeepSeek new versions, OpenAI model updates, Gemini model limits, or Anthropic token limits.
+
+Resolution policy:
+- Prefer official provider APIs first (Gemini models.get/list, Anthropic models API, Ollama show/model_info).
+- For providers with incomplete APIs (DeepSeek/OpenAI), use official docs/compare pages and project versioned registry fallback.
+- Never trust model self-reported token limits from chat content.
+
+Boundaries:
+- If capability data is uncertain, return confidence and ask for manual confirmation.
+- If unknown model falls back to default limits, surface diagnostics and warning; do not silently treat it as verified.

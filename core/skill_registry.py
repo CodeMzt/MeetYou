@@ -180,6 +180,16 @@ _DEFAULT_REUSABLE_SKILL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "scenarios": ["news digests", "hot topics", "trend tracking"],
         "recommended_tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
     },
+    "model_capability_refresh": {
+        "id": "model_capability_refresh",
+        "skill_type": "reusable",
+        "title": "Model Capability Refresh Skill",
+        "summary": "刷新模型 context/output token 能力并标记可信来源。",
+        "file_name": "model-capability-refresh",
+        "applicable_modes": ["normal", "research", "documents"],
+        "scenarios": ["model context limits", "model update checks", "provider capability refresh"],
+        "recommended_tools": ["refresh_model_capabilities"],
+    },
 }
 
 

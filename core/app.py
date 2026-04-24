@@ -1437,6 +1437,24 @@ class App:
             "session_state": self.brain.get_session_runtime_snapshot(session_id) if session_id else None,
         }
 
+    async def refresh_model_capabilities(
+        self,
+        *,
+        provider: str,
+        model: str,
+        api_base_url: str = "",
+        api_key: str = "",
+    ) -> dict[str, Any]:
+        from core.model_capabilities import get_model_capability_resolver
+
+        resolver = get_model_capability_resolver()
+        return await resolver.refresh_model_capabilities(
+            provider=provider,
+            model=model,
+            api_base_url=api_base_url,
+            api_key=api_key,
+        )
+
     def get_core_mcp_diagnostics(self) -> dict[str, Any]:
         configured_servers = sorted(self.config.get_mcp_servers())
         mcp_manager = getattr(self, "mcp_manager", None)

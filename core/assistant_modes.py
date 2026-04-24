@@ -644,6 +644,11 @@ _SKILL_PROMPT_FALLBACKS = {
         "Track evolving public topics, compare multiple sources, and produce a structured digest with clear freshness boundaries.\n"
         "Prefer available web and browser MCP capabilities, and fall back to native research tools when those integrations are unavailable."
     ),
+    "model-capability-refresh": (
+        "[Model Capability Refresh Skill]\n"
+        "When users ask about model context/output limits or model-version updates, refresh provider model capabilities from official sources.\n"
+        "Prefer provider APIs first, then official docs/compare pages or versioned registry fallback; never trust self-reported model token limits."
+    ),
     "mode-danxi": (
         "[Danxi Mode Skill]\n"
         "Operate as a campus-forum workflow specialist.\n"
@@ -689,6 +694,11 @@ _DEFAULT_PROMPT_REGISTRY = {
         "path": "prompt/SKILL/hotspot-tracking",
         "kind": "skill",
         "fallback": _SKILL_PROMPT_FALLBACKS["hotspot-tracking"],
+    },
+    "skill:model-capability-refresh": {
+        "path": "prompt/SKILL/model-capability-refresh",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["model-capability-refresh"],
     },
     "skill:mode-danxi": {
         "path": "prompt/SKILL/mode-danxi",
@@ -756,6 +766,14 @@ _DEFAULT_SKILL_REGISTRY = {
         "scenes": ["danxi_forum_ops"],
         "activation_keywords": ["danxi", "旦夕", "fduhole", "forum", "帖子", "楼层", "校内论坛"],
     },
+    "model_capability_refresh": {
+        "prompts": ["skill:model-capability-refresh"],
+        "tools": [],
+        "mcp_servers": [],
+        "scenes": ["model_capability_updates"],
+        "activation_keywords": ["model context", "output limit", "token limit", "模型上下文", "模型更新", "deepseek", "openai model", "gemini model"],
+        "authorization": {"read_only": True},
+    },
 }
 
 _DEFAULT_SCENE_DEFINITIONS = {
@@ -783,7 +801,7 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "title": "Research Synthesis",
         "summary": "科研、资料核验与来源追踪。",
         "applicable_modes": ["research", "normal"],
-        "skills": ["research_grounding", "knowledge_synthesis"],
+        "skills": ["research_grounding", "knowledge_synthesis", "model_capability_refresh"],
         "tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
         "mcp_servers": ["tavily_web", "browser_automation"],
         "fallback_tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
@@ -809,6 +827,17 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "mcp_servers": ["filesystem_tools"],
         "fallback_tools": ["build_study_plan", "extract_learning_points", "summarize_text"],
         "activation_keywords": ["study", "quiz", "flashcard", "学习", "复习", "知识点"],
+    },
+    "model_capability_updates": {
+        "title": "Model Capability Updates",
+        "summary": "模型 context/output token 能力刷新与可信来源核验。",
+        "applicable_modes": ["normal", "research", "documents"],
+        "skills": ["model_capability_refresh"],
+        "tools": ["search_web", "read_web_page"],
+        "mcp_servers": ["tavily_web"],
+        "fallback_tools": ["search_web", "read_web_page"],
+        "activation_keywords": ["model context", "context window", "output limit", "token limit", "模型上下文", "模型更新", "deepseek 新版本", "openai model update"],
+        "authorization": {"read_only": True},
     },
     "hotspot_tracking": {
         "title": "Hotspot Tracking",

@@ -91,13 +91,27 @@ class LLMAdapter(ABC):
     Abstract base class for provider adapters.
     """
 
+    def get_context_limit_info(self, model_name: str, *, provider_name: str = "") -> dict[str, Any]:
+        normalized_provider = str(provider_name or "").strip().lower()
+        if not normalized_provider:
+            normalized_provider = self.__class__.__name__.replace("Adapter", "").lower()
+        normalized_model = str(model_name or "").strip().lower()
+        from core.model_capabilities import get_model_capability_resolver
+
+        resolver = get_model_capability_resolver()
+        capability, diagnostic = resolver.resolve(provider=normalized_provider, model=normalized_model)
+        return {
+            "context_limit_tokens": int(capability.context_window),
+            "max_output_tokens": int(capability.max_output_tokens),
+            "provider": normalized_provider,
+            "model": normalized_model,
+            "source": str(diagnostic.get("source") or capability.source),
+            "confidence": str(diagnostic.get("confidence") or capability.confidence),
+            "diagnostic": str(diagnostic.get("diagnostic") or ""),
+        }
+
     def get_context_limit(self, model_name: str) -> int:
-        if model_name in MODEL_CONTEXT_LIMITS:
-            return MODEL_CONTEXT_LIMITS[model_name]
-        for key, limit in MODEL_CONTEXT_LIMITS.items():
-            if model_name.startswith(key):
-                return limit
-        return 8192
+        return int(self.get_context_limit_info(model_name).get("context_limit_tokens", 8192) or 8192)
 
     @abstractmethod
     def format_messages(self, messages: list[dict]) -> Any:

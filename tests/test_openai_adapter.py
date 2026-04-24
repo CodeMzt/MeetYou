@@ -55,6 +55,12 @@ class FakeSession:
 
 
 class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def test_get_context_limit_uses_registry_for_gpt_5_4_family(self):
+        adapter = OpenAIAdapter()
+        self.assertEqual(adapter.get_context_limit("gpt-5.4"), 400000)
+        self.assertEqual(adapter.get_context_limit("gpt-5.4-mini"), 400000)
+        self.assertEqual(adapter.get_context_limit("gpt-5.4-nano"), 400000)
+
     def test_format_messages_drops_dangling_tool_call_sequences(self):
         adapter = OpenAIAdapter()
 
