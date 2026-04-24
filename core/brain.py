@@ -31,6 +31,7 @@ from core.public_contract import to_internal_assistant_mode
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.status import ContextBreakdown, RuntimeStateSnapshot, RuntimeStatus, SessionUsageTotals, UsageCounters, UsageSnapshot, utcnow_iso
 from core.tool_runtime import ToolCallResult, ToolErrorCategory, ToolSourceType, normalize_tool_result
+from core.model_capabilities import ModelCapabilityResolver
 from tools.object_operations import redacted_object_debug_entry
 
 logger = logging.getLogger("meetyou.brain")
@@ -635,6 +636,7 @@ class Brain:
             snapshot.get("current_context_tokens_estimated", 0) or 0
         )
         session.usage_snapshot.context_breakdown = ContextBreakdown.from_mapping(snapshot.get("context_breakdown") or {})
+        session.usage_snapshot.context_budget_breakdown = dict(snapshot.get("context_budget_breakdown") or {})
         totals = dict(snapshot.get("session_totals") or {})
         session.usage_snapshot.last_turn_usage = UsageCounters(
             prompt_tokens=int((snapshot.get("last_turn_usage") or {}).get("prompt_tokens", 0) or 0),
@@ -2392,6 +2394,7 @@ class Brain:
         *,
         model: str,
         context_breakdown: dict[str, int],
+        context_budget_breakdown: dict[str, Any] | None,
         turn_usage: UsageCounters,
         usage_source: str,
         context_limit_info: dict[str, Any] | None = None,
@@ -2411,6 +2414,7 @@ class Brain:
             context_limit_info.get("context_limit_confidence") or "low"
         )
         session.usage_snapshot.context_breakdown = ContextBreakdown.from_mapping(context_breakdown)
+        session.usage_snapshot.context_budget_breakdown = dict(context_budget_breakdown or {})
         session.usage_snapshot.current_context_tokens_estimated = session.usage_snapshot.context_breakdown.total
         session.usage_snapshot.last_turn_usage = UsageCounters(
             prompt_tokens=turn_usage.prompt_tokens,
@@ -2421,6 +2425,7 @@ class Brain:
         session.usage_snapshot.usage_source = usage_source
         session.usage_snapshot.updated_at = utcnow_iso()
         session.metadata["last_context_snapshot"] = session.usage_snapshot.context_breakdown.to_dict()
+        session.metadata["last_context_budget_snapshot"] = dict(session.usage_snapshot.context_budget_breakdown)
         session.metadata["last_turn_usage"] = session.usage_snapshot.last_turn_usage.to_dict()
         session.metadata["session_totals"] = session.usage_snapshot.session_totals.to_dict()
         session.metadata["usage_source"] = usage_source
@@ -2546,6 +2551,7 @@ class Brain:
 
         adapter_options = self._build_adapter_options(model_options)
         turn_counted = False
+        retry_context_limit_once = False
 
         while True:
             policy_messages = self._build_mode_policy_messages(route_context, requested_mode=requested_mode) + [
@@ -2580,10 +2586,73 @@ class Brain:
             )
             messages = list(context_plan.get("messages") or [])
             context_breakdown = dict(context_plan.get("breakdown") or {})
+            capability_budget = ModelCapabilityResolver.resolve(
+                context_limit_info=context_limit_info,
+                model_options=model_options,
+            )
+            context_budget_breakdown = capability_budget.to_dict()
+            context_budget_breakdown["request_tokens_estimated"] = int(
+                getattr(self._context_manager, "estimate_tokens")(messages)
+                if callable(getattr(self._context_manager, "estimate_tokens", None))
+                else sum(self._estimate_message_tokens(message) for message in messages)
+            )
+            context_budget_breakdown["over_input_budget"] = bool(
+                context_budget_breakdown["request_tokens_estimated"] > capability_budget.target_input_tokens
+            )
+            if context_budget_breakdown["over_input_budget"] and not transient_turn:
+                try:
+                    trim_result = await self._context_manager.trim_history(
+                        session.chat_history,
+                        model,
+                        self._http_session,
+                        api_url,
+                        api_key,
+                        reserve_ratio=0.65,
+                        context_limit_override=int(context_limit_info.get("context_limit_tokens", 0) or 0),
+                        session_id=session.session_id,
+                        provider_name=provider_name,
+                        preserve_message_count=self._base_message_count(),
+                    ) or {}
+                except TypeError:
+                    trim_result = await self._context_manager.trim_history(
+                        session.chat_history,
+                        model,
+                        self._http_session,
+                        api_url,
+                        api_key,
+                    ) or {}
+                trimmed_summary = str(trim_result.get("conversation_summary") or "").strip()
+                if trimmed_summary:
+                    session.metadata["conversation_summary"] = trimmed_summary
+                context_plan = await self._build_context_plan(
+                    session=session,
+                    turn_input_index=turn_input_index,
+                    current_turn_messages=current_turn_messages,
+                    auto_memory_message=auto_memory_message,
+                    policy_messages=policy_messages,
+                    proprioception_message=proprioception_message,
+                    route_context=route_context,
+                    requested_mode=requested_mode,
+                    model=model,
+                    provider_name=provider_name,
+                    api_url=api_url,
+                    context_limit_info=context_limit_info,
+                )
+                messages = list(context_plan.get("messages") or [])
+                context_breakdown = dict(context_plan.get("breakdown") or {})
+                context_budget_breakdown["request_tokens_estimated"] = int(
+                    getattr(self._context_manager, "estimate_tokens")(messages)
+                    if callable(getattr(self._context_manager, "estimate_tokens", None))
+                    else sum(self._estimate_message_tokens(message) for message in messages)
+                )
+                context_budget_breakdown["over_input_budget"] = bool(
+                    context_budget_breakdown["request_tokens_estimated"] > capability_budget.target_input_tokens
+                )
             session.metadata["last_context_plan"] = {
                 "length_policy": dict(context_plan.get("length_policy") or {}),
                 "layers": dict(context_plan.get("layers") or {}),
                 "breakdown": dict(context_breakdown),
+                "context_budget_breakdown": dict(context_budget_breakdown),
             }
 
             tools = self._get_tools_for_route(route_context, requested_mode=requested_mode)
@@ -2664,11 +2733,47 @@ class Brain:
                             },
                         )
             except Exception as exc:
+                code = str(getattr(exc, "runtime_error_payload", {}).get("code") or "")
+                if code == "provider_context_limit_exceeded" and not retry_context_limit_once and not transient_turn:
+                    retry_context_limit_once = True
+                    try:
+                        retry_trim = await self._context_manager.trim_history(
+                            session.chat_history,
+                            model,
+                            self._http_session,
+                            api_url,
+                            api_key,
+                            reserve_ratio=0.6,
+                            context_limit_override=int(context_limit_info.get("context_limit_tokens", 0) or 0),
+                            session_id=session.session_id,
+                            provider_name=provider_name,
+                            preserve_message_count=self._base_message_count(),
+                        ) or {}
+                    except TypeError:
+                        retry_trim = await self._context_manager.trim_history(
+                            session.chat_history,
+                            model,
+                            self._http_session,
+                            api_url,
+                            api_key,
+                        ) or {}
+                    retry_summary = str(retry_trim.get("conversation_summary") or "").strip()
+                    if retry_summary:
+                        session.metadata["conversation_summary"] = retry_summary
+                    compression_snapshot = dict(retry_trim.get("compression") or compression_snapshot)
+                    session.metadata["last_compression"] = compression_snapshot
+                    continue
                 failure_payload = self._build_failure_payload_from_exception(
                     exc,
                     request_debug=request_debug,
                     compression=compression_snapshot,
                 )
+                if code == "provider_context_limit_exceeded":
+                    details = dict(failure_payload.get("details") or {})
+                    details["actionable_suggestion"] = (
+                        "请缩短本轮输入，或开启更高上下文窗口模型后重试。系统已自动压缩历史并重试一次。"
+                    )
+                    failure_payload["details"] = details
                 self._record_session_failure(session, failure_payload)
                 try:
                     setattr(exc, "runtime_error_payload", failure_payload)
@@ -2707,6 +2812,7 @@ class Brain:
                 session,
                 model=model,
                 context_breakdown=context_breakdown,
+                context_budget_breakdown=context_budget_breakdown,
                 turn_usage=turn_usage,
                 usage_source=usage_source,
                 context_limit_info=context_limit_info,

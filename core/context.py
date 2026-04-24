@@ -146,6 +146,7 @@ class ContextManager:
                 "tool_history": max(128, int(target_input_tokens * 0.1)),
                 "current_input": max(128, int(target_input_tokens * 0.12)),
                 "proprioception": max(64, int(target_input_tokens * 0.08)),
+                "tool_result_budget": max(256, int(context_limit * 0.08)),
             },
         }
 
@@ -264,15 +265,57 @@ class ContextManager:
 
         messages = compose_messages()
         recent_history_turns = int(length_policy.get("recent_history_turns", 8) or 8)
+        protected_message_ids: set[int] = set()
+        recent_anchor = max(len(selected_history) - (recent_history_turns * 2), 0)
+        protected_message_ids.update(id(message) for message in selected_history[recent_anchor:])
+        pending_tool_call_ids: set[str] = set()
+        for message in selected_history:
+            if message.get("tool_calls"):
+                for tool_call in message.get("tool_calls") or []:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    call_id = str(tool_call.get("id") or "").strip()
+                    if call_id:
+                        pending_tool_call_ids.add(call_id)
+            if message.get("role") == "tool":
+                tool_call_id = str(message.get("tool_call_id") or "").strip()
+                if tool_call_id:
+                    pending_tool_call_ids.discard(tool_call_id)
+        if pending_tool_call_ids:
+            for idx, message in enumerate(selected_history):
+                if message.get("tool_calls"):
+                    call_ids = {
+                        str(item.get("id") or "").strip()
+                        for item in (message.get("tool_calls") or [])
+                        if isinstance(item, dict)
+                    }
+                    if call_ids & pending_tool_call_ids:
+                        protected_message_ids.add(id(message))
         while self.estimate_tokens(messages) > int(length_policy.get("target_input_tokens", 0) or 0) and selected_history:
             removal_index = 0
             removable_prefix = max(len(selected_history) - recent_history_turns, 0)
             if removable_prefix > 0:
-                candidate_window = selected_history[:removable_prefix]
+                candidate_window = [
+                    message
+                    for idx, message in enumerate(selected_history[:removable_prefix])
+                    if id(message) not in protected_message_ids
+                ]
+                candidate_positions = [
+                    idx
+                    for idx in range(removable_prefix)
+                    if id(selected_history[idx]) not in protected_message_ids
+                ]
+                if not candidate_window:
+                    break
                 candidate_scores = [self._trim_priority(message) for message in candidate_window]
-                removal_index = min(range(len(candidate_window)), key=lambda idx: candidate_scores[idx])
+                removal_pick = min(range(len(candidate_window)), key=lambda idx: candidate_scores[idx])
+                removal_index = candidate_positions[removal_pick]
             else:
-                removable_roles = [idx for idx, message in enumerate(selected_history) if message.get("role") == "tool" or message.get("tool_calls")]
+                removable_roles = [
+                    idx
+                    for idx, message in enumerate(selected_history)
+                    if (message.get("role") == "tool" or message.get("tool_calls")) and id(message) not in protected_message_ids
+                ]
                 if not removable_roles:
                     break
                 removal_index = removable_roles[0]
@@ -355,12 +398,23 @@ class ContextManager:
         preserve_count = max(int(preserve_message_count), 0)
         removable_history = list(chat_history[preserve_count:])
         messages_to_summarize = []
+        tool_result_budget = int((length_policy.get("budgets") or {}).get("tool_result_budget", 0) or 0)
         while self.estimate_tokens(chat_history[:preserve_count] + removable_history) > usable_tokens and len(removable_history) > 2:
             candidate_window = removable_history[:-2] if len(removable_history) > 2 else removable_history
             if not candidate_window:
                 break
-            candidate_scores = [self._trim_priority(message) for message in candidate_window]
-            removal_index = min(range(len(candidate_window)), key=lambda idx: candidate_scores[idx])
+            oversized_tool_indexes = [
+                idx
+                for idx, message in enumerate(candidate_window)
+                if message.get("role") == "tool"
+                and tool_result_budget > 0
+                and self.estimate_message_tokens(message) > tool_result_budget
+            ]
+            if oversized_tool_indexes:
+                removal_index = oversized_tool_indexes[0]
+            else:
+                candidate_scores = [self._trim_priority(message) for message in candidate_window]
+                removal_index = min(range(len(candidate_window)), key=lambda idx: candidate_scores[idx])
             messages_to_summarize.append(removable_history.pop(removal_index))
 
         if not messages_to_summarize:
@@ -512,6 +566,11 @@ class ContextManager:
         tool_call_id_line = self._summary_line("tool_call_id", message.get("tool_call_id"))
         if tool_call_id_line:
             lines.append(tool_call_id_line)
+        metadata = dict(message.get("metadata") or {})
+        attachment_refs = metadata.get("attachment_ids") or metadata.get("source_ids") or metadata.get("source_id")
+        attachment_line = self._summary_line("attachment_refs", attachment_refs)
+        if attachment_line:
+            lines.append(attachment_line)
         return "\n".join(lines)
 
     async def _summarize(

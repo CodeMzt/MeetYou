@@ -382,6 +382,26 @@ class SummaryUsageContextManager(FakeContextManager):
         }
 
 
+class ContextLimitRetryAdapter:
+    def __init__(self):
+        self.call_count = 0
+
+    async def stream_chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
+        del session, api_url, api_key, model, messages, tools, kwargs
+        self.call_count += 1
+        if self.call_count == 1:
+            err = RuntimeError("context overflow")
+            err.runtime_error_payload = {
+                "code": "provider_context_limit_exceeded",
+                "category": "validation",
+                "message": "context too long",
+                "retryable": True,
+                "details": {},
+            }
+            raise err
+        yield StreamEvent(type="text", text="recovered")
+
+
 class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_brain_injects_structured_time_context_into_turn(self):
         adapter = QueuedStreamAdapter(
@@ -695,6 +715,36 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             usage_payload = next(event.usage for event in events if event.type == "usage")
             self.assertEqual(usage_payload["usage_source"], "estimated")
             self.assertGreater(usage_payload["last_turn_usage"]["total_tokens"], 7)
+        finally:
+            await brain.close_brain()
+
+    async def test_brain_retries_once_on_provider_context_limit_exceeded(self):
+        brain = Brain(
+            ContextLimitRetryAdapter(),
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+        try:
+            events = []
+            async for event in brain.input_brain(
+                "session-context-retry",
+                {"role": "user", "content": "long request"},
+                "key",
+                "url",
+                "gpt-4o",
+                model_options={"thinking": {"enabled": True, "budget_tokens": 256}},
+            ):
+                events.append(event)
+            self.assertEqual("".join(event.text or "" for event in events if event.type == "answer_text"), "recovered")
+            usage_payload = next(event.usage for event in events if event.type == "usage")
+            breakdown = usage_payload.get("context_budget_breakdown") or {}
+            self.assertGreater(breakdown.get("context_window", 0), 0)
+            self.assertGreater(breakdown.get("max_output_tokens", 0), 0)
+            self.assertGreater(breakdown.get("reserved_reasoning_tokens", 0), 0)
+            self.assertGreater(breakdown.get("tool_result_budget", 0), 0)
         finally:
             await brain.close_brain()
 
