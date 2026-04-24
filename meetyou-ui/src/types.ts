@@ -227,6 +227,7 @@ export interface ClientMessage {
   status: string
   channel: string
   created_at: string
+  temporary?: boolean
 }
 
 export interface ClientMessageCreatePayload {
@@ -486,6 +487,7 @@ export interface ChatTurn {
   createdAt: number
   trimmedActivityCount?: number
   error?: string
+  temporary?: boolean
   confirmRequest?: ConfirmRequestPayload | null
   confirmResponse?: { accepted: boolean } | null
   humanInputRequest?: HumanInputRequestPayload | null

@@ -400,6 +400,89 @@ class ContextManager:
         )
         return result
 
+    async def compact_history_for_idle_heartbeat(
+        self,
+        chat_history: list[dict],
+        *,
+        model: str,
+        session,
+        api_url: str,
+        api_key: str,
+        session_id: str = "",
+        provider_name: str = "",
+        preserve_message_count: int = 1,
+        recent_message_count: int = 6,
+    ) -> dict:
+        preserve_count = max(int(preserve_message_count), 0)
+        recent_count = max(int(recent_message_count), 2)
+        current_tokens = self.estimate_tokens(chat_history)
+        result = {
+            "summary_usage": None,
+            "current_tokens": current_tokens,
+            "conversation_summary": "",
+            "trimmed_messages": 0,
+            "compression": {
+                "triggered": False,
+                "level": "none",
+                "reason": "idle_heartbeat",
+                "trimmed_messages": 0,
+                "before_tokens": current_tokens,
+                "after_tokens": current_tokens,
+                "summary_tokens": 0,
+            },
+        }
+
+        preserved = list(chat_history[:preserve_count])
+        tail = list(chat_history[preserve_count:])
+        if len(tail) <= recent_count:
+            return result
+
+        def _is_meaningful(message: dict) -> bool:
+            metadata = dict(message.get("metadata") or {})
+            if metadata.get("transient"):
+                return False
+            content = message.get("content")
+            return bool(str(content or "").strip()) or bool(message.get("tool_calls")) or bool(message.get("provider_items"))
+
+        messages_to_summarize = [message for message in tail[:-recent_count] if _is_meaningful(message)]
+        if not messages_to_summarize:
+            return result
+
+        summary, summary_usage = await self._summarize(
+            messages_to_summarize,
+            session,
+            api_url,
+            api_key,
+            model,
+            existing_summary=self._normalize_conversation_summary(await self.load_context(session_id)) if session_id else "",
+        )
+        normalized_summary = self._normalize_conversation_summary(summary)
+        if normalized_summary:
+            await self.update_context(normalized_summary, session_id=session_id)
+
+        chat_history[:] = preserved + tail[-recent_count:]
+        after_tokens = self.estimate_tokens(chat_history)
+        result["summary_usage"] = summary_usage
+        result["current_tokens"] = after_tokens
+        result["conversation_summary"] = normalized_summary
+        result["trimmed_messages"] = len(messages_to_summarize)
+        result["compression"] = {
+            "triggered": True,
+            "level": "idle_heartbeat_summary",
+            "reason": "idle_heartbeat",
+            "trimmed_messages": len(messages_to_summarize),
+            "before_tokens": current_tokens,
+            "after_tokens": after_tokens,
+            "summary_tokens": self.estimate_text_tokens(normalized_summary),
+            "provider_name": str(provider_name or ""),
+        }
+        logger.info(
+            "Idle heartbeat context compaction complete: compressed %s messages for session %s",
+            len(messages_to_summarize),
+            session_id,
+        )
+        return result
+
     @staticmethod
     def _summary_line(prefix: str, value: Any) -> str:
         text = ""

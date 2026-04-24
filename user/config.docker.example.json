@@ -1,0 +1,77 @@
+{
+  "api_provider": "openai",
+  "api_url": "https://api.openai.com/v1/responses",
+  "model": "gpt-5.4",
+  "thinking_enabled": true,
+  "thinking_effort": "medium",
+  "thinking_budget_tokens": 2048,
+  "heartbeat_api_provider": "openai",
+  "heartbeat_api_url": "https://api.openai.com/v1/responses",
+  "heart_model": "gpt-5.4-mini",
+  "heartbeat_interval": 60,
+  "heartbeat_idle_poke_enabled": true,
+  "heartbeat_idle_poke_after_seconds": 3600,
+  "heartbeat_idle_poke_cooldown_seconds": 3600,
+  "heartbeat_idle_context_compaction_enabled": true,
+  "housekeeping_interval": 300,
+  "scheduler_interval": 30,
+  "embedding_model": "text-embedding-3-small",
+  "embedding_api_url": "https://api.openai.com/v1/embeddings",
+  "soul_path": "prompt/soul",
+  "start_path": "prompt/start",
+  "heartbeat_path": "prompt/heartbeat",
+  "memory_file_path": "user/memory_graph.json",
+  "task_file_path": "user/memory_tasks.json",
+  "tools_schema_path": "user/tools.json",
+  "assistant_modes": {
+    "skill_prompt_dir": "prompt/SKILL",
+    "basic_tools": [
+      "ask_human",
+      "get_current_system_time",
+      "search_knowledge",
+      "search_memory",
+      "search_web",
+      "read_web_page",
+      "remember_knowledge"
+    ],
+    "skills": {
+      "task_recognition": {
+        "tools": ["manage_tasks"]
+      }
+    }
+  },
+  "mode_router": {
+    "default_mode": "general",
+    "sticky_current_mode": true,
+    "allow_preferred_override": true,
+    "allow_in_turn_switch": true,
+    "max_switches_per_round": 0,
+    "max_switches_per_turn": 0,
+    "max_tool_calls_per_round": 0,
+    "fallback_to_heuristic": true
+  },
+  "trusted_write_roots": [
+    "docs",
+    "user"
+  ],
+  "source_catalog_path": "user/source_catalog.json",
+  "cmd_policy_path": "user/cmd_policy.json",
+  "mcp_registry_url": "https://registry.modelcontextprotocol.io/v0.1/servers",
+  "research_contact_email": "",
+  "enable_feishu_bot": false,
+  "enable_wechat_bot": false,
+  "wechat_ilink_base_url": "https://ilinkai.weixin.qq.com",
+  "wechat_ilink_channel_version": "2.1.7",
+  "wechat_ilink_token_file": "user/wechat_ilink_state.json",
+  "wechat_ilink_qr_output_path": "user/wechat-ilink-login-qr.png",
+  "wechat_ilink_poll_timeout_ms": 35000,
+  "wechat_ilink_login_poll_interval_seconds": 3,
+  "wechat_ilink_max_text_chars": 2000,
+  "gateway_cors_origins": [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173"
+  ],
+  "gateway_host": "0.0.0.0",
+  "gateway_port": 8000,
+  "feishu_broadcast_chat_ids": []
+}

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  clearDesktopMemory,
   createDanxiReply,
   deleteDanxiReply,
   fetchRuntimeUsageSnapshot,
@@ -87,6 +88,35 @@ describe('clientApi', () => {
     expect(snapshot.usage_ready).toBe(false)
     expect(snapshot.context_limit_tokens).toBe(128000)
     expect(snapshot.session_totals.turn_count).toBe(0)
+  })
+
+  it('clears memory through desktop operator surface', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          cleared_record_count: 4,
+          cleared_edge_count: 3,
+          cleared_session_summary_count: 2,
+          cleared_global_summary: true,
+          cleared_session_count: 2,
+          active_session_count: 0,
+          updated_at: '2026-04-23T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const result = await clearDesktopMemory('http://127.0.0.1:8000')
+
+    expect(result.ok).toBe(true)
+    expect(result.cleared_record_count).toBe(4)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/desktop/memory',
+      expect.objectContaining({
+        method: 'DELETE',
+      }),
+    )
   })
 
   it('loads procedures from client API', async () => {
@@ -709,6 +739,24 @@ describe('clientApi', () => {
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] || []
     const headers = new Headers(init?.headers)
     expect(headers.get('Authorization')).toBeNull()
+  })
+
+  it('creates websocket urls against desktop bridge instead of Core client ws', async () => {
+    vi.resetModules()
+    globalThis.localStorage = {
+      getItem: vi.fn().mockReturnValue('local-bridge-token'),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      key: vi.fn(),
+      length: 0,
+    } as unknown as Storage
+    ;(globalThis as { window?: Window }).window = {} as Window
+
+    const { createClientWsUrl: createWsUrl } = await import('./clientApi')
+    const url = await createWsUrl('http://127.0.0.1:38951', 'thr_1')
+
+    expect(url).toBe('ws://127.0.0.1:38951/desktop/ws?thread_id=thr_1&access_token=local-bridge-token')
   })
 
   it('prefers direct browser download for presigned attachment tickets', () => {

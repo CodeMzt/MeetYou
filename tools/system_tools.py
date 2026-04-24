@@ -12,6 +12,7 @@ import logging
 import re
 
 from core.io_protocol import EventTarget, TargetKind
+from core.runtime_context import get_event_context
 
 logger = logging.getLogger("meetyou.system_tools")
 
@@ -20,6 +21,9 @@ _platform_adapter = None
 _cmd_policy = None
 _event_bus = None
 _background_status_provider = None
+_heartbeat_settings_provider = None
+_heartbeat_settings_updater = None
+_temporary_reply_emitter = None
 _agent_dispatcher = None
 _allow_local_fallback = True
 
@@ -76,6 +80,21 @@ def init_system_tools(
 def set_background_status_provider(provider):
     global _background_status_provider
     _background_status_provider = provider
+
+
+def set_heartbeat_settings_provider(provider):
+    global _heartbeat_settings_provider
+    _heartbeat_settings_provider = provider
+
+
+def set_heartbeat_settings_updater(updater):
+    global _heartbeat_settings_updater
+    _heartbeat_settings_updater = updater
+
+
+def set_temporary_reply_emitter(emitter):
+    global _temporary_reply_emitter
+    _temporary_reply_emitter = emitter
 
 
 def set_agent_dispatcher(dispatcher):
@@ -334,6 +353,13 @@ async def get_background_status() -> str:
             payload["system_vitals"] = _platform_adapter.get_system_vitals()
         except Exception as exc:
             payload["system_vitals_error"] = str(exc)
+        describe_capabilities = getattr(_platform_adapter, "describe_capabilities", None)
+        if callable(describe_capabilities):
+            try:
+                payload["platform_capabilities"] = describe_capabilities()
+            except Exception as exc:
+                payload["platform_capabilities_error"] = str(exc)
+        payload["platform_adapter"] = type(_platform_adapter).__name__
 
     payload["current_time"] = (
         datetime.datetime.now(datetime.timezone.utc)
@@ -341,4 +367,79 @@ async def get_background_status() -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+async def manage_heartbeat_settings(action: str = "get", updates: dict | None = None) -> str:
+    normalized_action = str(action or "get").strip().lower()
+    if normalized_action not in {"get", "update"}:
+        return json.dumps(
+            {"ok": False, "error": "action must be get or update"},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    allowed = {
+        "heartbeat_idle_poke_enabled",
+        "heartbeat_idle_poke_after_seconds",
+        "heartbeat_idle_poke_cooldown_seconds",
+        "heartbeat_idle_context_compaction_enabled",
+    }
+
+    if normalized_action == "get":
+        provider = _heartbeat_settings_provider
+        payload = provider() if provider is not None else {}
+        if asyncio.iscoroutine(payload):
+            payload = await payload
+        return json.dumps({"ok": True, **(payload if isinstance(payload, dict) else {})}, ensure_ascii=False, indent=2)
+
+    requested = dict(updates or {})
+    sanitized = {key: value for key, value in requested.items() if key in allowed}
+    rejected = sorted(str(key) for key in requested if key not in allowed)
+    updater = _heartbeat_settings_updater
+    if updater is None:
+        return json.dumps(
+            {"ok": False, "error": "heartbeat settings updater is not available", "rejected_keys": rejected},
+            ensure_ascii=False,
+            indent=2,
+        )
+    result = updater(sanitized)
+    if asyncio.iscoroutine(result):
+        result = await result
+    return json.dumps(
+        {"ok": True, "requested_keys": sorted(sanitized), "rejected_keys": rejected, "result": result or {}},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+async def emit_temporary_reply(content: str, session_id: str = "", source=None) -> str:
+    text = re.sub(r"\s+", " ", str(content or "").strip())
+    if not text:
+        return json.dumps({"ok": False, "error": "content is required"}, ensure_ascii=False, indent=2)
+    if len(text) > 120:
+        text = text[:117].rstrip() + "..."
+
+    emitter = _temporary_reply_emitter
+    if emitter is None:
+        return json.dumps(
+            {"ok": False, "error": "temporary reply emitter is not available"},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    context = get_event_context()
+    resolved_session_id = str(session_id or context.get("session_id") or "").strip()
+    result = emitter(
+        text,
+        session_id=resolved_session_id,
+        source=source if source is not None else context.get("source"),
+        turn_id=str(context.get("turn_id") or "").strip(),
+    )
+    if asyncio.iscoroutine(result):
+        result = await result
+    payload = dict(result or {})
+    payload.setdefault("ok", bool(payload.get("delivered")))
+    payload.setdefault("content", text)
+    payload.setdefault("session_id", resolved_session_id)
     return json.dumps(payload, ensure_ascii=False, indent=2)

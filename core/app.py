@@ -60,6 +60,7 @@ from platform_layer.detector import detect_platform
 from sensors.feishu_input_adapter import FeishuInputAdapter
 from sensors.feishu_output_adapter import FeishuOutputAdapter
 from sensors.proprioceptor import Proprioceptor
+from sensors.wechat_ilink_adapter import WeChatInputAdapter, WeChatOutputService
 from service_runtime.models import RuntimeError
 from tools import system_tools
 from tools.mcp import MCPManager
@@ -76,6 +77,7 @@ class SessionExecutionRequest:
     input_info: dict[str, Any]
     target: EventTarget
     is_boot: bool
+    is_proactive_idle_poke: bool = False
 
 
 def _normalize_task_summary(task_record: dict[str, Any]) -> str:
@@ -135,6 +137,10 @@ _HEART_IMMEDIATE_KEYS = {
     "heartbeat_api_key",
     "housekeeping_interval",
     "heartbeat_interval",
+    "heartbeat_idle_poke_enabled",
+    "heartbeat_idle_poke_after_seconds",
+    "heartbeat_idle_poke_cooldown_seconds",
+    "heartbeat_idle_context_compaction_enabled",
     "heart_model",
     "heartbeat_path",
     "scheduler_interval",
@@ -158,6 +164,7 @@ _RESTART_REQUIRED_KEYS = {
     "cmd_policy_path",
     "database_url",
     "enable_feishu_bot",
+    "enable_wechat_bot",
     "feishu_app_id",
     "feishu_app_secret",
     "feishu_broadcast_chat_ids",
@@ -171,6 +178,13 @@ _RESTART_REQUIRED_KEYS = {
     "task_file_path",
     "tavily_api_key",
     "tools_schema_path",
+    "wechat_ilink_base_url",
+    "wechat_ilink_channel_version",
+    "wechat_ilink_login_poll_interval_seconds",
+    "wechat_ilink_max_text_chars",
+    "wechat_ilink_poll_timeout_ms",
+    "wechat_ilink_qr_output_path",
+    "wechat_ilink_token_file",
 }
 
 
@@ -230,6 +244,9 @@ class App:
             status_callback=self._update_heartbeat_status,
         )
         system_tools.set_background_status_provider(self.heart.get_background_status)
+        system_tools.set_heartbeat_settings_provider(self.get_heartbeat_settings)
+        system_tools.set_heartbeat_settings_updater(self.update_heartbeat_settings)
+        system_tools.set_temporary_reply_emitter(self.emit_temporary_reply)
 
         self.session_manager = SessionManager()
         self.heart.set_session_manager(self.session_manager)
@@ -241,6 +258,8 @@ class App:
         self.core_services = None
         self.feishu_input: FeishuInputAdapter | None = None
         self.feishu_output: FeishuOutputAdapter | None = None
+        self.wechat_input: WeChatInputAdapter | None = None
+        self.wechat_output: WeChatOutputService | None = None
         self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
         self._health_getter = health_getter
         self._telemetry_recorder = telemetry_recorder
@@ -690,6 +709,9 @@ class App:
         self.heart.set_adapter(self.heart_adapter)
         await self.heart.refresh_config()
         system_tools.set_background_status_provider(self.heart.get_background_status)
+        system_tools.set_heartbeat_settings_provider(self.get_heartbeat_settings)
+        system_tools.set_heartbeat_settings_updater(self.update_heartbeat_settings)
+        system_tools.set_temporary_reply_emitter(self.emit_temporary_reply)
 
     async def _refresh_mode_runtime(self):
         self.mode_manager = AssistantModeManager(self.config)
@@ -900,11 +922,17 @@ class App:
         resolved_target = self._resolve_background_target(session_id, target)
         if resolved_target.kind == TargetKind.WEB.value:
             return self._has_active_client_thread(session_id) or self._has_legacy_web_session(session_id)
-        if resolved_target.kind == TargetKind.FEISHU.value:
+        if resolved_target.kind in {TargetKind.FEISHU.value, TargetKind.WECHAT.value}:
             return self._has_active_client_thread(session_id)
         if resolved_target.kind == TargetKind.CLI.value:
             return bool(session_id)
         return False
+
+    def _can_persist_client_thread_message(self, session_id: str, target: EventTarget) -> bool:
+        resolved_target = self._resolve_background_target(session_id, target)
+        if resolved_target.kind not in {TargetKind.WEB.value, TargetKind.FEISHU.value, TargetKind.WECHAT.value}:
+            return False
+        return bool(self._resolve_session_thread_id(session_id))
 
     async def _deliver_background_message(
         self,
@@ -917,7 +945,7 @@ class App:
         if not session_id or not message:
             return False
         resolved_target = self._resolve_background_target(session_id, target)
-        if resolved_target.kind in {TargetKind.WEB.value, TargetKind.FEISHU.value} and self._has_active_client_thread(session_id):
+        if resolved_target.kind in {TargetKind.WEB.value, TargetKind.FEISHU.value, TargetKind.WECHAT.value} and self._can_persist_client_thread_message(session_id, resolved_target):
             await self._get_client_thread_bridge().persist_and_publish_assistant_message(
                 session_id,
                 content=message,
@@ -999,7 +1027,7 @@ class App:
                 ],
             )
 
-    def _recent_user_delivery(self) -> tuple[str, EventTarget] | None:
+    def _recent_user_delivery(self, *, require_deliverable: bool = True) -> tuple[str, EventTarget] | None:
         list_recent = getattr(self.session_manager, "list_recent_bindings", None)
         if not callable(list_recent):
             return None
@@ -1009,7 +1037,7 @@ class App:
                 continue
             source = getattr(binding, "source", None)
             source_kind = str(getattr(source, "kind", "") or "").strip().lower()
-            if source_kind not in {SourceKind.WEB.value, SourceKind.FEISHU.value, SourceKind.CLI.value}:
+            if source_kind not in {SourceKind.WEB.value, SourceKind.FEISHU.value, SourceKind.WECHAT.value, SourceKind.CLI.value}:
                 continue
             target = getattr(binding, "default_target", None)
             if target is None:
@@ -1019,7 +1047,9 @@ class App:
                 id=str(getattr(target, "id", "") or ""),
                 metadata=dict(getattr(target, "metadata", {}) or {}),
             )
-            if self._can_deliver_task_update(session_id, resolved_target):
+            if self._can_deliver_task_update(session_id, resolved_target) or (
+                not require_deliverable and self._can_persist_client_thread_message(session_id, resolved_target)
+            ):
                 return session_id, resolved_target
         return None
 
@@ -1036,7 +1066,7 @@ class App:
                 continue
             source = getattr(binding, "source", None)
             source_kind = str(getattr(source, "kind", "") or "").strip().lower()
-            if source_kind not in {SourceKind.WEB.value, SourceKind.FEISHU.value, SourceKind.CLI.value}:
+            if source_kind not in {SourceKind.WEB.value, SourceKind.FEISHU.value, SourceKind.WECHAT.value, SourceKind.CLI.value}:
                 continue
             metadata = dict(getattr(binding, "metadata", {}) or {})
             thread_id = str(metadata.get("thread_id") or "").strip()
@@ -1372,6 +1402,16 @@ class App:
             include_invalidated=include_invalidated,
         )
 
+    async def clear_memory_state(self) -> dict[str, Any]:
+        memory_result = await self.memory.clear_all()
+        session_result = self.brain.clear_all_conversation_state()
+        return {
+            "ok": True,
+            **memory_result,
+            **session_result,
+            "updated_at": utcnow_iso(),
+        }
+
     async def _sync_config_state_to_db(self) -> None:
         await sync_config_state_to_db(self)
 
@@ -1501,10 +1541,50 @@ class App:
                 return True
         return self.session_manager.get_binding(normalized_session_id) is not None
 
+    @staticmethod
+    def _empty_reply_control_snapshot() -> dict[str, Any]:
+        return {
+            "active_turn": None,
+            "pending_command": None,
+            "last_command": {},
+            "last_completed_command": {},
+            "last_finish_reason": "",
+            "checkpoint_count": 0,
+            "latest_replay_input": None,
+        }
+
     async def get_runtime_debug(self, session_id: str) -> dict[str, Any]:
         if not session_id:
             raise ValueError("session_id is required")
-        session_debug = self.brain.get_session_debug_snapshot(session_id)
+        try:
+            session_debug = self.brain.get_session_debug_snapshot(session_id)
+        except ValueError:
+            if not self._session_exists(session_id):
+                raise
+            session_debug = {
+                "session_id": session_id,
+                "route": {},
+                "route_history": [],
+                "context_plan": {},
+                "memory_scope": {
+                    "session_id": session_id,
+                    "prefetched": False,
+                    "found": False,
+                    "profile_count": 0,
+                    "fact_count": 0,
+                    "recent_event_count": 0,
+                },
+                "authorization": {"recent_decisions": []},
+                "object_operations": [],
+                "reply_control": self._empty_reply_control_snapshot(),
+                "checkpoints": [],
+                "runtime_state": self.brain.get_session_runtime_snapshot(session_id) or {},
+                "usage": self.brain.get_session_usage_snapshot(session_id) or {},
+                "request": {},
+                "compression": {},
+                "last_failure": {},
+                "updated_at": utcnow_iso(),
+            }
         route_snapshot = dict(session_debug.get("route") or {})
         tool_debug_getter = getattr(self.tools_manager, "get_route_debug_snapshot", None)
         route_authorization = (
@@ -1560,6 +1640,16 @@ class App:
                     "execution": dict(background_status.get("execution") or {}),
                     "delivery": dict(background_status.get("delivery") or {}),
                     "system": dict(background_status.get("system") or {}),
+                    "heartbeat_idle": {
+                        "enabled": bool(background_status.get("heartbeat_idle_poke_enabled")),
+                        "eligible": bool(background_status.get("idle_poke_eligible")),
+                        "after_seconds": int(background_status.get("heartbeat_idle_poke_after_seconds") or 0),
+                        "cooldown_seconds": int(background_status.get("heartbeat_idle_poke_cooldown_seconds") or 0),
+                        "context_compaction_enabled": bool(background_status.get("heartbeat_idle_context_compaction_enabled")),
+                        "last_idle_poke_at": str(background_status.get("last_idle_poke_at") or ""),
+                        "last_proactive_delivery_at": str(background_status.get("last_proactive_delivery_at") or ""),
+                        "last_proactive_delivery_status": str(background_status.get("last_proactive_delivery_status") or ""),
+                    },
                 },
                 "sources": list(background_status.get("background_status_sources") or []),
             },
@@ -1790,6 +1880,88 @@ class App:
             "updated_at": utcnow_iso(),
         }
 
+    async def get_heartbeat_settings(self) -> dict[str, Any]:
+        status = {}
+        try:
+            status = await self.heart.get_background_status()
+        except Exception as exc:
+            status = {"status_error": str(exc)}
+        return {
+            "settings": self.heart.get_idle_poke_settings_snapshot(),
+            "status": {
+                "idle_poke_eligible": bool(status.get("idle_poke_eligible")),
+                "idle_poke_window_ready": bool(status.get("idle_poke_window_ready")),
+                "idle_poke_cooldown_ready": bool(status.get("idle_poke_cooldown_ready")),
+                "last_user_activity_at": str(status.get("last_user_activity_at") or ""),
+                "recent_user_session_id": str(status.get("recent_user_session_id") or ""),
+                "last_idle_poke_at": str(status.get("last_idle_poke_at") or ""),
+                "last_proactive_delivery_at": str(status.get("last_proactive_delivery_at") or ""),
+                "last_proactive_delivery_status": str(status.get("last_proactive_delivery_status") or ""),
+                **({"status_error": str(status.get("status_error"))} if status.get("status_error") else {}),
+            },
+        }
+
+    async def update_heartbeat_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "heartbeat_idle_poke_enabled",
+            "heartbeat_idle_poke_after_seconds",
+            "heartbeat_idle_poke_cooldown_seconds",
+            "heartbeat_idle_context_compaction_enabled",
+        }
+        normalized = {
+            key: value
+            for key, value in dict(updates or {}).items()
+            if str(key or "").strip() in allowed
+        }
+        rejected = sorted(
+            str(key or "").strip()
+            for key in dict(updates or {})
+            if str(key or "").strip() and str(key or "").strip() not in allowed
+        )
+        result = await self.apply_config_updates(normalized) if normalized else {
+            "applied_keys": [],
+            "reloaded_components": [],
+            "restart_required_keys": [],
+            "warnings": [],
+        }
+        return {
+            **result,
+            "rejected_keys": rejected,
+            "snapshot": await self.get_heartbeat_settings(),
+        }
+
+    async def emit_temporary_reply(
+        self,
+        content: str,
+        *,
+        session_id: str = "",
+        source=None,
+        turn_id: str = "",
+    ) -> dict[str, Any]:
+        del source
+        text = str(content or "").strip()
+        if not text:
+            return {"delivered": False, "reason": "empty_content"}
+        context = get_event_context()
+        resolved_session_id = str(session_id or context.get("session_id") or "").strip()
+        if not resolved_session_id:
+            return {"delivered": False, "reason": "session_unavailable"}
+        bridge = self._get_client_thread_bridge()
+        result = await bridge.publish_temporary_assistant_message(
+            resolved_session_id,
+            content=text,
+            turn_id=str(turn_id or context.get("turn_id") or "").strip(),
+        )
+        if result.get("delivered"):
+            logger.info(
+                "Temporary reply emitted",
+                extra={
+                    "session_id": resolved_session_id,
+                    "turn_id": str(turn_id or context.get("turn_id") or "").strip(),
+                },
+            )
+        return result
+
     async def apply_config_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
         snapshot = self.config.begin_transaction()
         applied_keys: list[str] = []
@@ -1993,9 +2165,12 @@ class App:
     def _resolve_session_execution_request(self, event: InboundEvent) -> SessionExecutionRequest | None:
         effective_session_id = event.session_id
         is_agent_connection_reply = False
+        is_proactive_idle_poke = False
         if event.type == EventType.SIGNAL.value:
             if self._is_heartbeat_signal(event):
-                delivery = self._recent_user_delivery()
+                signal_kind = str((event.metadata or {}).get("heartbeat_signal_kind") or "").strip().lower()
+                is_proactive_idle_poke = signal_kind == "idle_poke" and bool((event.metadata or {}).get("heartbeat_direct_delivery"))
+                delivery = self._recent_user_delivery(require_deliverable=not is_proactive_idle_poke)
                 if delivery is None:
                     logger.info("Skipping heartbeat signal because no recent active session is available")
                     return None
@@ -2027,6 +2202,7 @@ class App:
             input_info=input_info,
             target=target,
             is_boot=effective_session_id == "system:boot" or is_agent_connection_reply,
+            is_proactive_idle_poke=is_proactive_idle_poke,
         )
 
     def _enrich_request_procedure_context(self, request: SessionExecutionRequest) -> None:
@@ -2074,6 +2250,65 @@ class App:
             metadata["effective_procedure_source"] = "none"
         request.input_info["metadata"] = metadata
 
+    async def _process_proactive_idle_poke(self, request: SessionExecutionRequest) -> None:
+        metadata = dict(request.input_info.get("metadata") or {})
+        api_key = self.config.get("api_key") or ""
+        api_url = self.config.get("api_url") or ""
+        model = self.config.get("model") or ""
+        if bool(metadata.get("heartbeat_context_compaction_enabled")):
+            try:
+                compression = await self.brain.compact_session_for_idle_heartbeat(
+                    request.session_id,
+                    api_key=api_key,
+                    api_url=api_url,
+                    model=model,
+                    provider_name=self._get_main_provider(),
+                )
+                logger.info(
+                    "Idle heartbeat context compaction checked",
+                    extra={
+                        "session_id": request.session_id,
+                        "triggered": bool((compression.get("compression") or {}).get("triggered")),
+                        "reason": str((compression.get("compression") or {}).get("reason") or compression.get("reason") or ""),
+                    },
+                )
+            except Exception as exc:
+                logger.warning("Idle heartbeat context compaction failed for %s: %s", request.session_id, exc)
+
+        message = self.brain.compose_idle_poke_message(
+            request.session_id,
+            observed_issue=str(request.event.content or ""),
+        )
+        turn_id = uuid4().hex
+        await self.brain.record_proactive_assistant_message(
+            request.session_id,
+            message,
+            metadata={
+                "heartbeat_decision": metadata.get("heartbeat_decision", "notify"),
+                "last_user_activity_at": metadata.get("last_user_activity_at", ""),
+                "turn_id": turn_id,
+            },
+        )
+        delivered = await self._deliver_background_message(
+            request.session_id,
+            request.target,
+            message,
+            activity_kind="idle_heartbeat",
+        )
+        self.heart.record_idle_poke_delivery(
+            session_id=request.session_id,
+            message=message,
+            delivered=delivered,
+        )
+        logger.info(
+            "Idle heartbeat proactive delivery handled",
+            extra={
+                "session_id": request.session_id,
+                "target_kind": getattr(request.target, "kind", ""),
+                "delivered": delivered,
+            },
+        )
+
     async def _process_session_execution(self, request: SessionExecutionRequest) -> None:
         stream_id = ""
         turn_id = uuid4().hex
@@ -2093,6 +2328,10 @@ class App:
         finish_reason = ""
 
         try:
+            if request.is_proactive_idle_poke:
+                await self._process_proactive_idle_poke(request)
+                return
+
             api_key = self.config.get("api_key") or ""
             api_url = self.config.get("api_url") or ""
             model = self.config.get("model") or ""

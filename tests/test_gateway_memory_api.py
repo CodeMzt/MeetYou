@@ -10,8 +10,10 @@ from gateway.api import FastAPIGateway
 class GatewayMemoryApiTests(unittest.TestCase):
     def setUp(self):
         self.access_token = "memory-token"
+        self.clear_calls = []
 
         def snapshot_getter(source_id="", session_id="", include_invalidated=False):
+            del include_invalidated
             return {
                 "metadata": {
                     "embedding_model": "text-embedding-3-small",
@@ -32,7 +34,7 @@ class GatewayMemoryApiTests(unittest.TestCase):
                         "id": "pf_1",
                         "type": "profile",
                         "scope": {"user_id": source_id or "global", "session_id": ""},
-                        "content": "name: 阿明",
+                        "content": "name: demo",
                         "strength": 0.72,
                         "importance": 0.9,
                         "confidence": 0.95,
@@ -45,7 +47,7 @@ class GatewayMemoryApiTests(unittest.TestCase):
                         "entity_keys": [],
                         "source_record_ids": [],
                         "fact_key": "name",
-                        "fact_value": "阿明",
+                        "fact_value": "demo",
                     }
                 ],
                 "edges": [],
@@ -57,6 +59,7 @@ class GatewayMemoryApiTests(unittest.TestCase):
             }
 
         def graph_getter(source_id="", session_id="", include_invalidated=False):
+            del session_id, include_invalidated
             return {
                 "metadata": {
                     "embedding_model": "text-embedding-3-small",
@@ -65,19 +68,19 @@ class GatewayMemoryApiTests(unittest.TestCase):
                 },
                 "scope": {
                     "source_id": source_id,
-                    "session_id": session_id,
+                    "session_id": "",
                 },
                 "working_summaries": {
                     "global_summary": "global summary",
-                    "session_summary": "session summary" if session_id else "",
-                    "session_id": session_id,
+                    "session_summary": "",
+                    "session_id": "",
                 },
                 "nodes": [
                     {
                         "id": "pf_1",
                         "type": "profile",
-                        "label": "阿明",
-                        "content": "name: 阿明",
+                        "label": "demo",
+                        "content": "name: demo",
                         "status": "active",
                         "scope": {"user_id": source_id or "global", "session_id": ""},
                         "strength": 0.72,
@@ -91,7 +94,7 @@ class GatewayMemoryApiTests(unittest.TestCase):
                         "entity_keys": [],
                         "source_record_ids": [],
                         "fact_key": "name",
-                        "fact_value": "阿明",
+                        "fact_value": "demo",
                     }
                 ],
                 "edges": [],
@@ -102,11 +105,25 @@ class GatewayMemoryApiTests(unittest.TestCase):
                 },
             }
 
+        async def memory_clearer():
+            self.clear_calls.append(True)
+            return {
+                "ok": True,
+                "cleared_record_count": 1,
+                "cleared_edge_count": 0,
+                "cleared_session_summary_count": 1,
+                "cleared_global_summary": True,
+                "cleared_session_count": 2,
+                "active_session_count": 0,
+                "updated_at": "2026-04-23T00:00:00Z",
+            }
+
         self.gateway = FastAPIGateway(
             EventBus(),
             SessionManager(),
             memory_snapshot_getter=snapshot_getter,
             memory_graph_getter=graph_getter,
+            memory_clearer=memory_clearer,
             access_token=self.access_token,
         )
         self.client = TestClient(self.gateway.app)
@@ -125,7 +142,7 @@ class GatewayMemoryApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["scope"]["source_id"], "browser-tab-a")
         self.assertEqual(payload["working_summaries"]["session_summary"], "session summary")
-        self.assertEqual(payload["records"][0]["fact_value"], "阿明")
+        self.assertEqual(payload["records"][0]["fact_value"], "demo")
 
     def test_get_memory_graph(self):
         response = self.client.get(
@@ -135,7 +152,7 @@ class GatewayMemoryApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["nodes"][0]["label"], "阿明")
+        self.assertEqual(payload["nodes"][0]["label"], "demo")
         self.assertIn("stats", payload)
         self.assertEqual(payload["stats"]["record_count"], 1)
 
@@ -154,7 +171,26 @@ class GatewayMemoryApiTests(unittest.TestCase):
         self.assertEqual(snapshot_response.status_code, 200)
         self.assertEqual(graph_response.status_code, 200)
         self.assertEqual(snapshot_response.json()["scope"]["source_id"], "browser-tab-a")
-        self.assertEqual(graph_response.json()["nodes"][0]["label"], "阿明")
+        self.assertEqual(graph_response.json()["nodes"][0]["label"], "demo")
+
+    def test_clear_memory_route(self):
+        response = self.client.delete("/memory", headers=self._auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["cleared_record_count"], 1)
+        self.assertEqual(payload["cleared_session_count"], 2)
+        self.assertEqual(len(self.clear_calls), 1)
+
+    def test_clear_operator_memory_route(self):
+        response = self.client.delete("/operator/memory", headers=self._auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["cleared_global_summary"])
+        self.assertEqual(len(self.clear_calls), 1)
 
     def test_get_memory_requires_auth(self):
         response = self.client.get("/memory")

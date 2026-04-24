@@ -374,6 +374,25 @@ class Memory(MemoryRepository):
         text = str(working.get("global", "")).strip()
         return text or "当前没有暂存的上下文信息。"
 
+    async def clear_all(self) -> dict[str, Any]:
+        working = self._summary_store()
+        by_session = working.get("by_session", {}) if isinstance(working.get("by_session"), dict) else {}
+        cleared_record_count = len(list(self._store.get("records", [])))
+        cleared_edge_count = len(list(self._store.get("edges", [])))
+        cleared_session_summary_count = sum(1 for value in by_session.values() if str(value or "").strip())
+        cleared_global_summary = bool(str(working.get("global", "") or "").strip())
+
+        self._store = self._store_layer.empty_store()
+        self._store["metadata"]["embedding_model"] = self._embedding_model
+        self._store["metadata"]["embedding_api_url"] = self._embedding_api_url
+        await self.save_memory_graph()
+        return {
+            "cleared_record_count": cleared_record_count,
+            "cleared_edge_count": cleared_edge_count,
+            "cleared_session_summary_count": cleared_session_summary_count,
+            "cleared_global_summary": cleared_global_summary,
+        }
+
     def get_memory_snapshot(
         self,
         source_id: str = "",

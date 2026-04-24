@@ -46,6 +46,11 @@ Feishu Client ----------------------/        |
 
 当前仓库仍保留一些 Windows 优先能力，例如 `uiautomation`、PowerShell launcher、`.cmd` 脚本和 Electron 的部分窗口行为；但 `requirements.txt` 中相关依赖已改为按平台条件安装，Linux 部署 Core 时不会再因 `uiautomation`、`pywin32` 被直接阻塞。
 
+当前平台语义再补充两点：
+
+- `platform_layer` 里的 UI 焦点/控件感知属于 Windows 专属能力；Linux / macOS 下显式禁用，不提供替代实现，调用会分别返回 `ui_automation_not_implemented_on_linux` / `ui_automation_not_implemented_on_macos`
+- `desktop-agent` 当前暴露的文件读写、Shell 执行、workspace 分析能力仍按跨平台能力处理；也就是说 Linux / macOS 可以继续承接这些 capability，但不应承诺 Windows 那套 UI Automation 级别的桌面感知
+
 ## 环境要求
 
 Linux 云服务器至少需要：
@@ -92,6 +97,8 @@ user/            本地配置模板与运行态数据目录
 
 ### 0. 容器化快速启动（Core + PostgreSQL）
 
+这里的 PostgreSQL 是可选的部署进程，不是第二套数据模型。如果你的 Linux 服务器已经有 PostgreSQL，可以在 `deploy/docker/compose.env` 中把 `MEETYOU_DATABASE_URL` 指向现有数据库，再按需调整 Compose 服务。
+
 ```bash
 python scripts/prepare_core_runtime.py --profile docker --output-root deploy/docker/runtime
 ```
@@ -117,16 +124,16 @@ python scripts/check_core_runtime.py --profile docker --runtime-root deploy/dock
 启动命令：
 
 ```bash
-docker compose -f deploy/docker/compose.core-postgres.yml up -d --build
+docker compose --env-file deploy/docker/compose.env -f deploy/docker/compose.core-postgres.yml up -d --build
 curl http://127.0.0.1:8000/health
 ```
 
 补充：
 
-- Docker Core 会先继承根目录 `.env` 的现有密钥，再叠加 `deploy/docker/compose.env` 中的 PostgreSQL 覆盖项
+- Docker Core 会先继承根目录 `.env` 的现有密钥，再叠加 `deploy/docker/compose.env` 与 `deploy/docker/runtime/core.env`
 - PostgreSQL 会映射到宿主机 `127.0.0.1:55432`
 - Core 会使用 `deploy/docker/runtime/user/`，不会碰你当前本机 `user/`
-- Windows 下可直接使用一键脚本：`scripts\docker-core-acceptance.cmd install-docker|prepare|start|check`
+- Windows 下可直接使用一键脚本：`scripts\docker-core-acceptance.cmd prepare|check|start|logs`
 
 如果你更偏向传统 Linux 宿主机部署，再继续看下面的 `venv` / `systemd` 路径。
 
@@ -212,6 +219,7 @@ cp user/desktop_agent.example.json user/desktop_agent.json
 - `assistant_modes` / `mode_router`：模式与工具路由
 - `object_store_backend`：附件存储后端，推荐生产环境接入对象存储
 - `source_catalog_path`：研究来源目录
+- `tools_schema_path`：默认应指向 `user/tools.json`；V3 当前把 `manage_heartbeat_settings` 与 `emit_temporary_reply` 放进 `common_tools`，供所有助手节点共享使用
 
 重要限制：
 
@@ -227,6 +235,7 @@ MEETYOU_API_KEY=
 MEETYOU_HEARTBEAT_API_KEY=
 MEETYOU_EMBEDDING_API_KEY=
 MEETYOU_GATEWAY_ACCESS_TOKEN=
+MEETYOU_AGENT_WS_ACCESS_TOKEN=
 MEETYOU_AGENT_ACCESS_TOKEN=
 MEETYOU_EDGE_ACCESS_TOKEN=
 MEETYOU_DATABASE_URL=postgresql+psycopg://postgres:password@127.0.0.1:5432/meetyou
@@ -239,15 +248,27 @@ MEETYOU_FEISHU_APP_SECRET=
 说明：
 
 - `MEETYOU_GATEWAY_ACCESS_TOKEN`：Gateway / WebSocket 访问令牌
+- `MEETYOU_AGENT_WS_ACCESS_TOKEN`：`desktop-agent` 连接 `/agent/ws` 的首选令牌
 - `MEETYOU_AGENT_ACCESS_TOKEN`：共享 Agent 访问令牌；`desktop-agent` 与 `edge-agent` 都可回退到它
 - `MEETYOU_EDGE_ACCESS_TOKEN`：仅给 `edge-agent` 的专用覆盖令牌
 - `MEETYOU_DATABASE_URL`：正式持久化数据库连接串
 
-如果使用 Danxi / WebVPN 凭证加密链路，还建议单独配置：
+如果使用 Danxi / WebVPN，建议在 Core Service 所在环境额外配置：
 
 ```env
 MEETYOU_CREDENTIAL_SECRET=
+DANXI_MAIL=
+DANXI_PASSWORD=
+STUVPN_FUDAN_USER=
+STUVPN_FUDAN_PASSWORD=
+MEETYOU_DANXI_USE_WEBVPN=false
 ```
+
+说明：
+
+- `DANXI_MAIL` / `DANXI_PASSWORD` 用于 Core 侧 Danxi 默认会话自动登录。
+- `STUVPN_FUDAN_USER` / `STUVPN_FUDAN_PASSWORD` 用于服务端在 WebVPN cookie 失效或校外网络需要代理时自动重建 WebVPN 会话。
+- Danxi 前端只保留手动输入与内嵌 WebVPN 登录窗作为备用路径；跨边界凭证传输统一走 `encrypted_credentials`，密钥优先使用 `MEETYOU_CREDENTIAL_SECRET`。
 
 ### 5. 准备 PostgreSQL
 
@@ -324,6 +345,15 @@ agent.ready
 
 二者不是同一件事。
 
+V3 里补齐的空闲心跳（idle poke）属于 `Core Heart` 的一部分，当前口径是：
+
+- 默认启用 1 小时空闲主动触达，可通过配置动态关闭或调整间隔
+- 心跳不再回放整段长上下文，而是基于 `conversation_summary`、最近少量非 transient 消息和最近 idle poke 记录生成简短主动消息
+- 首次触发 idle poke 且会话尚未压缩时，会顺带执行一次持久化上下文压缩，后续正常会话也复用这份摘要
+- 当前配置项包括 `heartbeat_idle_poke_enabled`、`heartbeat_idle_poke_after_seconds`、`heartbeat_idle_poke_cooldown_seconds`、`heartbeat_idle_context_compaction_enabled`
+- 运行态可通过 `manage_heartbeat_settings`、`/operator/config`、桌面端设置中心查看或更新
+- 需要在思考过程中先给用户一个短暂答复时，可调用 `emit_temporary_reply`；这类消息会实时显示在当前 assistant turn 上，并在正式回答到来后被替换，不写入长期消息历史
+
 ### `desktop-agent` 与 `edge-agent` 的差异
 
 - `desktop-agent`：主要运行在用户设备侧，代表本机能力，并作为桌面 UI 的本地 backend
@@ -397,6 +427,12 @@ Agent WebSocket 还兼容 `access_token` query。
 - 正常桌面链路下，Electron UI 会优先托管这个 backend；`python -m desktop_agent` 主要保留给 backend-only 调试
 - 如果 Core 开启了 Gateway 鉴权，desktop backend 内部访问 Core client/operator/runtime/developer surface 时需要有效的 `gateway_access_token`；建议直接在 `.env` 中配置 `MEETYOU_GATEWAY_ACCESS_TOKEN`
 
+非 Windows 说明：
+
+- `desktop-agent` 的文件、Shell、workspace 能力可以在 Linux / macOS 下继续工作
+- 但当前仓库没有为 Linux / macOS 提供和 Windows 等价的桌面 UI Automation / 焦点感知实现
+- 因此 Linux / macOS 只能作为“无 UI Automation 的降级桌面后端”，不要把它当成与 Windows 等价的桌面自动化节点
+
 启动命令：
 
 ```bash
@@ -453,6 +489,7 @@ Core 在服务端拉起 `npx` 型 MCP 时会默认复用工作目录下的 `.npm
 - `GET /client/workspaces/{workspace_id}/agents`
 - `GET /operator/config`
 - `GET /operator/memory`
+- `DELETE /operator/memory`
 - `GET /runtime/state`
 - `GET /runtime/usage`
 - `GET /developer/runtime/debug`
@@ -462,11 +499,20 @@ Core 在服务端拉起 `npx` 型 MCP 时会默认复用工作目录下的 `.npm
 
 - `GET /desktop/status`
 - `GET /desktop/health`
+- `DELETE /desktop/memory`
 - `POST /desktop/messages`
 - `GET /desktop/ws`
 - `GET /desktop/workspaces`
 - `GET /desktop/runtime/usage`
 - `GET /desktop/runtime/debug`
+
+关于记忆清除：
+
+- `DELETE /operator/memory` 与 `DELETE /desktop/memory` 会清空 Memory Graph、working summaries 和 Brain 的会话内记忆态
+- 该操作不会删除 thread/message 历史；它只清除后续推理会继续引用的记忆层
+- 桌面端当前在 Memory Dashboard 暴露一键清除入口，并要求用户输入确认短语后才执行
+
+WeChat Bot 已切换为官方 iLink 路径：启用 `enable_wechat_bot` 后通过二维码登录获取 `bot_token`，使用 `POST /ilink/bot/getupdates` 长轮询接收入站消息，并用 `POST /ilink/bot/sendmessage` 携带 `context_token` 回发文本回复。当前已落地最小文本闭环骨架，真实扫码验收记录见 `docs/v3/design/bot-integration.md`。
 
 兼容说明：
 
@@ -584,8 +630,14 @@ npm run build
 
 说明：
 
-- 当前桌面端整体仍偏 Windows
-- Linux 服务器部署的核心目标应是 Core Service，而不是 Electron UI
+- 当前脚本会执行 `tsc && vite build && electron-builder`
+- `electron-builder` 当前仅显式声明 Windows `nsis` 目标，产物输出目录是 `meetyou-ui/release/`
+- V3 当前的 Windows 打包口径是“Electron UI + PyInstaller one-dir `desktop_agent` backend + runtime template”一起进入安装包
+- 打包前先执行 `scripts\\build-desktop-backend.ps1`，生成 `desktop_agent.exe` 和 `meetyou-ui/resources/runtime-template/`
+- packaged mode 下，Electron main 会优先从 `process.resourcesPath` 启动内置 desktop backend；开发态才回退到工作区里的 `python main.py desktop-agent`
+- 安装包首次运行会把 runtime template 复制到 `app.getPath('userData')/meetyou-runtime`，并在这里维护可写的 `desktop_agent.json`、`mcp_servers.json`、`cmd_policy.json` 与 `.env`
+- `.env` 中的 Core 地址、Gateway token、Agent token、Danxi/WebVPN 相关密钥应由 runtime template 或用户运行目录提供；不要依赖安装包外的仓库路径
+- 当前桌面端整体仍偏 Windows；Linux 服务器部署的核心目标应是 Core Service，而不是 Electron UI
 
 ## 验证建议
 
@@ -613,8 +665,9 @@ Linux 服务器首轮验收建议按这个顺序：
 
 ```bash
 python -m unittest tests.test_config_manager
-python -m unittest tests.test_gateway_agent_api
-python -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime
+python -m unittest tests.test_gateway_surface_routes
+python -m unittest tests.test_danxi_tools
+python -m unittest tests.test_desktop_agent_runtime tests.test_edge_agent_protocol tests.test_edge_agent_runtime
 ```
 
 如果你在 Windows 上做桌面端联调，再补：
@@ -623,13 +676,23 @@ python -m unittest tests.test_edge_agent_protocol tests.test_edge_agent_runtime
 cd meetyou-ui
 npm run typecheck
 npm run test
+npm run build
+```
+
+如果你要验证当前 Windows 安装包链路，推荐顺序是：
+
+```bash
+scripts\build-desktop-backend.ps1
+cd meetyou-ui
+npm run build
+scripts\manual-acceptance.cmd check
 ```
 
 说明：
 
-- 当前仓库没有现成的 Linux / 腾讯云一键验收脚本
 - `scripts/manual-acceptance.cmd` 和 PowerShell 路径主要服务 Windows 桌面链路
-- 本次仓库内验证主要覆盖文档/模板一致性与本地自动化测试，仍建议在真实 Linux 云服务器上完成一次 `service -> client/ws -> agent/ws` 联机验收
+- Linux / 腾讯云侧仍建议至少做一次真实 `service -> client/ws -> agent/ws` 联机验收
+- Windows 打包验证应重点确认：图标正确、desktop backend 能拉起、设置中心能加载、远端 Core 可连通、Danxi 会话可自动恢复或自动使用 Core 环境变量建会话
 
 ## 相关文档
 

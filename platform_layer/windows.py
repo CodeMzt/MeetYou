@@ -21,6 +21,31 @@ class WindowsPlatformAdapter(PlatformAdapter):
         "taskhostw.exe", "explorer.exe", "taskmgr.exe",
     ]
 
+    def describe_capabilities(self) -> dict:
+        return {
+            "ui_context": {
+                "status": "enabled",
+                "availability": "full",
+                "supported_platforms": ["windows"],
+                "windows_only": True,
+                "notes": "Windows 主机支持 UI Automation 焦点感知；如果缺少 Windows 专属依赖，则返回 ui_automation_unavailable。",
+            },
+            "running_apps": {
+                "status": "enabled",
+                "availability": "full",
+                "supported_platforms": ["windows", "linux", "macos"],
+                "windows_only": False,
+                "notes": "基于 psutil 汇总运行进程。",
+            },
+            "system_vitals": {
+                "status": "enabled",
+                "availability": "full",
+                "supported_platforms": ["windows", "linux", "macos"],
+                "windows_only": False,
+                "notes": "基于 psutil 汇总 CPU、内存与电池状态。",
+            },
+        }
+
     def get_ui_context(self) -> dict:
         try:
             import uiautomation as auto

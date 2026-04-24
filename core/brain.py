@@ -29,7 +29,7 @@ from core.assistant_modes import (
 from core.brain_session import BrainSession
 from core.public_contract import to_internal_assistant_mode
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
-from core.status import ContextBreakdown, RuntimeStatus, SessionUsageTotals, UsageCounters, utcnow_iso
+from core.status import ContextBreakdown, RuntimeStateSnapshot, RuntimeStatus, SessionUsageTotals, UsageCounters, UsageSnapshot, utcnow_iso
 from core.tool_runtime import ToolCallResult, ToolErrorCategory, ToolSourceType, normalize_tool_result
 from tools.object_operations import redacted_object_debug_entry
 
@@ -242,6 +242,106 @@ class Brain:
         session.touch()
         return session
 
+    def _recent_idle_poke_messages(self, session: BrainSession, *, limit: int = 6) -> list[str]:
+        messages: list[str] = []
+        for item in reversed(session.chat_history[self._base_message_count() :]):
+            metadata = dict(item.get("metadata") or {})
+            if metadata.get("heartbeat_signal_kind") != "idle_poke":
+                continue
+            content = str(item.get("content") or "").strip()
+            if content:
+                messages.append(content)
+            if len(messages) >= limit:
+                break
+        return messages
+
+    def compose_idle_poke_message(self, session_id: str, *, observed_issue: str = "") -> str:
+        session = self.get_or_create_session(session_id)
+        recent = set(self._recent_idle_poke_messages(session, limit=8))
+        variants = [
+            "我还在这儿，等你回来我们可以接着把刚才的事收完。",
+            "我刚整理了一下状态，随时可以陪你继续推进。",
+            "我这边空下来了，轻轻冒个泡，看看你要不要继续。",
+            "如果你回来了，我可以接着陪你把手头这段往下走。",
+            "我还在线，等你想继续的时候我们就从刚才那里接上。",
+            "这边没有紧急状况，我先安静等你回来继续。",
+        ]
+        for offset in range(len(variants)):
+            index = (len(recent) + offset) % len(variants)
+            candidate = variants[index]
+            if candidate not in recent:
+                return candidate
+        return f"我还在这儿，等你回来我们可以继续。({len(recent) + 1})"
+
+    async def compact_session_for_idle_heartbeat(
+        self,
+        session_id: str,
+        *,
+        api_key: str,
+        api_url: str,
+        model: str,
+        provider_name: str = "",
+    ) -> dict[str, Any]:
+        session = self.get_or_create_session(session_id)
+        await self._refresh_session_context(session)
+        if session.metadata.get("heartbeat_context_compacted_at"):
+            return {
+                "triggered": False,
+                "reason": "already_compacted",
+                "heartbeat_context_compacted_at": session.metadata.get("heartbeat_context_compacted_at"),
+            }
+        compactor = getattr(self._context_manager, "compact_history_for_idle_heartbeat", None)
+        if not callable(compactor):
+            return {"triggered": False, "reason": "compactor_unavailable"}
+        result = await compactor(
+            session.chat_history,
+            model=model,
+            session=session,
+            api_url=api_url,
+            api_key=api_key,
+            session_id=session_id,
+            provider_name=provider_name,
+            preserve_message_count=self._base_message_count(),
+            recent_message_count=6,
+        )
+        compression = dict(result.get("compression") or {})
+        if compression.get("triggered"):
+            compacted_at = utcnow_iso()
+            session.metadata["heartbeat_context_compacted_at"] = compacted_at
+            session.metadata["last_compaction_reason"] = "idle_heartbeat"
+            session.metadata["last_compression"] = compression
+            summary = str(result.get("conversation_summary") or "").strip()
+            if summary:
+                session.metadata["conversation_summary"] = summary
+            await self._persist_session_context(session)
+        return result
+
+    async def record_proactive_assistant_message(
+        self,
+        session_id: str,
+        content: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        text = str(content or "").strip()
+        if not text:
+            return
+        session = self.get_or_create_session(session_id)
+        session.chat_history.append(
+            {
+                "role": "assistant",
+                "content": text,
+                "metadata": {
+                    "proactive": True,
+                    "heartbeat_signal_kind": "idle_poke",
+                    "created_at": utcnow_iso(),
+                    **dict(metadata or {}),
+                },
+            }
+        )
+        session.touch()
+        await self._persist_session_context(session)
+
     def discard_trailing_transient_messages(self, session_id: str):
         session = self._sessions.get(session_id)
         if session is None:
@@ -256,6 +356,35 @@ class Brain:
         session = self._sessions.pop(session_id, None)
         if session is not None:
             await self._save_session_context(session)
+
+    def clear_all_conversation_state(self) -> dict[str, Any]:
+        base_history = [dict(message) for message in self._base_messages]
+        cleared_session_count = 0
+        active_session_count = 0
+        for session in self._sessions.values():
+            if (
+                len(session.chat_history) > self._base_message_count()
+                or bool(session.metadata)
+                or bool(session.active_stream_id)
+                or bool(session.usage_snapshot.session_totals.turn_count)
+            ):
+                cleared_session_count += 1
+            if str(session.runtime_state.status or RuntimeStatus.IDLE.value) not in {
+                RuntimeStatus.IDLE.value,
+                RuntimeStatus.HEARTBEAT.value,
+            }:
+                active_session_count += 1
+            session.chat_history = [dict(message) for message in base_history]
+            session.active_stream_id = ""
+            session.metadata = {}
+            session.runtime_state = RuntimeStateSnapshot(session_id=session.session_id)
+            session.usage_snapshot = UsageSnapshot(session_id=session.session_id)
+            session.touch()
+        self._global_context = ""
+        return {
+            "cleared_session_count": cleared_session_count,
+            "active_session_count": active_session_count,
+        }
 
     async def _save_session_context(self, session: BrainSession):
         await self._persist_session_context(session)

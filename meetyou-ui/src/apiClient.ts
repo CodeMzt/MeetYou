@@ -2,6 +2,28 @@ import { parseErrorEnvelope } from './protocolClient'
 import { DEFAULT_BASE_URL } from './windowBridge'
 
 let cachedAccessToken: string | null = null
+const TOKEN_IPC_TIMEOUT_MS = 1500
+const DEFAULT_FETCH_TIMEOUT_MS = 30000
+const IPC_TIMEOUT = Symbol('ipc-timeout')
+
+type FetchWithAuthInit = RequestInit & {
+  timeoutMs?: number
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof IPC_TIMEOUT> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<typeof IPC_TIMEOUT>((resolve) => {
+    timeoutId = setTimeout(() => resolve(IPC_TIMEOUT), timeoutMs)
+  })
+  return Promise.race([
+    promise.finally(() => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    }),
+    timeout,
+  ])
+}
 
 function shouldAttachAccessToken(url: string): boolean {
   try {
@@ -27,10 +49,11 @@ export async function resolveAccessToken(): Promise<string> {
   }
 
   try {
-    let ipcToken = await window.ipcRenderer?.invoke?.('get-desktop-bridge-access-token')
-    if (typeof ipcToken !== 'string') {
-      ipcToken = await window.ipcRenderer?.invoke?.('get-gateway-access-token')
-    }
+    const ipcInvoke = window.ipcRenderer?.invoke
+    const ipcToken =
+      typeof ipcInvoke === 'function'
+        ? await withTimeout(Promise.resolve(ipcInvoke('get-desktop-bridge-access-token')), TOKEN_IPC_TIMEOUT_MS)
+        : undefined
     if (typeof ipcToken === 'string') {
       const token = ipcToken.trim()
       cachedAccessToken = token || null
@@ -54,13 +77,37 @@ export async function resolveAccessToken(): Promise<string> {
   return ''
 }
 
-export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
+export async function fetchWithAuth(url: string, init?: FetchWithAuthInit): Promise<Response> {
+  const { timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, ...requestInit } = init ?? {}
   const token = await resolveAccessToken()
-  const headers = new Headers(init?.headers)
+  const headers = new Headers(requestInit.headers)
   if (token && shouldAttachAccessToken(url)) {
     headers.set('Authorization', `Bearer ${token}`)
   }
-  return fetch(url, { ...init, headers })
+  if (!timeoutMs || timeoutMs <= 0) {
+    return fetch(url, { ...requestInit, headers })
+  }
+
+  const controller = new AbortController()
+  const upstreamSignal = requestInit.signal
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason)
+  if (upstreamSignal?.aborted) {
+    abortFromUpstream()
+  } else {
+    upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true })
+  }
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...requestInit, headers, signal: controller.signal })
+  } catch (error) {
+    if (controller.signal.aborted && !upstreamSignal?.aborted) {
+      throw new Error(`请求超时（${Math.ceil(timeoutMs / 1000)}s）`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+    upstreamSignal?.removeEventListener('abort', abortFromUpstream)
+  }
 }
 
 export async function readErrorMessage(

@@ -87,7 +87,7 @@ V3 默认继续沿用以下约束：
 - 部署与跨平台设计见 `deployment-and-platform.md`
 - 桌面一体化设计见 `desktop-unified-agent.md`
 - Core 部署操作基线见 `../operations/core-deployment.md`
-- QQBot / WeChatBot 接入设计见 `bot-integration.md`
+- WeChat Bot 接入设计见 `bot-integration.md`
 - 执行顺序与 feature 拆分见 `../plan/implementation-plan.md`
 
 ## 7. 历史参考

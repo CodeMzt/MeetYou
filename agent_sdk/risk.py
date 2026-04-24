@@ -13,6 +13,7 @@ _DEFAULT_TOOL_ACTION_RISKS: dict[str, str] = {
     "get_current_system_time": "read",
     "get_sys_vitals": "read",
     "get_background_status": "read",
+    "manage_heartbeat_settings": "local_write",
     "remember_knowledge": "local_write",
     "search_memory": "read",
     "manage_memories": "local_write",

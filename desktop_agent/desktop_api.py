@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import aiohttp
@@ -20,6 +21,62 @@ LOCAL_BRIDGE_STATUS_PATH = "/desktop/status"
 LEGACY_LOCAL_BRIDGE_STATUS_PATH = "/desktop/bridge/status"
 DESKTOP_WS_PATH = "/desktop/ws"
 _HTTP_ERROR_SCHEMA = "meetyou.http.v1"
+_LOCAL_CONFIG_KEYS = {"core_base_url", "gateway_access_token", "agent_access_token"}
+_LOCAL_SECRET_KEYS = {"gateway_access_token", "agent_access_token"}
+_LOCAL_CONFIG_FIELDS = [
+    {
+        "key": "core_base_url",
+        "title": "Desktop Core Service URL",
+        "description": "HTTP base URL used by this desktop backend when it proxies UI requests to Core Service.",
+        "group": "advanced",
+        "input": "text",
+        "placeholder": "https://core.example.com",
+        "advanced": False,
+    },
+    {
+        "key": "gateway_access_token",
+        "title": "Desktop Gateway Access Token",
+        "description": "Bearer token used by this desktop backend for Core HTTP and client WebSocket requests.",
+        "group": "secrets",
+        "input": "password",
+        "advanced": False,
+    },
+    {
+        "key": "agent_access_token",
+        "title": "Desktop Agent Access Token",
+        "description": "Bearer token used by the packaged desktop agent when it connects to Core /agent/ws.",
+        "group": "secrets",
+        "input": "password",
+        "advanced": True,
+    },
+]
+_LOCAL_SCHEMA_ENVELOPE = {
+    "schema": _HTTP_ERROR_SCHEMA,
+    "kind": "schema",
+    "ui_schema": {
+        "http_schema": _HTTP_ERROR_SCHEMA,
+        "ws_schema": "meetyou.ws.v1",
+        "ws_frame_kinds": [],
+        "ws_event_types": [],
+        "ws_runtime_resources": [],
+        "runtime_statuses": [],
+        "providers": [],
+        "thinking_efforts": [],
+        "config_groups": [
+            {
+                "key": "secrets",
+                "title": "Secrets",
+                "description": "Local credentials used by the desktop backend.",
+            },
+            {
+                "key": "advanced",
+                "title": "Desktop Runtime",
+                "description": "Local desktop backend connection settings.",
+            },
+        ],
+        "config_fields": _LOCAL_CONFIG_FIELDS,
+    },
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,11 +174,9 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("GET", "/desktop/danxi/search", lambda _request: "/client/danxi/search"),
         DesktopApiRoute("GET", "/desktop/danxi/messages", lambda _request: "/client/danxi/messages"),
         DesktopApiRoute("GET", "/desktop/danxi/floors/{floor_id}/target", lambda request: f"/client/danxi/floors/{request.match_info['floor_id']}/target"),
-        DesktopApiRoute("GET", "/desktop/config/schema", lambda _request: "/operator/schema/ui"),
-        DesktopApiRoute("GET", "/desktop/config", lambda _request: "/operator/config"),
-        DesktopApiRoute("PATCH", "/desktop/config", lambda _request: "/operator/config"),
         DesktopApiRoute("GET", "/desktop/memory", lambda _request: "/operator/memory"),
         DesktopApiRoute("GET", "/desktop/memory/graph", lambda _request: "/operator/memory/graph"),
+        DesktopApiRoute("DELETE", "/desktop/memory", lambda _request: "/operator/memory"),
         DesktopApiRoute("PATCH", "/desktop/workspaces/{workspace_id}", lambda request: f"/operator/workspaces/{request.match_info['workspace_id']}"),
         DesktopApiRoute("GET", "/desktop/source-profiles", lambda _request: "/operator/source-profiles"),
         DesktopApiRoute("GET", "/desktop/runtime/usage", lambda _request: "/runtime/usage"),
@@ -151,6 +206,9 @@ class DesktopApiServer:
             web.get(LOCAL_BRIDGE_STATUS_PATH, self._handle_status),
             web.get(LEGACY_LOCAL_BRIDGE_STATUS_PATH, self._handle_status),
             web.get(DESKTOP_WS_PATH, self._handle_client_ws),
+            web.get("/desktop/config/schema", self._handle_config_schema),
+            web.get("/desktop/config", self._handle_config_get),
+            web.patch("/desktop/config", self._handle_config_patch),
         ]
         for route in _desktop_routes():
             routes.append(web.route(route.method, route.desktop_path, self._build_route_handler(route)))
@@ -203,6 +261,200 @@ class DesktopApiServer:
                 "ws_path": DESKTOP_WS_PATH,
             }
         )
+
+    def _config_path(self) -> Path:
+        return Path(self._config.config_file_path or "user/desktop_agent.json").expanduser()
+
+    def _read_config_file_payload(self) -> dict[str, object]:
+        path = self._config_path()
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            logger.warning("Failed to read desktop config file %s", path, exc_info=True)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _write_config_file_payload(self, payload: dict[str, object]) -> None:
+        path = self._config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n", encoding="utf-8")
+
+    @staticmethod
+    def _mask_secret(value: object) -> str:
+        text = str(value or "")
+        if not text:
+            return ""
+        if len(text) <= 8:
+            return "********"
+        return f"{text[:2]}******{text[-2:]}"
+
+    def _local_config_items(self) -> dict[str, dict[str, object]]:
+        values = {
+            "core_base_url": self._config.core_base_url,
+            "gateway_access_token": self._config.gateway_access_token,
+            "agent_access_token": self._config.agent_access_token,
+        }
+        env_keys = {
+            "gateway_access_token": "MEETYOU_GATEWAY_ACCESS_TOKEN",
+            "agent_access_token": "MEETYOU_AGENT_WS_ACCESS_TOKEN",
+        }
+        items: dict[str, dict[str, object]] = {}
+        for key, value in values.items():
+            secret = key in _LOCAL_SECRET_KEYS
+            items[key] = {
+                "key": key,
+                "value": self._mask_secret(value) if secret else value,
+                "raw_value": None if secret else value,
+                "is_secret": secret,
+                "has_value": bool(str(value or "").strip()),
+                "source": "desktop_agent",
+                "env_key": env_keys.get(key),
+            }
+        return items
+
+    @staticmethod
+    def _merge_local_config_schema(payload: object) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            payload = {}
+        merged = json.loads(json.dumps(_LOCAL_SCHEMA_ENVELOPE))
+        core_schema = payload.get("ui_schema")
+        if isinstance(core_schema, dict):
+            merged = dict(payload)
+            ui_schema = dict(core_schema)
+            existing_groups = {
+                str(item.get("key") or ""): item
+                for item in ui_schema.get("config_groups", [])
+                if isinstance(item, dict)
+            }
+            for group in _LOCAL_SCHEMA_ENVELOPE["ui_schema"]["config_groups"]:
+                existing_groups.setdefault(str(group["key"]), group)
+            existing_fields = {
+                str(item.get("key") or ""): item
+                for item in ui_schema.get("config_fields", [])
+                if isinstance(item, dict)
+            }
+            for field in _LOCAL_CONFIG_FIELDS:
+                existing_fields[str(field["key"])] = field
+            ui_schema["config_groups"] = list(existing_groups.values())
+            ui_schema["config_fields"] = list(existing_fields.values())
+            merged["ui_schema"] = ui_schema
+        return merged
+
+    async def _handle_config_schema(self, request: web.Request) -> web.Response:
+        auth_error = self._check_local_auth(request)
+        if auth_error is not None:
+            return auth_error
+        try:
+            response = await self._core_client.request(request, method="GET", core_path="/operator/schema/ui")
+            if response.status < 400:
+                payload = json.loads(response.body.decode("utf-8")) if response.body else {}
+                return web.json_response(self._merge_local_config_schema(payload), status=200)
+        except Exception:
+            logger.info("Using local desktop config schema because Core schema is unavailable", exc_info=True)
+        return web.json_response(_LOCAL_SCHEMA_ENVELOPE)
+
+    async def _handle_config_get(self, request: web.Request) -> web.Response:
+        auth_error = self._check_local_auth(request)
+        if auth_error is not None:
+            return auth_error
+        items: dict[str, object] = {}
+        core_config_available = False
+        try:
+            response = await self._core_client.request(request, method="GET", core_path="/operator/config")
+            if response.status < 400:
+                payload = json.loads(response.body.decode("utf-8")) if response.body else {}
+                if isinstance(payload, dict) and isinstance(payload.get("items"), dict):
+                    items.update(payload["items"])
+                    core_config_available = True
+        except Exception:
+            logger.info("Using local desktop config because Core config is unavailable", exc_info=True)
+        items.update(self._local_config_items())
+        return web.json_response(
+            {
+                "items": items,
+                "core_config_available": core_config_available,
+                "desktop_config_path": str(self._config_path()),
+            }
+        )
+
+    @staticmethod
+    def _validate_local_config_update(key: str, value: object) -> object:
+        if key == "core_base_url":
+            normalized = str(value or "").strip().rstrip("/")
+            if not normalized.startswith(("http://", "https://")):
+                raise ValueError("core_base_url must start with http:// or https://")
+            return normalized
+        return str(value or "").strip()
+
+    def _apply_local_config_updates(self, updates: dict[str, object]) -> list[str]:
+        payload = self._read_config_file_payload()
+        applied: list[str] = []
+        for key, value in updates.items():
+            normalized = self._validate_local_config_update(key, value)
+            payload[key] = normalized
+            setattr(self._config, key, normalized)
+            applied.append(key)
+        if applied:
+            self._write_config_file_payload(payload)
+        return applied
+
+    async def _handle_config_patch(self, request: web.Request) -> web.Response:
+        auth_error = self._check_local_auth(request)
+        if auth_error is not None:
+            return auth_error
+        try:
+            payload = await request.json()
+            raw_updates = payload.get("updates") if isinstance(payload, dict) else None
+            updates = raw_updates if isinstance(raw_updates, dict) else {}
+            local_updates = {key: value for key, value in updates.items() if key in _LOCAL_CONFIG_KEYS}
+            core_updates = {key: value for key, value in updates.items() if key not in _LOCAL_CONFIG_KEYS}
+            applied = self._apply_local_config_updates(local_updates)
+            reloaded_components = ["desktop_backend"] if applied else []
+            restart_required_keys: list[str] = []
+            warnings: list[str] = []
+            if "agent_access_token" in applied:
+                warnings.append("The running agent websocket will use the updated agent token on its next reconnect.")
+            if core_updates:
+                body = json.dumps({"updates": core_updates}, ensure_ascii=False).encode("utf-8")
+                response = await self._core_client.request_with_body(
+                    request,
+                    method="PATCH",
+                    core_path="/operator/config",
+                    body=body,
+                )
+                if response.status >= 400:
+                    return web.Response(status=response.status, body=response.body, headers=response.headers)
+                core_result = json.loads(response.body.decode("utf-8")) if response.body else {}
+                applied.extend([str(item) for item in core_result.get("applied_keys", [])])
+                reloaded_components.extend([str(item) for item in core_result.get("reloaded_components", [])])
+                restart_required_keys.extend([str(item) for item in core_result.get("restart_required_keys", [])])
+                warnings.extend([str(item) for item in core_result.get("warnings", [])])
+            return web.json_response(
+                {
+                    "applied_keys": sorted(set(applied)),
+                    "reloaded_components": sorted(set(reloaded_components)),
+                    "restart_required_keys": sorted(set(restart_required_keys)),
+                    "warnings": warnings,
+                }
+            )
+        except (ValueError, json.JSONDecodeError) as exc:
+            return _build_error_response(
+                status=400,
+                code="invalid_desktop_config_update",
+                category="validation",
+                message=str(exc),
+            )
+        except Exception as exc:
+            logger.exception("Desktop config update failed: %s", exc)
+            return _build_error_response(
+                status=502,
+                code="desktop_config_update_failed",
+                category="dependency",
+                message="Failed to update desktop or Core configuration.",
+                retryable=True,
+            )
 
     async def _forward_json(self, request: web.Request, *, route: DesktopApiRoute) -> web.Response:
         auth_error = self._check_local_auth(request)
