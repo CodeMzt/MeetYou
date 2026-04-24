@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
@@ -11,7 +11,9 @@ import {
 } from 'lucide-react'
 import GlassSelect from '../components/GlassSelect'
 import { useConfig } from '../hooks/useConfig'
+import { fetchRuntimeBuildInfo, type RuntimeBuildInfoSnapshot } from '../buildInfo'
 import type { ConfigFormValue, ResolvedConfigField } from '../types'
+import { DEFAULT_BASE_URL } from '../windowBridge'
 
 function FieldStatus({
   field,
@@ -165,6 +167,13 @@ export default function SettingsView() {
   } = useConfig()
 
   const [advancedOpen, setAdvancedOpen] = useState<Record<string, boolean>>({})
+  const [runtimeBuildInfo, setRuntimeBuildInfo] = useState<RuntimeBuildInfoSnapshot | null>(null)
+
+  useEffect(() => {
+    void fetchRuntimeBuildInfo(DEFAULT_BASE_URL).then((snapshot) => {
+      setRuntimeBuildInfo(snapshot)
+    })
+  }, [])
 
   const appliedSummary = useMemo(() => {
     if (!saveResult) {
@@ -205,6 +214,22 @@ export default function SettingsView() {
           </button>
         </div>
       </div>
+
+
+      {runtimeBuildInfo ? (
+        <div className="settings-version-card">
+          <div className="settings-version-row"><strong>UI</strong><span>{runtimeBuildInfo.ui.package_version} · {runtimeBuildInfo.ui.git_commit.slice(0, 12)}</span></div>
+          <div className="settings-version-row"><strong>Desktop Backend</strong><span>{runtimeBuildInfo.desktop_backend ? `${runtimeBuildInfo.desktop_backend.package_version} · ${runtimeBuildInfo.desktop_backend.git_commit.slice(0, 12)}` : '未读取到'}</span></div>
+          <div className="settings-version-row"><strong>Core</strong><span>{runtimeBuildInfo.core ? `${runtimeBuildInfo.core.package_version} · ${runtimeBuildInfo.core.git_commit.slice(0, 12)}` : '未读取到'}</span></div>
+        </div>
+      ) : null}
+
+      {runtimeBuildInfo?.warning ? (
+        <div className="settings-banner warning">
+          <AlertCircle size={15} />
+          <span>{runtimeBuildInfo.warning}</span>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="settings-banner error">
