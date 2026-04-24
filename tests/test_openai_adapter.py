@@ -745,6 +745,70 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["details"]["provider_mode"], "openai_compatible_chat")
         self.assertEqual(payload["details"]["status_code"], 400)
 
+    def test_deepseek_payload_guard_backfills_final_payload_tool_reasoning_content(self):
+        adapter = OpenAIAdapter()
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "user", "content": "Use a tool"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_1",
+                            "function": {"name": "get_date", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "{}"},
+            ],
+            "thinking": {"type": "enabled"},
+        }
+
+        changed = adapter._ensure_chat_reasoning_content_roundtrip(
+            payload,
+            url="https://api.deepseek.com/chat/completions",
+            model="deepseek-chat",
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(payload["messages"][1]["reasoning_content"], "")
+
+    def test_deepseek_reasoning_content_400_retry_payload_backfills_missing_field(self):
+        adapter = OpenAIAdapter()
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "user", "content": "Use a tool"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_1",
+                            "function": {"name": "get_date", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "{}"},
+            ],
+        }
+
+        retry_payload = adapter._build_retry_payload_for_compatible_400(
+            payload,
+            {
+                "code": "provider_bad_request",
+                "message": "The `reasoning_content` in the thinking mode must be passed back to the API.",
+            },
+        )
+
+        self.assertIsNotNone(retry_payload)
+        self.assertNotIn("reasoning_content", payload["messages"][1])
+        self.assertEqual(retry_payload["messages"][1]["reasoning_content"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

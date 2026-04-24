@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
 from typing import Any, AsyncGenerator
 from urllib.parse import urlparse, urlunparse
 
@@ -234,6 +235,26 @@ class OpenAIAdapter(LLMAdapter):
     def _supports_chat_reasoning_content_roundtrip(url: str, model: str) -> bool:
         host = (urlparse(str(url or "").strip()).hostname or "").lower()
         return host == "api.deepseek.com" or OpenAIAdapter._is_deepseek_family_model(model)
+
+    @staticmethod
+    def _backfill_tool_reasoning_content(payload: dict[str, Any]) -> bool:
+        """DeepSeek thinking mode requires this field on assistant tool-call turns."""
+        changed = False
+        for message in payload.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") != "assistant" or not message.get("tool_calls"):
+                continue
+            if not isinstance(message.get("reasoning_content"), str):
+                message["reasoning_content"] = ""
+                changed = True
+        return changed
+
+    @classmethod
+    def _ensure_chat_reasoning_content_roundtrip(cls, payload: dict[str, Any], *, url: str, model: str) -> bool:
+        if not cls._supports_chat_reasoning_content_roundtrip(url, model):
+            return False
+        return cls._backfill_tool_reasoning_content(payload)
 
     @staticmethod
     def _supports_chat_thinking_toggle(url: str, model: str) -> bool:
@@ -543,6 +564,12 @@ class OpenAIAdapter(LLMAdapter):
         payload: dict[str, Any],
         error_payload: dict[str, Any],
     ) -> dict[str, Any] | None:
+        message = str(error_payload.get("message") or "").lower()
+        if "reasoning_content" in message and "must be passed back" in message:
+            next_payload = deepcopy(payload)
+            if self._backfill_tool_reasoning_content(next_payload):
+                return next_payload
+
         if str(error_payload.get("code") or "") != "provider_invalid_request_fields":
             return None
         next_payload = dict(payload)
@@ -929,6 +956,7 @@ class OpenAIAdapter(LLMAdapter):
             payload["tools"] = ft
         payload["stream_options"] = {"include_usage": True}
         self._apply_chat_reasoning_options(payload, model, request_url=url, **kwargs)
+        self._ensure_chat_reasoning_content_roundtrip(payload, url=url, model=model)
 
         try:
             async for event in self._stream_chat_completions_once(
@@ -1017,6 +1045,7 @@ class OpenAIAdapter(LLMAdapter):
         if ft:
             payload["tools"] = ft
         self._apply_chat_reasoning_options(payload, model, request_url=url, **kwargs)
+        self._ensure_chat_reasoning_content_roundtrip(payload, url=url, model=model)
 
         try:
             return await self._chat_completions_once(

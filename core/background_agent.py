@@ -20,6 +20,10 @@ class BackgroundAgentRunner:
         self._adapter = adapter
         self._tools_manager = tools_manager
 
+    @staticmethod
+    def _should_keep_tool_reasoning_field(adapter_options: dict[str, Any] | None) -> bool:
+        return (adapter_options or {}).get("thinking") is not False
+
     async def run(
         self,
         *,
@@ -58,7 +62,7 @@ class BackgroundAgentRunner:
             assistant_message: dict[str, Any] = {"role": "assistant", "content": last_content or None}
             if tool_calls:
                 reasoning_content = str(result.get("reasoning_content") or "").strip()
-                if reasoning_content:
+                if reasoning_content or self._should_keep_tool_reasoning_field(adapter_options):
                     assistant_message["reasoning_content"] = reasoning_content
                 assistant_message["tool_calls"] = [
                     {
