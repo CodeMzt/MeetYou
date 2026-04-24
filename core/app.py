@@ -49,6 +49,7 @@ from core.io_protocol import (
     make_target,
 )
 from core.logger import setup_logger
+from core.model_capabilities.resolver import get_model_capability_resolver
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.session_actor import SessionActorRuntime
 from core.session_manager import SessionManager
@@ -2658,6 +2659,46 @@ class App:
                 await self._session_execution_runtime.submit(request.session_id, request)
         finally:
             await self._session_execution_runtime.shutdown()
+
+    async def refresh_model_capabilities(self, *, provider_name: str = "", model_name: str = "") -> dict[str, Any]:
+        provider = str(provider_name or self._get_main_provider()).strip().lower()
+        model = str(model_name or self.config.get("model") or "").strip()
+        resolver = get_model_capability_resolver()
+        if not model:
+            return {
+                "provider": provider,
+                "model": model,
+                "source": "none",
+                "old": {},
+                "new": {},
+                "trusted": False,
+                "requires_manual_confirmation": True,
+                "diagnostic": "model_name_required",
+            }
+
+        try:
+            import aiohttp
+        except Exception:
+            aiohttp = None
+
+        api_url = str(self.config.get("api_url") or "")
+        api_key = str(self.config.get("api_key") or "")
+        if provider == "anthropic":
+            api_url = str(self.config.get("heartbeat_api_url") or api_url)
+            api_key = str(self.config.get("heartbeat_api_key") or api_key)
+
+        if aiohttp is None:
+            return await resolver.refresh_model_capabilities(provider=provider, model=model, api_url=api_url, api_key=api_key)
+
+        async with aiohttp.ClientSession() as session:
+            return await resolver.refresh_model_capabilities(
+                provider=provider,
+                model=model,
+                api_url=api_url,
+                api_key=api_key,
+                session=session,
+            )
+
 
     async def setup(self):
         await setup_app_runtime(self)
