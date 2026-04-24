@@ -5,11 +5,21 @@ from core.db.repositories.base import RepositoryBase
 
 
 class ThreadRepository(RepositoryBase):
-    def create(self, *, thread_id: str, principal_id, workspace_id, title: str = "", pinned_procedure_id: str | None = None) -> Thread:
+    def create(
+        self,
+        *,
+        thread_id: str,
+        principal_id,
+        home_workspace_id=None,
+        workspace_id=None,
+        title: str = "",
+        pinned_procedure_id: str | None = None,
+    ) -> Thread:
+        resolved_home_workspace_id = home_workspace_id if home_workspace_id is not None else workspace_id
         thread = Thread(
             thread_id=thread_id,
             principal_id=principal_id,
-            workspace_id=workspace_id,
+            home_workspace_id=resolved_home_workspace_id,
             title=title,
             pinned_procedure_id=pinned_procedure_id,
         )

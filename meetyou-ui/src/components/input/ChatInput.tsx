@@ -56,6 +56,7 @@ export default function ChatInput({
 }: ChatInputProps) {
   const [showOptions, setShowOptions] = useState(false)
   const dockRef = useRef<HTMLDivElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerLocked = Boolean(confirmRequest || pendingHumanInput)
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
@@ -84,6 +85,18 @@ export default function ChatInput({
       }
     }
   }
+
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) {
+      return
+    }
+    const maxHeight = Math.min(180, Math.max(112, Math.floor(window.innerHeight * 0.34)))
+    textarea.style.height = 'auto'
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight)
+    textarea.style.height = `${nextHeight}px`
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [inputVal])
 
   useEffect(() => {
     if (!showOptions) {
@@ -177,6 +190,7 @@ export default function ChatInput({
         />
 
         <textarea
+          ref={textareaRef}
           className={styles.textarea}
           placeholder={inputPlaceholder}
           value={inputVal}

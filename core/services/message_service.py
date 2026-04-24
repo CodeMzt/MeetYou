@@ -17,6 +17,7 @@ class MessageService(ServiceBase):
         channel: str = "message",
         status: str = "completed",
         source_client_id=None,
+        active_workspace_id=None,
         meta: dict | None = None,
     ):
         with self.session_scope() as session:
@@ -29,6 +30,7 @@ class MessageService(ServiceBase):
                 content=content,
                 status=status,
                 source_client_id=source_client_id,
+                active_workspace_id=active_workspace_id,
                 meta=meta,
             )
 

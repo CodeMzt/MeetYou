@@ -117,6 +117,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         )
         self.assertEqual(thread_resp.status_code, 200)
         thread_payload = thread_resp.json()
+        self.assertEqual(thread_payload["home_workspace_id"], "personal")
         self.assertEqual(thread_payload["workspace_id"], "personal")
         self.assertEqual(thread_payload["pinned_procedure_id"], "code_review")
 
@@ -184,7 +185,109 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
             headers=self._auth_headers(),
         )
         self.assertEqual(session_resp.status_code, 200)
+        self.assertEqual(session_resp.json()["active_workspace_id"], "personal")
         self.assertEqual(session_resp.json()["thread_id"], thread_payload["thread_id"])
+
+    def test_active_workspace_switch_and_context_pool_cross_client_recall(self):
+        feishu_thread_resp = self.client.post(
+            "/client/threads",
+            json={"home_workspace_id": "personal", "title": "Feishu topic"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(feishu_thread_resp.status_code, 200)
+        feishu_thread_id = feishu_thread_resp.json()["thread_id"]
+
+        feishu_session_resp = self.client.post(
+            "/client/sessions",
+            json={
+                "thread_id": feishu_thread_id,
+                "active_workspace_id": "personal",
+                "client_id": "feishu-bot",
+                "client_type": "bot",
+                "display_name": "Feishu Bot",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(feishu_session_resp.status_code, 200)
+        feishu_session_id = feishu_session_resp.json()["session_id"]
+
+        feishu_message_resp = self.client.post(
+            "/client/messages",
+            json={
+                "thread_id": feishu_thread_id,
+                "session_id": feishu_session_id,
+                "client_id": "feishu-bot",
+                "content": "Feishu asked about payment callback retry failures.",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(feishu_message_resp.status_code, 200)
+        self.assertEqual(feishu_message_resp.json()["active_workspace_id"], "personal")
+
+        desktop_thread_resp = self.client.post(
+            "/client/threads",
+            json={"home_workspace_id": "desktop-main", "title": "Desktop continuation"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(desktop_thread_resp.status_code, 200)
+        desktop_thread_id = desktop_thread_resp.json()["thread_id"]
+
+        desktop_session_resp = self.client.post(
+            "/client/sessions",
+            json={
+                "thread_id": desktop_thread_id,
+                "active_workspace_id": "desktop-main",
+                "client_id": "desktop-app",
+                "client_type": "electron",
+                "display_name": "Desktop App",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(desktop_session_resp.status_code, 200)
+        desktop_session_id = desktop_session_resp.json()["session_id"]
+
+        switch_resp = self.client.patch(
+            f"/client/sessions/{desktop_session_id}/active-workspace",
+            json={"active_workspace_id": "study", "client_id": "desktop-app"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(switch_resp.status_code, 200)
+        self.assertEqual(switch_resp.json()["active_workspace_id"], "study")
+
+        desktop_message_resp = self.client.post(
+            "/client/messages",
+            json={
+                "thread_id": desktop_thread_id,
+                "session_id": desktop_session_id,
+                "client_id": "desktop-app",
+                "content": "Continue the payment callback retry topic.",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(desktop_message_resp.status_code, 200)
+        self.assertEqual(desktop_message_resp.json()["active_workspace_id"], "study")
+
+        query_resp = self.client.get(
+            "/client/context-pool/query",
+            params={
+                "q": "payment callback retry",
+                "thread_id": desktop_thread_id,
+                "session_id": desktop_session_id,
+                "active_workspace_id": "study",
+                "limit": 8,
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(query_resp.status_code, 200)
+        items = query_resp.json()["items"]
+        self.assertTrue(any("Feishu asked" in item["content"] for item in items))
+
+        personal_clients_resp = self.client.get("/client/workspaces/personal/clients", headers=self._auth_headers())
+        study_clients_resp = self.client.get("/client/workspaces/study/clients", headers=self._auth_headers())
+        self.assertEqual(personal_clients_resp.status_code, 200)
+        self.assertEqual(study_clients_resp.status_code, 200)
+        self.assertTrue(any(item["client_id"] == "feishu-bot" for item in personal_clients_resp.json()))
+        self.assertTrue(any(item["client_id"] == "desktop-app" for item in study_clients_resp.json()))
 
     def test_create_session_binds_runtime_session_without_replaying_connected_agent(self):
         workspace = self.core_domain.services.workspace.get_by_workspace_id("personal")

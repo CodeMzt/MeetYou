@@ -111,6 +111,12 @@ async def setup_app_runtime(app) -> None:
     app.db_session_factory = app.core_domain.session_factory
     app.core_services = app.core_domain.services
     app.heart.set_core_services(app.core_services)
+    context_pool_setter = getattr(app.context_manager, "set_context_pool_service", None)
+    if callable(context_pool_setter):
+        context_pool_setter(
+            app.core_services.context_pool,
+            principal_getter=lambda: app.core_domain.principal.id,
+        )
     state_blob_service = app.core_services.state_blob
     await app.memory.init_memory(app.config)
     app.memory.set_store_backend(
@@ -224,6 +230,9 @@ async def setup_app_runtime(app) -> None:
         cors_origins=app.config.get("gateway_cors_origins") or [],
     )
     app.core_domain.agent_dispatch.set_transport(app.gateway.dispatch_agent_call)
+    runtime_bridge_setter = getattr(app.tools_manager, "set_runtime_bridge", None)
+    if callable(runtime_bridge_setter):
+        runtime_bridge_setter(session_manager=app.session_manager, gateway_getter=lambda: app.gateway)
     app.speaker.register_adapter("web", app.gateway.output_adapter)
     app.speaker.register_adapter("internal", app.gateway.agent_output_adapter)
     await app.gateway.start(host=host, port=port)

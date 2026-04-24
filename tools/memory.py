@@ -195,7 +195,11 @@ class Memory(MemoryRepository):
         return normalized
 
     def _current_workspace_id(self) -> str:
-        return self._normalize_workspace_id(get_event_context().get("workspace_id"))
+        context = get_event_context()
+        return self._normalize_workspace_id(context.get("active_workspace_id") or context.get("workspace_id"))
+
+    def _current_thread_id(self) -> str:
+        return str(get_event_context().get("thread_id") or "").strip()
 
     def _enrich_record_workspace_scope(self, record: MemoryRecord) -> MemoryRecord:
         inferred_tags: list[str] = []
@@ -218,6 +222,10 @@ class Memory(MemoryRepository):
             record["origin_workspace_id"] = origin_workspace_id
         elif record.get("origin_workspace_id"):
             record["origin_workspace_id"] = self._normalize_workspace_id(record.get("origin_workspace_id"))
+        context = get_event_context()
+        thread_id = str(context.get("thread_id") or "").strip()
+        if thread_id and not str(record.get("thread_id") or "").strip():
+            record["thread_id"] = thread_id
         return record
 
     async def save_memory_graph(self):

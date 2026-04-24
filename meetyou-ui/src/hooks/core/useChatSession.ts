@@ -137,6 +137,7 @@ export function useChatSession(
         const context = clientContext ?? (await initializeClientContext())
         const message = await sendClientMessage(baseUrl, {
           thread_id: context.threadId,
+          active_workspace_id: context.workspace.workspace_id,
           workspace_id: context.workspace.workspace_id,
           client_id: context.clientId,
           session_id: context.session.session_id,

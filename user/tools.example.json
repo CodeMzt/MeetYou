@@ -22,6 +22,36 @@
     {
       "type": "function",
       "function": {
+        "name": "switch_workspace",
+        "description": "Switch the current client session to a different active workspace. Workspaces are preference and locality scopes, not hard visibility boundaries.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "workspace_id": {
+              "type": "string",
+              "description": "Target workspace public id, such as personal, desktop-main, study, or home-lab."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Short reason for the switch."
+            },
+            "session_id": {
+              "type": "string",
+              "description": "Optional session id. Defaults to the current runtime session."
+            }
+          },
+          "required": [
+            "workspace_id"
+          ]
+        },
+        "metadata": {
+          "safe_parallel": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "ask_human",
         "description": "Ask the human a follow-up question and continue the same tool-calling round after the reply arrives.",
         "parameters": {

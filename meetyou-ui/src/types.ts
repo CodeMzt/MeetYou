@@ -76,6 +76,7 @@ export interface ClientThreadProcedureContext {
 
 export interface ClientThread {
   thread_id: string
+  home_workspace_id: string
   workspace_id: string
   title: string
   status: string
@@ -86,6 +87,7 @@ export interface ClientThread {
 export interface ClientSession {
   session_id: string
   thread_id: string
+  active_workspace_id: string
   workspace_id: string
   client_id: string
   status: string
@@ -140,6 +142,16 @@ export interface ClientAvailableAgent {
   status: string
   owner_client_id: string
   workspace_ids: string[]
+}
+
+export interface ClientAvailableClient {
+  client_id: string
+  client_type: string
+  display_name: string
+  status: string
+  workspace_ids: string[]
+  membership_role: string
+  enabled: boolean
 }
 
 export interface OperatorSourceProfile {
@@ -220,6 +232,7 @@ export interface ClientMessage {
   message_id: string
   thread_id: string
   session_id: string
+  active_workspace_id: string
   workspace_id: string
   client_id: string
   role: MessageRole
@@ -232,7 +245,8 @@ export interface ClientMessage {
 
 export interface ClientMessageCreatePayload {
   thread_id: string
-  workspace_id: string
+  active_workspace_id?: string
+  workspace_id?: string
   client_id: string
   content: string
   session_id?: string
@@ -260,6 +274,7 @@ export type ClientWsEvent =
   | { kind: 'confirm_resolved'; sessionId: string; requestId: string; accepted: boolean }
   | { kind: 'human_input_requested'; sessionId: string; payload: HumanInputRequestPayload }
   | { kind: 'human_input_resolved'; sessionId: string; requestId: string; answerText: string; selectedOption?: string }
+  | { kind: 'workspace_changed'; threadId: string; sessionId: string; activeWorkspaceId: string; workspaceId: string }
   | {
       kind: 'operation_updated'
       threadId: string
@@ -331,6 +346,7 @@ export interface ContextBreakdown {
   system: number
   history: number
   tool_history: number
+  context_pool: number
   memory_context: number
   policy: number
   current_input: number
@@ -385,11 +401,32 @@ export interface RuntimeRequestSnapshot {
   budget: RuntimeRequestBudget
   layers: {
     conversation_summary: boolean
+    context_pool: boolean
     memory_recall: boolean
     session_preload: boolean
     prefer_live_web: boolean
     history_message_count: number
   }
+}
+
+export interface ContextPoolQueryItem {
+  context_id: string
+  item_type: string
+  role: string
+  content: string
+  score: number
+  same_session: boolean
+  same_thread: boolean
+  same_workspace: boolean
+  workspace_tags: string[]
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface ContextPoolQueryResponse {
+  query: string
+  count: number
+  items: ContextPoolQueryItem[]
 }
 
 export interface RuntimeCompressionSnapshot {

@@ -29,6 +29,29 @@ function normalizeBuildInfo(payload: unknown): BuildInfo | null {
   }
 }
 
+function readCompileTimeValue(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+}
+
+function applyCompileTimeUiBuildInfo(info: BuildInfo): BuildInfo {
+  const gitCommit = readCompileTimeValue(
+    typeof __MEETYOU_UI_GIT_COMMIT__ === 'string' ? __MEETYOU_UI_GIT_COMMIT__ : '',
+  )
+  const branch = readCompileTimeValue(
+    typeof __MEETYOU_UI_GIT_BRANCH__ === 'string' ? __MEETYOU_UI_GIT_BRANCH__ : '',
+  )
+  const buildTime = readCompileTimeValue(
+    typeof __MEETYOU_UI_BUILD_TIME__ === 'string' ? __MEETYOU_UI_BUILD_TIME__ : '',
+  )
+
+  return {
+    ...info,
+    git_commit: gitCommit && gitCommit !== 'unknown' ? gitCommit : info.git_commit,
+    branch: branch && branch !== 'unknown' ? branch : info.branch,
+    build_time: buildTime || info.build_time,
+  }
+}
+
 export function detectBuildDriftWarning(ui: BuildInfo, desktopBackend: BuildInfo | null): string | null {
   if (!desktopBackend) {
     return null
@@ -43,13 +66,14 @@ export function detectBuildDriftWarning(ui: BuildInfo, desktopBackend: BuildInfo
 }
 
 export function getUiBuildInfo(): BuildInfo {
-  return normalizeBuildInfo(uiBuildInfo) ?? {
+  const fallback = normalizeBuildInfo(uiBuildInfo) ?? {
     git_commit: 'unknown',
     branch: 'unknown',
     build_time: '',
     component: 'ui',
     package_version: '0.0.0',
   }
+  return applyCompileTimeUiBuildInfo(fallback)
 }
 
 export async function fetchRuntimeBuildInfo(baseUrl: string): Promise<RuntimeBuildInfoSnapshot> {

@@ -20,6 +20,7 @@ describe('UsagePanel', () => {
             system: 256,
             history: 2048,
             tool_history: 128,
+            context_pool: 256,
             memory_context: 512,
             policy: 64,
             current_input: 1024,

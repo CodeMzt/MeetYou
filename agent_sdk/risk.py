@@ -17,6 +17,7 @@ _DEFAULT_TOOL_ACTION_RISKS: dict[str, str] = {
     "remember_knowledge": "local_write",
     "search_memory": "read",
     "manage_memories": "local_write",
+    "switch_workspace": "local_write",
     "search_web": "read",
     "read_web_page": "read",
     "research_topic": "read",

@@ -201,6 +201,11 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     processWsUpdateForChat(update)
     processWsUpdateForOperations(update)
 
+    if (update.kind === 'workspace_changed') {
+      void refreshWorkspace(update.workspaceId || update.activeWorkspaceId)
+      void refreshAvailableAgents()
+    }
+
     if (
       update.kind === 'message_completed' ||
       update.kind === 'confirm_resolved' ||
@@ -208,7 +213,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     ) {
       void reloadProcedureContext()
     }
-  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, reloadProcedureContext])
+  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, refreshAvailableAgents, refreshWorkspace, reloadProcedureContext])
 
   useEffect(() => {
     if (autoInitializeAttemptedRef.current) {

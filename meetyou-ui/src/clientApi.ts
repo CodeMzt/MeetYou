@@ -4,6 +4,8 @@ import type {
   AssistantMode,
   ClientAttachmentRecord,
   ClientAvailableAgent,
+  ClientAvailableClient,
+  ContextPoolQueryResponse,
   DanxiActionResponse,
   DanxiListResponse,
   DanxiMessageTargetResponse,
@@ -378,7 +380,7 @@ export async function listOperatorSourceProfiles(baseUrl: string): Promise<Opera
 
 export async function createClientThread(
   baseUrl: string,
-  payload: Pick<ClientThread, 'workspace_id' | 'title'> & { mode?: string; pinned_procedure_id?: string | null },
+  payload: Pick<ClientThread, 'title'> & { home_workspace_id?: string; workspace_id?: string; mode?: string; pinned_procedure_id?: string | null },
 ): Promise<ClientThread> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/threads'), {
     method: 'POST',
@@ -392,7 +394,8 @@ export async function createClientSession(
   baseUrl: string,
   payload: {
     thread_id: string
-    workspace_id: string
+    active_workspace_id?: string
+    workspace_id?: string
     client_id: string
     client_type?: string
     display_name?: string
@@ -404,6 +407,19 @@ export async function createClientSession(
     body: JSON.stringify(payload),
   })
   return readJsonOrThrow<ClientSession>(response, '创建客户端会话失败')
+}
+
+export async function updateClientSessionActiveWorkspace(
+  baseUrl: string,
+  sessionId: string,
+  payload: { active_workspace_id: string; client_id?: string },
+): Promise<ClientSession> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/sessions/${encodeURIComponent(sessionId)}/active-workspace`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<ClientSession>(response, '切换工作区失败')
 }
 
 export async function sendClientMessage(baseUrl: string, payload: ClientMessageCreatePayload): Promise<ClientMessage> {
@@ -446,6 +462,25 @@ export async function createClientOperation(
 export async function listClientAvailableAgents(baseUrl: string, workspaceId: string): Promise<ClientAvailableAgent[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/agents`))
   return readJsonOrThrow<ClientAvailableAgent[]>(response, '加载可用 Agent 失败')
+}
+
+export async function listClientAvailableClients(baseUrl: string, workspaceId: string): Promise<ClientAvailableClient[]> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/clients`))
+  return readJsonOrThrow<ClientAvailableClient[]>(response, '加载工作区客户端失败')
+}
+
+export async function queryContextPool(
+  baseUrl: string,
+  payload: { q: string; thread_id?: string; session_id?: string; active_workspace_id?: string; limit?: number },
+): Promise<ContextPoolQueryResponse> {
+  const url = new URL(buildDesktopUrl(baseUrl, '/context-pool/query'))
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<ContextPoolQueryResponse>(response, '查询上下文池失败')
 }
 
 export async function listClientProcedures(baseUrl: string): Promise<ClientProcedure[]> {

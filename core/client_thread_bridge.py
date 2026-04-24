@@ -56,6 +56,42 @@ class ClientThreadBridge:
             return gateway, core_services, None, resolved_session_row, binding_metadata, bridged_session_id or session_id
         return gateway, core_services, thread_row, resolved_session_row, binding_metadata, bridged_session_id or session_id
 
+    def _resolve_workspace_rows(self, core_services, *, thread_row, session_row=None, binding_metadata: dict | None = None):
+        binding_metadata = dict(binding_metadata or {})
+        home_workspace_row = core_services.workspace.get_by_id(
+            getattr(thread_row, "home_workspace_id", None) or getattr(thread_row, "workspace_id", None)
+        )
+        active_workspace_row = None
+        if session_row is not None:
+            active_workspace_row = core_services.workspace.get_by_id(
+                getattr(session_row, "active_workspace_id", None) or getattr(session_row, "workspace_id", None)
+            )
+        if active_workspace_row is None:
+            active_workspace_key = str(
+                binding_metadata.get("active_workspace_id") or binding_metadata.get("workspace_id") or ""
+            ).strip()
+            resolver = getattr(core_services.workspace, "get_by_workspace_id", None)
+            if active_workspace_key and callable(resolver):
+                active_workspace_row = core_services.workspace.get_by_workspace_id(active_workspace_key)
+        return home_workspace_row, active_workspace_row or home_workspace_row
+
+    def _record_context_pool_message(self, core_services, *, message, thread_row, session_row, active_workspace_row, home_workspace_row) -> None:
+        context_pool = getattr(core_services, "context_pool", None)
+        if context_pool is None:
+            return
+        try:
+            context_pool.record_message(
+                principal_id=thread_row.principal_id,
+                message=message,
+                thread=thread_row,
+                session=session_row,
+                active_workspace=active_workspace_row,
+                home_workspace=home_workspace_row,
+                metadata={"source": "assistant.message"},
+            )
+        except Exception:
+            return
+
     async def publish_task_operation_update(
         self,
         operation,
@@ -198,7 +234,13 @@ class ClientThreadBridge:
         )
         if gateway is None or core_services is None or thread_row is None:
             return
-        workspace_row = core_services.workspace.get_by_id(thread_row.workspace_id)
+        home_workspace_row, workspace_row = self._resolve_workspace_rows(
+            core_services,
+            thread_row=thread_row,
+            session_row=session_row,
+            binding_metadata=binding_metadata,
+        )
+        workspace_id = getattr(workspace_row, "workspace_id", "")
         if session_row is not None:
             message = core_services.message.create_message(
                 thread_id=thread_row.id,
@@ -206,13 +248,29 @@ class ClientThreadBridge:
                 role="assistant",
                 content=content,
                 status="completed",
-                meta={"turn_id": turn_id, "stream_id": stream_id},
+                active_workspace_id=getattr(workspace_row, "id", None),
+                meta={
+                    "turn_id": turn_id,
+                    "stream_id": stream_id,
+                    "home_workspace_id": getattr(home_workspace_row, "workspace_id", ""),
+                    "active_workspace_id": workspace_id,
+                    "workspace_id": workspace_id,
+                },
+            )
+            self._record_context_pool_message(
+                core_services,
+                message=message,
+                thread_row=thread_row,
+                session_row=session_row,
+                active_workspace_row=workspace_row,
+                home_workspace_row=home_workspace_row,
             )
             message_payload = {
                 "message_id": message.message_id,
                 "thread_id": thread_row.thread_id,
                 "session_id": publish_session_id or session_id,
-                "workspace_id": getattr(workspace_row, "workspace_id", ""),
+                "active_workspace_id": workspace_id,
+                "workspace_id": workspace_id,
                 "client_id": "",
                 "role": message.role,
                 "content": message.content,
@@ -225,7 +283,8 @@ class ClientThreadBridge:
                 "message_id": f"msg_transient_{uuid4().hex}",
                 "thread_id": thread_row.thread_id,
                 "session_id": publish_session_id or session_id,
-                "workspace_id": getattr(workspace_row, "workspace_id", ""),
+                "active_workspace_id": workspace_id,
+                "workspace_id": workspace_id,
                 "client_id": str(binding_metadata.get("client_id") or ""),
                 "role": "assistant",
                 "content": content,
@@ -256,10 +315,16 @@ class ClientThreadBridge:
         text = str(content or "").strip()
         if not text:
             return {"delivered": False, "reason": "empty_content"}
-        gateway, core_services, thread_row, _, binding_metadata, publish_session_id = self._resolve_thread_context(session_id)
+        gateway, core_services, thread_row, session_row, binding_metadata, publish_session_id = self._resolve_thread_context(session_id)
         if gateway is None or core_services is None or thread_row is None:
             return {"delivered": False, "reason": "thread_unavailable"}
-        workspace_row = core_services.workspace.get_by_id(thread_row.workspace_id)
+        _, workspace_row = self._resolve_workspace_rows(
+            core_services,
+            thread_row=thread_row,
+            session_row=session_row,
+            binding_metadata=binding_metadata,
+        )
+        workspace_id = getattr(workspace_row, "workspace_id", "")
         message_id = f"msg_temp_{uuid4().hex}"
         effective_turn_id = str(turn_id or "").strip()
         payload_session_id = publish_session_id or session_id
@@ -267,7 +332,8 @@ class ClientThreadBridge:
             "message_id": message_id,
             "thread_id": thread_row.thread_id,
             "session_id": payload_session_id,
-            "workspace_id": getattr(workspace_row, "workspace_id", ""),
+            "active_workspace_id": workspace_id,
+            "workspace_id": workspace_id,
             "client_id": str(binding_metadata.get("client_id") or ""),
             "role": "assistant",
             "content": text,

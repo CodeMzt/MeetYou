@@ -2330,7 +2330,8 @@ class App:
             turn_id=turn_id,
             source=request.event.source,
             target=request.target,
-            workspace_id=str((request.input_info.get("metadata") or {}).get("workspace_id") or ""),
+            active_workspace_id=str((request.input_info.get("metadata") or {}).get("active_workspace_id") or (request.input_info.get("metadata") or {}).get("workspace_id") or ""),
+            workspace_id=str((request.input_info.get("metadata") or {}).get("active_workspace_id") or (request.input_info.get("metadata") or {}).get("workspace_id") or ""),
             thread_id=str((request.input_info.get("metadata") or {}).get("thread_id") or ""),
             pinned_procedure_id=str((request.input_info.get("metadata") or {}).get("pinned_procedure_id") or ""),
         )

@@ -16,6 +16,14 @@ class Session(TimestampMixin, Base):
     session_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     thread_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("threads.id"), nullable=False)
     client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
-    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    active_workspace_id: Mapped[uuid.UUID] = mapped_column("workspace_id", UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+    @property
+    def workspace_id(self):
+        return self.active_workspace_id
+
+    @workspace_id.setter
+    def workspace_id(self, value) -> None:
+        self.active_workspace_id = value

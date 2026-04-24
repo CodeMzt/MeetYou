@@ -25,3 +25,33 @@ class ClientService(ServiceBase):
     def get_by_id(self, row_id):
         with self.session_scope() as session:
             return ClientRepository(session).get_by_id(row_id)
+
+    def bind_workspace(
+        self,
+        *,
+        workspace_id,
+        client_id,
+        membership_role: str = "member",
+        enabled: bool = True,
+        metadata: dict | None = None,
+    ):
+        with self.session_scope() as session:
+            return ClientRepository(session).bind_workspace(
+                workspace_id=workspace_id,
+                client_id=client_id,
+                membership_role=membership_role,
+                enabled=enabled,
+                metadata=metadata,
+            )
+
+    def list_workspace_bindings(self, client_id: str):
+        with self.session_scope() as session:
+            return ClientRepository(session).list_workspace_bindings(client_id)
+
+    def list_clients_for_workspace(self, workspace_id):
+        with self.session_scope() as session:
+            return ClientRepository(session).list_clients_for_workspace(workspace_id)
+
+    def is_bound_to_workspace(self, *, client_id: str, workspace_id) -> bool:
+        with self.session_scope() as session:
+            return ClientRepository(session).is_bound_to_workspace(client_id=client_id, workspace_id=workspace_id)

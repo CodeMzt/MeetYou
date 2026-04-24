@@ -14,6 +14,7 @@ from core.db.repositories import (
     AgentRepository,
     ApprovalRepository,
     AttachmentRepository,
+    ContextPoolRepository,
     ClientRepository,
     OperationRepository,
     PrincipalRepository,
@@ -92,6 +93,8 @@ class DatabasePhase1Tests(unittest.TestCase):
                 "operations",
                 "approvals",
                 "attachments",
+                "client_workspace_memberships",
+                "context_pool_items",
             }.issubset(tables)
         )
 
@@ -101,6 +104,7 @@ class DatabasePhase1Tests(unittest.TestCase):
             client_repo = ClientRepository(session)
             workspace_repo = WorkspaceRepository(session)
             agent_repo = AgentRepository(session)
+            context_pool_repo = ContextPoolRepository(session)
             thread_repo = ThreadRepository(session)
             session_repo = SessionRepository(session)
             operation_repo = OperationRepository(session)
@@ -127,17 +131,30 @@ class DatabasePhase1Tests(unittest.TestCase):
                 transport_profile="desktop_wss",
             )
             agent_repo.bind_workspace(workspace_id=workspace.id, agent_id=agent.id)
+            client_repo.bind_workspace(workspace_id=workspace.id, client_id=client.id)
             thread = thread_repo.create(
                 thread_id=f"thr_{uuid.uuid4().hex}",
                 principal_id=principal.id,
-                workspace_id=workspace.id,
+                home_workspace_id=workspace.id,
                 title="Phase 1 Test",
             )
             conversation = session_repo.create(
                 session_id=f"sess_{uuid.uuid4().hex}",
                 thread_id=thread.id,
                 client_id=client.id,
-                workspace_id=workspace.id,
+                active_workspace_id=workspace.id,
+            )
+            context_item = context_pool_repo.create(
+                context_id=f"ctx_{uuid.uuid4().hex}",
+                principal_id=principal.id,
+                thread_id=thread.id,
+                session_id=conversation.id,
+                source_client_id=client.id,
+                home_workspace_id=workspace.id,
+                active_workspace_id=workspace.id,
+                content="Desktop client asked about payment callback retries.",
+                canonical_text="desktop client asked about payment callback retries",
+                role="user",
             )
             operation = operation_repo.create(
                 operation_id=f"op_{uuid.uuid4().hex}",
@@ -168,8 +185,10 @@ class DatabasePhase1Tests(unittest.TestCase):
             self.assertIsNotNone(client_repo.get_by_client_id("desktop-main"))
             self.assertIsNotNone(workspace_repo.get_by_workspace_id("personal"))
             self.assertIsNotNone(agent_repo.get_by_agent_id("desktop-main-agent"))
+            self.assertTrue(client_repo.is_bound_to_workspace(client_id="desktop-main", workspace_id=workspace.id))
             self.assertIsNotNone(thread_repo.get_by_thread_id(thread.thread_id))
             self.assertIsNotNone(session_repo.get_by_session_id(conversation.session_id))
+            self.assertIsNotNone(context_pool_repo.get_by_context_id(context_item.context_id))
             self.assertIsNotNone(operation_repo.get_by_operation_id(operation.operation_id))
             self.assertIsNotNone(approval_repo.get_by_approval_id(approval.approval_id))
             self.assertIsNotNone(attachment_repo.get_by_attachment_id(attachment.attachment_id))

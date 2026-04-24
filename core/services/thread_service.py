@@ -7,12 +7,21 @@ from core.services.base import ServiceBase
 
 
 class ThreadService(ServiceBase):
-    def create_thread(self, *, principal_id, workspace_id, title: str = "", pinned_procedure_id: str | None = None):
+    def create_thread(
+        self,
+        *,
+        principal_id,
+        home_workspace_id=None,
+        workspace_id=None,
+        title: str = "",
+        pinned_procedure_id: str | None = None,
+    ):
+        resolved_home_workspace_id = home_workspace_id if home_workspace_id is not None else workspace_id
         with self.session_scope() as session:
             return ThreadRepository(session).create(
                 thread_id=f"thr_{uuid4().hex}",
                 principal_id=principal_id,
-                workspace_id=workspace_id,
+                home_workspace_id=resolved_home_workspace_id,
                 title=title,
                 pinned_procedure_id=pinned_procedure_id,
             )

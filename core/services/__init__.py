@@ -8,6 +8,7 @@ from core.services.attachment_service import AttachmentService
 from core.services.capability_service import CapabilityService
 from core.services.client_service import ClientService
 from core.services.config_state_service import ConfigStateService
+from core.services.context_pool_service import ContextPoolService
 from core.services.memory_state_service import MemoryStateService
 from core.services.message_service import MessageService
 from core.services.operation_service import OperationService
@@ -38,6 +39,7 @@ class CoreServices:
     attachment: AttachmentService
     message: MessageService
     config_state: ConfigStateService
+    context_pool: ContextPoolService
     memory_state: MemoryStateService
     task_state: TaskStateService
 
@@ -49,6 +51,7 @@ __all__ = [
     "CapabilityService",
     "ClientService",
     "ConfigStateService",
+    "ContextPoolService",
     "CoreServices",
     "MemoryStateService",
     "MessageService",

@@ -16,6 +16,7 @@ class MessageRepository(RepositoryBase):
         channel: str = "message",
         status: str = "completed",
         source_client_id=None,
+        active_workspace_id=None,
         meta: dict | None = None,
     ) -> Message:
         row = Message(
@@ -27,6 +28,7 @@ class MessageRepository(RepositoryBase):
             content=content,
             status=status,
             source_client_id=source_client_id,
+            active_workspace_id=active_workspace_id,
             meta=dict(meta or {}),
         )
         self.session.add(row)

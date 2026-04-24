@@ -17,6 +17,7 @@ from core.services import (
     CapabilityService,
     ClientService,
     ConfigStateService,
+    ContextPoolService,
     CoreServices,
     MemoryStateService,
     MessageService,
@@ -224,6 +225,7 @@ def build_core_services(session_factory) -> CoreServices:
         attachment=AttachmentService(session_factory),
         message=MessageService(session_factory),
         config_state=ConfigStateService(session_factory),
+        context_pool=ContextPoolService(session_factory),
         memory_state=MemoryStateService(session_factory),
         task_state=TaskStateService(session_factory),
     )
@@ -260,6 +262,7 @@ def bootstrap_core_domain(
         attachment=AttachmentService(session_factory, storage_root=attachment_storage_root, object_store=object_store),
         message=MessageService(session_factory),
         config_state=ConfigStateService(session_factory),
+        context_pool=ContextPoolService(session_factory),
         memory_state=MemoryStateService(session_factory),
         task_state=TaskStateService(session_factory),
     )

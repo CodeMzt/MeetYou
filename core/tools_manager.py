@@ -24,6 +24,7 @@ from tools.procedure_tools import ProcedureTools
 from tools.scenario_tools import ScenarioTools
 from tools.study_tools import StudyTools
 from tools.web_search import WebSearchTools
+from tools.workspace_tools import WorkspaceTools
 
 _get_mcp_timeout_seconds = get_mcp_timeout_seconds
 _should_expose_mcp_tool = should_expose_mcp_tool
@@ -32,6 +33,7 @@ _WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _ORDER_REQUIRED_TOOLS = {
     "ask_human",
     "switch_assistant_mode",
+    "switch_workspace",
     "save_memory",
     "remember_knowledge",
     "manage_memories",
@@ -73,6 +75,7 @@ class ToolsManager:
         )
         self._lightweight_tools = LightweightTools()
         self._procedure_tools = ProcedureTools()
+        self._workspace_tools = WorkspaceTools()
         self._scenario_tools = ScenarioTools(
             memory,
             context_manager,
@@ -113,6 +116,7 @@ class ToolsManager:
             "read_attachment": self._attachment_tools.read_attachment,
             "delete_attachment": self._attachment_tools.delete_attachment,
             "manage_procedures": self._procedure_tools.manage_procedures,
+            "switch_workspace": self._workspace_tools.switch_workspace,
             "summarize_text": self._lightweight_tools.summarize_text,
             "organize_notes": self._lightweight_tools.organize_notes,
             "extract_action_items": self._lightweight_tools.extract_action_items,
@@ -198,6 +202,10 @@ class ToolsManager:
     def set_core_domain(self, core_domain) -> None:
         self._attachment_tools.set_core_domain(core_domain)
         self._procedure_tools.set_core_domain(core_domain)
+        self._workspace_tools.set_core_domain(core_domain)
+
+    def set_runtime_bridge(self, *, session_manager=None, gateway_getter=None) -> None:
+        self._workspace_tools.set_runtime(session_manager=session_manager, gateway_getter=gateway_getter)
 
     def set_state_backends(self, *, office_backend=None, study_backend=None, danxi_backend=None) -> None:
         if self._danxi_tools is not None and danxi_backend is not None:

@@ -57,6 +57,29 @@ class SummaryAdapter:
         return 128000
 
 
+class FakeContextPoolService:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def query_by_public_ids(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        return [
+            {
+                "context_id": "ctx_feishu_1",
+                "item_type": "turn",
+                "role": "user",
+                "content": "Feishu user asked about payment callback retries.",
+                "score": 0.91,
+                "same_session": False,
+                "same_thread": False,
+                "same_workspace": False,
+                "workspace_tags": ["remote"],
+                "metadata": {"client_id": "feishu"},
+                "created_at": "2026-04-24T00:00:00Z",
+            }
+        ]
+
+
 class DummyMemory(Memory):
     async def _get_embedding(self, text: str) -> list[float]:
         raw = str(text or "")
@@ -212,6 +235,39 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(plan["layers"]["conversation_summary"])
         self.assertTrue(any("[对话摘要层]" in message.get("content", "") for message in plan["messages"]))
         self.assertLessEqual(plan["breakdown"]["total"], plan["length_policy"]["target_input_tokens"])
+
+    async def test_context_plan_includes_context_pool_recall(self):
+        context_pool = FakeContextPoolService()
+        context_manager = ContextManager(self.memory, adapter=SummaryAdapter(), event_bus=None)
+        context_manager.set_context_pool_service(context_pool, principal_getter=lambda: "principal-1")
+
+        token = bind_event_context(
+            session_id="desktop-session",
+            thread_id="desktop-thread",
+            active_workspace_id="desktop-main",
+        )
+        try:
+            plan = await context_manager.build_context_plan(
+                session_history_before_turn=[],
+                current_turn_messages=[{"role": "user", "content": "continue the payment callback topic"}],
+                auto_memory_message=None,
+                policy_messages=[],
+                proprioception_message=None,
+                route_context={},
+                requested_mode="general",
+                model="gpt-5.4",
+                provider_name="openai",
+                api_url="https://api.openai.com/v1/responses",
+                context_limit_override=4096,
+            )
+        finally:
+            reset_event_context(token)
+
+        self.assertTrue(plan["layers"]["context_pool"])
+        self.assertTrue(any("[ContextPool]" in message.get("content", "") for message in plan["messages"]))
+        self.assertEqual(context_pool.calls[0]["active_workspace_id"], "desktop-main")
+        self.assertEqual(context_pool.calls[0]["session_id"], "desktop-session")
+        self.assertGreater(plan["breakdown"]["context_pool"], 0)
 
     async def test_trim_history_persists_summary_without_writing_system_message_into_history(self):
         adapter = SummaryAdapter("updated summary")
@@ -633,7 +689,7 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(recall["profile"])
         self.assertIn("black coffee", recall["profile"][0]["fact_value"])
 
-    async def test_session_aware_recall_keeps_recent_events_in_same_session(self):
+    async def test_session_aware_recall_ranks_same_session_without_hiding_other_sessions(self):
         await self.memory.save_memory("payment callback still needs fix", 0.8, session_id="s1", source=self.source)
         await self.memory.save_memory("user likes pour over coffee", 0.8, session_id="s2", source=self.source)
 
@@ -644,7 +700,7 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
             await self.memory.recall_memory_structured("coffee", session_id="", source=self.source, reinforce=False)
         )
 
-        self.assertFalse(any("coffee" in item["content"].lower() for item in same_session["recent_events"]))
+        self.assertTrue(any("coffee" in item["content"].lower() for item in same_session["recent_events"]))
         self.assertTrue(any("coffee" in item["content"].lower() for item in cross_session["recent_events"]))
 
     async def test_workspace_tags_affect_memory_ranking_and_source_labels(self):

@@ -110,6 +110,11 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
         return {
           ...current,
           workspace: nextWorkspace,
+          session: {
+            ...current.session,
+            active_workspace_id: workspaceId,
+            workspace_id: workspaceId,
+          },
         }
       })
       return nextWorkspace
@@ -134,12 +139,14 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
         throw new Error('没有可用工作空间')
       }
       const thread = await createClientThread(baseUrl, {
+        home_workspace_id: workspace.workspace_id,
         workspace_id: workspace.workspace_id,
         title: 'Desktop Chat',
         mode: workspace.base_mode,
       })
       const session = await createClientSession(baseUrl, {
         thread_id: thread.thread_id,
+        active_workspace_id: workspace.workspace_id,
         workspace_id: workspace.workspace_id,
         client_id: sourceIdRef.current,
         client_type: 'electron',
