@@ -344,6 +344,102 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("stream_options", session.calls[1]["json"])
         self.assertEqual([event.type for event in events], ["text", "done"])
 
+    def test_deepseek_thinking_tool_call_preserves_reasoning_content(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter._format_chat_messages(
+            [
+                {"role": "user", "content": "Need weather"},
+                {
+                    "role": "assistant",
+                    "content": "Let me check the date first.",
+                    "reasoning_content": "I need the date before calling weather.",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_1",
+                            "function": {"name": "get_date", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "2026-04-24"},
+            ],
+            url="https://api.deepseek.com/v1/chat/completions",
+            model="deepseek-v4-pro",
+        )
+
+        assistant = formatted[1]
+        self.assertEqual(assistant["reasoning_content"], "I need the date before calling weather.")
+        self.assertEqual(assistant["content"], "Let me check the date first.")
+        self.assertEqual(assistant["tool_calls"][0]["id"], "call_1")
+
+    def test_deepseek_reasoner_strips_reasoning_content_from_input(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter._format_chat_messages(
+            [
+                {"role": "user", "content": "Need weather"},
+                {
+                    "role": "assistant",
+                    "content": "Let me check.",
+                    "reasoning_content": "Do not send this back to deepseek-reasoner.",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_1",
+                            "function": {"name": "get_date", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "2026-04-24"},
+            ],
+            url="https://api.deepseek.com/v1/chat/completions",
+            model="deepseek-reasoner",
+        )
+
+        self.assertNotIn("reasoning_content", formatted[1])
+
+    async def test_deepseek_stream_emits_reasoning_and_tool_calls(self):
+        adapter = OpenAIAdapter()
+        session = FakeSession(
+            [
+                FakeResponse(
+                    lines=[
+                        'data: {"choices":[{"delta":{"reasoning_content":"plan "}}]}',
+                        'data: {"choices":[{"delta":{"content":"Let me check."}}]}',
+                        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"get_date","arguments":"{}"}}]}}]}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        events = []
+        async for event in adapter.stream_chat(
+            session,
+            "https://api.deepseek.com/v1/chat/completions",
+            "key",
+            "deepseek-v4-pro",
+            [{"role": "user", "content": "Need weather"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_date",
+                        "description": "Get date",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            thinking=True,
+            thinking_effort="high",
+        ):
+            events.append(event)
+
+        self.assertEqual([event.type for event in events], ["reasoning", "text", "tool_calls", "done"])
+        self.assertEqual(events[0].reasoning_text, "plan ")
+        self.assertEqual(events[2].tool_calls[0].id, "call_1")
+
     async def test_compatible_host_400_raises_structured_provider_error(self):
         adapter = OpenAIAdapter()
         session = FakeSession(

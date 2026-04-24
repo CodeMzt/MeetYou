@@ -674,5 +674,53 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(item.get("source_label") == "当前工作区:desktop-main" for item in payload["recent_events"]))
         self.assertIn("[来源: 当前工作区:desktop-main]", text)
 
+    async def test_memory_record_status_update_and_delete(self):
+        await self.memory.save_memory("user likes black coffee", 0.8, session_id="s1", source=self.source)
+        memory_id = self.memory._store["records"][-1]["id"]
+
+        invalidated = await self.memory.update_record_status(memory_id, "invalidated")
+        active_snapshot = self.memory.get_memory_snapshot(include_invalidated=False)
+        full_snapshot = self.memory.get_memory_snapshot(include_invalidated=True)
+
+        self.assertEqual(invalidated["memory_id"], memory_id)
+        self.assertEqual(invalidated["status"], "invalidated")
+        self.assertFalse(any(record["id"] == memory_id for record in active_snapshot["records"]))
+        self.assertTrue(any(record["id"] == memory_id and record["status"] == "invalidated" for record in full_snapshot["records"]))
+
+        restored = await self.memory.update_record_status(memory_id, "active")
+        self.assertEqual(restored["record"]["status"], "active")
+
+        await self.memory.save_memory("user likes pour over coffee", 0.8, session_id="s1", source=self.source)
+        other_id = self.memory._store["records"][-1]["id"]
+        self.memory._store["edges"].append(
+            {
+                "from_id": memory_id,
+                "to_id": other_id,
+                "semantic_sim": 0.99,
+                "same_entity": False,
+                "same_project": False,
+                "derived_from": False,
+                "contradicts": False,
+                "updated_at": dt_to_iso(utcnow()),
+            }
+        )
+
+        deleted = await self.memory.delete_record(memory_id)
+
+        self.assertTrue(deleted["deleted"])
+        self.assertFalse(any(record.get("id") == memory_id for record in self.memory._store["records"]))
+        self.assertFalse(
+            any(edge.get("from_id") == memory_id or edge.get("to_id") == memory_id for edge in self.memory._store["edges"])
+        )
+
+    async def test_memory_record_mutation_rejects_missing_ids(self):
+        with self.assertRaises(KeyError):
+            await self.memory.update_record_status("missing-memory", "invalidated")
+        with self.assertRaises(KeyError):
+            await self.memory.delete_record("missing-memory")
+        with self.assertRaises(ValueError):
+            await self.memory.update_record_status("missing-memory", "archived")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,8 @@ from gateway.models import (
     HealthResponse,
     MemoryClearResponse,
     MemoryGraphResponse,
+    MemoryRecordMutationResponse,
+    MemoryRecordPatchRequest,
     MemorySnapshotResponse,
     RuntimeEnvelopePayload,
     RuntimeEnvelopeResponse,
@@ -66,6 +68,8 @@ class FastAPIGateway:
         memory_snapshot_getter=None,
         memory_graph_getter=None,
         memory_clearer=None,
+        memory_record_status_updater=None,
+        memory_record_deleter=None,
         runtime_state_getter=None,
         runtime_usage_getter=None,
         runtime_debug_getter=None,
@@ -89,6 +93,8 @@ class FastAPIGateway:
             memory_snapshot_getter=memory_snapshot_getter,
             memory_graph_getter=memory_graph_getter,
             memory_clearer=memory_clearer,
+            memory_record_status_updater=memory_record_status_updater,
+            memory_record_deleter=memory_record_deleter,
             runtime_state_getter=runtime_state_getter,
             runtime_usage_getter=runtime_usage_getter,
             runtime_debug_getter=runtime_debug_getter,
@@ -103,6 +109,8 @@ class FastAPIGateway:
         self._memory_snapshot_getter = memory_snapshot_getter
         self._memory_graph_getter = memory_graph_getter
         self._memory_clearer = memory_clearer
+        self._memory_record_status_updater = memory_record_status_updater
+        self._memory_record_deleter = memory_record_deleter
         self._runtime_state_getter = runtime_state_getter
         self._runtime_usage_getter = runtime_usage_getter
         self._runtime_debug_getter = runtime_debug_getter
@@ -569,6 +577,52 @@ class FastAPIGateway:
             self._require_http_auth(request)
             payload = await self._resolve(self._memory_clearer)
             return MemoryClearResponse(**payload)
+
+        @self.app.patch("/memory/records/{memory_id}", response_model=MemoryRecordMutationResponse)
+        async def update_memory_record_status(memory_id: str, http_request: Request, request: MemoryRecordPatchRequest):
+            self._require_http_auth(http_request)
+            try:
+                payload = await self._resolve(self._memory_record_status_updater, memory_id, request.status)
+            except KeyError:
+                self._raise_http_error(
+                    status_code=404,
+                    code="memory_record_not_found",
+                    category=RuntimeErrorCategory.VALIDATION.value,
+                    message="Memory record not found.",
+                    details={"memory_id": memory_id},
+                )
+            except ValueError as exc:
+                self._raise_http_error(
+                    status_code=400,
+                    code="memory_record_update_invalid",
+                    category=RuntimeErrorCategory.VALIDATION.value,
+                    message=str(exc),
+                    details={"memory_id": memory_id, "status": request.status},
+                )
+            return MemoryRecordMutationResponse(**payload)
+
+        @self.app.delete("/memory/records/{memory_id}", response_model=MemoryRecordMutationResponse)
+        async def delete_memory_record(memory_id: str, request: Request):
+            self._require_http_auth(request)
+            try:
+                payload = await self._resolve(self._memory_record_deleter, memory_id)
+            except KeyError:
+                self._raise_http_error(
+                    status_code=404,
+                    code="memory_record_not_found",
+                    category=RuntimeErrorCategory.VALIDATION.value,
+                    message="Memory record not found.",
+                    details={"memory_id": memory_id},
+                )
+            except ValueError as exc:
+                self._raise_http_error(
+                    status_code=400,
+                    code="memory_record_delete_invalid",
+                    category=RuntimeErrorCategory.VALIDATION.value,
+                    message=str(exc),
+                    details={"memory_id": memory_id},
+                )
+            return MemoryRecordMutationResponse(**payload)
 
         @self.app.get("/runtime/state", response_model=RuntimeEnvelopeResponse)
         async def get_runtime_state(request: Request, session_id: str = ""):

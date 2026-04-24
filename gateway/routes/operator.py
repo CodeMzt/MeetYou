@@ -16,6 +16,8 @@ from gateway.models import (
     HealthResponse,
     MemoryClearResponse,
     MemoryGraphResponse,
+    MemoryRecordMutationResponse,
+    MemoryRecordPatchRequest,
     MemorySnapshotResponse,
     OperatorAgentResponse,
     OperatorSourceProfileResponse,
@@ -216,6 +218,52 @@ def build_operator_router(gateway) -> APIRouter:
         gateway._require_http_auth(request)
         payload = await gateway._resolve(gateway._dependencies.memory_clearer)
         return MemoryClearResponse(**payload)
+
+    @router.patch("/memory/records/{memory_id}", response_model=MemoryRecordMutationResponse)
+    async def update_operator_memory_record_status(memory_id: str, http_request: Request, request: MemoryRecordPatchRequest):
+        gateway._require_http_auth(http_request)
+        try:
+            payload = await gateway._resolve(gateway._dependencies.memory_record_status_updater, memory_id, request.status)
+        except KeyError:
+            gateway._raise_http_error(
+                status_code=404,
+                code="memory_record_not_found",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="Memory record not found.",
+                details={"memory_id": memory_id},
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code="memory_record_update_invalid",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+                details={"memory_id": memory_id, "status": request.status},
+            )
+        return MemoryRecordMutationResponse(**payload)
+
+    @router.delete("/memory/records/{memory_id}", response_model=MemoryRecordMutationResponse)
+    async def delete_operator_memory_record(memory_id: str, request: Request):
+        gateway._require_http_auth(request)
+        try:
+            payload = await gateway._resolve(gateway._dependencies.memory_record_deleter, memory_id)
+        except KeyError:
+            gateway._raise_http_error(
+                status_code=404,
+                code="memory_record_not_found",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="Memory record not found.",
+                details={"memory_id": memory_id},
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code="memory_record_delete_invalid",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+                details={"memory_id": memory_id},
+            )
+        return MemoryRecordMutationResponse(**payload)
 
     @router.get("/health", response_model=HealthEnvelopeResponse)
     async def operator_health(request: Request):

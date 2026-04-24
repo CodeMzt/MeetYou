@@ -14,11 +14,22 @@ const MEMORY_CLEAR_CONFIRMATION = '清除记忆'
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('overview')
   const [confirmClearOpen, setConfirmClearOpen] = useState(false)
-  const { snapshot, graph, refresh, error, clearFeedback, clearing, clearMemory } = useMemory()
+  const {
+    snapshot,
+    graph,
+    refresh,
+    error,
+    clearFeedback,
+    clearing,
+    mutatingRecordIds,
+    clearMemory,
+    updateRecordStatus,
+    deleteRecord,
+  } = useMemory()
 
   useEffect(() => {
     if (['overview', 'records', 'timeline', 'graph'].includes(activeTab)) {
-      refresh()
+      refresh(activeTab === 'records')
     }
   }, [activeTab, refresh])
 
@@ -27,12 +38,12 @@ export default function Dashboard() {
       return ''
     }
     const summaryParts = [
-      `${clearFeedback.clearedRecordCount} records`,
-      `${clearFeedback.clearedEdgeCount} edges`,
-      `${clearFeedback.clearedSessionSummaryCount} session summaries`,
+      `${clearFeedback.clearedRecordCount} 条记忆`,
+      `${clearFeedback.clearedEdgeCount} 条关系`,
+      `${clearFeedback.clearedSessionSummaryCount} 条会话摘要`,
     ]
     if (clearFeedback.clearedGlobalSummary) {
-      summaryParts.push('global summary')
+      summaryParts.push('全局摘要')
     }
     return summaryParts.join(', ')
   }, [clearFeedback])
@@ -80,20 +91,19 @@ export default function Dashboard() {
           <div className="card memory-actions-card">
             <div className="memory-actions-copy">
               <div className="memory-actions-title-row">
-                <h2 className="memory-actions-title">Memory Control</h2>
+                <h2 className="memory-actions-title">记忆管理</h2>
                 <span className="memory-actions-badge">
                   <AlertTriangle size={12} />
-                  Destructive
+                  高风险
                 </span>
               </div>
               <p className="memory-actions-description">
-                Clear the working summaries and memory graph in one step. Thread messages remain intact, but future turns
-                will no longer use the cleared memory state.
+                可以清空全部记忆，也可以在记录列表中单独失效或删除某条记忆。线程消息不会被删除。
               </p>
               {clearFeedback ? (
                 <div className="settings-banner success">
                   <div className="settings-banner-copy">
-                    <strong>Memory cleared</strong>
+                    <strong>记忆已清空</strong>
                     <span>{feedbackSummary}</span>
                   </div>
                 </div>
@@ -101,7 +111,7 @@ export default function Dashboard() {
               {error ? (
                 <div className="settings-banner error">
                   <div className="settings-banner-copy">
-                    <strong>Action failed</strong>
+                    <strong>操作失败</strong>
                     <span>{error}</span>
                   </div>
                 </div>
@@ -110,17 +120,24 @@ export default function Dashboard() {
             <div className="memory-actions-buttons">
               <button className="settings-secondary-btn" onClick={() => refresh()} disabled={clearing}>
                 <RefreshCw size={16} />
-                Refresh
+                刷新
               </button>
               <button className="memory-clear-btn" onClick={() => setConfirmClearOpen(true)} disabled={clearing}>
                 <Trash2 size={16} />
-                {clearing ? 'Clearing...' : 'Clear Memory'}
+                {clearing ? '清空中...' : '清空全部记忆'}
               </button>
             </div>
           </div>
 
           {activeTab === 'overview' && <OverviewView snapshot={snapshot} />}
-          {activeTab === 'records' && <RecordsView snapshot={snapshot} />}
+          {activeTab === 'records' && (
+            <RecordsView
+              snapshot={snapshot}
+              mutatingRecordIds={mutatingRecordIds}
+              onUpdateStatus={updateRecordStatus}
+              onDeleteRecord={deleteRecord}
+            />
+          )}
           {activeTab === 'timeline' && <TimelineView snapshot={snapshot} />}
           {activeTab === 'graph' && (
             <Suspense fallback={<div className="card graph-loading">Loading graph view...</div>}>
@@ -132,13 +149,13 @@ export default function Dashboard() {
 
       <ConfirmModal
         isOpen={confirmClearOpen}
-        title="Clear memory state"
-        message="This removes stored memory records, graph edges, session summaries, and in-memory conversation state. It does not delete thread messages."
-        confirmText={clearing ? 'Clearing...' : 'Clear memory'}
-        cancelText="Cancel"
+        title="清空全部记忆"
+        message="这会删除已存储的记忆记录、关系图、会话摘要和当前内存中的对话状态，但不会删除线程消息。"
+        confirmText={clearing ? '清空中...' : '清空记忆'}
+        cancelText="取消"
         isDestructive
-        confirmationLabel="Type to confirm"
-        confirmationHint="Enter the confirmation phrase exactly before this action becomes available."
+        confirmationLabel="输入确认词"
+        confirmationHint="必须完整输入确认词后才会执行。"
         confirmationText={MEMORY_CLEAR_CONFIRMATION}
         onConfirm={handleConfirmClear}
         onCancel={() => setConfirmClearOpen(false)}

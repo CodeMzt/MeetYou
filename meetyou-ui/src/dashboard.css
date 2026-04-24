@@ -206,6 +206,103 @@
   cursor: not-allowed;
 }
 
+.records-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 14px;
+}
+
+.records-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.records-type-chip,
+.records-status-chip,
+.records-meta span {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.records-type-chip {
+  background: var(--text-accent);
+  color: var(--text-inverse);
+}
+
+.records-status-chip.active {
+  color: var(--text-success);
+  background: var(--bg-success);
+}
+
+.records-status-chip.invalidated {
+  color: var(--text-error);
+  background: var(--bg-error);
+}
+
+.records-content {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.records-fact-key {
+  color: var(--text-secondary);
+}
+
+.records-meta {
+  margin-top: auto;
+  padding-top: 6px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.records-meta span {
+  background: var(--border-subtle);
+}
+
+.records-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.records-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.records-action-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--text-accent);
+}
+
+.records-action-btn.danger {
+  color: var(--text-error);
+  border-color: var(--border-error);
+  background: var(--bg-error);
+}
+
+.records-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .scroll-surface {
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
