@@ -198,12 +198,8 @@ class OpenAIAdapter(LLMAdapter):
             if "tool_calls" in msg:
                 new_msg["tool_calls"] = msg["tool_calls"]
                 reasoning_content = msg.get("reasoning_content")
-                if (
-                    preserve_reasoning_content
-                    and "reasoning_content" in msg
-                    and isinstance(reasoning_content, str)
-                ):
-                    new_msg["reasoning_content"] = reasoning_content
+                if preserve_reasoning_content:
+                    new_msg["reasoning_content"] = reasoning_content if isinstance(reasoning_content, str) else ""
             if "tool_call_id" in msg:
                 new_msg["tool_call_id"] = msg["tool_call_id"]
 

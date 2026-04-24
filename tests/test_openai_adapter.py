@@ -411,6 +411,34 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant["reasoning_content"], "")
         self.assertEqual(assistant["tool_calls"][0]["id"], "call_1")
 
+    def test_deepseek_thinking_tool_call_backfills_missing_reasoning_content_field(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter._format_chat_messages(
+            [
+                {"role": "user", "content": "Need weather"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_1",
+                            "function": {"name": "get_date", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "2026-04-24"},
+            ],
+            url="https://api.deepseek.com/chat/completions",
+            model="deepseek-v4-pro",
+        )
+
+        assistant = formatted[1]
+        self.assertIn("reasoning_content", assistant)
+        self.assertEqual(assistant["reasoning_content"], "")
+        self.assertEqual(assistant["tool_calls"][0]["id"], "call_1")
+
     def test_deepseek_thinking_tool_calls_preserve_reasoning_content_on_compatible_proxy(self):
         adapter = OpenAIAdapter()
 
