@@ -76,6 +76,69 @@
           "required": []
         }
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "manage_heartbeat_settings",
+        "description": "Read or update heartbeat idle proactive poke settings.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "get",
+                "update"
+              ],
+              "description": "Use get to inspect settings/status or update to change allowed idle heartbeat settings."
+            },
+            "updates": {
+              "type": "object",
+              "description": "Allowed keys: heartbeat_idle_poke_enabled, heartbeat_idle_poke_after_seconds, heartbeat_idle_poke_cooldown_seconds, heartbeat_idle_context_compaction_enabled.",
+              "properties": {
+                "heartbeat_idle_poke_enabled": {
+                  "type": "boolean"
+                },
+                "heartbeat_idle_poke_after_seconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "heartbeat_idle_poke_cooldown_seconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "heartbeat_idle_context_compaction_enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "emit_temporary_reply",
+        "description": "Send a short temporary assistant reply to the current user while the turn continues. Keep it brief; it will be replaced by the final answer.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "A short temporary reply, ideally one sentence."
+            }
+          },
+          "required": [
+            "content"
+          ]
+        }
+      }
     }
   ],
   "chain_tools": [

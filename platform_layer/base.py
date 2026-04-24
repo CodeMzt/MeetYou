@@ -16,6 +16,16 @@ class PlatformAdapter(ABC):
     """
 
     @abstractmethod
+    def describe_capabilities(self) -> dict:
+        """
+        返回当前平台适配器的能力语义说明。
+
+        Returns:
+            dict: 以能力名为 key 的说明字典，显式声明 enabled / degraded / disabled
+                  以及 Linux / macOS 下的降级或禁用语义。
+        """
+
+    @abstractmethod
     def get_ui_context(self) -> dict:
         """
         获取当前光标/焦点处的 UI 控件信息。

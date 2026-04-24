@@ -249,6 +249,23 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(config.agent_access_token, "agent-from-file")
         self.assertEqual(config.gateway_access_token, "gateway-from-dotenv")
 
+    def test_load_desktop_agent_config_accepts_utf8_bom_json(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "desktop_agent.json"
+            config_path.write_bytes(
+                b"\xef\xbb\xbf"
+                + json.dumps({"core_base_url": "https://core.example.com"}).encode("utf-8")
+            )
+
+            previous_cwd = Path.cwd()
+            os.chdir(tmp_dir)
+            try:
+                config = load_desktop_agent_config(str(config_path))
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(config.core_base_url, "https://core.example.com")
+
     def test_load_desktop_agent_config_does_not_use_gateway_token_for_agent_runtime(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "desktop_agent.json"
@@ -306,6 +323,12 @@ class DesktopAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(snapshot["payload"]["capabilities"][0]["workspace_ids"], config.workspace_ids)
         self.assertEqual(heartbeat["type"], "agent.heartbeat")
         self.assertEqual(heartbeat["payload"]["metrics"]["cpu_percent"], 10.0)
+
+    def test_build_hello_normalizes_macos_host_os(self):
+        config = load_desktop_agent_config()
+        with mock.patch("desktop_agent.protocol.platform.system", return_value="Darwin"):
+            hello = build_hello(config)
+        self.assertEqual(hello["payload"]["host"]["os"], "macos")
 
     def test_runtime_handles_call_request_with_echo_handler(self):
         config = load_desktop_agent_config()

@@ -38,8 +38,8 @@ from core.runtime_context import bind_event_context, reset_event_context
 logger = logging.getLogger("meetyou.heart")
 
 _URGENT_DUE_WINDOW = timedelta(hours=6)
-_IDLE_POKE_WINDOW = timedelta(hours=1)
-_IDLE_POKE_COOLDOWN_SECONDS = 3600
+_DEFAULT_IDLE_POKE_AFTER_SECONDS = 3600
+_DEFAULT_IDLE_POKE_COOLDOWN_SECONDS = 3600
 _DEFAULT_SIGNAL_COOLDOWN_SECONDS = 1800
 _STALL_MIN_WINDOW = 300
 _PENDING_CONSOLIDATION_STALE_WINDOW = timedelta(hours=4)
@@ -68,6 +68,27 @@ def _iso_to_dt(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _config_bool(value: Any, *, default: bool) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 class Heart:
@@ -119,6 +140,14 @@ class Heart:
         self._last_heartbeat_signal_message = ""
         self._last_heartbeat_signal_fingerprint = ""
         self._last_idle_poke_at = ""
+        self._last_idle_poke_session_id = ""
+        self._last_idle_poke_message = ""
+        self._last_proactive_delivery_at = ""
+        self._last_proactive_delivery_status = ""
+        self._idle_poke_enabled = True
+        self._idle_poke_after_seconds = _DEFAULT_IDLE_POKE_AFTER_SECONDS
+        self._idle_poke_cooldown_seconds = _DEFAULT_IDLE_POKE_COOLDOWN_SECONDS
+        self._idle_context_compaction_enabled = True
         self._job_specs = {
             "scheduler": {"kind": "scheduler", "max_retries": 0},
             "housekeeping": {"kind": "housekeeping", "max_retries": 0},
@@ -163,14 +192,31 @@ class Heart:
         self._heartbeat_interval = int(self._config.get("heartbeat_interval") or 180)
         self._housekeeping_interval = int(self._config.get("housekeeping_interval") or 60)
         self._scheduler_interval = int(self._config.get("scheduler_interval") or 15)
+        self._idle_poke_enabled = _config_bool(self._config.get("heartbeat_idle_poke_enabled"), default=True)
+        self._idle_poke_after_seconds = _positive_int(
+            self._config.get("heartbeat_idle_poke_after_seconds"),
+            default=_DEFAULT_IDLE_POKE_AFTER_SECONDS,
+        )
+        self._idle_poke_cooldown_seconds = _positive_int(
+            self._config.get("heartbeat_idle_poke_cooldown_seconds"),
+            default=_DEFAULT_IDLE_POKE_COOLDOWN_SECONDS,
+        )
+        self._idle_context_compaction_enabled = _config_bool(
+            self._config.get("heartbeat_idle_context_compaction_enabled"),
+            default=True,
+        )
         self._api_url = self._config.get("heartbeat_api_url") or ""
         self._api_key = self._config.get("heartbeat_api_key") or ""
         self._model = self._config.get("heart_model") or ""
         logger.info(
-            "Heart config refreshed: heartbeat=%ss housekeeping=%ss scheduler=%ss model=%s",
+            "Heart config refreshed: heartbeat=%ss housekeeping=%ss scheduler=%ss idle_poke=%s/%ss cooldown=%ss compact=%s model=%s",
             self._heartbeat_interval,
             self._housekeeping_interval,
             self._scheduler_interval,
+            self._idle_poke_enabled,
+            self._idle_poke_after_seconds,
+            self._idle_poke_cooldown_seconds,
+            self._idle_context_compaction_enabled,
             self._model,
         )
 
@@ -354,7 +400,7 @@ class Heart:
                 continue
             source = getattr(binding, "source", None)
             source_kind = str(getattr(source, "kind", "") or "").strip().lower()
-            if source_kind not in {SourceKind.WEB.value, SourceKind.FEISHU.value, SourceKind.CLI.value}:
+            if source_kind not in {SourceKind.WEB.value, SourceKind.FEISHU.value, SourceKind.WECHAT.value, SourceKind.CLI.value}:
                 continue
             last_active = str(getattr(binding, "metadata", {}).get("last_active_at", "") or "").strip()
             try:
@@ -536,8 +582,27 @@ class Heart:
 
     def _signal_cooldown_seconds(self, signal_kind: str) -> int:
         if signal_kind == "idle_poke":
-            return _IDLE_POKE_COOLDOWN_SECONDS
+            return self._idle_poke_cooldown_seconds
         return _DEFAULT_SIGNAL_COOLDOWN_SECONDS
+
+    def get_idle_poke_settings_snapshot(self) -> dict[str, Any]:
+        return {
+            "heartbeat_idle_poke_enabled": self._idle_poke_enabled,
+            "heartbeat_idle_poke_after_seconds": self._idle_poke_after_seconds,
+            "heartbeat_idle_poke_cooldown_seconds": self._idle_poke_cooldown_seconds,
+            "heartbeat_idle_context_compaction_enabled": self._idle_context_compaction_enabled,
+            "last_idle_poke_at": self._last_idle_poke_at,
+            "last_idle_poke_session_id": self._last_idle_poke_session_id,
+            "last_idle_poke_message": self._last_idle_poke_message,
+            "last_proactive_delivery_at": self._last_proactive_delivery_at,
+            "last_proactive_delivery_status": self._last_proactive_delivery_status,
+        }
+
+    def record_idle_poke_delivery(self, *, session_id: str, message: str, delivered: bool) -> None:
+        self._last_idle_poke_session_id = str(session_id or "").strip()
+        self._last_idle_poke_message = str(message or "").strip()
+        self._last_proactive_delivery_at = _utcnow_iso()
+        self._last_proactive_delivery_status = "delivered" if delivered else "persisted_or_skipped"
 
     def _signal_fingerprint(self, signal_kind: str, payload: dict[str, Any]) -> str:
         if signal_kind == "system_issue":
@@ -687,9 +752,10 @@ class Heart:
         now = datetime.now(timezone.utc)
         last_idle_poke_at = _iso_to_dt(self._last_idle_poke_at)
         has_recent_user_session = bool(payload.get("last_user_activity_at"))
-        idle_window_ready = bool(last_user_activity_at and last_user_activity_at <= now - _IDLE_POKE_WINDOW)
+        idle_window = timedelta(seconds=self._idle_poke_after_seconds)
+        idle_window_ready = bool(last_user_activity_at and last_user_activity_at <= now - idle_window)
         idle_cooldown_ready = bool(
-            last_idle_poke_at is None or last_idle_poke_at <= now - timedelta(seconds=_IDLE_POKE_COOLDOWN_SECONDS)
+            last_idle_poke_at is None or last_idle_poke_at <= now - timedelta(seconds=self._idle_poke_cooldown_seconds)
         )
         payload["scheduler_stalled"] = scheduler_stalled
         payload["housekeeping_stalled"] = housekeeping_stalled
@@ -715,8 +781,21 @@ class Heart:
         }
         payload["temporal"] = build_temporal_attention_snapshot(issue_payload)
         payload["last_idle_poke_at"] = self._last_idle_poke_at
+        payload["last_idle_poke_session_id"] = self._last_idle_poke_session_id
+        payload["last_idle_poke_message"] = self._last_idle_poke_message
+        payload["last_proactive_delivery_at"] = self._last_proactive_delivery_at
+        payload["last_proactive_delivery_status"] = self._last_proactive_delivery_status
+        payload["heartbeat_idle_poke_enabled"] = self._idle_poke_enabled
+        payload["heartbeat_idle_poke_after_seconds"] = self._idle_poke_after_seconds
+        payload["heartbeat_idle_poke_cooldown_seconds"] = self._idle_poke_cooldown_seconds
+        payload["heartbeat_idle_context_compaction_enabled"] = self._idle_context_compaction_enabled
+        payload["idle_poke_after_seconds"] = self._idle_poke_after_seconds
+        payload["idle_poke_cooldown_seconds"] = self._idle_poke_cooldown_seconds
+        payload["idle_poke_window_ready"] = idle_window_ready
+        payload["idle_poke_cooldown_ready"] = idle_cooldown_ready
         payload["idle_poke_eligible"] = bool(
-            has_recent_user_session
+            self._idle_poke_enabled
+            and has_recent_user_session
             and idle_window_ready
             and idle_cooldown_ready
             and not payload["system_issue_candidates"]
@@ -1059,6 +1138,21 @@ class Heart:
                             self._last_heartbeat_signal_at = emitted_at
                             if signal_kind == "idle_poke":
                                 self._last_idle_poke_at = emitted_at
+                            signal_metadata = {
+                                "heartbeat_decision": decision,
+                                "heartbeat_signal_kind": signal_kind,
+                                "transient": True,
+                                "disable_tools": True,
+                            }
+                            if signal_kind == "idle_poke":
+                                signal_metadata.update(
+                                    {
+                                        "heartbeat_direct_delivery": True,
+                                        "heartbeat_context_compaction_enabled": self._idle_context_compaction_enabled,
+                                        "recent_user_session_id": str(background_status.get("recent_user_session_id") or ""),
+                                        "last_user_activity_at": str(background_status.get("last_user_activity_at") or ""),
+                                    }
+                                )
                             await self._event_bus.inbound_queue.put(
                                 InboundEvent(
                                     session_id=self._session_id,
@@ -1067,12 +1161,7 @@ class Heart:
                                     content=message,
                                     source=self._source,
                                     target=EventTarget(kind=TargetKind.INTERNAL.value),
-                                    metadata={
-                                        "heartbeat_decision": decision,
-                                        "heartbeat_signal_kind": signal_kind,
-                                        "transient": True,
-                                        "disable_tools": True,
-                                    },
+                                    metadata=signal_metadata,
                                 )
                             )
                             heartbeat_delivery = delivery_payload(

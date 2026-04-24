@@ -188,3 +188,7 @@ memory_tasks.json.bak
 tmp_*.py
 meetyou-ui/node_modules/
 meetyou-ui/dist-electron/
+meetyou-ui/release/
+scripts/Capture-Screen.ps1
+deploy/docker/compose.env
+deploy/docker/runtime/

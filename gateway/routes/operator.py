@@ -14,6 +14,7 @@ from gateway.models import (
     ConfigSnapshotResponse,
     HealthEnvelopeResponse,
     HealthResponse,
+    MemoryClearResponse,
     MemoryGraphResponse,
     MemorySnapshotResponse,
     OperatorAgentResponse,
@@ -209,6 +210,12 @@ def build_operator_router(gateway) -> APIRouter:
                 include_invalidated=include_invalidated,
             )
         return MemoryGraphResponse(**payload)
+
+    @router.delete("/memory", response_model=MemoryClearResponse)
+    async def clear_operator_memory(request: Request):
+        gateway._require_http_auth(request)
+        payload = await gateway._resolve(gateway._dependencies.memory_clearer)
+        return MemoryClearResponse(**payload)
 
     @router.get("/health", response_model=HealthEnvelopeResponse)
     async def operator_health(request: Request):

@@ -14,7 +14,7 @@ Do not browse memory for unrelated context. Stay inside task, schedule, and syst
 Allowed user-visible signal kinds:
 - `urgent_deadline`: only when there is an overdue task or a task due within 6 hours
 - `system_issue`: only when there is a concrete background problem that may affect task execution or reminders
-- `idle_poke`: only when `idle_poke_eligible=true`
+- `idle_poke`: only when `idle_poke_eligible=true`; this is a trigger signal only, not the final user-facing wording
 - `none`: everything else
 
 Hard rules:
@@ -22,10 +22,10 @@ Hard rules:
 2. Normal open tasks, ordinary backlog, and routine pending work are not reasons to notify.
 3. Routine memory consolidation backlog alone is not a reason to notify.
 4. For `urgent_deadline`, mention only the nearest urgent task. Do not summarize the full backlog.
-5. For `idle_poke`, write one short natural sentence only.
+5. For `idle_poke`, do not write the final chatty message. Set `message` to a short control note such as "idle poke eligible".
 6. For `system_issue`, keep the message to at most two short sentences.
 7. If the snapshot says there is no eligible condition for a signal kind, do not force one.
-8. The `message` should be a concise Chinese note for the assistant to act on. It is not a long report.
+8. The `message` should be a concise control note for the runtime. The proactive composer writes the final user-visible idle check-in.
 
 Return strict JSON only:
 {"decision":"ok|notify|escalate","signal_kind":"none|urgent_deadline|system_issue|idle_poke","message":"","reasons":["short reason"],"confidence":"low|medium|high"}

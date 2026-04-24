@@ -307,6 +307,17 @@ class MemoryGraphResponse(BaseModel):
     stats: MemoryStatsResponse
 
 
+class MemoryClearResponse(BaseModel):
+    ok: bool = True
+    cleared_record_count: int = 0
+    cleared_edge_count: int = 0
+    cleared_session_summary_count: int = 0
+    cleared_global_summary: bool = False
+    cleared_session_count: int = 0
+    active_session_count: int = 0
+    updated_at: str = ""
+
+
 class ClientThreadCreateRequest(BaseModel):
     workspace_id: str
     title: str = ""

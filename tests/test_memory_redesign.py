@@ -243,6 +243,37 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["compression"]["level"], "history_summary")
         self.assertEqual(await context_manager.load_context("s1"), "updated summary")
 
+    async def test_idle_heartbeat_compaction_preserves_recent_turns_and_persists_summary(self):
+        adapter = SummaryAdapter("idle heartbeat summary")
+        context_manager = ContextManager(self.memory, adapter=adapter, event_bus=None)
+        history = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "old request"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "middle request"},
+            {"role": "assistant", "content": "middle answer"},
+            {"role": "user", "content": "recent request"},
+            {"role": "assistant", "content": "recent answer"},
+        ]
+
+        result = await context_manager.compact_history_for_idle_heartbeat(
+            history,
+            model="gpt-5.4",
+            session=None,
+            api_url="https://api.openai.com/v1/responses",
+            api_key="key",
+            session_id="s1",
+            provider_name="openai",
+            preserve_message_count=1,
+            recent_message_count=2,
+        )
+
+        self.assertTrue(result["compression"]["triggered"])
+        self.assertEqual(result["compression"]["level"], "idle_heartbeat_summary")
+        self.assertEqual(result["conversation_summary"], "idle heartbeat summary")
+        self.assertEqual([message["content"] for message in history], ["system prompt", "recent request", "recent answer"])
+        self.assertEqual(await context_manager.load_context("s1"), "idle heartbeat summary")
+
     async def test_context_estimation_counts_provider_items_and_tool_calls(self):
         context_manager = ContextManager(self.memory, adapter=SummaryAdapter(), event_bus=None)
 

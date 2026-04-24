@@ -49,6 +49,7 @@ def run_runtime_entry(mode: str) -> None:
             runtime_error.code,
             runtime_error.message,
         )
+        raise SystemExit(1) from exc
 
 
 def main(argv: list[str] | None = None) -> None:

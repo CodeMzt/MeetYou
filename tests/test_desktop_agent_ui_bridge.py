@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import socket
+import tempfile
 import unittest
+from pathlib import Path
 
 import aiohttp
 from aiohttp import ClientSession, web
@@ -252,3 +255,78 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["session_id"], "sess_1")
         self.assertEqual(self.session_start_count, 1)
+
+
+class DesktopApiLocalConfigTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.runtime_root = Path(self.temp_dir.name)
+        self.config_path = self.runtime_root / "user" / "desktop_agent.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(
+            json.dumps(
+                {
+                    "core_base_url": "http://127.0.0.1:9",
+                    "gateway_access_token": "",
+                    "agent_access_token": "",
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.bridge_port = _unused_port()
+        self.bridge_base_url = f"http://127.0.0.1:{self.bridge_port}"
+        self.bridge = DesktopApiServer(
+            DesktopAgentConfig(
+                core_base_url="http://127.0.0.1:9",
+                gateway_access_token="",
+                agent_access_token="",
+                local_bridge_port=self.bridge_port,
+                local_bridge_access_token="local-token",
+                config_file_path=str(self.config_path),
+            )
+        )
+        await self.bridge.start()
+
+    async def asyncTearDown(self):
+        await self.bridge.stop()
+        self.temp_dir.cleanup()
+
+    async def test_config_page_can_update_remote_core_url_when_core_is_unreachable(self):
+        headers = {"Authorization": "Bearer local-token"}
+        async with ClientSession(headers=headers) as session:
+            async with session.get(f"{self.bridge_base_url}/desktop/config/schema") as schema_response:
+                self.assertEqual(schema_response.status, 200)
+                schema_payload = await schema_response.json()
+            self.assertEqual(schema_payload["kind"], "schema")
+            self.assertIn(
+                "core_base_url",
+                [item["key"] for item in schema_payload["ui_schema"]["config_fields"]],
+            )
+
+            async with session.get(f"{self.bridge_base_url}/desktop/config") as config_response:
+                self.assertEqual(config_response.status, 200)
+                config_payload = await config_response.json()
+            self.assertFalse(config_payload["core_config_available"])
+            self.assertEqual(config_payload["items"]["core_base_url"]["value"], "http://127.0.0.1:9")
+
+            async with session.patch(
+                f"{self.bridge_base_url}/desktop/config",
+                json={
+                    "updates": {
+                        "core_base_url": "https://core.example.com",
+                        "gateway_access_token": "gateway-secret",
+                    }
+                },
+            ) as patch_response:
+                self.assertEqual(patch_response.status, 200)
+                patch_payload = await patch_response.json()
+            self.assertEqual(patch_payload["applied_keys"], ["core_base_url", "gateway_access_token"])
+
+            async with session.get(f"{self.bridge_base_url}/desktop/status") as status_response:
+                self.assertEqual(status_response.status, 200)
+                status_payload = await status_response.json()
+
+        persisted = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(status_payload["core_base_url"], "https://core.example.com")
+        self.assertEqual(persisted["core_base_url"], "https://core.example.com")
+        self.assertEqual(persisted["gateway_access_token"], "gateway-secret")

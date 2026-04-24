@@ -63,6 +63,8 @@ class ToolsManager:
             "update_context": context_manager.update_context,
             "get_sys_vitals": system_tools_module.get_sys_vitals,
             "get_background_status": getattr(system_tools_module, "get_background_status", None),
+            "manage_heartbeat_settings": getattr(system_tools_module, "manage_heartbeat_settings", None),
+            "emit_temporary_reply": getattr(system_tools_module, "emit_temporary_reply", None),
             "search_web": self._web_search_tools.search_web,
             "read_web_page": self._web_search_tools.read_web_page,
             "research_topic": self._scenario_tools.research_topic,
