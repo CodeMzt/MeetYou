@@ -28,6 +28,12 @@ class ToolExecutor:
     def set_execution_observer(self, observer) -> None:
         self._execution_observer = observer
 
+    def get_tool_capability_metadata(self, tool_name: str) -> dict[str, Any]:
+        normalized_tool_name = str(tool_name or "").strip()
+        metadata = self._registry.get_tool_capability_metadata(normalized_tool_name)
+        metadata["action_risk"] = self._risk_classifier.get_tool_action_risk(normalized_tool_name)
+        return metadata
+
     async def execute(
         self,
         tool_name: str,

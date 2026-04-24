@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path, PureWindowsPath
+import re
 from typing import Any
 
 from core.tool_runtime import (
@@ -25,6 +27,36 @@ from tools.web_search import WebSearchTools
 
 _get_mcp_timeout_seconds = get_mcp_timeout_seconds
 _should_expose_mcp_tool = should_expose_mcp_tool
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
+_ORDER_REQUIRED_TOOLS = {
+    "ask_human",
+    "switch_assistant_mode",
+    "save_memory",
+    "remember_knowledge",
+    "manage_memories",
+    "manage_tasks",
+    "manage_scheduled_tasks",
+    "danxi_login",
+    "danxi_logout",
+    "danxi_set_webvpn_cookie",
+    "danxi_clear_webvpn_cookie",
+    "danxi_create_post",
+    "danxi_reply_post",
+    "danxi_edit_reply",
+    "danxi_delete_reply",
+    "danxi_delete_post",
+    "danxi_manage_favorite",
+    "danxi_manage_subscription",
+    "danxi_mark_message_read",
+}
+
+_AGENT_LOCAL_FILE_TOOLS = {
+    "analyze_workspace",
+    "read_local_documents",
+    "write_local_document",
+    "rewrite_local_document",
+}
 
 
 class ToolsManager:
@@ -263,6 +295,78 @@ class ToolsManager:
                 or route_context.get("degradation_notes")
                 or []
             ),
+        }
+
+    @staticmethod
+    def _normalize_path(path_value: str) -> str:
+        path_text = str(path_value or "").strip()
+        if not path_text:
+            return ""
+        if _WINDOWS_ABSOLUTE_PATH_RE.match(path_text):
+            return str(PureWindowsPath(path_text))
+        try:
+            return str(Path(path_text).expanduser().resolve())
+        except Exception:
+            return path_text
+
+    def get_tool_parallel_metadata(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any] | None = None,
+        *,
+        route_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del route_context
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_tool_args = dict(tool_args or {})
+        capability = self._executor.get_tool_capability_metadata(normalized_tool_name)
+        action_risk = str(capability.get("action_risk") or self.get_tool_action_risk(normalized_tool_name))
+        schema_metadata = capability.get("schema_metadata")
+        schema_metadata = dict(schema_metadata) if isinstance(schema_metadata, dict) else {}
+
+        mutates_state = action_risk in {"local_write", "external_write", "destructive"}
+        requires_order = normalized_tool_name in _ORDER_REQUIRED_TOOLS
+        if normalized_tool_name == "exec_sys_cmd":
+            requires_order = True
+
+        resource_key = str(schema_metadata.get("resource_key") or "").strip()
+        if not resource_key and normalized_tool_name in _AGENT_LOCAL_FILE_TOOLS:
+            path_candidate = normalized_tool_args.get("path") or normalized_tool_args.get("workspace_path")
+            normalized_path = self._normalize_path(str(path_candidate or ""))
+            if normalized_path:
+                resource_key = f"path:{normalized_path}"
+            else:
+                resource_key = f"{normalized_tool_name}:unknown_path"
+        if not resource_key:
+            resource_key = f"tool:{normalized_tool_name}"
+
+        safe_parallel_default = action_risk == "read" and not requires_order
+        safe_parallel = bool(schema_metadata.get("safe_parallel", safe_parallel_default))
+        if requires_order or action_risk in {"local_write", "external_write", "destructive"}:
+            safe_parallel = False
+
+        max_concurrency = schema_metadata.get("max_concurrency", 1 if not safe_parallel else 3)
+        try:
+            max_concurrency_int = max(1, int(max_concurrency))
+        except (TypeError, ValueError):
+            max_concurrency_int = 1 if not safe_parallel else 3
+
+        parallel_group = str(schema_metadata.get("parallel_group") or "").strip() or str(
+            schema_metadata.get("resource_key") or ""
+        ).strip()
+        if not parallel_group:
+            parallel_group = action_risk
+
+        return {
+            "tool_name": normalized_tool_name,
+            "source": str(capability.get("source") or "unknown"),
+            "action_risk": action_risk,
+            "safe_parallel": safe_parallel,
+            "parallel_group": parallel_group,
+            "resource_key": resource_key,
+            "mutates_state": mutates_state,
+            "requires_order": requires_order,
+            "max_concurrency": max_concurrency_int,
         }
 
     async def call_tool(
