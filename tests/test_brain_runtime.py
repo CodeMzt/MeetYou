@@ -271,6 +271,52 @@ class ToolCallingAdapter:
         )
 
 
+class MissingReasoningToolAdapter:
+    def __init__(self):
+        self.call_count = 0
+        self.second_call_assistant = {}
+
+    async def stream_chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
+        del session, api_url, api_key, model, tools, kwargs
+        self.call_count += 1
+        if self.call_count == 1:
+            yield StreamEvent(
+                type="tool_calls",
+                tool_calls=[
+                    ToolCallInfo(
+                        id="call_1",
+                        name="lookup_profile",
+                        arguments_str='{"name":"Alex"}',
+                    )
+                ],
+            )
+            yield StreamEvent(
+                type="usage",
+                usage={
+                    "prompt_tokens": 8,
+                    "completion_tokens": 1,
+                    "reasoning_tokens": 0,
+                    "total_tokens": 9,
+                },
+            )
+            return
+
+        for message in messages:
+            if message.get("role") == "assistant" and message.get("tool_calls"):
+                self.second_call_assistant = dict(message)
+
+        yield StreamEvent(type="text", text="done")
+        yield StreamEvent(
+            type="usage",
+            usage={
+                "prompt_tokens": 9,
+                "completion_tokens": 3,
+                "reasoning_tokens": 0,
+                "total_tokens": 12,
+            },
+        )
+
+
 class ProviderItemsToolAdapter:
     def __init__(self):
         self.call_count = 0
@@ -678,6 +724,35 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     for message in second_call_messages
                 )
             )
+        finally:
+            await brain.close_brain()
+
+    async def test_brain_keeps_empty_reasoning_content_for_thinking_tool_follow_up(self):
+        adapter = MissingReasoningToolAdapter()
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-deepseek-empty-reasoning-tool",
+                {"role": "user", "content": "Who is Alex?"},
+                "key",
+                "https://api.deepseek.com/chat/completions",
+                "deepseek-v4-pro",
+                model_options={"thinking": {"enabled": True, "effort": "high"}},
+            ):
+                pass
+
+            self.assertEqual(adapter.second_call_assistant["role"], "assistant")
+            self.assertIn("reasoning_content", adapter.second_call_assistant)
+            self.assertEqual(adapter.second_call_assistant["reasoning_content"], "")
+            self.assertEqual(adapter.second_call_assistant["tool_calls"][0]["id"], "call_1")
         finally:
             await brain.close_brain()
 
