@@ -1,16 +1,14 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { User, Bot } from 'lucide-react'
-import { ChatTurn, HumanInputRequestPayload, OperationView, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel } from '../../types'
+import { ChatTurn, HumanInputRequestPayload, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel } from '../../types'
 import TurnBody from './TurnBody'
 import ActionCard from './ActionCard'
-import OperationPanel from './OperationPanel'
 import styles from './MessageList.module.css'
 
 interface MessageListProps {
   connected: boolean
   messages: ChatTurn[]
-  operations: OperationView[]
   runtimeSnapshot: RuntimeStateSnapshot | null
   healthSnapshot: RuntimeHealthSnapshot | null
   lastError: RuntimeErrorPayload | null
@@ -19,7 +17,6 @@ interface MessageListProps {
   pendingHumanInput: HumanInputRequestPayload | null
   sendConfirmResponse: (requestId: string, accepted: boolean, approvalId?: string) => void
   sendHumanInputResponse: (requestId: string, val: string, option?: string) => void
-  decideOperationApproval?: (approvalId: string, decision: 'approve' | 'reject') => void
   onDownloadAttachment?: (attachmentId: string) => void
   sendControlCommand?: (action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback', params?: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string }) => void
 }
@@ -27,7 +24,6 @@ interface MessageListProps {
 export default function MessageList({
   connected,
   messages,
-  operations,
   runtimeSnapshot,
   healthSnapshot,
   lastError,
@@ -36,24 +32,62 @@ export default function MessageList({
   pendingHumanInput,
   sendConfirmResponse,
   sendHumanInputResponse,
-  decideOperationApproval,
   onDownloadAttachment,
   sendControlCommand
 }: MessageListProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [autoFollowEnabled, setAutoFollowEnabled] = useState(true)
   const lastAssistantMessageId = useMemo(
     () => [...messages].reverse().find((message) => message.role === 'assistant')?.id,
     [messages],
   )
+  const isStreaming = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
+
+  const isNearBottom = () => {
+    const container = containerRef.current
+    if (!container) {
+      return true
+    }
+    const distance = container.scrollHeight - container.scrollTop - container.clientHeight
+    return distance <= 80
+  }
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (autoFollowEnabled && scrollRef.current) {
       scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
     }
-  }, [messages, approvalDisplay, pendingHumanInput, runtimeSnapshot?.status])
+  }, [autoFollowEnabled, messages, approvalDisplay, pendingHumanInput, runtimeSnapshot?.status])
+
+  useEffect(() => {
+    if (autoFollowEnabled && isNearBottom()) {
+      return
+    }
+    if (!isStreaming && isNearBottom()) {
+      setAutoFollowEnabled(true)
+    }
+  }, [isStreaming, messages, autoFollowEnabled])
+
+  const handleScroll = () => {
+    if (!isStreaming) {
+      if (!autoFollowEnabled && isNearBottom()) {
+        setAutoFollowEnabled(true)
+      }
+      return
+    }
+    if (isNearBottom()) {
+      if (!autoFollowEnabled) {
+        setAutoFollowEnabled(true)
+      }
+      return
+    }
+    if (autoFollowEnabled) {
+      setAutoFollowEnabled(false)
+    }
+  }
 
   return (
-    <div className={styles.scrollContainer}>
+    <div ref={containerRef} className={styles.scrollContainer} onScroll={handleScroll}>
       <AnimatePresence initial={false}>
         {messages.length === 0 && (
           <motion.div key="empty-state" className={styles.emptyState} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -125,13 +159,19 @@ export default function MessageList({
           )
         })}
 
-        <OperationPanel
-          operations={operations}
-          onApprove={decideOperationApproval ? (approvalId) => decideOperationApproval(approvalId, 'approve') : undefined}
-          onReject={decideOperationApproval ? (approvalId) => decideOperationApproval(approvalId, 'reject') : undefined}
-          onDownloadAttachment={onDownloadAttachment}
-        />
       </AnimatePresence>
+      {!autoFollowEnabled && isStreaming && (
+        <button
+          type="button"
+          className={styles.resumeFollowBtn}
+          onClick={() => {
+            setAutoFollowEnabled(true)
+            scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+          }}
+        >
+          回到底部继续追踪输出
+        </button>
+      )}
       <div ref={scrollRef} style={{ height: 16 }} />
     </div>
   )
