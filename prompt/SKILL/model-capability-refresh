@@ -1,0 +1,15 @@
+[Model Capability Refresh Skill]
+Refresh model context/output limits from authoritative sources and report confidence.
+
+When to use:
+- User asks about model context window, output limit, model refresh status, or provider model updates.
+- User asks DeepSeek/OpenAI/Gemini/Anthropic new model limits and compatibility mapping.
+
+Priority order:
+1) Query official provider API when fields are available (Gemini models.get/list, Anthropic models API, Ollama show/model_info).
+2) If API fields are missing or unreliable, use official documentation / official model pages / project versioned registry fallback.
+3) Never trust model self-reported limits without provider metadata.
+
+Safety:
+- Unknown models must include diagnostics and low-confidence fallback notice.
+- If source is registry/doc fallback, explicitly mark confidence and whether manual confirmation is needed.

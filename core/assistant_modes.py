@@ -644,6 +644,12 @@ _SKILL_PROMPT_FALLBACKS = {
         "Track evolving public topics, compare multiple sources, and produce a structured digest with clear freshness boundaries.\n"
         "Prefer available web and browser MCP capabilities, and fall back to native research tools when those integrations are unavailable."
     ),
+    "model-capability-refresh": (
+        "[Model Capability Refresh Skill]\n"
+        "Refresh and verify model context/output limits with authoritative sources.\n"
+        "Prefer provider APIs first, then official docs/versioned registry fallback, and never trust model self-reported limits.\n"
+        "Unknown models must include diagnostics and low-confidence fallback status."
+    ),
     "mode-danxi": (
         "[Danxi Mode Skill]\n"
         "Operate as a campus-forum workflow specialist.\n"
@@ -684,6 +690,11 @@ _DEFAULT_PROMPT_REGISTRY = {
         "path": "prompt/SKILL/office-coordination",
         "kind": "skill",
         "fallback": _SKILL_PROMPT_FALLBACKS["office-coordination"],
+    },
+    "skill:model-capability-refresh": {
+        "path": "prompt/SKILL/model-capability-refresh",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["model-capability-refresh"],
     },
     "skill:hotspot-tracking": {
         "path": "prompt/SKILL/hotspot-tracking",
@@ -739,6 +750,22 @@ _DEFAULT_SKILL_REGISTRY = {
         "mcp_servers": ["notion_knowledge"],
         "scenes": ["office_coordination"],
         "activation_keywords": ["meeting", "minutes", "action items", "纪要", "同步", "后续"],
+    },
+    "model_capability_refresh": {
+        "prompts": ["skill:model-capability-refresh"],
+        "tools": [],
+        "mcp_servers": [],
+        "activation_keywords": [
+            "model context",
+            "context window",
+            "output limit",
+            "token limit",
+            "模型上下文",
+            "模型更新",
+            "deepseek 新版本",
+            "gpt-5.4",
+        ],
+        "authorization": {"read_only": True},
     },
     "hotspot_tracking": {
         "prompts": ["skill:hotspot-tracking"],

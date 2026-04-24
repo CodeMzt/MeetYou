@@ -19,7 +19,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     aiohttp = None
 
-from adapters.base import MODEL_CONTEXT_LIMITS
+from core.model_capabilities.resolver import get_model_capability_resolver
 
 logger = logging.getLogger("meetyou.source_catalog")
 
@@ -198,14 +198,9 @@ FALLBACK_SOURCE_PROFILES = {
 }
 
 
-def _fallback_context_limit(model_name: str) -> int:
-    normalized = str(model_name or "").strip()
-    if normalized in MODEL_CONTEXT_LIMITS:
-        return int(MODEL_CONTEXT_LIMITS[normalized])
-    for key, limit in MODEL_CONTEXT_LIMITS.items():
-        if normalized.startswith(key):
-            return int(limit)
-    return 8192
+def _fallback_context_limit(provider_name: str, model_name: str) -> int:
+    capability = get_model_capability_resolver().resolve(provider_name, model_name)
+    return int(capability.context_window)
 
 
 def _normalize_domain(value: str) -> str:
@@ -575,8 +570,8 @@ class SourceCatalogManager:
                 context_limit_tokens=int(matched_entry.get("context_limit_tokens", 0) or 0),
                 context_limit_source=str(matched_entry.get("source") or "official_registry"),
                 context_limit_model=str(model_name or ""),
-            context_limit_confidence=str(matched_entry.get("confidence") or "medium"),
-        )
+                context_limit_confidence=str(matched_entry.get("confidence") or "medium"),
+            )
 
         if callable(probe_callable):
             try:
@@ -592,7 +587,7 @@ class SourceCatalogManager:
                 logger.info("Context limit probe failed for %s/%s: %s", provider_name, model_name, exc)
 
         return ContextLimitInfo(
-            context_limit_tokens=_fallback_context_limit(model_name),
+            context_limit_tokens=_fallback_context_limit(provider_name, model_name),
             context_limit_source="fallback",
             context_limit_model=str(model_name or ""),
             context_limit_confidence="low",

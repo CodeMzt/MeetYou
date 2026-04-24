@@ -28,6 +28,8 @@ def _ollama_usage(payload: dict | None) -> dict | None:
 
 
 class OllamaAdapter(LLMAdapter):
+    provider_name = "ollama"
+
     async def query_model_context_limit(self, session, base_url: str, model: str) -> int | None:
         try:
             show_url = base_url.split("/api/")[0] + "/api/show"

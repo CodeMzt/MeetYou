@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator
 import json
 
+from core.model_capabilities.resolver import get_model_capability_resolver
+
 
 @dataclass
 class ContentPart:
@@ -47,57 +49,16 @@ class StreamEvent:
     error: str | None = None
 
 
-MODEL_CONTEXT_LIMITS: dict[str, int] = {
-    "gpt-4o": 128000,
-    "gpt-4o-mini": 128000,
-    "gpt-4-turbo": 128000,
-    "gpt-4": 8192,
-    "gpt-3.5-turbo": 16385,
-    "o1": 200000,
-    "o1-mini": 128000,
-    "o1-preview": 128000,
-    "o3-mini": 200000,
-    "gpt-4.1": 1048576,
-    "gpt-4.1-mini": 1048576,
-    "gpt-4.1-nano": 1048576,
-    "gpt-5.4": 400000,
-    "gpt-5.4-mini": 400000,
-    "gpt-5.4-nano": 400000,
-    "deepseek-chat": 65536,
-    "deepseek-reasoner": 65536,
-    "claude-3-opus": 200000,
-    "claude-3-sonnet": 200000,
-    "claude-3-haiku": 200000,
-    "claude-3.5-sonnet": 200000,
-    "claude-3.5-haiku": 200000,
-    "claude-4-opus": 200000,
-    "claude-4-sonnet": 200000,
-    "gemini-pro": 32768,
-    "gemini-1.5-pro": 2097152,
-    "gemini-1.5-flash": 1048576,
-    "gemini-2.0-flash": 1048576,
-    "gemini-2.5-pro": 1048576,
-    "gemini-2.5-flash": 1048576,
-    "llama3": 8192,
-    "llama3.1": 131072,
-    "llama3.2": 131072,
-    "mistral": 32768,
-    "qwen2.5": 131072,
-}
-
-
 class LLMAdapter(ABC):
     """
     Abstract base class for provider adapters.
     """
 
+    provider_name: str = ""
+
     def get_context_limit(self, model_name: str) -> int:
-        if model_name in MODEL_CONTEXT_LIMITS:
-            return MODEL_CONTEXT_LIMITS[model_name]
-        for key, limit in MODEL_CONTEXT_LIMITS.items():
-            if model_name.startswith(key):
-                return limit
-        return 8192
+        capability = get_model_capability_resolver().resolve(self.provider_name, model_name)
+        return int(capability.context_window)
 
     @abstractmethod
     def format_messages(self, messages: list[dict]) -> Any:
@@ -133,6 +94,22 @@ class LLMAdapter(ABC):
         **kwargs,
     ) -> dict:
         """Non-streaming chat response."""
+
+
+def _build_compat_context_limits() -> dict[str, int]:
+    resolver = get_model_capability_resolver()
+    limits: dict[str, int] = {}
+    for item in resolver._registry.get("entries", []):  # backward-compat export
+        if not isinstance(item, dict):
+            continue
+        patterns = item.get("model_patterns") or []
+        if not patterns:
+            continue
+        limits[str(patterns[0]).strip().lower()] = int(item.get("context_window", 0) or 0)
+    return {k: v for k, v in limits.items() if v > 0}
+
+
+MODEL_CONTEXT_LIMITS: dict[str, int] = _build_compat_context_limits()
 
 
 def create_adapter(provider_name: str) -> LLMAdapter:
