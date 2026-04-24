@@ -2064,7 +2064,7 @@ class Brain:
                 assistant_message: dict[str, Any] = {"role": "assistant", "content": last_content or None}
                 if tool_calls:
                     reasoning_content = str(result.get("reasoning_content") or "").strip()
-                    if reasoning_content:
+                    if reasoning_content or self._should_keep_tool_reasoning_field(adapter_options):
                         assistant_message["reasoning_content"] = reasoning_content
                     assistant_message["tool_calls"] = [
                         {
@@ -2568,6 +2568,13 @@ class Brain:
             "thinking_budget": thinking.get("budget_tokens"),
         }
 
+    @staticmethod
+    def _should_keep_tool_reasoning_field(adapter_options: dict[str, Any] | None) -> bool:
+        # DeepSeek thinking mode defaults to enabled. If a tool-call turn
+        # yields no visible reasoning delta, preserve an empty field so the
+        # follow-up request does not omit reasoning_content entirely.
+        return (adapter_options or {}).get("thinking") is not False
+
     def _update_usage_snapshot(
         self,
         session: BrainSession,
@@ -2985,7 +2992,7 @@ class Brain:
                 ],
                 "provider_items": provider_items,
             }
-            if reasoning_content:
+            if reasoning_content or self._should_keep_tool_reasoning_field(adapter_options):
                 tool_call_assistant_message["reasoning_content"] = reasoning_content
             session.chat_history.append(tool_call_assistant_message)
 
