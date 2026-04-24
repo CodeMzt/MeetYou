@@ -95,6 +95,21 @@ class _FakeAgentDispatcher:
         raise AssertionError(f"Unexpected capability: {capability_suffix}")
 
 
+class _RecordingAgentDispatcher:
+    def __init__(self):
+        self.calls = []
+
+    async def dispatch_agent_capability(self, **kwargs):
+        return await self.dispatch_local_capability(**kwargs)
+
+    async def dispatch_local_capability(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        if kwargs["capability_suffix"] == "file.write":
+            content = str(kwargs.get("arguments", {}).get("content") or "")
+            return {"bytes_written": len(content.encode("utf-8"))}
+        raise AssertionError(f"Unexpected capability: {kwargs['capability_suffix']}")
+
+
 class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def _build_manager(self, *, call_mcp_tool=None, exec_sys_cmd=None, command_safety_checker=None, mode_manager=None):
         async def builtin_time():
@@ -242,7 +257,8 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(previewless.ok)
             self.assertEqual(previewless.error.code, "tool_confirmation_required")
 
-            blocked = await manager.call_tool(
+            core_boundary_manager = self._build_manager(mode_manager=_FakeModeManager([trusted_dir]))
+            blocked = await core_boundary_manager.call_tool(
                 "write_local_document",
                 {"path": outside_path, "content": "# Final\n", "preview": False, "confirmed": True},
                 route_context=route_context,
@@ -259,8 +275,28 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(Path(trusted_path).read_text(encoding="utf-8"), "# Final\n")
             self.assertEqual(
                 written.metadata["authorization"]["write_boundary"],
-                "trusted_root",
+                "agent_managed",
             )
+
+    async def test_agent_managed_document_write_preserves_windows_path_on_core(self):
+        manager = self._build_manager(mode_manager=_FakeModeManager([]))
+        dispatcher = _RecordingAgentDispatcher()
+        manager.set_capability_dispatcher(dispatcher)
+        windows_path = r"E:\Documents\test_write_confirm.md"
+
+        result = await manager.call_tool(
+            "write_local_document",
+            {"path": windows_path, "content": "ok", "preview": False, "confirmed": True},
+            route_context={"tool_bundle": ["write_local_document"], "mcp_servers": [], "current_mode": "documents"},
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.content.data["path"], windows_path)
+        self.assertEqual(result.content.data["execution_target"], "desktop_agent")
+        self.assertEqual(dispatcher.calls[0]["arguments"]["path"], windows_path)
+        self.assertEqual(result.metadata["authorization"]["write_path"], windows_path)
+        self.assertEqual(result.metadata["authorization"]["write_boundary"], "agent_managed")
+        self.assertIsNone(result.metadata["authorization"]["trusted_root"])
 
     async def test_readonly_authorization_hides_write_tools_and_blocks_write_calls(self):
         with tempfile.TemporaryDirectory() as trusted_dir:
