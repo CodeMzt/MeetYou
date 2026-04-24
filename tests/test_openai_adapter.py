@@ -303,6 +303,7 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("input", call["json"])
         self.assertEqual(call["json"]["stream_options"], {"include_usage": True})
         self.assertEqual(call["json"]["reasoning_effort"], "medium")
+        self.assertEqual(call["json"]["thinking"], {"type": "enabled"})
         self.assertEqual(
             [event.type for event in events],
             ["text", "usage", "done"],
@@ -346,8 +347,10 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session.calls), 2)
         self.assertEqual(session.calls[0]["json"]["reasoning_effort"], "medium")
         self.assertEqual(session.calls[0]["json"]["stream_options"], {"include_usage": True})
+        self.assertEqual(session.calls[0]["json"]["thinking"], {"type": "enabled"})
         self.assertNotIn("reasoning_effort", session.calls[1]["json"])
         self.assertNotIn("stream_options", session.calls[1]["json"])
+        self.assertNotIn("thinking", session.calls[1]["json"])
         self.assertEqual([event.type for event in events], ["text", "done"])
 
     def test_deepseek_thinking_tool_call_preserves_reasoning_content(self):
@@ -464,7 +467,110 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant["reasoning_content"], "Both checks are needed before answering.")
         self.assertEqual([tool_call["id"] for tool_call in assistant["tool_calls"]], ["call_a", "call_b"])
 
-    def test_deepseek_reasoner_strips_reasoning_content_from_input(self):
+    async def test_deepseek_reasoner_stream_payload_roundtrips_reasoning_content_for_parallel_tool_calls(self):
+        adapter = OpenAIAdapter()
+        session = FakeSession([FakeResponse(lines=["data: [DONE]"])])
+
+        async for _ in adapter.stream_chat(
+            session,
+            "https://api.deepseek.com/chat/completions",
+            "key",
+            "deepseek-reasoner",
+            [
+                {"role": "user", "content": "Run both checks"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "Need both command results before answering.",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_a",
+                            "function": {"name": "exec_sys_cmd", "arguments": '{"cmd":"whoami"}'},
+                        },
+                        {
+                            "type": "function",
+                            "id": "call_b",
+                            "function": {"name": "exec_sys_cmd", "arguments": '{"cmd":"pwd"}'},
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_a", "content": "user"},
+                {"role": "tool", "tool_call_id": "call_b", "content": "repo"},
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "exec_sys_cmd",
+                        "description": "Execute command",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            thinking=True,
+            thinking_effort="high",
+        ):
+            pass
+
+        payload = session.calls[0]["json"]
+        assistant = payload["messages"][1]
+        self.assertEqual(assistant["reasoning_content"], "Need both command results before answering.")
+        self.assertEqual([tool_call["id"] for tool_call in assistant["tool_calls"]], ["call_a", "call_b"])
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+
+    async def test_deepseek_chat_result_exposes_reasoning_content_for_tool_calls(self):
+        adapter = OpenAIAdapter()
+        session = FakeSession(
+            [
+                FakeResponse(
+                    json_data={
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "",
+                                    "reasoning_content": "Need to run the command before answering.",
+                                    "tool_calls": [
+                                        {
+                                            "type": "function",
+                                            "id": "call_a",
+                                            "function": {"name": "exec_sys_cmd", "arguments": '{"cmd":"whoami"}'},
+                                        }
+                                    ],
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    }
+                )
+            ]
+        )
+
+        result = await adapter.chat(
+            session,
+            "https://api.deepseek.com/chat/completions",
+            "key",
+            "deepseek-reasoner",
+            [{"role": "user", "content": "Run command"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "exec_sys_cmd",
+                        "description": "Execute command",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            thinking=True,
+            thinking_effort="high",
+        )
+
+        self.assertEqual(result["reasoning_content"], "Need to run the command before answering.")
+        self.assertEqual(result["tool_calls"][0].id, "call_a")
+        self.assertEqual(session.calls[0]["json"]["thinking"], {"type": "enabled"})
+
+    def test_deepseek_reasoner_preserves_reasoning_content_for_tool_calls(self):
         adapter = OpenAIAdapter()
 
         formatted = adapter._format_chat_messages(
@@ -473,7 +579,7 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": "Let me check.",
-                    "reasoning_content": "Do not send this back to deepseek-reasoner.",
+                    "reasoning_content": "Need the date before calling weather.",
                     "tool_calls": [
                         {
                             "type": "function",
@@ -483,6 +589,25 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
                     ],
                 },
                 {"role": "tool", "tool_call_id": "call_1", "content": "2026-04-24"},
+            ],
+            url="https://api.deepseek.com/v1/chat/completions",
+            model="deepseek-reasoner",
+        )
+
+        self.assertEqual(formatted[1]["reasoning_content"], "Need the date before calling weather.")
+
+    def test_deepseek_reasoner_does_not_send_reasoning_content_without_tool_calls(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter._format_chat_messages(
+            [
+                {"role": "user", "content": "Need weather"},
+                {
+                    "role": "assistant",
+                    "content": "Answer without tools.",
+                    "reasoning_content": "No tool call, do not keep this in context.",
+                },
+                {"role": "user", "content": "Thanks"},
             ],
             url="https://api.deepseek.com/v1/chat/completions",
             model="deepseek-reasoner",
