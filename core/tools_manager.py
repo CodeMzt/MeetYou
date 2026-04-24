@@ -4,6 +4,7 @@ from typing import Any
 
 from core.tool_runtime import (
     ToolCallResult,
+    ToolExecutionCapability,
     ToolAuthorizationGateway,
     ToolExecutor,
     ToolPermissionPolicy,
@@ -231,6 +232,13 @@ class ToolsManager:
 
     def get_action_risk_for_tools(self, tool_names: list[str] | tuple[str, ...]) -> str:
         return self._risk_classifier.get_action_risk_for_tools(tool_names)
+
+    def get_tool_execution_capability(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any] | None = None,
+    ) -> ToolExecutionCapability:
+        return self._executor.get_tool_execution_capability(tool_name, tool_args)
 
     def get_route_debug_snapshot(self, route_context: dict[str, Any] | None = None) -> dict[str, Any]:
         route_context = dict(route_context or {})

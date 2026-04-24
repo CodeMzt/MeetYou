@@ -3,6 +3,7 @@ from core.tool_runtime.executor import ToolExecutor
 from core.tool_runtime.models import (
     ToolCallContent,
     ToolCallError,
+    ToolExecutionCapability,
     ToolCallResult,
     ToolContentKind,
     ToolErrorCategory,
@@ -22,6 +23,7 @@ from core.tool_runtime.risk import ToolRiskClassifier
 __all__ = [
     "ToolCallContent",
     "ToolCallError",
+    "ToolExecutionCapability",
     "ToolCallResult",
     "AuthorizationDecision",
     "ToolContentKind",

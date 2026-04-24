@@ -10,6 +10,7 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import asyncio
 from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -1760,41 +1761,64 @@ class Brain:
         route_context: dict[str, Any],
         tool_activity_callback,
     ) -> None:
-        for tc in visible_tool_calls:
-            try:
-                args = tc.arguments
-            except Exception:
-                args = {}
+        max_parallel_tool_calls = self._get_router_limit("max_parallel_tool_calls", default=3) or 1
+        pending = list(enumerate(visible_tool_calls))
+        indexed_results: dict[int, tuple[Any, ToolCallResult]] = {}
 
-            tool_context = bind_event_context(tool_call_id=tc.id)
-            try:
-                try:
-                    context = get_event_context()
-                    result = await self._call_tool_with_route(
-                        tc.name,
-                        args,
-                        session_id=context.get("session_id", session_id),
-                        source=context.get("source"),
-                        tool_activity_callback=tool_activity_callback,
+        while pending:
+            current_index, current = pending.pop(0)
+            current_batch: list[tuple[int, Any]] = [(current_index, current)]
+            current_capability = self._get_tool_execution_capability(current)
+            batch_resource_keys = {current_capability.resource_key}
+            batch_group_counts: dict[str, int] = {}
+            if current_capability.parallel_group:
+                batch_group_counts[current_capability.parallel_group] = 1
+
+            if self._can_parallelize_tool_call(current_capability) and max_parallel_tool_calls > 1:
+                next_pending: list[tuple[int, Any]] = []
+                for candidate_index, candidate in pending:
+                    candidate_capability = self._get_tool_execution_capability(candidate)
+                    if len(current_batch) >= max_parallel_tool_calls:
+                        next_pending.append(candidate)
+                        continue
+                    if not self._can_parallelize_tool_call(candidate_capability):
+                        next_pending.append(candidate)
+                        continue
+                    if candidate_capability.resource_key and candidate_capability.resource_key in batch_resource_keys:
+                        next_pending.append(candidate)
+                        continue
+                    max_group_concurrency = candidate_capability.max_concurrency
+                    existing_group_count = batch_group_counts.get(candidate_capability.parallel_group, 0)
+                    if (
+                        max_group_concurrency is not None
+                        and candidate_capability.parallel_group
+                        and existing_group_count >= max_group_concurrency
+                    ):
+                        next_pending.append(candidate)
+                        continue
+                    current_batch.append((candidate_index, candidate))
+                    if candidate_capability.resource_key:
+                        batch_resource_keys.add(candidate_capability.resource_key)
+                    if candidate_capability.parallel_group:
+                        batch_group_counts[candidate_capability.parallel_group] = existing_group_count + 1
+                pending = next_pending
+
+            batch_results = await asyncio.gather(
+                *(
+                    self._execute_single_visible_tool_call(
+                        tc=tc,
+                        session_id=session_id,
                         route_context=route_context,
+                        tool_activity_callback=tool_activity_callback,
                     )
-                except Exception as exc:
-                    result = ToolCallResult.failure(
-                        tool_name=tc.name,
-                        source=ToolSourceType.UNKNOWN,
-                        action_risk=self._get_action_risk_for_tools([tc.name]),
-                        code="tool_dispatch_failed",
-                        category=ToolErrorCategory.EXECUTION,
-                        message="Tool dispatch failed before producing a result.",
-                        details={
-                            "tool_name": tc.name,
-                            "exception_type": type(exc).__name__,
-                            "exception_message": str(exc),
-                        },
-                    )
-            finally:
-                reset_event_context(tool_context)
+                    for _, tc in current_batch
+                )
+            )
+            for (index, _), (_, result) in zip(current_batch, batch_results):
+                indexed_results[index] = (visible_tool_calls[index], result)
 
+        for index in range(len(visible_tool_calls)):
+            tc, result = indexed_results[index]
             self._record_authorization_result(session, result)
             session.chat_history.append(
                 {
@@ -1803,6 +1827,80 @@ class Brain:
                     "tool_call_id": tc.id,
                 }
             )
+
+    async def _execute_single_visible_tool_call(
+        self,
+        *,
+        tc: Any,
+        session_id: str,
+        route_context: dict[str, Any],
+        tool_activity_callback,
+    ) -> tuple[Any, ToolCallResult]:
+        try:
+            args = tc.arguments
+        except Exception:
+            args = {}
+        tool_context = bind_event_context(tool_call_id=tc.id)
+        try:
+            try:
+                context = get_event_context()
+                result = await self._call_tool_with_route(
+                    tc.name,
+                    args,
+                    session_id=context.get("session_id", session_id),
+                    source=context.get("source"),
+                    tool_activity_callback=tool_activity_callback,
+                    route_context=route_context,
+                )
+            except Exception as exc:
+                result = ToolCallResult.failure(
+                    tool_name=tc.name,
+                    source=ToolSourceType.UNKNOWN,
+                    action_risk=self._get_action_risk_for_tools([tc.name]),
+                    code="tool_dispatch_failed",
+                    category=ToolErrorCategory.EXECUTION,
+                    message="Tool dispatch failed before producing a result.",
+                    details={
+                        "tool_name": tc.name,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc),
+                    },
+                )
+        finally:
+            reset_event_context(tool_context)
+        return tc, result
+
+    def _get_tool_execution_capability(self, tc: Any):
+        getter = getattr(self._tools_manager, "get_tool_execution_capability", None)
+        try:
+            args = tc.arguments
+        except Exception:
+            args = {}
+        if callable(getter):
+            return getter(tc.name, args)
+        action_risk = self._get_action_risk_for_tools([tc.name])
+        return type(
+            "_FallbackCapability",
+            (),
+            {
+                "safe_parallel": action_risk == "read",
+                "requires_order": action_risk != "read",
+                "mutates_state": action_risk != "read",
+                "resource_key": f"fallback:{tc.name}",
+                "parallel_group": "fallback",
+                "max_concurrency": 1 if action_risk != "read" else None,
+                "requires_approval": False,
+            },
+        )()
+
+    @staticmethod
+    def _can_parallelize_tool_call(capability: Any) -> bool:
+        return bool(
+            getattr(capability, "safe_parallel", False)
+            and not getattr(capability, "requires_order", True)
+            and not getattr(capability, "mutates_state", True)
+            and not getattr(capability, "requires_approval", False)
+        )
 
     def _get_action_risk_for_tools(self, tool_names: list[str]) -> str:
         getter = getattr(self._tools_manager, "get_action_risk_for_tools", None)

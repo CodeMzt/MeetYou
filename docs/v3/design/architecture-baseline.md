@@ -90,6 +90,26 @@ V3 默认继续沿用以下约束：
 - WeChat Bot 接入设计见 `bot-integration.md`
 - 执行顺序与 feature 拆分见 `../plan/implementation-plan.md`
 
+## 6.1 Tool 并行执行安全策略（2026-04）
+
+- Core 在 `brain` 可见 tool call 执行链路中支持“安全并行”，但仍以模型返回顺序回填 `tool_call_id` 对应的 tool result，保持 chat_history 可重放性。
+- 每个 tool 暴露统一并行元数据：`safe_parallel`、`parallel_group`、`resource_key`、`mutates_state`、`requires_order`、`max_concurrency`，并可由 Core built-in / MCP / Agent capability 统一查询。
+- 默认策略保持保守：
+  - `read` 工具默认可并行；
+  - 同 `resource_key` 串行；
+  - `local_write` / `external_write` / `destructive` 默认串行，除非显式安全标注。
+- 下列操作保持串行且不可“并行绕过”：
+  - 需要审批或人工输入的工具；
+  - memory / task 写入类工具；
+  - 模式切换类工具；
+  - Danxi 发帖、回帖、编辑删除等外部写操作；
+  - shell destructive 命令。
+- Agent 本地文件能力维持 Agent 边界不回灌到 Core：
+  - 本地只读能力在不同路径可并行；
+  - 同写路径或路径未知时必须串行；
+  - Core 只做调度，不接管 Desktop Agent 本地文件执行责任。
+- 默认全局并发上限 `max_parallel_tool_calls=3`，可由 router 配置下发更严格限制。
+
 ## 7. 历史参考
 
 V2 的详细设计、协议与迁移资料已移到 `docs/archive/v2/`。当 V3 需要追溯历史设计决策时，可按需查阅归档，而不是继续在归档文档上直接追加新计划。

@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from pathlib import Path
 from typing import Any
 
 from core.tool_runtime.models import (
     ToolCallResult,
+    ToolExecutionCapability,
     ToolErrorCategory,
     ToolSourceType,
     normalize_tool_result,
@@ -14,6 +16,22 @@ from core.tool_runtime.models import (
 from core.tool_runtime.policy import get_mcp_timeout_seconds
 
 logger = logging.getLogger("meetyou.tools_manager")
+
+_SERIAL_ONLY_TOOLS = {
+    "ask_human",
+    "save_memory",
+    "remember_knowledge",
+    "manage_memories",
+    "manage_tasks",
+    "manage_scheduled_tasks",
+    "danxi_create_post",
+    "danxi_reply_post",
+    "danxi_edit_reply",
+    "danxi_delete_reply",
+    "danxi_delete_post",
+}
+_LOCAL_AGENT_READ_TOOLS = {"analyze_workspace", "read_local_documents"}
+_LOCAL_AGENT_WRITE_TOOLS = {"write_local_document", "rewrite_local_document"}
 
 
 class ToolExecutor:
@@ -27,6 +45,70 @@ class ToolExecutor:
 
     def set_execution_observer(self, observer) -> None:
         self._execution_observer = observer
+
+    def get_tool_execution_capability(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any] | None = None,
+    ) -> ToolExecutionCapability:
+        normalized_tool_name = str(tool_name or "").strip()
+        action_risk = self._risk_classifier.get_tool_action_risk(normalized_tool_name)
+        source = ToolSourceType.UNKNOWN.value
+        if self._registry.has_builtin(normalized_tool_name):
+            source = ToolSourceType.BUILTIN.value
+        elif self._registry.has_mcp(normalized_tool_name):
+            source = ToolSourceType.MCP.value
+        args = dict(tool_args or {})
+
+        mutates_state = action_risk != "read"
+        requires_order = mutates_state
+        safe_parallel = action_risk == "read"
+        requires_approval = normalized_tool_name in {"exec_sys_cmd"} or normalized_tool_name in _SERIAL_ONLY_TOOLS
+        parallel_group = f"{source}:default"
+        resource_key = f"{source}:{normalized_tool_name}"
+        max_concurrency: int | None = 1 if not safe_parallel else None
+
+        if normalized_tool_name in _SERIAL_ONLY_TOOLS:
+            safe_parallel = False
+            requires_order = True
+            mutates_state = True
+            requires_approval = True
+            parallel_group = "safety:serial"
+            max_concurrency = 1
+
+        if action_risk in {"local_write", "external_write", "destructive"}:
+            safe_parallel = False
+            requires_order = True
+            mutates_state = True
+            parallel_group = f"{source}:mutating"
+            max_concurrency = 1
+
+        if normalized_tool_name in _LOCAL_AGENT_READ_TOOLS | _LOCAL_AGENT_WRITE_TOOLS:
+            path_key = self._extract_local_path_key(normalized_tool_name, args)
+            parallel_group = "agent_local_file"
+            if path_key:
+                resource_key = f"agent_local:{path_key}"
+                safe_parallel = normalized_tool_name in _LOCAL_AGENT_READ_TOOLS and action_risk == "read"
+                requires_order = not safe_parallel
+                max_concurrency = 2 if safe_parallel else 1
+            else:
+                safe_parallel = False
+                requires_order = True
+                max_concurrency = 1
+                resource_key = f"agent_local:{normalized_tool_name}:unknown_path"
+
+        return ToolExecutionCapability(
+            tool_name=normalized_tool_name,
+            source=source,
+            action_risk=action_risk,
+            safe_parallel=safe_parallel and not requires_approval,
+            parallel_group=parallel_group,
+            resource_key=resource_key,
+            mutates_state=mutates_state,
+            requires_order=requires_order or requires_approval,
+            max_concurrency=max_concurrency,
+            requires_approval=requires_approval,
+        )
 
     async def execute(
         self,
@@ -118,6 +200,28 @@ class ToolExecutor:
         self._attach_authorization_metadata(result, authorization_decision)
         self._notify_execution_observer(tool_name, normalized_tool_args, result)
         return result
+
+    @staticmethod
+    def _normalize_path_key(path_value: Any) -> str:
+        path_text = str(path_value or "").strip()
+        if not path_text:
+            return ""
+        try:
+            return str(Path(path_text).expanduser().resolve()).lower()
+        except Exception:
+            return path_text.lower()
+
+    def _extract_local_path_key(self, tool_name: str, tool_args: dict[str, Any]) -> str:
+        if tool_name in {"write_local_document", "rewrite_local_document", "analyze_workspace"}:
+            return self._normalize_path_key(tool_args.get("path"))
+        if tool_name == "read_local_documents":
+            paths = tool_args.get("paths")
+            if isinstance(paths, str):
+                return self._normalize_path_key(paths)
+            if isinstance(paths, list) and len(paths) == 1:
+                return self._normalize_path_key(paths[0])
+            return ""
+        return ""
 
     async def _execute_builtin(
         self,

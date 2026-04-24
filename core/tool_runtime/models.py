@@ -110,6 +110,19 @@ class ToolCallResult(BaseModel):
         )
 
 
+class ToolExecutionCapability(BaseModel):
+    tool_name: str
+    source: str = ToolSourceType.UNKNOWN.value
+    action_risk: str = "read"
+    safe_parallel: bool = False
+    parallel_group: str = "default"
+    resource_key: str = ""
+    mutates_state: bool = False
+    requires_order: bool = True
+    max_concurrency: int | None = 1
+    requires_approval: bool = False
+
+
 def normalize_tool_output(raw_output: Any) -> ToolCallContent:
     if isinstance(raw_output, ToolCallContent):
         return raw_output
