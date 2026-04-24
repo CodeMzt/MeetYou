@@ -65,6 +65,15 @@ scripts\manual-acceptance.cmd check -BaseUrl https://your-remote-core.example
 8. 打开 runtime debug / workspace / attachments / Danxi 子窗口，确认这些窗口仍可工作
 9. 如需检查 token 注入，renderer 只应持有本地 `local_bridge_access_token` 用于 `/desktop/*` 与 `/desktop/ws`，不应把 Core gateway token 暴露给 UI 请求链路
 
+## 4.1 工具执行边界专项验收（Core / Agent）
+
+1. 在 `developer/runtime/debug`（或 desktop 映射的 `/desktop/runtime/debug`）确认 `tool_execution_boundary` 字段存在，并逐项检查 `source_type`、`executor_owner`、`risk`、`parallelizable`。
+2. `read_local_documents`、`write_local_document`、`rewrite_local_document`、`analyze_workspace`、`exec_sys_cmd` 必须显示为 `executor_owner=agent_dispatch`，禁止回退为 Core 直执。
+3. `core_mcp_config_path` 必须是 `user/core_mcp_servers.json`，`desktop_agent_mcp_config_path` 必须是 `user/mcp_servers.json`，两者不能混用。
+4. Agent capability snapshot 注册后，Core 侧仅负责 dispatch 与结果回填，不应在 Core 进程内直接执行本地文件/Shell 能力。
+5. Danxi 相关工具（`danxi_*`）继续保留在 Core 路径（`executor_owner=core`），不迁移到 Desktop Agent。
+6. 验收测试需使用临时目录与 mock transport，不做真实破坏性文件操作。
+
 ## 5. 失败排查
 
 - 如果 UI 打开但始终无法连接，先检查本地 backend 状态接口

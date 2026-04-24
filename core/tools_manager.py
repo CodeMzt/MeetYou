@@ -28,6 +28,19 @@ _should_expose_mcp_tool = should_expose_mcp_tool
 
 
 class ToolsManager:
+    _AGENT_DISPATCH_TOOL_NAMES = {
+        "exec_sys_cmd",
+        "analyze_workspace",
+        "read_local_documents",
+        "write_local_document",
+        "rewrite_local_document",
+        "compile_report",
+    }
+    _SERIAL_TOOL_NAMES = {
+        "ask_human",
+        "emit_temporary_reply",
+    }
+
     def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None, task_manager=None):
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
@@ -263,6 +276,36 @@ class ToolsManager:
                 or route_context.get("degradation_notes")
                 or []
             ),
+        }
+
+    def get_tool_execution_boundary_snapshot(self) -> dict[str, Any]:
+        tools: list[dict[str, Any]] = []
+        for tool_name in sorted(self._registry.supported_funcs):
+            action_risk = self._risk_classifier.get_tool_action_risk(tool_name)
+            delegated = tool_name in self._AGENT_DISPATCH_TOOL_NAMES
+            tools.append(
+                {
+                    "tool_name": tool_name,
+                    "source_type": "builtin_agent_proxy" if delegated else "builtin",
+                    "executor_owner": "agent_dispatch" if delegated else "core",
+                    "risk": action_risk,
+                    "parallelizable": action_risk == "read" and tool_name not in self._SERIAL_TOOL_NAMES,
+                }
+            )
+        for tool_name in sorted(getattr(self._mcp_manager, "tool_map", {})):
+            tools.append(
+                {
+                    "tool_name": tool_name,
+                    "source_type": "mcp",
+                    "executor_owner": "core_mcp",
+                    "risk": self._risk_classifier.get_tool_action_risk(tool_name),
+                    "parallelizable": True,
+                }
+            )
+        return {
+            "core_mcp_config_path": "user/core_mcp_servers.json",
+            "desktop_agent_mcp_config_path": "user/mcp_servers.json",
+            "tools": tools,
         }
 
     async def call_tool(

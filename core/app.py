@@ -1665,6 +1665,11 @@ class App:
             "compression": dict(session_debug.get("compression") or {}),
             "last_failure": dict(session_debug.get("last_failure") or {}),
             "core_mcp": self.get_core_mcp_diagnostics(),
+            "tool_execution_boundary": (
+                self.tools_manager.get_tool_execution_boundary_snapshot()
+                if hasattr(self.tools_manager, "get_tool_execution_boundary_snapshot")
+                else {}
+            ),
             "updated_at": str(session_debug.get("updated_at") or utcnow_iso()),
         }
 
