@@ -162,6 +162,33 @@ class ContextManager:
             return (3, 0)
         return (4, 0)
 
+    @staticmethod
+    def _has_attachment_or_source(value: Any) -> bool:
+        if isinstance(value, dict):
+            for key in ("attachment_id", "attachments", "source_id", "source_ids", "citation_ids"):
+                if value.get(key):
+                    return True
+            return any(ContextManager._has_attachment_or_source(item) for item in value.values())
+        if isinstance(value, list):
+            return any(ContextManager._has_attachment_or_source(item) for item in value)
+        return False
+
+    @staticmethod
+    def _pending_tool_call_ids(history: list[dict]) -> set[str]:
+        requested: set[str] = set()
+        resolved: set[str] = set()
+        for message in history:
+            for tool_call in message.get("tool_calls") or []:
+                if not isinstance(tool_call, dict):
+                    continue
+                call_id = str(tool_call.get("id") or "").strip()
+                if call_id:
+                    requested.add(call_id)
+            tool_call_id = str(message.get("tool_call_id") or "").strip()
+            if tool_call_id:
+                resolved.add(tool_call_id)
+        return requested - resolved
+
     def build_context_breakdown(
         self,
         *,
@@ -248,6 +275,23 @@ class ContextManager:
         system_history = [dict(message) for message in session_history_before_turn if message.get("role") == "system"]
         non_system_history = [dict(message) for message in session_history_before_turn if message.get("role") != "system"]
         selected_history = list(non_system_history)
+        pending_tool_call_ids = self._pending_tool_call_ids(selected_history)
+
+        def pinned_indexes_for_current_history() -> set[int]:
+            pinned_indexes: set[int] = set()
+            if not pending_tool_call_ids:
+                return pinned_indexes
+            for idx, message in enumerate(selected_history):
+                tool_call_id = str(message.get("tool_call_id") or "").strip()
+                if tool_call_id and tool_call_id in pending_tool_call_ids:
+                    pinned_indexes.add(idx)
+                    if idx > 0:
+                        pinned_indexes.add(idx - 1)
+                for tool_call in message.get("tool_calls") or []:
+                    call_id = str((tool_call or {}).get("id") or "").strip()
+                    if call_id and call_id in pending_tool_call_ids:
+                        pinned_indexes.add(idx)
+            return pinned_indexes
 
         def compose_messages() -> list[dict]:
             messages = list(system_history)
@@ -265,14 +309,23 @@ class ContextManager:
         messages = compose_messages()
         recent_history_turns = int(length_policy.get("recent_history_turns", 8) or 8)
         while self.estimate_tokens(messages) > int(length_policy.get("target_input_tokens", 0) or 0) and selected_history:
+            pinned_indexes = pinned_indexes_for_current_history()
             removal_index = 0
             removable_prefix = max(len(selected_history) - recent_history_turns, 0)
             if removable_prefix > 0:
-                candidate_window = selected_history[:removable_prefix]
+                candidate_window = [msg for idx, msg in enumerate(selected_history[:removable_prefix]) if idx not in pinned_indexes]
                 candidate_scores = [self._trim_priority(message) for message in candidate_window]
+                if not candidate_window:
+                    break
                 removal_index = min(range(len(candidate_window)), key=lambda idx: candidate_scores[idx])
+                source_msg = candidate_window[removal_index]
+                removal_index = selected_history.index(source_msg)
             else:
-                removable_roles = [idx for idx, message in enumerate(selected_history) if message.get("role") == "tool" or message.get("tool_calls")]
+                removable_roles = [
+                    idx
+                    for idx, message in enumerate(selected_history)
+                    if (message.get("role") == "tool" or message.get("tool_calls")) and idx not in pinned_indexes
+                ]
                 if not removable_roles:
                     break
                 removal_index = removable_roles[0]
@@ -500,15 +553,23 @@ class ContextManager:
 
     def _serialize_message_for_summary(self, message: dict, index: int) -> str:
         lines = [f"[消息 {index}]", f"role: {str(message.get('role') or 'unknown')}"]
-        content_line = self._summary_line("content", message.get("content"))
+        content_value = message.get("content")
+        content_line = self._summary_line("content", content_value)
         if content_line:
-            lines.append(content_line)
+            if self.estimate_text_tokens(content_line) > 256:
+                lines.append(content_line[:640] + " ...[truncated_for_summary]")
+            else:
+                lines.append(content_line)
+        if self._has_attachment_or_source(content_value):
+            lines.append("traceability: attachment/source id detected in content")
         tool_calls_line = self._summary_line("tool_calls", message.get("tool_calls"))
         if tool_calls_line:
             lines.append(tool_calls_line)
         provider_items_line = self._summary_line("provider_items", message.get("provider_items"))
         if provider_items_line:
             lines.append(provider_items_line)
+        if self._has_attachment_or_source(message.get("provider_items")):
+            lines.append("traceability: attachment/source id detected in provider_items")
         tool_call_id_line = self._summary_line("tool_call_id", message.get("tool_call_id"))
         if tool_call_id_line:
             lines.append(tool_call_id_line)
