@@ -489,7 +489,7 @@ function createSettingsWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize
 
-  const windowWidth = 520
+  const windowWidth = 560
   const windowHeight = 660
 
   settingsWin = new BrowserWindow({
@@ -794,7 +794,7 @@ function createDashboardWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize
 
-  const windowWidth = 800
+  const windowWidth = 840
   const windowHeight = 640
 
   dashboardWin = new BrowserWindow({

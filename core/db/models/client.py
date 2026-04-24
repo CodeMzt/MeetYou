@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, JSON, String
+from sqlalchemy import Boolean, ForeignKey, JSON, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,4 +19,18 @@ class Client(TimestampMixin, Base):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     capabilities: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
+class ClientWorkspaceMembership(TimestampMixin, Base):
+    __tablename__ = "client_workspace_memberships"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "client_id", name="uq_client_workspace_memberships_workspace_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
+    membership_role: Mapped[str] = mapped_column(String(32), nullable=False, default="member")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)

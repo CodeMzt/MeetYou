@@ -6,6 +6,7 @@ from core.db.repositories.attachment_upload_ticket import AttachmentUploadTicket
 from core.db.repositories.capability import CapabilityRepository
 from core.db.repositories.client import ClientRepository
 from core.db.repositories.config_entry import ConfigEntryRepository
+from core.db.repositories.context_pool import ContextPoolRepository
 from core.db.repositories.memory_record import MemoryRecordRepository
 from core.db.repositories.message import MessageRepository
 from core.db.repositories.operation import OperationRepository
@@ -27,6 +28,7 @@ __all__ = [
     "CapabilityRepository",
     "ClientRepository",
     "ConfigEntryRepository",
+    "ContextPoolRepository",
     "MemoryRecordRepository",
     "MessageRepository",
     "OperationRepository",

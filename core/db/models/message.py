@@ -16,6 +16,7 @@ class Message(TimestampMixin, Base):
     message_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     thread_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("threads.id"), nullable=False)
     session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("sessions.id"), nullable=True)
+    active_workspace_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     channel: Mapped[str] = mapped_column(String(32), nullable=False, default="message")
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")

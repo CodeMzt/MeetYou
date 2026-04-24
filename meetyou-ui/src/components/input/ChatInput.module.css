@@ -106,12 +106,16 @@
 
 .settingsBtn {
   padding: 8px;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   color: var(--text-secondary);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: color 0.2s, background 0.2s;
+  margin-bottom: 1px;
 }
 
 .settingsBtn:hover {
@@ -128,8 +132,15 @@
   padding: 8px 0;
   color: var(--text-primary);
   resize: none;
-  max-height: 120px;
-  min-height: 20px;
+  height: 36px;
+  min-height: 36px;
+  max-height: 180px;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
+}
+
+.textarea:focus {
+  outline: none;
 }
 
 .textarea::placeholder {

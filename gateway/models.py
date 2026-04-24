@@ -141,6 +141,7 @@ class ContextBreakdownResponse(BaseModel):
     system: int = 0
     history: int = 0
     tool_history: int = 0
+    context_pool: int = 0
     memory_context: int = 0
     policy: int = 0
     current_input: int = 0
@@ -332,10 +333,15 @@ class MemoryRecordMutationResponse(BaseModel):
 
 
 class ClientThreadCreateRequest(BaseModel):
-    workspace_id: str
+    home_workspace_id: str = ""
+    workspace_id: str = ""
     title: str = ""
     mode: str = "general"
     pinned_procedure_id: str | None = None
+
+    @property
+    def resolved_home_workspace_id(self) -> str:
+        return str(self.home_workspace_id or self.workspace_id or "").strip()
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -400,7 +406,8 @@ class ClientThreadPinnedProcedureRequest(BaseModel):
 
 class ClientThreadResponse(BaseModel):
     thread_id: str
-    workspace_id: str
+    home_workspace_id: str
+    workspace_id: str = ""
     title: str = ""
     status: str = "active"
     summary: str = ""
@@ -409,23 +416,35 @@ class ClientThreadResponse(BaseModel):
 
 class ClientSessionCreateRequest(BaseModel):
     thread_id: str
-    workspace_id: str
+    active_workspace_id: str = ""
+    workspace_id: str = ""
     client_id: str
     client_type: str = "electron"
     display_name: str = ""
+
+    @property
+    def resolved_active_workspace_id(self) -> str:
+        return str(self.active_workspace_id or self.workspace_id or "").strip()
 
 
 class ClientSessionResponse(BaseModel):
     session_id: str
     thread_id: str
-    workspace_id: str
+    active_workspace_id: str
+    workspace_id: str = ""
     client_id: str
     status: str = "active"
 
 
+class ClientActiveWorkspacePatchRequest(BaseModel):
+    active_workspace_id: str
+    client_id: str = ""
+
+
 class ClientMessageCreateRequest(BaseModel):
     thread_id: str
-    workspace_id: str
+    active_workspace_id: str | None = None
+    workspace_id: str | None = None
     client_id: str
     content: str
     session_id: str | None = None
@@ -444,12 +463,17 @@ class ClientMessageCreateRequest(BaseModel):
             return None
         return to_public_assistant_mode(value)
 
+    @property
+    def resolved_active_workspace_id(self) -> str:
+        return str(self.active_workspace_id or self.workspace_id or "").strip()
+
 
 class ClientMessageResponse(BaseModel):
     message_id: str
     thread_id: str
     session_id: str = ""
-    workspace_id: str
+    active_workspace_id: str
+    workspace_id: str = ""
     client_id: str = ""
     role: str
     content: str
@@ -762,6 +786,36 @@ class ClientAvailableAgentResponse(BaseModel):
     transport_profile: str
     owner_client_id: str = ""
     workspace_ids: list[str] = Field(default_factory=list)
+
+
+class ClientAvailableClientResponse(BaseModel):
+    client_id: str
+    display_name: str
+    client_type: str
+    status: str
+    workspace_ids: list[str] = Field(default_factory=list)
+    membership_role: str = "member"
+    enabled: bool = True
+
+
+class ContextPoolQueryItemResponse(BaseModel):
+    context_id: str
+    item_type: str
+    role: str = ""
+    content: str
+    score: float = 0.0
+    same_session: bool = False
+    same_thread: bool = False
+    same_workspace: bool = False
+    workspace_tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class ContextPoolQueryResponse(BaseModel):
+    query: str
+    count: int = 0
+    items: list[ContextPoolQueryItemResponse] = Field(default_factory=list)
 
 
 class OperatorWorkspaceCreateRequest(BaseModel):

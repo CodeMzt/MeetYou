@@ -519,7 +519,6 @@ class MemoryRetrieverLayer:
     def eligible_records(self, user_id: str, session_id: str = "") -> list[dict[str, Any]]:
         current_model = self._owner._embedding_model
         results: list[dict[str, Any]] = []
-        normalized_session_id = str(session_id or "").strip()
         for record in self._owner._store.get("records", []):
             if record.get("type") not in {"episode", "fact", "profile"}:
                 continue
@@ -529,9 +528,6 @@ class MemoryRetrieverLayer:
                 continue
             if record.get("embedding_model") != current_model:
                 continue
-            if record.get("type") == "episode" and normalized_session_id:
-                if str(record.get("scope", {}).get("session_id") or "").strip() != normalized_session_id:
-                    continue
             results.append(record)
         return results
 
@@ -662,12 +658,16 @@ class MemoryRetrieverLayer:
             graph = self.graph_score(record_id, anchor_ids)
             workspace_match = self.workspace_match(record)
             session_bonus = 0.0
+            thread_bonus = 0.0
             if (
                 normalized_session_id
                 and record.get("type") == "episode"
                 and str(record.get("scope", {}).get("session_id") or "").strip() == normalized_session_id
             ):
                 session_bonus = 0.08
+            current_thread_id = str(self._owner._current_thread_id() if hasattr(self._owner, "_current_thread_id") else "").strip()
+            if current_thread_id and str(record.get("thread_id") or "").strip() == current_thread_id:
+                thread_bonus = 0.12
             score = (
                 0.5 * semantic
                 + 0.2 * recency
@@ -676,6 +676,7 @@ class MemoryRetrieverLayer:
                 + 0.05 * graph
                 + float(workspace_match["bonus"] or 0.0)
                 + session_bonus
+                + thread_bonus
             )
             results.append(
                 {
@@ -689,6 +690,7 @@ class MemoryRetrieverLayer:
                     "workspace_match": workspace_match["kind"],
                     "source_label": workspace_match["label"],
                     "session_bonus": session_bonus,
+                    "thread_bonus": thread_bonus,
                 }
             )
         results.sort(key=lambda item: item["score"], reverse=True)
@@ -708,6 +710,7 @@ class MemoryRetrieverLayer:
                 "workspace_match": str(item.get("workspace_match") or ""),
                 "source_label": str(item.get("source_label") or ""),
                 "session_bonus": round(float(item.get("session_bonus", 0.0) or 0.0), 4),
+                "thread_bonus": round(float(item.get("thread_bonus", 0.0) or 0.0), 4),
             }
         )
         return payload
@@ -727,6 +730,7 @@ class MemoryRetrieverLayer:
                 "session_id": str(session_id or ""),
                 "session_aware": bool(str(session_id or "").strip()),
                 "workspace_id": self._owner._current_workspace_id(),
+                "thread_id": str(getattr(self._owner, "_current_thread_id", lambda: "")() or ""),
             },
             "profile": [],
             "facts": [],

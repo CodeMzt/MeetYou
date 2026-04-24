@@ -980,6 +980,7 @@ class Brain:
             },
             "layers": {
                 "conversation_summary": bool(layers.get("conversation_summary")),
+                "context_pool": bool(layers.get("context_pool")),
                 "memory_recall": bool(layers.get("memory_recall")),
                 "session_preload": bool(layers.get("session_preload")),
                 "prefer_live_web": bool(layers.get("prefer_live_web")),

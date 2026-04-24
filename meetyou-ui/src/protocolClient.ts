@@ -58,11 +58,12 @@ function toClientMessage(value: unknown): ClientMessage | null {
   if (!record.message_id || !record.thread_id || !record.role) {
     return null
   }
-  return {
-    message_id: toString(record.message_id),
-    thread_id: toString(record.thread_id),
-    session_id: toString(record.session_id),
-    workspace_id: toString(record.workspace_id),
+    return {
+      message_id: toString(record.message_id),
+      thread_id: toString(record.thread_id),
+      session_id: toString(record.session_id),
+      active_workspace_id: toString(record.active_workspace_id || record.workspace_id),
+      workspace_id: toString(record.workspace_id || record.active_workspace_id),
     client_id: toString(record.client_id),
     role: (toString(record.role) || 'assistant') as ClientMessage['role'],
     content: normalizeContent(record.content),
@@ -185,6 +186,7 @@ function toRuntimeUsageSnapshot(value: unknown): RuntimeUsageSnapshot | null {
       system: toNumber(contextBreakdown.system),
       history: toNumber(contextBreakdown.history),
       tool_history: toNumber(contextBreakdown.tool_history),
+      context_pool: toNumber(contextBreakdown.context_pool),
       memory_context: toNumber(contextBreakdown.memory_context),
       policy: toNumber(contextBreakdown.policy),
       current_input: toNumber(contextBreakdown.current_input),
@@ -246,6 +248,7 @@ function toRuntimeRequestSnapshot(value: unknown): RuntimeRequestSnapshot | null
     },
     layers: {
       conversation_summary: toBoolean(layers.conversation_summary),
+      context_pool: toBoolean(layers.context_pool),
       memory_recall: toBoolean(layers.memory_recall),
       session_preload: toBoolean(layers.session_preload),
       prefer_live_web: toBoolean(layers.prefer_live_web),
@@ -660,6 +663,16 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
   if (eventType === 'message.created') {
     const message = toClientMessage(event.message)
     return message ? { kind: 'message_created', threadId, sessionId, message } : { kind: 'ignore' }
+  }
+
+  if (eventType === 'workspace.changed') {
+    return {
+      kind: 'workspace_changed',
+      threadId,
+      sessionId,
+      activeWorkspaceId: toString(event.active_workspace_id || event.workspace_id),
+      workspaceId: toString(event.workspace_id || event.active_workspace_id),
+    }
   }
 
   if (eventType === 'confirm.requested') {

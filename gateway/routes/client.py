@@ -48,10 +48,12 @@ from gateway.models import (
     ClientHumanInputResponseRequest,
     ClientHumanInputResponseResult,
     ClientAvailableAgentResponse,
+    ClientAvailableClientResponse,
     ClientOperationCreateRequest,
     ClientOperationResponse,
     ClientMessageCreateRequest,
     ClientMessageResponse,
+    ClientActiveWorkspacePatchRequest,
     ClientProcedureDetailResponse,
     ClientProcedureResponse,
     ClientSessionCreateRequest,
@@ -62,6 +64,7 @@ from gateway.models import (
     ClientThreadResponse,
     ClientWsCommand,
     ClientWorkspaceResponse,
+    ContextPoolQueryResponse,
 )
 from service_runtime.models import RuntimeError
 from tools.danxi_tools import get_shared_danxi_tools
@@ -169,6 +172,7 @@ def _resolve_danxi_webvpn_cookie_payload(payload: ClientDanxiWebvpnCookiePatchRe
 def _thread_response(thread, workspace_id: str) -> ClientThreadResponse:
     return ClientThreadResponse(
         thread_id=thread.thread_id,
+        home_workspace_id=workspace_id,
         workspace_id=workspace_id,
         title=thread.title,
         status=thread.status,
@@ -251,12 +255,13 @@ def _operation_response(operation, *, workspace_id: str, thread_id: str) -> Clie
     )
 
 
-def _message_response(message, *, thread_id: str, workspace_id: str, session_id: str = "", client_id: str = "") -> ClientMessageResponse:
+def _message_response(message, *, thread_id: str, active_workspace_id: str, session_id: str = "", client_id: str = "") -> ClientMessageResponse:
     return ClientMessageResponse(
         message_id=message.message_id,
         thread_id=thread_id,
         session_id=session_id,
-        workspace_id=workspace_id,
+        active_workspace_id=active_workspace_id,
+        workspace_id=active_workspace_id,
         client_id=client_id,
         role=message.role,
         content=message.content,
@@ -319,7 +324,7 @@ def _get_workspace_by_row_id(domain, row_id):
     return domain.services.workspace.get_by_id(row_id)
 
 
-def _require_thread_workspace(gateway, domain, *, thread, workspace_id: str):
+def _require_workspace(gateway, domain, *, workspace_id: str):
     workspace = domain.services.workspace.get_by_workspace_id(workspace_id)
     if workspace is None:
         gateway._raise_http_error(
@@ -327,13 +332,63 @@ def _require_thread_workspace(gateway, domain, *, thread, workspace_id: str):
             code="workspace_not_found",
             message=f"未知 workspace: {workspace_id}",
         )
-    if thread.workspace_id != workspace.id:
+    return workspace
+
+
+def _resolve_thread_home_workspace(gateway, domain, *, thread):
+    workspace = _get_workspace_by_row_id(domain, getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None))
+    if workspace is None:
         gateway._raise_http_error(
-            status_code=400,
-            code="thread_workspace_mismatch",
-            message=f"thread {thread.thread_id} 不属于 workspace: {workspace_id}",
+            status_code=404,
+            code="workspace_not_found",
+            message=f"thread {thread.thread_id} 缺少 home workspace",
         )
     return workspace
+
+
+def _resolve_active_workspace(gateway, domain, *, requested_workspace_id: str = "", session_record=None, thread=None):
+    workspace_id = str(requested_workspace_id or "").strip()
+    if workspace_id:
+        return _require_workspace(gateway, domain, workspace_id=workspace_id)
+    if session_record is not None:
+        workspace = _get_workspace_by_row_id(domain, getattr(session_record, "active_workspace_id", None) or getattr(session_record, "workspace_id", None))
+        if workspace is not None:
+            return workspace
+    if thread is not None:
+        return _resolve_thread_home_workspace(gateway, domain, thread=thread)
+    gateway._raise_http_error(status_code=400, code="workspace_required", message="active_workspace_id 为必填字段")
+
+
+def _bind_client_workspace(domain, *, client, workspace, role: str = "member", metadata: dict | None = None) -> None:
+    try:
+        domain.services.client.bind_workspace(
+            workspace_id=workspace.id,
+            client_id=client.id,
+            membership_role=role,
+            enabled=True,
+            metadata=metadata,
+        )
+    except Exception:
+        logger.exception("Failed to bind client workspace membership")
+
+
+def _record_context_pool_message(domain, *, message, thread, session_record=None, client=None, active_workspace=None, home_workspace=None, metadata: dict | None = None) -> None:
+    context_pool = getattr(domain.services, "context_pool", None)
+    if context_pool is None:
+        return
+    try:
+        context_pool.record_message(
+            principal_id=domain.principal.id,
+            message=message,
+            thread=thread,
+            session=session_record,
+            client=client,
+            active_workspace=active_workspace,
+            home_workspace=home_workspace,
+            metadata=metadata,
+        )
+    except Exception:
+        logger.exception("Failed to write context pool item")
 
 
 def _workspace_governance_view(workspace) -> dict[str, Any]:
@@ -501,7 +556,7 @@ def _resolve_client_session_for_thread(domain, *, session_id: str, thread_id: st
     thread_row = domain.services.thread.get_by_id(session_row.thread_id)
     if thread_row is None or thread_row.thread_id != thread_id:
         return None, None, None, None, "session_thread_mismatch", f"session {session_id} 不属于 thread: {thread_id}"
-    workspace_row = _get_workspace_by_row_id(domain, session_row.workspace_id)
+    workspace_row = _get_workspace_by_row_id(domain, getattr(session_row, "active_workspace_id", None) or getattr(session_row, "workspace_id", None))
     client_row = domain.services.client.get_by_id(session_row.client_id)
     return session_row, thread_row, workspace_row, client_row, "", ""
 
@@ -805,6 +860,58 @@ def build_client_router(gateway) -> APIRouter:
             )
         rows.sort(key=lambda item: (0 if item.owner_client_id else 1, item.display_name.lower(), item.agent_id))
         return rows
+
+    @router.get("/workspaces/{workspace_id}/clients", response_model=list[ClientAvailableClientResponse])
+    async def list_workspace_clients(workspace_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        workspace = domain.services.workspace.get_by_workspace_id(workspace_id)
+        if workspace is None:
+            gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"未知 workspace: {workspace_id}")
+        rows = []
+        for client, binding in domain.services.client.list_clients_for_workspace(workspace.id):
+            rows.append(
+                ClientAvailableClientResponse(
+                    client_id=client.client_id,
+                    display_name=client.display_name,
+                    client_type=client.client_type,
+                    status=client.status,
+                    workspace_ids=[workspace_id],
+                    membership_role=binding.membership_role,
+                    enabled=bool(binding.enabled),
+                )
+            )
+        return rows
+
+    @router.get("/context-pool/query", response_model=ContextPoolQueryResponse)
+    async def query_context_pool(
+        request: Request,
+        q: str = "",
+        thread_id: str = "",
+        session_id: str = "",
+        active_workspace_id: str = "",
+        workspace_id: str = "",
+        limit: int = 8,
+    ):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        thread_row = domain.services.thread.get_by_thread_id(thread_id) if thread_id else None
+        session_row = domain.services.session.get_by_session_id(session_id) if session_id else None
+        workspace_row = None
+        resolved_workspace_id = str(active_workspace_id or workspace_id or "").strip()
+        if resolved_workspace_id:
+            workspace_row = _require_workspace(gateway, domain, workspace_id=resolved_workspace_id)
+        elif session_row is not None:
+            workspace_row = _get_workspace_by_row_id(domain, session_row.active_workspace_id)
+        items = domain.services.context_pool.query(
+            principal_id=domain.principal.id,
+            query_text=q,
+            thread_id=getattr(thread_row, "id", None),
+            session_id=getattr(session_row, "id", None),
+            active_workspace_id=getattr(workspace_row, "id", None),
+            limit=limit,
+        )
+        return ContextPoolQueryResponse(query=q, count=len(items), items=items)
 
     @router.post("/danxi/session/login", response_model=ClientDanxiSessionResponse)
     async def danxi_login(payload: ClientDanxiSessionLoginRequest, request: Request):
@@ -1228,12 +1335,13 @@ def build_client_router(gateway) -> APIRouter:
     async def create_thread(http_request: Request, payload: ClientThreadCreateRequest):
         gateway._require_http_auth(http_request)
         domain = gateway._require_core_domain()
-        workspace = domain.services.workspace.get_by_workspace_id(payload.workspace_id)
+        home_workspace_id = payload.resolved_home_workspace_id
+        workspace = domain.services.workspace.get_by_workspace_id(home_workspace_id)
         if workspace is None:
             gateway._raise_http_error(
                 status_code=404,
                 code="workspace_not_found",
-                message=f"未知 workspace: {payload.workspace_id}",
+                message=f"未知 workspace: {home_workspace_id}",
             )
         if payload.pinned_procedure_id:
             procedure = domain.services.procedure.get_by_procedure_id(payload.pinned_procedure_id)
@@ -1245,11 +1353,11 @@ def build_client_router(gateway) -> APIRouter:
                 )
         thread = domain.services.thread.create_thread(
             principal_id=domain.principal.id,
-            workspace_id=workspace.id,
+            home_workspace_id=workspace.id,
             title=payload.title,
             pinned_procedure_id=payload.pinned_procedure_id,
         )
-        return _thread_response(thread, payload.workspace_id)
+        return _thread_response(thread, home_workspace_id)
 
     @router.get("/threads/{thread_id}", response_model=ClientThreadResponse)
     async def get_thread(thread_id: str, request: Request):
@@ -1258,7 +1366,7 @@ def build_client_router(gateway) -> APIRouter:
         thread = domain.services.thread.get_by_thread_id(thread_id)
         if thread is None:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {thread_id}")
-        workspace = _get_workspace_by_row_id(domain, thread.workspace_id)
+        workspace = _resolve_thread_home_workspace(gateway, domain, thread=thread)
         return _thread_response(thread, getattr(workspace, "workspace_id", ""))
 
     @router.get("/threads/{thread_id}/procedure-context", response_model=ClientThreadProcedureContextResponse)
@@ -1312,7 +1420,9 @@ def build_client_router(gateway) -> APIRouter:
         thread = domain.services.thread.get_by_thread_id(payload.thread_id)
         if thread is None:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {payload.thread_id}")
-        workspace = _require_thread_workspace(gateway, domain, thread=thread, workspace_id=payload.workspace_id)
+        home_workspace = _resolve_thread_home_workspace(gateway, domain, thread=thread)
+        active_workspace_id = payload.resolved_active_workspace_id or getattr(home_workspace, "workspace_id", "")
+        workspace = _resolve_active_workspace(gateway, domain, requested_workspace_id=active_workspace_id, thread=thread)
         governance = domain.services.workspace.get_governance_view(workspace)
         client = domain.services.client.ensure_client(
             client_id=payload.client_id,
@@ -1320,10 +1430,12 @@ def build_client_router(gateway) -> APIRouter:
             client_type=payload.client_type,
             display_name=payload.display_name or payload.client_id,
         )
+        _bind_client_workspace(domain, client=client, workspace=home_workspace, role="home")
+        _bind_client_workspace(domain, client=client, workspace=workspace, role="active")
         session = domain.services.session.create_session(
             thread_id=thread.id,
             client_id=client.id,
-            workspace_id=workspace.id,
+            active_workspace_id=workspace.id,
         )
         source = make_source(SourceKind.WEB.value, payload.client_id, client_id=payload.client_id)
         _bind_runtime_session(
@@ -1332,7 +1444,11 @@ def build_client_router(gateway) -> APIRouter:
             source=source,
             metadata={
                 "thread_id": payload.thread_id,
-                "workspace_id": payload.workspace_id,
+                "home_workspace_id": getattr(home_workspace, "workspace_id", ""),
+                "active_workspace_id": active_workspace_id,
+                "workspace_id": active_workspace_id,
+                "workspace_title": workspace.title,
+                "workspace_base_mode": workspace.base_mode,
                 "client_id": payload.client_id,
                 "session_row_id": str(getattr(session, "id", "") or ""),
             },
@@ -1340,9 +1456,65 @@ def build_client_router(gateway) -> APIRouter:
         return ClientSessionResponse(
             session_id=session.session_id,
             thread_id=payload.thread_id,
-            workspace_id=payload.workspace_id,
+            active_workspace_id=active_workspace_id,
+            workspace_id=active_workspace_id,
             client_id=payload.client_id,
             status=session.status,
+        )
+
+    @router.patch("/sessions/{session_id}/active-workspace", response_model=ClientSessionResponse)
+    async def update_session_active_workspace(session_id: str, request: Request, payload: ClientActiveWorkspacePatchRequest):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        session_record = domain.services.session.get_by_session_id(session_id)
+        if session_record is None:
+            gateway._raise_http_error(status_code=404, code="session_not_found", message=f"未知 session: {session_id}")
+        thread = domain.services.thread.get_by_id(session_record.thread_id)
+        if thread is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"session {session_id} 缺少 thread")
+        workspace = _require_workspace(gateway, domain, workspace_id=payload.active_workspace_id)
+        client = domain.services.client.get_by_id(session_record.client_id)
+        if client is not None:
+            _bind_client_workspace(domain, client=client, workspace=workspace, role="active")
+        updated = domain.services.session.set_active_workspace(
+            session_id=session_id,
+            active_workspace_id=workspace.id,
+            metadata={"active_workspace_id": workspace.workspace_id},
+        )
+        source_client_id = str(payload.client_id or getattr(client, "client_id", "") or "client-http").strip() or "client-http"
+        source = make_source(SourceKind.WEB.value, source_client_id, client_id=source_client_id)
+        _bind_runtime_session(
+            gateway,
+            session_id=session_id,
+            source=source,
+            metadata={
+                "thread_id": thread.thread_id,
+                "active_workspace_id": workspace.workspace_id,
+                "workspace_id": workspace.workspace_id,
+                "workspace_title": workspace.title,
+                "workspace_base_mode": workspace.base_mode,
+                "client_id": source_client_id,
+                "session_row_id": str(getattr(session_record, "id", "") or ""),
+            },
+        )
+        await gateway.publish_client_thread_event(
+            thread.thread_id,
+            event_type="workspace.changed",
+            payload={
+                "thread_id": thread.thread_id,
+                "session_id": session_id,
+                "active_workspace_id": workspace.workspace_id,
+                "workspace_id": workspace.workspace_id,
+                "client_id": source_client_id,
+            },
+        )
+        return ClientSessionResponse(
+            session_id=session_id,
+            thread_id=thread.thread_id,
+            active_workspace_id=workspace.workspace_id,
+            workspace_id=workspace.workspace_id,
+            client_id=getattr(client, "client_id", source_client_id),
+            status=getattr(updated, "status", getattr(session_record, "status", "active")),
         )
 
     @router.post("/messages", response_model=ClientMessageResponse)
@@ -1352,8 +1524,7 @@ def build_client_router(gateway) -> APIRouter:
         thread = domain.services.thread.get_by_thread_id(payload.thread_id)
         if thread is None:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {payload.thread_id}")
-        workspace = _require_thread_workspace(gateway, domain, thread=thread, workspace_id=payload.workspace_id)
-        governance = domain.services.workspace.get_governance_view(workspace)
+        home_workspace = _resolve_thread_home_workspace(gateway, domain, thread=thread)
         client = domain.services.client.ensure_client(
             client_id=payload.client_id,
             principal_id=domain.principal.id,
@@ -1367,17 +1538,22 @@ def build_client_router(gateway) -> APIRouter:
                 code="session_thread_mismatch",
                 message=f"session {payload.session_id} 不属于 thread: {payload.thread_id}",
             )
-        if session_record is not None and session_record.workspace_id != workspace.id:
-            gateway._raise_http_error(
-                status_code=400,
-                code="session_workspace_mismatch",
-                message=f"session {payload.session_id} 不属于 workspace: {payload.workspace_id}",
-            )
+        workspace = _resolve_active_workspace(
+            gateway,
+            domain,
+            requested_workspace_id=payload.resolved_active_workspace_id,
+            session_record=session_record,
+            thread=thread,
+        )
+        active_workspace_id = getattr(workspace, "workspace_id", "")
+        governance = domain.services.workspace.get_governance_view(workspace)
+        _bind_client_workspace(domain, client=client, workspace=home_workspace, role="home")
+        _bind_client_workspace(domain, client=client, workspace=workspace, role="active")
         if session_record is None:
             session_record = domain.services.session.create_session(
                 thread_id=thread.id,
                 client_id=client.id,
-                workspace_id=workspace.id,
+                active_workspace_id=workspace.id,
             )
         source = make_source(SourceKind.WEB.value, payload.client_id, client_id=payload.client_id)
         _bind_runtime_session(
@@ -1386,14 +1562,21 @@ def build_client_router(gateway) -> APIRouter:
             source=source,
             metadata={
                 "thread_id": payload.thread_id,
-                "workspace_id": payload.workspace_id,
+                "home_workspace_id": getattr(home_workspace, "workspace_id", ""),
+                "active_workspace_id": active_workspace_id,
+                "workspace_id": active_workspace_id,
+                "workspace_title": workspace.title,
+                "workspace_base_mode": workspace.base_mode,
                 "client_id": payload.client_id,
+                "session_row_id": str(getattr(session_record, "id", "") or ""),
             },
         )
         inbound_metadata = {
             "thread_id": payload.thread_id,
             "message_id": message.message_id if False else "",
-            "workspace_id": payload.workspace_id,
+            "home_workspace_id": getattr(home_workspace, "workspace_id", ""),
+            "active_workspace_id": active_workspace_id,
+            "workspace_id": active_workspace_id,
             "workspace_title": workspace.title,
             "workspace_base_mode": workspace.base_mode,
             "workspace_prompt_overlay": governance["prompt_overlay"],
@@ -1418,8 +1601,11 @@ def build_client_router(gateway) -> APIRouter:
             role=payload.role,
             content=payload.content,
             source_client_id=client.id,
+            active_workspace_id=workspace.id,
             meta={
-                "workspace_id": payload.workspace_id,
+                "home_workspace_id": getattr(home_workspace, "workspace_id", ""),
+                "active_workspace_id": active_workspace_id,
+                "workspace_id": active_workspace_id,
                 "workspace_base_mode": workspace.base_mode,
                 "workspace_prompt_overlay": governance["prompt_overlay"],
                 "workspace_default_execution_target": governance["default_execution_target"],
@@ -1433,6 +1619,16 @@ def build_client_router(gateway) -> APIRouter:
             },
         )
         inbound_metadata["message_id"] = message.message_id
+        _record_context_pool_message(
+            domain,
+            message=message,
+            thread=thread,
+            session_record=session_record,
+            client=client,
+            active_workspace=workspace,
+            home_workspace=home_workspace,
+            metadata={"source": "client.message"},
+        )
         await gateway.publish_client_thread_event(
             payload.thread_id,
             event_type="message.created",
@@ -1442,7 +1638,7 @@ def build_client_router(gateway) -> APIRouter:
                 "message": _message_response(
                     message,
                     thread_id=payload.thread_id,
-                    workspace_id=payload.workspace_id,
+                    active_workspace_id=active_workspace_id,
                     session_id=session_record.session_id,
                     client_id=payload.client_id,
                 ).model_dump(),
@@ -1461,7 +1657,7 @@ def build_client_router(gateway) -> APIRouter:
         return _message_response(
             message,
             thread_id=payload.thread_id,
-            workspace_id=payload.workspace_id,
+            active_workspace_id=active_workspace_id,
             session_id=session_record.session_id,
             client_id=payload.client_id,
         )
@@ -1575,20 +1771,29 @@ def build_client_router(gateway) -> APIRouter:
         thread = domain.services.thread.get_by_thread_id(thread_id)
         if thread is None:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {thread_id}")
-        workspace = _get_workspace_by_row_id(domain, thread.workspace_id)
+        home_workspace = _resolve_thread_home_workspace(gateway, domain, thread=thread)
         messages = domain.services.message.list_messages_for_thread(thread.id)
         session_lookup = {}
         client_lookup = {}
+        workspace_lookup = {}
         results: list[ClientMessageResponse] = []
         for item in messages:
             session_id = ""
             client_id = ""
+            active_workspace_id = getattr(home_workspace, "workspace_id", "")
             if item.session_id is not None:
                 session_row = session_lookup.get(item.session_id)
                 if session_row is None:
                     session_row = domain.services.session.get_by_id(item.session_id)
                     session_lookup[item.session_id] = session_row
                 session_id = getattr(session_row, "session_id", "")
+                workspace_row_id = getattr(item, "active_workspace_id", None) or getattr(session_row, "active_workspace_id", None)
+                if workspace_row_id is not None:
+                    workspace_row = workspace_lookup.get(workspace_row_id)
+                    if workspace_row is None:
+                        workspace_row = domain.services.workspace.get_by_id(workspace_row_id)
+                        workspace_lookup[workspace_row_id] = workspace_row
+                    active_workspace_id = getattr(workspace_row, "workspace_id", active_workspace_id)
             if item.source_client_id is not None:
                 client_row = client_lookup.get(item.source_client_id)
                 if client_row is None:
@@ -1599,7 +1804,7 @@ def build_client_router(gateway) -> APIRouter:
                 _message_response(
                     item,
                     thread_id=thread.thread_id,
-                    workspace_id=getattr(workspace, "workspace_id", ""),
+                    active_workspace_id=active_workspace_id,
                     session_id=session_id,
                     client_id=client_id,
                 )
@@ -1613,7 +1818,7 @@ def build_client_router(gateway) -> APIRouter:
         thread = domain.services.thread.get_by_thread_id(payload.thread_id)
         if thread is None:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {payload.thread_id}")
-        workspace = _require_thread_workspace(gateway, domain, thread=thread, workspace_id=payload.workspace_id)
+        workspace = _require_workspace(gateway, domain, workspace_id=payload.workspace_id)
         procedure, procedure_profile = _resolve_procedure_execution_profile(domain, payload=payload)
         preferred_capability_ref = str(procedure_profile.get("preferred_capability_ref") or "").strip()
         requested_execution_target = str(payload.execution_target or "").strip()
@@ -2053,7 +2258,7 @@ def build_client_router(gateway) -> APIRouter:
                     continue
                 source = make_source(SourceKind.WEB.value, str(command.client_id or "client-ws").strip() or "client-ws")
                 if domain is not None:
-                    session_row, _, workspace_row, client_row, session_error_code, session_error_message = _resolve_client_session_for_thread(
+                    session_row, thread_row, workspace_row, client_row, session_error_code, session_error_message = _resolve_client_session_for_thread(
                         domain,
                         session_id=command_session_id,
                         thread_id=thread_id,
@@ -2074,12 +2279,22 @@ def build_client_router(gateway) -> APIRouter:
                         if not sent:
                             break
                         continue
+                    home_workspace_row = (
+                        _get_workspace_by_row_id(
+                            domain,
+                            getattr(thread_row, "home_workspace_id", None) or getattr(thread_row, "workspace_id", None),
+                        )
+                        if thread_row is not None
+                        else None
+                    )
                     _bind_runtime_session(
                         gateway,
                         session_id=command_session_id,
                         source=source,
                         metadata={
                             "thread_id": thread_id,
+                            "home_workspace_id": getattr(home_workspace_row, "workspace_id", ""),
+                            "active_workspace_id": getattr(workspace_row, "workspace_id", ""),
                             "workspace_id": getattr(workspace_row, "workspace_id", ""),
                             "client_id": getattr(client_row, "client_id", "") or str(command.client_id or "").strip(),
                             "session_row_id": str(getattr(session_row, "id", "") or ""),

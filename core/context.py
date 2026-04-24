@@ -8,6 +8,8 @@ import json
 import logging
 from typing import Any
 
+from core.runtime_context import get_event_context
+
 
 logger = logging.getLogger("meetyou.context")
 
@@ -49,6 +51,8 @@ class ContextManager:
         self._memory = memory
         self._adapter = adapter
         self._event_bus = event_bus
+        self._context_pool_service = None
+        self._context_pool_principal_getter = None
         self.proprioception_info: dict = {
             "ui_info": "",
             "running_apps": [],
@@ -57,6 +61,10 @@ class ContextManager:
 
     def set_adapter(self, adapter):
         self._adapter = adapter
+
+    def set_context_pool_service(self, service, *, principal_getter=None) -> None:
+        self._context_pool_service = service
+        self._context_pool_principal_getter = principal_getter
 
     async def load_context(self, session_id: str = "") -> str:
         return await self._memory.load_working_summary(session_id=session_id)
@@ -140,6 +148,7 @@ class ContextManager:
             "budgets": {
                 "system": max(256, int(target_input_tokens * 0.16)),
                 "conversation_summary": max(192, int(target_input_tokens * 0.12)),
+                "context_pool": max(192, int(target_input_tokens * 0.1)),
                 "memory": max(192, int(target_input_tokens * 0.14)),
                 "policy": max(256, int(target_input_tokens * 0.16)),
                 "history": max(256, int(target_input_tokens * 0.26)),
@@ -198,6 +207,7 @@ class ContextManager:
         policy_messages: list[dict],
         proprioception_message: dict | None,
         conversation_summary_message: dict | None = None,
+        context_pool_message: dict | None = None,
         selected_history_messages: list[dict] | None = None,
     ) -> dict[str, int]:
         system_tokens = 0
@@ -214,7 +224,11 @@ class ContextManager:
             else:
                 history_tokens += tokens
 
-        memory_tokens = self.estimate_message_tokens(auto_memory_message or {}) + self.estimate_message_tokens(conversation_summary_message or {})
+        context_pool_tokens = self.estimate_message_tokens(context_pool_message or {})
+        memory_tokens = (
+            self.estimate_message_tokens(auto_memory_message or {})
+            + self.estimate_message_tokens(conversation_summary_message or {})
+        )
         policy_tokens = self.estimate_tokens(policy_messages)
         current_input_tokens = self.estimate_tokens(current_turn_messages)
         proprioception_tokens = self.estimate_message_tokens(proprioception_message or {})
@@ -223,6 +237,7 @@ class ContextManager:
             system_tokens
             + history_tokens
             + tool_history_tokens
+            + context_pool_tokens
             + memory_tokens
             + policy_tokens
             + current_input_tokens
@@ -232,11 +247,65 @@ class ContextManager:
             "system": system_tokens,
             "history": history_tokens,
             "tool_history": tool_history_tokens,
+            "context_pool": context_pool_tokens,
             "memory_context": memory_tokens,
             "policy": policy_tokens,
             "current_input": current_input_tokens,
             "proprioception": proprioception_tokens,
             "total": total,
+        }
+
+    async def _build_context_pool_message(
+        self,
+        *,
+        current_turn_messages: list[dict],
+        route_context: dict[str, Any],
+    ) -> dict | None:
+        service = self._context_pool_service
+        principal_getter = self._context_pool_principal_getter
+        if service is None or principal_getter is None:
+            return None
+        query_parts = []
+        for message in current_turn_messages:
+            if str(message.get("role") or "") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                query_parts.append(content.strip())
+        query_text = "\n".join(query_parts).strip()
+        if not query_text:
+            return None
+        event_context = get_event_context()
+        workspace = route_context.get("workspace") if isinstance(route_context.get("workspace"), dict) else {}
+        active_workspace_id = str(
+            event_context.get("active_workspace_id")
+            or event_context.get("workspace_id")
+            or workspace.get("workspace_id")
+            or ""
+        ).strip()
+        try:
+            principal_id = principal_getter()
+            rows = service.query_by_public_ids(
+                principal_id=principal_id,
+                query_text=query_text,
+                thread_id=str(event_context.get("thread_id") or "").strip(),
+                session_id=str(event_context.get("session_id") or "").strip(),
+                active_workspace_id=active_workspace_id,
+                limit=6,
+            )
+        except Exception as exc:
+            logger.warning("ContextPool recall failed: %s", exc)
+            return None
+        if not rows:
+            return None
+        return {
+            "role": "system",
+            "content": (
+                "[ContextPool]\n"
+                "下面是跨 Client/Agent 会话池召回的短中期上下文。它不是长期事实；若与当前用户输入冲突，以当前输入为准。\n"
+                + json.dumps({"items": rows}, ensure_ascii=False)
+            ),
+            "metadata": {"context_layer": "context_pool", "transient": True},
         }
 
     async def build_context_plan(
@@ -271,6 +340,10 @@ class ContextManager:
                 "content": "[对话摘要层]\n" + normalized_summary,
                 "metadata": {"context_layer": "conversation_summary", "transient": True},
             }
+        context_pool_message = await self._build_context_pool_message(
+            current_turn_messages=current_turn_messages,
+            route_context=route_context,
+        )
 
         system_history = [dict(message) for message in session_history_before_turn if message.get("role") == "system"]
         non_system_history = [dict(message) for message in session_history_before_turn if message.get("role") != "system"]
@@ -297,6 +370,8 @@ class ContextManager:
             messages = list(system_history)
             if summary_message:
                 messages.append(summary_message)
+            if context_pool_message:
+                messages.append(context_pool_message)
             if auto_memory_message is not None:
                 messages.append(dict(auto_memory_message))
             messages.extend(dict(message) for message in policy_messages)
@@ -340,6 +415,7 @@ class ContextManager:
             policy_messages=policy_messages,
             proprioception_message=proprioception_message,
             conversation_summary_message=summary_message,
+            context_pool_message=context_pool_message,
         )
         return {
             "messages": messages,
@@ -347,6 +423,7 @@ class ContextManager:
             "breakdown": breakdown,
             "layers": {
                 "conversation_summary": bool(summary_message),
+                "context_pool": bool(context_pool_message),
                 "memory_recall": bool(auto_memory_message),
                 "session_preload": bool(route_context.get("should_preload_context")),
                 "prefer_live_web": bool(route_context.get("prefer_live_web")),
