@@ -30,6 +30,8 @@ interface WorkspacePanelProps {
   operations: OperationView[]
   approvalDisplay: ApprovalDisplayModel | null
   pendingHumanInput: HumanInputRequestPayload | null
+  onDecideOperationApproval?: (approvalId: string, decision: 'approve' | 'reject') => void
+  approvalSubmittingIds?: string[]
 }
 
 function countRunningOperations(operations: OperationView[]): number {
@@ -52,6 +54,8 @@ export default function WorkspacePanel({
   operations,
   approvalDisplay,
   pendingHumanInput,
+  onDecideOperationApproval,
+  approvalSubmittingIds = [],
 }: WorkspacePanelProps) {
   if (!workspace) {
     return null
@@ -147,8 +151,30 @@ export default function WorkspacePanel({
           <div className={styles.operationsList}>
             {recentOperations.map((item) => (
               <div key={item.operation_id} className={styles.operationItem}>
-                <strong>{item.title || item.operation_id}</strong>
-                <span>{formatOperationTone(item.tone)}</span>
+                <div className={styles.operationMain}>
+                  <strong>{item.title || item.operation_id}</strong>
+                  <span>{formatOperationTone(item.tone)}</span>
+                </div>
+                {item.approval_required && item.approval_status === 'pending' && item.approval_id ? (
+                  <div className={styles.operationActions}>
+                    <button
+                      type="button"
+                      className={`${styles.approvalBtn} ${styles.approveBtn}`}
+                      disabled={approvalSubmittingIds.includes(item.approval_id)}
+                      onClick={() => onDecideOperationApproval?.(item.approval_id || '', 'approve')}
+                    >
+                      批准
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.approvalBtn} ${styles.rejectBtn}`}
+                      disabled={approvalSubmittingIds.includes(item.approval_id)}
+                      onClick={() => onDecideOperationApproval?.(item.approval_id || '', 'reject')}
+                    >
+                      拒绝
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
