@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -22,6 +24,7 @@ def _unused_port() -> int:
 class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.session_start_count = 0
+        self.health_delay_seconds = 0.0
         self.core_port = _unused_port()
         self.bridge_port = _unused_port()
         self.core_base_url = f"http://127.0.0.1:{self.core_port}"
@@ -69,6 +72,8 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
 
     async def _handle_health(self, request: web.Request) -> web.Response:
         self._assert_core_auth(request)
+        if self.health_delay_seconds:
+            await asyncio.sleep(self.health_delay_seconds)
         return web.json_response({"status": "ready", "health": {"build_info": {"git_commit": "core-commit", "branch": "main", "build_time": "2026-04-24T00:00:00Z", "component": "core", "package_version": "1.0.0"}}})
 
     async def _handle_workspaces(self, request: web.Request) -> web.Response:
@@ -167,6 +172,18 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["core_base_url"], self.core_base_url)
         self.assertEqual(payload["core_build_info"]["git_commit"], "core-commit")
         self.assertEqual(payload["build_info"]["component"], "desktop_backend")
+
+    async def test_status_endpoint_does_not_wait_on_slow_core_health(self):
+        self.health_delay_seconds = 2.0
+        started_at = time.perf_counter()
+        async with ClientSession() as session:
+            async with session.get(f"{self.bridge_base_url}{LOCAL_BRIDGE_STATUS_PATH}") as response:
+                self.assertEqual(response.status, 200)
+                payload = await response.json()
+        elapsed = time.perf_counter() - started_at
+        self.assertLess(elapsed, 1.5)
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["core_build_info"], {})
 
     async def test_http_proxy_requires_local_auth_and_rewrites_attachment_ticket_urls(self):
         async with ClientSession() as session:
