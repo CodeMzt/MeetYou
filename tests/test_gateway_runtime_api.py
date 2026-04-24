@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -321,6 +322,61 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(payload["runtime"]["debug"]["last_failure"]["code"], "provider_bad_request")
         self.assertTrue(payload["runtime"]["debug"]["authorization"]["confirmation"]["pending"])
         self.assertEqual(payload["runtime"]["debug"]["object_operations"][0]["summary"], "已删除记忆。")
+
+    def test_runtime_debug_routes_serialize_non_json_payloads(self):
+        gateway = FastAPIGateway(
+            self.event_bus,
+            SessionManager(),
+            health_getter=lambda: {
+                "service": "meetyou-runtime",
+                "status": "ready",
+                "live": True,
+                "ready": True,
+                "degraded": False,
+                "components": [],
+                "errors": [],
+                "updated_at": "2026-04-01T00:00:00Z",
+            },
+            runtime_debug_getter=lambda session_id: {
+                "session_id": session_id,
+                "route": {"current_mode": "office"},
+                "authorization": {
+                    "route_preview": {
+                        "visible_tools": ["read_local_documents"],
+                        "candidate_tools": ["read_local_documents"],
+                        "authorization_preview": [],
+                        "mcp_server_diagnostics": [SimpleNamespace(kind="opaque-diagnostic")],
+                    },
+                    "recent_decisions": [],
+                    "confirmation": {"pending": False, "request_id": ""},
+                },
+                "core_mcp": {
+                    "runtime_server_diagnostics": [SimpleNamespace(kind="opaque-core-runtime")],
+                },
+                "updated_at": "2026-04-01T00:00:00Z",
+            },
+            access_token=self.access_token,
+        )
+        client = TestClient(gateway.app)
+        self.addCleanup(client.close)
+
+        for path in ("/runtime/debug", "/developer/runtime/debug"):
+            response = client.get(
+                path,
+                params={"session_id": "web:session:json-safe"},
+                headers=self._auth_headers(),
+            )
+
+            self.assertEqual(response.status_code, 200, msg=path)
+            payload = response.json()
+            self.assertEqual(
+                payload["runtime"]["debug"]["authorization"]["route_preview"]["mcp_server_diagnostics"][0],
+                "namespace(kind='opaque-diagnostic')",
+            )
+            self.assertEqual(
+                payload["runtime"]["debug"]["core_mcp"]["runtime_server_diagnostics"][0],
+                "namespace(kind='opaque-core-runtime')",
+            )
 
     def test_websocket_rejects_unauthorized_connection(self):
         with self.client.websocket_connect("/ws?session_id=web:session:1&source_id=browser-tab-a") as websocket:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from gateway.models import RuntimeEnvelopePayload, RuntimeEnvelopeResponse
+from gateway.serialization import make_json_safe
 
 
 def build_developer_router(gateway) -> APIRouter:
@@ -19,7 +20,7 @@ def build_developer_router(gateway) -> APIRouter:
             runtime=RuntimeEnvelopePayload(
                 resource="debug",
                 session_id=str(payload.get("session_id") or session_id),
-                debug=dict(payload or {}),
+                debug=make_json_safe(dict(payload or {})),
             ),
         )
 
