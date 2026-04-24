@@ -25,6 +25,13 @@ from tools.web_search import WebSearchTools
 
 _get_mcp_timeout_seconds = get_mcp_timeout_seconds
 _should_expose_mcp_tool = should_expose_mcp_tool
+_AGENT_DISPATCH_LOCAL_TOOLS = {
+    "exec_sys_cmd",
+    "analyze_workspace",
+    "read_local_documents",
+    "write_local_document",
+    "rewrite_local_document",
+}
 
 
 class ToolsManager:
@@ -151,10 +158,12 @@ class ToolsManager:
             mcp_manager,
             authorization_gateway=self._authorization_gateway,
         )
+        self._agent_dispatcher_available = False
 
     def set_agent_dispatcher(self, dispatcher) -> None:
         if self._document_tools is not None:
             self._document_tools.set_agent_dispatcher(dispatcher)
+        self._agent_dispatcher_available = dispatcher is not None
         self._authorization_gateway.set_local_capability_dispatcher_available(dispatcher is not None)
 
     def set_capability_dispatcher(self, dispatcher) -> None:
@@ -253,6 +262,7 @@ class ToolsManager:
             "visible_tools": visible_tool_names,
             "candidate_tools": candidate_tool_names,
             "authorization_preview": decisions,
+            "execution_boundary": self.get_tool_execution_boundary_snapshot(),
             "mcp_server_diagnostics": list(
                 route_context.get("capability_set", {}).get("mcp_diagnostics")
                 or route_context.get("mcp_diagnostics")
@@ -264,6 +274,37 @@ class ToolsManager:
                 or []
             ),
         }
+
+    def get_tool_execution_boundary_snapshot(self) -> list[dict[str, Any]]:
+        tool_names = set(self._registry.supported_funcs.keys())
+        tool_names.update(getattr(self._mcp_manager, "tool_map", {}).keys())
+        snapshot: list[dict[str, Any]] = []
+        for tool_name in sorted(name for name in tool_names if str(name or "").strip()):
+            normalized = str(tool_name).strip()
+            is_builtin = self._registry.has_builtin(normalized)
+            if is_builtin:
+                source_type = "builtin"
+                executor_owner = (
+                    "agent_dispatch" if normalized in _AGENT_DISPATCH_LOCAL_TOOLS and self._agent_dispatcher_available else "core"
+                )
+            elif self._registry.has_mcp(normalized):
+                source_type = "mcp"
+                executor_owner = "core_mcp"
+            else:
+                source_type = "unknown"
+                executor_owner = "unknown"
+
+            risk = self._risk_classifier.get_tool_action_risk(normalized)
+            snapshot.append(
+                {
+                    "tool_name": normalized,
+                    "source_type": source_type,
+                    "executor_owner": executor_owner,
+                    "risk": risk,
+                    "parallel_safe": risk == "read",
+                }
+            )
+        return snapshot
 
     async def call_tool(
         self,
