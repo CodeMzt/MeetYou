@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Send, Settings2, Sparkles, BrainCircuit, Square, Paperclip } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { AssistantMode, ThinkingOverride, ConfirmRequestPayload, HumanInputRequestPayload, RuntimeStateSnapshot, ConnectionState } from '../../types'
@@ -55,6 +55,7 @@ export default function ChatInput({
   onUploadAttachment,
 }: ChatInputProps) {
   const [showOptions, setShowOptions] = useState(false)
+  const dockRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerLocked = Boolean(confirmRequest || pendingHumanInput)
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
@@ -84,8 +85,23 @@ export default function ChatInput({
     }
   }
 
+  useEffect(() => {
+    if (!showOptions) {
+      return
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!dockRef.current?.contains(event.target as Node)) {
+        setShowOptions(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+    }
+  }, [showOptions])
+
   return (
-    <div className={styles.dockContainer}>
+    <div className={styles.dockContainer} ref={dockRef}>
       <AnimatePresence>
         {showOptions && (
           <motion.div

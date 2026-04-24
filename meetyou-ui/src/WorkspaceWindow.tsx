@@ -15,6 +15,7 @@ import ProcedureCatalogPanel from './components/workspace/ProcedureCatalogPanel'
 import WorkspacePanel from './components/workspace/WorkspacePanel'
 import SubWindow from './components/layout/SubWindow'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from './windowBridge'
+import { decideClientApproval } from './clientApi'
 
 type WorkspaceWindowPayload = {
   baseUrl: string
@@ -43,6 +44,7 @@ const EMPTY_PAYLOAD: WorkspaceWindowPayload = {
 export default function WorkspaceWindow() {
   const [payload, setPayload] = useState<WorkspaceWindowPayload>(EMPTY_PAYLOAD)
   const [procedureContext, setProcedureContext] = useState<ClientThreadProcedureContext | null>(null)
+  const [approvalSubmittingIds, setApprovalSubmittingIds] = useState<string[]>([])
 
   useEffect(() => {
     setProcedureContext(payload.procedureContext)
@@ -68,6 +70,20 @@ export default function WorkspaceWindow() {
     }
   }, [])
 
+  const handleDecideOperationApproval = async (approvalId: string, decision: 'approve' | 'reject') => {
+    if (!approvalId || approvalSubmittingIds.includes(approvalId)) {
+      return
+    }
+    setApprovalSubmittingIds((current) => [...current, approvalId])
+    try {
+      await decideClientApproval(payload.baseUrl, approvalId, { decision })
+    } catch (error) {
+      console.warn('Failed to submit operation approval from workspace window:', error)
+    } finally {
+      setApprovalSubmittingIds((current) => current.filter((item) => item !== approvalId))
+    }
+  }
+
   return (
     <SubWindow title="工作区与规程" icon={<LayoutTemplate size={16} />} className={styles.windowOverride}>
       <div className={`dashboard-content ${styles.mainContent}`}>
@@ -82,6 +98,8 @@ export default function WorkspaceWindow() {
               operations={payload.operations}
               approvalDisplay={payload.approvalDisplay}
               pendingHumanInput={payload.pendingHumanInput}
+              onDecideOperationApproval={handleDecideOperationApproval}
+              approvalSubmittingIds={approvalSubmittingIds}
             />
           ) : null}
 

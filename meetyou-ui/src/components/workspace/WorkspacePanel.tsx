@@ -30,10 +30,20 @@ interface WorkspacePanelProps {
   operations: OperationView[]
   approvalDisplay: ApprovalDisplayModel | null
   pendingHumanInput: HumanInputRequestPayload | null
+  onDecideOperationApproval?: (approvalId: string, decision: 'approve' | 'reject') => void
+  approvalSubmittingIds?: string[]
 }
 
 function countRunningOperations(operations: OperationView[]): number {
   return operations.filter((item) => item.tone === 'running' || item.tone === 'pending').length
+}
+
+function formatOperationTone(tone: string): string {
+  if (tone === 'running') return '进行中'
+  if (tone === 'pending') return '等待中'
+  if (tone === 'success') return '成功'
+  if (tone === 'failed') return '失败'
+  return '状态未知'
 }
 
 export default function WorkspacePanel({
@@ -44,6 +54,8 @@ export default function WorkspacePanel({
   operations,
   approvalDisplay,
   pendingHumanInput,
+  onDecideOperationApproval,
+  approvalSubmittingIds = [],
 }: WorkspacePanelProps) {
   if (!workspace) {
     return null
@@ -58,6 +70,7 @@ export default function WorkspacePanel({
   const effectiveProcedure = procedureContext?.effective_procedure ?? null
   const procedureSource = procedureContext?.source ?? 'none'
   const latestInferenceVisible = procedureSource === 'inferred' && procedureContext?.latest_inferred_reason
+  const recentOperations = operations.slice(0, 3)
 
   return (
     <section className={styles.panel}>
@@ -128,6 +141,45 @@ export default function WorkspacePanel({
           <span>记忆排序：{formatMemoryRankingPolicyLabel(workspace.memory_ranking_policy)}</span>
         </div>
       </div>
+
+      {recentOperations.length > 0 ? (
+        <div className={styles.operationsCard}>
+          <div className={styles.operationsHeader}>
+            <span className={styles.kicker}>开发调试</span>
+            <span className={styles.operationsHint}>最近操作（最多 3 条）</span>
+          </div>
+          <div className={styles.operationsList}>
+            {recentOperations.map((item) => (
+              <div key={item.operation_id} className={styles.operationItem}>
+                <div className={styles.operationMain}>
+                  <strong>{item.title || item.operation_id}</strong>
+                  <span>{formatOperationTone(item.tone)}</span>
+                </div>
+                {item.approval_required && item.approval_status === 'pending' && item.approval_id ? (
+                  <div className={styles.operationActions}>
+                    <button
+                      type="button"
+                      className={`${styles.approvalBtn} ${styles.approveBtn}`}
+                      disabled={approvalSubmittingIds.includes(item.approval_id)}
+                      onClick={() => onDecideOperationApproval?.(item.approval_id || '', 'approve')}
+                    >
+                      批准
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.approvalBtn} ${styles.rejectBtn}`}
+                      disabled={approvalSubmittingIds.includes(item.approval_id)}
+                      onClick={() => onDecideOperationApproval?.(item.approval_id || '', 'reject')}
+                    >
+                      拒绝
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className={styles.procedureCard}>
         <div className={styles.procedureHeader}>
