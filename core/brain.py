@@ -31,6 +31,7 @@ from core.assistant_modes import (
 from core.brain_session import BrainSession
 from core.public_contract import to_internal_assistant_mode
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
+from core.model_capabilities import ModelContextBudgetResolver
 from core.status import ContextBreakdown, RuntimeStateSnapshot, RuntimeStatus, SessionUsageTotals, UsageCounters, UsageSnapshot, utcnow_iso
 from core.tool_runtime import ToolCallResult, ToolErrorCategory, ToolSourceType, normalize_tool_result
 from tools.object_operations import redacted_object_debug_entry
@@ -198,6 +199,7 @@ class Brain:
         self._http_session: Any | None = None
         self._provider_name: str = ""
         self._global_context: str = ""
+        self._model_context_budget_resolver = ModelContextBudgetResolver()
 
     async def init_brain(self, sys_prompt: str):
         self._base_messages = [{"role": "system", "content": sys_prompt}]
@@ -645,6 +647,7 @@ class Brain:
             snapshot.get("current_context_tokens_estimated", 0) or 0
         )
         session.usage_snapshot.context_breakdown = ContextBreakdown.from_mapping(snapshot.get("context_breakdown") or {})
+        session.usage_snapshot.context_budget_breakdown = dict(snapshot.get("context_budget_breakdown") or {})
         totals = dict(snapshot.get("session_totals") or {})
         session.usage_snapshot.last_turn_usage = UsageCounters(
             prompt_tokens=int((snapshot.get("last_turn_usage") or {}).get("prompt_tokens", 0) or 0),
@@ -935,6 +938,7 @@ class Brain:
         context_plan: dict[str, Any],
         context_breakdown: dict[str, int],
         context_limit_info: dict[str, Any],
+        context_budget_breakdown: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         length_policy = dict(context_plan.get("length_policy") or {})
         layers = dict(context_plan.get("layers") or {})
@@ -972,6 +976,7 @@ class Brain:
                 "target_input_tokens": int(length_policy.get("target_input_tokens", 0) or 0),
                 "reserved_response_tokens": int(length_policy.get("reserved_response_tokens", 0) or 0),
                 "breakdown_total": int(context_breakdown.get("total", 0) or 0),
+                "context_budget_breakdown": dict(context_budget_breakdown or {}),
             },
             "layers": {
                 "conversation_summary": bool(layers.get("conversation_summary")),
@@ -981,6 +986,51 @@ class Brain:
                 "history_message_count": int(layers.get("history_message_count", 0) or 0),
             },
         }
+
+    async def _attempt_compaction_for_budget(
+        self,
+        *,
+        session: BrainSession,
+        model: str,
+        api_url: str,
+        api_key: str,
+        provider_name: str,
+        context_limit_info: dict[str, Any],
+        reserve_ratio: float,
+        turn_usage: UsageCounters | None = None,
+    ) -> dict[str, Any]:
+        try:
+            result = await self._context_manager.trim_history(
+                session.chat_history,
+                model,
+                self._http_session,
+                api_url,
+                api_key,
+                reserve_ratio=reserve_ratio,
+                context_limit_override=int(context_limit_info.get("context_limit_tokens", 0) or 0),
+                session_id=session.session_id,
+                provider_name=provider_name,
+                preserve_message_count=self._base_message_count(),
+            ) or {}
+        except TypeError:
+            result = await self._context_manager.trim_history(
+                session.chat_history,
+                model,
+                self._http_session,
+                api_url,
+                api_key,
+            ) or {}
+        trimmed_summary = str(result.get("conversation_summary") or "").strip()
+        if trimmed_summary:
+            session.metadata["conversation_summary"] = trimmed_summary
+        compression_snapshot = dict(result.get("compression") or {})
+        if compression_snapshot:
+            session.metadata["last_compression"] = compression_snapshot
+        summary_usage = self._normalize_usage(result.get("summary_usage"))
+        if summary_usage and turn_usage is not None:
+            turn_usage.add(summary_usage)
+            session.usage_snapshot.session_totals.add(summary_usage)
+        return result
 
     def _build_failure_payload_from_exception(
         self,
@@ -2520,6 +2570,7 @@ class Brain:
         *,
         model: str,
         context_breakdown: dict[str, int],
+        context_budget_breakdown: dict[str, Any] | None,
         turn_usage: UsageCounters,
         usage_source: str,
         context_limit_info: dict[str, Any] | None = None,
@@ -2539,6 +2590,7 @@ class Brain:
             context_limit_info.get("context_limit_confidence") or "low"
         )
         session.usage_snapshot.context_breakdown = ContextBreakdown.from_mapping(context_breakdown)
+        session.usage_snapshot.context_budget_breakdown = dict(context_budget_breakdown or {})
         session.usage_snapshot.current_context_tokens_estimated = session.usage_snapshot.context_breakdown.total
         session.usage_snapshot.last_turn_usage = UsageCounters(
             prompt_tokens=turn_usage.prompt_tokens,
@@ -2549,6 +2601,7 @@ class Brain:
         session.usage_snapshot.usage_source = usage_source
         session.usage_snapshot.updated_at = utcnow_iso()
         session.metadata["last_context_snapshot"] = session.usage_snapshot.context_breakdown.to_dict()
+        session.metadata["last_context_budget_breakdown"] = dict(session.usage_snapshot.context_budget_breakdown)
         session.metadata["last_turn_usage"] = session.usage_snapshot.last_turn_usage.to_dict()
         session.metadata["session_totals"] = session.usage_snapshot.session_totals.to_dict()
         session.metadata["usage_source"] = usage_source
@@ -2674,6 +2727,8 @@ class Brain:
 
         adapter_options = self._build_adapter_options(model_options)
         turn_counted = False
+        preflight_compaction_attempted = False
+        provider_context_retry_attempted = False
 
         while True:
             policy_messages = self._build_mode_policy_messages(route_context, requested_mode=requested_mode) + [
@@ -2708,10 +2763,39 @@ class Brain:
             )
             messages = list(context_plan.get("messages") or [])
             context_breakdown = dict(context_plan.get("breakdown") or {})
+            context_budget = self._model_context_budget_resolver.resolve(
+                model=model,
+                context_limit_info=context_limit_info,
+                length_policy=dict(context_plan.get("length_policy") or {}),
+                model_options=model_options,
+            ).to_dict()
+            request_tokens_estimated = int(
+                getattr(self._context_manager, "estimate_tokens")(messages)
+                if callable(getattr(self._context_manager, "estimate_tokens", None))
+                else sum(self._estimate_message_tokens(message) for message in messages)
+            )
+            if (
+                request_tokens_estimated > int(context_budget.get("input_budget", 0) or 0)
+                and not transient_turn
+                and not preflight_compaction_attempted
+            ):
+                preflight_compaction_attempted = True
+                await self._attempt_compaction_for_budget(
+                    session=session,
+                    model=model,
+                    api_url=api_url,
+                    api_key=api_key,
+                    provider_name=provider_name,
+                    context_limit_info=context_limit_info,
+                    reserve_ratio=0.62,
+                    turn_usage=turn_usage,
+                )
+                continue
             session.metadata["last_context_plan"] = {
                 "length_policy": dict(context_plan.get("length_policy") or {}),
                 "layers": dict(context_plan.get("layers") or {}),
                 "breakdown": dict(context_breakdown),
+                "context_budget_breakdown": dict(context_budget),
             }
 
             tools = self._get_tools_for_route(route_context, requested_mode=requested_mode)
@@ -2724,6 +2808,7 @@ class Brain:
                 context_plan=context_plan,
                 context_breakdown=context_breakdown,
                 context_limit_info=context_limit_info,
+                context_budget_breakdown=context_budget,
             )
             session.metadata["last_request_debug"] = request_debug
             assistant_content = ""
@@ -2798,6 +2883,23 @@ class Brain:
                     compression=compression_snapshot,
                 )
                 self._record_session_failure(session, failure_payload)
+                if (
+                    str(failure_payload.get("code") or "") == "provider_context_limit_exceeded"
+                    and not provider_context_retry_attempted
+                    and not transient_turn
+                ):
+                    provider_context_retry_attempted = True
+                    await self._attempt_compaction_for_budget(
+                        session=session,
+                        model=model,
+                        api_url=api_url,
+                        api_key=api_key,
+                        provider_name=provider_name,
+                        context_limit_info=context_limit_info,
+                        reserve_ratio=0.58,
+                        turn_usage=turn_usage,
+                    )
+                    continue
                 try:
                     setattr(exc, "runtime_error_payload", failure_payload)
                 except Exception:
@@ -2835,6 +2937,7 @@ class Brain:
                 session,
                 model=model,
                 context_breakdown=context_breakdown,
+                context_budget_breakdown=context_budget,
                 turn_usage=turn_usage,
                 usage_source=usage_source,
                 context_limit_info=context_limit_info,

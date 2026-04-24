@@ -1856,6 +1856,7 @@ class App:
             merged_snapshot.setdefault("last_turn_usage", dict(zero_usage))
             merged_snapshot.setdefault("session_totals", {**zero_usage, "turn_count": 0})
             merged_snapshot.setdefault("current_context_tokens_estimated", 0)
+            merged_snapshot.setdefault("context_budget_breakdown", {})
             merged_snapshot.setdefault("usage_source", "estimated")
             merged_snapshot.setdefault("updated_at", utcnow_iso())
             return merged_snapshot
@@ -1871,6 +1872,7 @@ class App:
             "context_limit_model": str(context_limit_info.get("context_limit_model") or self.config.get("model") or ""),
             "context_limit_confidence": str(context_limit_info.get("context_limit_confidence") or "low"),
             "current_context_tokens_estimated": 0,
+            "context_budget_breakdown": {},
             "context_breakdown": {
                 "system": 0,
                 "history": 0,
