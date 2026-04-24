@@ -22,6 +22,8 @@ if (-not $SkipInstall) {
     & $Python -m pip install -r requirements-build-desktop.txt
 }
 
+& $Python scripts/generate_build_info.py
+
 $ResolvedOutput = Join-Path $RepoRoot $OutputDir
 $RuntimeTemplateDir = Join-Path $RepoRoot "meetyou-ui\resources\runtime-template"
 $WorkPath = Join-Path $RepoRoot "build\pyinstaller-desktop-agent"

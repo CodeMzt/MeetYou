@@ -137,6 +137,7 @@ class RuntimeHealth(BaseModel):
     components: list[RuntimeComponentHealth] = Field(default_factory=list)
     checks: list[RuntimeHealthCheck] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
+    build_info: dict[str, Any] = Field(default_factory=dict)
     telemetry: list[RuntimeTelemetrySignal] = Field(default_factory=list)
     errors: list[RuntimeError] = Field(default_factory=list)
     updated_at: str = Field(default_factory=utcnow_iso)
