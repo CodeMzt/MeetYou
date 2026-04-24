@@ -195,6 +195,7 @@ class UsageSnapshot:
     context_limit_confidence: str = ""
     current_context_tokens_estimated: int = 0
     context_breakdown: ContextBreakdown = field(default_factory=ContextBreakdown)
+    context_budget_breakdown: dict = field(default_factory=dict)
     last_turn_usage: UsageCounters = field(default_factory=UsageCounters)
     session_totals: SessionUsageTotals = field(default_factory=SessionUsageTotals)
     usage_source: str = "estimated"
@@ -210,6 +211,7 @@ class UsageSnapshot:
             "context_limit_confidence": self.context_limit_confidence,
             "current_context_tokens_estimated": int(self.current_context_tokens_estimated),
             "context_breakdown": self.context_breakdown.to_dict(),
+            "context_budget_breakdown": dict(self.context_budget_breakdown),
             "last_turn_usage": self.last_turn_usage.to_dict(),
             "session_totals": self.session_totals.to_dict(),
             "usage_source": self.usage_source,

@@ -382,6 +382,48 @@ class SummaryUsageContextManager(FakeContextManager):
         }
 
 
+class BudgetPressureContextManager(FakeContextManager):
+    def __init__(self):
+        super().__init__()
+        self.trim_calls = 0
+
+    async def trim_history(self, chat_history, model, session, api_url, api_key, reserve_ratio: float = 0.75, **kwargs):
+        del model, session, api_url, api_key, reserve_ratio, kwargs
+        self.trim_calls += 1
+        if len(chat_history) > 3:
+            del chat_history[1:-2]
+        return {
+            "conversation_summary": "compressed summary",
+            "current_tokens": sum(self.estimate_message_tokens(message) for message in chat_history),
+            "compression": {"triggered": True, "level": "history_summary", "trimmed_messages": 2},
+        }
+
+    def get_context_limit(self, model: str) -> int:
+        del model
+        return 320
+
+
+class ProviderContextRetryAdapter:
+    def __init__(self):
+        self.calls = 0
+
+    async def stream_chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
+        del session, api_url, api_key, model, messages, tools, kwargs
+        self.calls += 1
+        if self.calls == 1:
+            error = RuntimeError("provider context limit")
+            error.runtime_error_payload = {
+                "code": "provider_context_limit_exceeded",
+                "category": "validation",
+                "message": "Maximum context length exceeded.",
+                "retryable": False,
+                "details": {},
+            }
+            raise error
+        yield StreamEvent(type="text", text="retry-ok")
+        yield StreamEvent(type="usage", usage={"prompt_tokens": 1, "completion_tokens": 1, "reasoning_tokens": 0, "total_tokens": 2})
+
+
 class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_brain_injects_structured_time_context_into_turn(self):
         adapter = QueuedStreamAdapter(
@@ -695,6 +737,49 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             usage_payload = next(event.usage for event in events if event.type == "usage")
             self.assertEqual(usage_payload["usage_source"], "estimated")
             self.assertGreater(usage_payload["last_turn_usage"]["total_tokens"], 7)
+        finally:
+            await brain.close_brain()
+
+    async def test_brain_preflights_budget_and_records_context_budget_breakdown(self):
+        context_manager = BudgetPressureContextManager()
+        adapter = QueuedStreamAdapter(rounds=[[StreamEvent(type="text", text="ok")]])
+        brain = Brain(adapter, FakeToolsManager(), context_manager, event_bus=None, exception_router=None)
+        await brain.init_brain("system prompt")
+        try:
+            for i in range(12):
+                brain.get_or_create_session("session-budget").chat_history.append({"role": "user", "content": f"old message {i}"})
+            events = []
+            async for event in brain.input_brain(
+                "session-budget",
+                {"role": "user", "content": "new request"},
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                events.append(event)
+            usage_payload = next(event.usage for event in events if event.type == "usage")
+            self.assertGreaterEqual(context_manager.trim_calls, 1)
+            self.assertIn("input_budget", usage_payload["context_budget_breakdown"])
+            self.assertGreater(usage_payload["context_budget_breakdown"]["context_window"], 0)
+        finally:
+            await brain.close_brain()
+
+    async def test_brain_retries_once_after_provider_context_limit_exceeded(self):
+        context_manager = BudgetPressureContextManager()
+        brain = Brain(ProviderContextRetryAdapter(), FakeToolsManager(), context_manager, event_bus=None, exception_router=None)
+        await brain.init_brain("system prompt")
+        try:
+            events = []
+            async for event in brain.input_brain(
+                "session-retry",
+                {"role": "user", "content": "hello"},
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                events.append(event)
+            self.assertEqual("".join(event.text or "" for event in events if event.type == "answer_text"), "retry-ok")
+            self.assertGreaterEqual(context_manager.trim_calls, 1)
         finally:
             await brain.close_brain()
 
