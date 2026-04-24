@@ -155,6 +155,7 @@ class ToolsManager:
     def set_agent_dispatcher(self, dispatcher) -> None:
         if self._document_tools is not None:
             self._document_tools.set_agent_dispatcher(dispatcher)
+        self._authorization_gateway.set_local_capability_dispatcher_available(dispatcher is not None)
 
     def set_capability_dispatcher(self, dispatcher) -> None:
         self.set_agent_dispatcher(dispatcher)
