@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from pathlib import Path
 from typing import Any
 
+from build_info import load_build_info
 from cil.client import CILClient
 from core.app import App
 from core.background_status import build_system_issue_snapshot
@@ -40,6 +42,11 @@ class ServiceRuntime:
         self.command = command
         self.boundaries: RuntimeModuleSet = build_default_runtime_boundaries()
         self.health = RuntimeHealth.from_component_names(self.boundaries.names())
+        self.health.build_info = load_build_info(
+            Path(__file__).resolve().parents[1] / "core" / "build_info.json",
+            component="core",
+            package_version="0.0.0",
+        )
         self.health.replace_platform_boundary(build_runtime_platform_boundaries().to_dict())
         self.events: list[RuntimeEvent] = []
         self.telemetry = RuntimeTelemetryRecorder()

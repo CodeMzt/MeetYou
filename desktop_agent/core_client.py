@@ -179,3 +179,23 @@ class DesktopCoreClient:
             self._build_core_ws_url(request, local_access_token=local_access_token),
             headers=self._build_core_request_headers(request),
         )
+
+    async def get_json(self, core_path: str) -> dict[str, object] | None:
+        if self._session is None:
+            raise RuntimeError("desktop_backend_unavailable")
+        response = await self._session.get(
+            self._build_core_http_url(core_path),
+            headers=build_core_auth_headers(self._config.gateway_access_token),
+            allow_redirects=False,
+        )
+        try:
+            if response.status >= 400:
+                return None
+            payload = await response.json(content_type=None)
+            if isinstance(payload, dict):
+                return payload
+            return None
+        except Exception:
+            return None
+        finally:
+            response.release()

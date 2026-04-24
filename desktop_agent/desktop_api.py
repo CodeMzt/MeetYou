@@ -11,6 +11,7 @@ from typing import Awaitable, Callable
 import aiohttp
 from aiohttp import web
 
+from build_info import load_build_info
 from desktop_agent.config import DesktopAgentConfig
 from desktop_agent.core_client import DesktopCoreClient, rewrite_attachment_ticket, rewrite_download_ticket
 
@@ -197,6 +198,11 @@ class DesktopApiServer:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._core_client = DesktopCoreClient(config)
+        self._build_info = load_build_info(
+            Path(__file__).resolve().with_name("build_info.json"),
+            component="desktop_backend",
+            package_version="0.0.0",
+        )
         self._on_client_session_created = on_client_session_created
 
     async def start(self) -> None:
@@ -253,6 +259,15 @@ class DesktopApiServer:
         )
 
     async def _handle_status(self, _request: web.Request) -> web.Response:
+        core_build_info: dict[str, object] = {}
+        try:
+            health_payload = await self._core_client.get_json("/health")
+            if isinstance(health_payload, dict):
+                health_node = health_payload.get("health")
+                if isinstance(health_node, dict) and isinstance(health_node.get("build_info"), dict):
+                    core_build_info = dict(health_node.get("build_info") or {})
+        except Exception:
+            logger.debug("Failed to fetch core build info for desktop status", exc_info=True)
         return web.json_response(
             {
                 "status": "ready",
@@ -261,6 +276,8 @@ class DesktopApiServer:
                 "local_bridge_enabled": self._config.local_bridge_enabled,
                 "api_prefix": "/desktop",
                 "ws_path": DESKTOP_WS_PATH,
+                "build_info": self._build_info,
+                "core_build_info": core_build_info,
             }
         )
 

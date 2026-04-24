@@ -69,7 +69,7 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
 
     async def _handle_health(self, request: web.Request) -> web.Response:
         self._assert_core_auth(request)
-        return web.json_response({"status": "ready"})
+        return web.json_response({"status": "ready", "health": {"build_info": {"git_commit": "core-commit", "branch": "main", "build_time": "2026-04-24T00:00:00Z", "component": "core", "package_version": "1.0.0"}}})
 
     async def _handle_workspaces(self, request: web.Request) -> web.Response:
         self._assert_core_auth(request)
@@ -165,6 +165,8 @@ class DesktopApiServerTests(unittest.IsolatedAsyncioTestCase):
                 payload = await response.json()
         self.assertEqual(payload["local_bridge_base_url"], self.bridge_base_url)
         self.assertEqual(payload["core_base_url"], self.core_base_url)
+        self.assertEqual(payload["core_build_info"]["git_commit"], "core-commit")
+        self.assertEqual(payload["build_info"]["component"], "desktop_backend")
 
     async def test_http_proxy_requires_local_auth_and_rewrites_attachment_ticket_urls(self):
         async with ClientSession() as session:
