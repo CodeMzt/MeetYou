@@ -14,10 +14,8 @@ export default function App() {
   const baseUrl = DEFAULT_BASE_URL
   const {
     messages,
-    operations,
     workspace,
     sendMessage,
-    decideOperationApproval,
     connectionState,
     connected,
     desktopAgentConnected,
@@ -144,7 +142,6 @@ export default function App() {
           <MessageList
             connected={connected}
             messages={messages}
-            operations={operations}
             runtimeSnapshot={runtimeSnapshot}
             healthSnapshot={healthSnapshot}
             lastError={lastError}
@@ -153,7 +150,6 @@ export default function App() {
             pendingHumanInput={pendingHumanInput}
             sendConfirmResponse={sendConfirmResponse}
             sendHumanInputResponse={sendHumanInputResponse}
-            decideOperationApproval={decideOperationApproval}
             onDownloadAttachment={(attachmentId) => void downloadAttachment(attachmentId)}
             sendControlCommand={sendControlCommand}
           />
