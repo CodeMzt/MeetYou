@@ -93,3 +93,14 @@ V3 默认继续沿用以下约束：
 ## 7. 历史参考
 
 V2 的详细设计、协议与迁移资料已移到 `docs/archive/v2/`。当 V3 需要追溯历史设计决策时，可按需查阅归档，而不是继续在归档文档上直接追加新计划。
+## 8. Visible Tool Calls 并行执行策略（Core Runtime）
+
+- Core 在 `core/brain.py` 的 visible tool call 阶段支持受控并行调度：仅对 `safe_parallel=true` 且满足资源隔离条件的调用并发执行。
+- 并发调度始终保留模型给出的 `tool_calls` 顺序作为 `chat_history` 的 tool result 回填顺序，避免破坏后续轮次的 `tool_call_id` 对齐。
+- 默认策略保守：
+  - `read` 风险工具默认可并行；
+  - `local_write` / `external_write` / `destructive` 默认串行；
+  - 审批/人类输入/模式切换/记忆写入/任务写入/发帖回帖删除/shell 高风险命令保持串行。
+- Agent 本地文件能力通过 tool metadata 的 `resource_key` 区分资源边界：不同只读路径可并行，同写路径或未知路径串行。
+- 并行执行中各 tool call 使用隔离的 `event context`（独立 `tool_call_id` 绑定），单个调用失败不会取消同批次其他安全调用；最终每个 tool_call 都会产出 `ToolCallResult`。
+- 全局并行度上限为 `max_parallel_tool_calls`（默认 `3`），可由 route_context 或 mode router 限制覆盖。
