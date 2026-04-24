@@ -138,6 +138,15 @@ def _local_path_suffix(path_value: str) -> str:
     return Path(_local_path_name(path_value)).suffix.lower()
 
 
+def _looks_like_local_path_input(path_value: str) -> bool:
+    raw = str(path_value or "").strip()
+    if not raw:
+        return False
+    if re.match(r"^(?:[A-Za-z]:[\\/]|\\\\|/|~)", raw):
+        return True
+    return any(separator in raw for separator in ("/", "\\")) and bool(_local_path_suffix(raw))
+
+
 def _dedupe_keep_order(items: list[str]) -> list[str]:
     seen: set[str] = set()
     output: list[str] = []
@@ -918,7 +927,7 @@ class DocumentTools:
         route_context: dict[str, Any] | None = None,
         activity_callback=None,
     ) -> str:
-        del session_id, source, route_context, activity_callback
+        del source, route_context, activity_callback
         sections: list[dict[str, Any]] = []
         for index, item in enumerate(list(inputs or []), start=1):
             if isinstance(item, dict):
@@ -932,8 +941,23 @@ class DocumentTools:
                 continue
 
             maybe_path = Path(text).expanduser()
-            if maybe_path.exists() and maybe_path.is_file():
-                collected = self._collect_document(maybe_path.resolve(), goal="", chunking="none")
+            if self._agent_dispatcher is not None and _looks_like_local_path_input(text):
+                collected = await self._collect_document_via_agent(
+                    _normalize_local_path_value(text),
+                    goal="",
+                    chunking="none",
+                    session_id=session_id,
+                )
+                section_content = collected.get("content_excerpt") or collected.get("warning") or ""
+                section_title = collected.get("name") or _local_path_name(text)
+            elif maybe_path.exists() and maybe_path.is_file():
+                resolved_path = maybe_path.resolve()
+                self._ensure_local_capability_available(
+                    capability_suffix="file.read",
+                    session_id=session_id,
+                    path=str(resolved_path),
+                )
+                collected = self._collect_document(resolved_path, goal="", chunking="none")
                 section_content = collected.get("content_excerpt") or collected.get("warning") or ""
                 section_title = collected.get("name") or maybe_path.name
             else:
