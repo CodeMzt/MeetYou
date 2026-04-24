@@ -11,8 +11,9 @@ from core.exceptions import ConfigError
 
 
 class _FakeBrain:
-    def __init__(self, snapshot=None, debug_snapshot=None):
+    def __init__(self, snapshot=None, debug_snapshot=None, *, debug_raises: bool = False):
         self._snapshot = snapshot
+        self._debug_raises = debug_raises
         self._debug_snapshot = debug_snapshot or {
             "session_id": "desktop-1",
             "route": {"current_mode": "research", "tool_bundle": ["research_topic"]},
@@ -29,7 +30,16 @@ class _FakeBrain:
         del session_id
         return self._snapshot
 
+    def get_session_runtime_snapshot(self, session_id: str):
+        return {
+            "session_id": session_id,
+            "status": "idle",
+            "detail": "",
+        }
+
     def get_session_debug_snapshot(self, session_id: str):
+        if self._debug_raises:
+            raise ValueError(f"Session not found: {session_id}")
         payload = dict(self._debug_snapshot)
         payload["session_id"] = session_id
         payload["runtime_state"] = {**dict(payload.get("runtime_state") or {}), "session_id": session_id}
@@ -107,6 +117,12 @@ class _FakeConfig:
     def get(self, key: str, default=None):
         return self._values.get(key, default)
 
+    def get_mcp_servers(self):
+        return {}
+
+    def get_mcp_server_config_diagnostic(self):
+        return {"status": "not_configured", "server_count": 0}
+
     def begin_transaction(self):
         snapshot = {"values": dict(self._values)}
         self.snapshots.append(snapshot)
@@ -121,9 +137,9 @@ class _FakeConfig:
 
 
 class AppRuntimeUsageTests(unittest.IsolatedAsyncioTestCase):
-    def _make_app(self, *, snapshot=None, debug_snapshot=None, has_binding=True, existing_session_ids=None):
+    def _make_app(self, *, snapshot=None, debug_snapshot=None, debug_raises=False, has_binding=True, existing_session_ids=None):
         app = App.__new__(App)
-        app.brain = _FakeBrain(snapshot=snapshot, debug_snapshot=debug_snapshot)
+        app.brain = _FakeBrain(snapshot=snapshot, debug_snapshot=debug_snapshot, debug_raises=debug_raises)
         app.session_manager = _FakeSessionManager(has_binding=has_binding)
         app.core_services = SimpleNamespace(session=_FakeSessionService(existing_session_ids=existing_session_ids or []))
         app.mode_manager = _FakeModeManager()
@@ -268,6 +284,19 @@ class AppRuntimeUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["authorization"]["route_preview"]["visible_tools"], ["research_topic"])
         self.assertEqual(payload["task_state"]["background"]["schedule"]["due_task_count"], 1)
         self.assertEqual(payload["memory_scope"]["session_id"], "desktop-1")
+
+    async def test_runtime_debug_returns_bootstrap_payload_for_existing_session_without_brain_snapshot(self):
+        app = self._make_app(debug_raises=True, has_binding=False, existing_session_ids=["sess_db_only"])
+
+        payload = await App.get_runtime_debug(app, "sess_db_only")
+
+        self.assertEqual(payload["session_id"], "sess_db_only")
+        self.assertEqual(payload["route"], {})
+        self.assertEqual(payload["route_history"], [])
+        self.assertEqual(payload["memory_scope"]["session_id"], "sess_db_only")
+        self.assertFalse(payload["memory_scope"]["prefetched"])
+        self.assertEqual(payload["reply_control"]["checkpoint_count"], 0)
+        self.assertEqual(payload["authorization"]["confirmation"]["request_id"], "")
 
     async def test_apply_config_updates_refreshes_mode_manager_bindings(self):
         class _ConfigWithUpdates(_FakeConfig):

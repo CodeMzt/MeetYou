@@ -378,6 +378,37 @@ class GatewayRuntimeApiTests(unittest.TestCase):
                 "namespace(kind='opaque-core-runtime')",
             )
 
+    def test_developer_runtime_debug_maps_getter_errors_to_not_found(self):
+        gateway = FastAPIGateway(
+            self.event_bus,
+            SessionManager(),
+            health_getter=lambda: {
+                "service": "meetyou-runtime",
+                "status": "ready",
+                "live": True,
+                "ready": True,
+                "degraded": False,
+                "components": [],
+                "errors": [],
+                "updated_at": "2026-04-01T00:00:00Z",
+            },
+            runtime_debug_getter=lambda session_id: (_ for _ in ()).throw(ValueError(f"Session not found: {session_id}")),
+            access_token=self.access_token,
+        )
+        client = TestClient(gateway.app)
+        self.addCleanup(client.close)
+
+        response = client.get(
+            "/developer/runtime/debug",
+            params={"session_id": "missing-session"},
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "runtime_debug_not_found")
+        self.assertEqual(payload["error"]["details"]["session_id"], "missing-session")
+
     def test_websocket_rejects_unauthorized_connection(self):
         with self.client.websocket_connect("/ws?session_id=web:session:1&source_id=browser-tab-a") as websocket:
             payload = websocket.receive_json()
