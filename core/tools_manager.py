@@ -57,6 +57,7 @@ _AGENT_LOCAL_FILE_TOOLS = {
     "write_local_document",
     "rewrite_local_document",
 }
+_AGENT_DISPATCH_LOCAL_TOOLS = {"exec_sys_cmd", *_AGENT_LOCAL_FILE_TOOLS}
 
 
 class ToolsManager:
@@ -183,10 +184,12 @@ class ToolsManager:
             mcp_manager,
             authorization_gateway=self._authorization_gateway,
         )
+        self._agent_dispatcher_available = False
 
     def set_agent_dispatcher(self, dispatcher) -> None:
         if self._document_tools is not None:
             self._document_tools.set_agent_dispatcher(dispatcher)
+        self._agent_dispatcher_available = dispatcher is not None
         self._authorization_gateway.set_local_capability_dispatcher_available(dispatcher is not None)
 
     def set_capability_dispatcher(self, dispatcher) -> None:
@@ -285,6 +288,7 @@ class ToolsManager:
             "visible_tools": visible_tool_names,
             "candidate_tools": candidate_tool_names,
             "authorization_preview": decisions,
+            "execution_boundary": self.get_tool_execution_boundary_snapshot(),
             "mcp_server_diagnostics": list(
                 route_context.get("capability_set", {}).get("mcp_diagnostics")
                 or route_context.get("mcp_diagnostics")
@@ -368,6 +372,42 @@ class ToolsManager:
             "requires_order": requires_order,
             "max_concurrency": max_concurrency_int,
         }
+
+    def get_tool_execution_boundary_snapshot(self) -> list[dict[str, Any]]:
+        tool_names = set(self._registry.supported_funcs.keys())
+        tool_names.update(getattr(self._mcp_manager, "tool_map", {}).keys())
+        snapshot: list[dict[str, Any]] = []
+        for tool_name in sorted(name for name in tool_names if str(name or "").strip()):
+            normalized = str(tool_name).strip()
+            is_builtin = self._registry.has_builtin(normalized)
+            if is_builtin:
+                source_type = "builtin"
+                if normalized in _AGENT_DISPATCH_LOCAL_TOOLS:
+                    executor_owner = "agent_dispatch" if self._agent_dispatcher_available else "agent_required"
+                else:
+                    executor_owner = "core"
+            elif self._registry.has_mcp(normalized):
+                source_type = "mcp"
+                executor_owner = "core_mcp"
+            else:
+                source_type = "unknown"
+                executor_owner = "unknown"
+
+            risk = self._risk_classifier.get_tool_action_risk(normalized)
+            try:
+                parallel_safe = bool(self.get_tool_parallel_metadata(normalized, {}).get("safe_parallel", False))
+            except Exception:
+                parallel_safe = risk == "read"
+            snapshot.append(
+                {
+                    "tool_name": normalized,
+                    "source_type": source_type,
+                    "executor_owner": executor_owner,
+                    "risk": risk,
+                    "parallel_safe": parallel_safe,
+                }
+            )
+        return snapshot
 
     async def call_tool(
         self,

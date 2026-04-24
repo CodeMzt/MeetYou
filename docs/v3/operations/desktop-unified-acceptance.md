@@ -65,7 +65,22 @@ scripts\manual-acceptance.cmd check -BaseUrl https://your-remote-core.example
 8. 打开 runtime debug / workspace / attachments / Danxi 子窗口，确认这些窗口仍可工作
 9. 如需检查 token 注入，renderer 只应持有本地 `local_bridge_access_token` 用于 `/desktop/*` 与 `/desktop/ws`，不应把 Core gateway token 暴露给 UI 请求链路
 
-## 5. 失败排查
+## 5. 工具执行边界专项验收（Core / Agent）
+
+每次涉及工具注册、runtime debug 或 Agent capability 变更时，补做一次以下验收，防止本地能力回流到 Core：
+
+1. 运行 `python -m unittest tests.test_tool_execution_boundary`，确认本地文件读写类工具在无 Agent dispatch 时返回 `local_agent_required`，在 mock agent transport 下才通过 dispatch 执行。
+2. 运行 `python -m unittest tests.test_desktop_agent_runtime tests.test_agent_release_compatibility`，确认 capability snapshot 注册后，Core 对本地 capability 只做 dispatch，不做直接执行回退。
+3. 打开 `/developer/runtime/debug?session_id=<id>`（或桌面端 `/desktop/runtime/debug`），检查 `authorization.route_preview.execution_boundary`：
+   - 本地能力工具（如 `read_local_documents`、`write_local_document`、`exec_sys_cmd`）应显示 `executor_owner=agent_dispatch`（已连 Agent）或被显式阻断；
+   - Danxi 工具应保持 `source_type=builtin` 且 `executor_owner=core`，作为 Core 侧白名单能力。
+4. 检查 Core MCP 与 Desktop Agent MCP 配置分离：
+   - Core 诊断路径只看 `user/core_mcp_servers.json`；
+   - Desktop Agent 本地 MCP 路径只看 `user/mcp_servers.json`。
+
+> 注意：验收仅允许临时目录与 mock transport，不做真实用户目录写入、批量删除或破坏性文件操作。
+
+## 6. 失败排查
 
 - 如果 UI 打开但始终无法连接，先检查本地 backend 状态接口
 - 如果 backend 存活但 Agent 不在线，先确认是否已经创建 desktop session，再检查 `desktop_agent` 到 Core 的 `/agent/ws` 握手
@@ -73,7 +88,7 @@ scripts\manual-acceptance.cmd check -BaseUrl https://your-remote-core.example
 - 如果当前是远程 Core 验收，优先确认 `-BaseUrl` 指向的是可访问的远程地址，而不是默认的本地 `http://127.0.0.1:8000`
 - 如果聊天或 Danxi 页失败，优先检查本地 `/desktop/*` API 是否通、以及 backend 到 Core 的 client surface 是否正常
 
-## 6. 非 Windows 说明
+## 7. 非 Windows 说明
 
 - 当前桌面主链的首选验收平台仍是 Windows
 - 如果在 Linux / macOS 上拉起 `desktop-agent`，文件读写、Shell、workspace 分析仍应可用
