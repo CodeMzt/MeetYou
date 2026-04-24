@@ -39,6 +39,7 @@ from gateway.models import (
     UiProtocolSchemaEnvelopeResponse,
     UiProtocolSchemaResponse,
 )
+from gateway.serialization import make_json_safe
 from gateway.routes import build_agent_router, build_client_router, build_developer_router, build_operator_router
 from service_runtime.models import RuntimeError, RuntimeErrorCategory
 from gateway.ws_manager import AgentOutputAdapter, WebSocketManager, WebSocketOutputAdapter
@@ -638,7 +639,7 @@ class FastAPIGateway:
                 runtime=RuntimeEnvelopePayload(
                     resource="debug",
                     session_id=str(payload.get("session_id") or session_id),
-                    debug=dict(payload or {}),
+                    debug=make_json_safe(dict(payload or {})),
                 ),
             )
 
