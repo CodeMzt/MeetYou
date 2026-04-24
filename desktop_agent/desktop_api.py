@@ -261,7 +261,7 @@ class DesktopApiServer:
     async def _handle_status(self, _request: web.Request) -> web.Response:
         core_build_info: dict[str, object] = {}
         try:
-            health_payload = await self._core_client.get_json("/health")
+            health_payload = await self._core_client.get_json("/health", timeout_seconds=0.75)
             if isinstance(health_payload, dict):
                 health_node = health_payload.get("health")
                 if isinstance(health_node, dict) and isinstance(health_node.get("build_info"), dict):

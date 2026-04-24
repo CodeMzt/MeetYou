@@ -180,13 +180,21 @@ class DesktopCoreClient:
             headers=self._build_core_request_headers(request),
         )
 
-    async def get_json(self, core_path: str) -> dict[str, object] | None:
+    async def get_json(self, core_path: str, *, timeout_seconds: float | None = None) -> dict[str, object] | None:
         if self._session is None:
             raise RuntimeError("desktop_backend_unavailable")
+        request_timeout = None
+        if timeout_seconds is not None:
+            request_timeout = aiohttp.ClientTimeout(
+                total=max(0.1, float(timeout_seconds)),
+                sock_connect=min(1.0, max(0.1, float(timeout_seconds))),
+                sock_read=max(0.1, float(timeout_seconds)),
+            )
         response = await self._session.get(
             self._build_core_http_url(core_path),
             headers=build_core_auth_headers(self._config.gateway_access_token),
             allow_redirects=False,
+            timeout=request_timeout,
         )
         try:
             if response.status >= 400:
