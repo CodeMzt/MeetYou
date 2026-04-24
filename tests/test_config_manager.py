@@ -20,6 +20,8 @@ class ConfigManagerTests(unittest.TestCase):
             "MEETYOU_DATABASE_URL": os.environ.get("MEETYOU_DATABASE_URL"),
             "MEETYOU_FEISHU_APP_ID": os.environ.get("MEETYOU_FEISHU_APP_ID"),
             "MEETYOU_FEISHU_APP_SECRET": os.environ.get("MEETYOU_FEISHU_APP_SECRET"),
+            "NOTION_TOKEN": os.environ.get("NOTION_TOKEN"),
+            "TAVILY_API_KEY": os.environ.get("TAVILY_API_KEY"),
         }
         for key in self._old_env:
             os.environ.pop(key, None)

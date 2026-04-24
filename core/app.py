@@ -2215,34 +2215,36 @@ class App:
         )
 
     def _enrich_request_procedure_context(self, request: SessionExecutionRequest) -> None:
-        if self.core_services is None or self.core_domain is None:
+        core_services = getattr(self, "core_services", None)
+        core_domain = getattr(self, "core_domain", None)
+        if core_services is None or core_domain is None:
             return
         metadata = dict(request.input_info.get("metadata") or {})
-        session_row = self.core_services.session.get_by_session_id(request.session_id)
+        session_row = core_services.session.get_by_session_id(request.session_id)
         if session_row is None:
             return
-        thread_row = self.core_services.thread.get_by_id(session_row.thread_id)
-        workspace_row = self.core_services.workspace.get_by_id(session_row.workspace_id)
+        thread_row = core_services.thread.get_by_id(session_row.thread_id)
+        workspace_row = core_services.workspace.get_by_id(session_row.workspace_id)
         if thread_row is None or workspace_row is None:
             return
         if request.event.type == EventType.MESSAGE.value and request.event.role == "user":
-            inference = self.core_services.procedure.infer_for_turn(
-                principal_id=self.core_domain.principal.id,
+            inference = core_services.procedure.infer_for_turn(
+                principal_id=core_domain.principal.id,
                 content=str(request.input_info.get("content") or ""),
                 preferred_mode=str(metadata.get("preferred_mode") or workspace_row.base_mode or ""),
                 workspace_id=str(getattr(workspace_row, "workspace_id", "") or ""),
             )
-            self.core_services.thread.set_latest_inferred_procedure(
+            core_services.thread.set_latest_inferred_procedure(
                 thread_id=thread_row.id,
                 procedure_id=str(inference.get("procedure_id") or ""),
                 score=int(inference.get("score", 0) or 0),
                 reason=str(inference.get("reason") or ""),
                 inferred_at=str(inference.get("inferred_at") or ""),
             )
-            refreshed_thread = self.core_services.thread.get_by_id(thread_row.id)
+            refreshed_thread = core_services.thread.get_by_id(thread_row.id)
             if refreshed_thread is not None:
                 thread_row = refreshed_thread
-        context = self.core_services.procedure.get_thread_context(thread_row)
+        context = core_services.procedure.get_thread_context(thread_row)
         pinned = context.get("pinned_procedure")
         effective = context.get("effective_procedure")
         if isinstance(pinned, dict):

@@ -681,6 +681,99 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
+    async def test_brain_preserves_reasoning_content_after_parallel_tool_follow_up(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="reasoning", reasoning_text="Need both command results before answering."),
+                    StreamEvent(type="text", text="I will run both checks."),
+                    StreamEvent(
+                        type="tool_calls",
+                        tool_calls=[
+                            ToolCallInfo(
+                                id="call_a",
+                                name="research_topic",
+                                arguments_str='{"topic":"workspace"}',
+                            ),
+                            ToolCallInfo(
+                                id="call_b",
+                                name="inspect_page",
+                                arguments_str='{"url":"https://example.com"}',
+                            ),
+                        ],
+                    ),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 8,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 3,
+                            "total_tokens": 13,
+                        },
+                    ),
+                ],
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 10,
+                            "completion_tokens": 1,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 11,
+                        },
+                    ),
+                ],
+            ],
+        )
+        tools_manager = FakeToolsManager()
+        brain = Brain(
+            adapter,
+            tools_manager,
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-deepseek-parallel-tools",
+                {"role": "user", "content": "Run web checks for https://example.com"},
+                "key",
+                "https://llm-proxy.example.com/v1/chat/completions",
+                "deepseek/deepseek-v4-pro",
+            ):
+                pass
+
+            non_memory_tool_calls = [
+                call["tool_name"]
+                for call in tools_manager.calls
+                if call["tool_name"] != "search_memory"
+            ]
+            self.assertEqual(
+                non_memory_tool_calls,
+                ["research_topic", "inspect_page"],
+            )
+            second_call_messages = adapter.stream_calls[1]["messages"]
+            assistant_tool_messages = [
+                message
+                for message in second_call_messages
+                if message.get("role") == "assistant" and message.get("tool_calls")
+            ]
+            self.assertEqual(len(assistant_tool_messages), 1)
+            assistant = assistant_tool_messages[0]
+            self.assertEqual(assistant["reasoning_content"], "Need both command results before answering.")
+            self.assertEqual([tool_call["id"] for tool_call in assistant["tool_calls"]], ["call_a", "call_b"])
+            tool_messages = [
+                message
+                for message in second_call_messages
+                if message.get("role") == "tool"
+            ]
+            self.assertEqual([message.get("tool_call_id") for message in tool_messages], ["call_a", "call_b"])
+        finally:
+            await brain.close_brain()
+
     async def test_estimate_call_usage_counts_provider_items(self):
         brain = Brain(
             SilentAnswerAdapter(),

@@ -379,6 +379,91 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant["content"], "Let me check the date first.")
         self.assertEqual(assistant["tool_calls"][0]["id"], "call_1")
 
+    def test_deepseek_thinking_tool_calls_preserve_reasoning_content_on_compatible_proxy(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter._format_chat_messages(
+            [
+                {"role": "user", "content": "Run both checks"},
+                {
+                    "role": "assistant",
+                    "content": "I will run the checks.",
+                    "reasoning_content": "Both read-only checks can run before I answer.",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_a",
+                            "function": {"name": "exec_sys_cmd", "arguments": '{"cmd":"whoami"}'},
+                        },
+                        {
+                            "type": "function",
+                            "id": "call_b",
+                            "function": {"name": "exec_sys_cmd", "arguments": '{"cmd":"pwd"}'},
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_a", "content": "user"},
+                {"role": "tool", "tool_call_id": "call_b", "content": "repo"},
+            ],
+            url="https://llm-proxy.example.com/v1/chat/completions",
+            model="deepseek/deepseek-v4-pro",
+        )
+
+        assistant = formatted[1]
+        self.assertEqual(assistant["reasoning_content"], "Both read-only checks can run before I answer.")
+        self.assertEqual([tool_call["id"] for tool_call in assistant["tool_calls"]], ["call_a", "call_b"])
+
+    async def test_deepseek_proxy_stream_payload_roundtrips_reasoning_content_for_parallel_tool_calls(self):
+        adapter = OpenAIAdapter()
+        session = FakeSession([FakeResponse(lines=["data: [DONE]"])])
+
+        async for _ in adapter.stream_chat(
+            session,
+            "https://llm-proxy.example.com/v1/chat/completions",
+            "key",
+            "deepseek-v4-pro",
+            [
+                {"role": "user", "content": "Run both checks"},
+                {
+                    "role": "assistant",
+                    "content": "I will run the checks.",
+                    "reasoning_content": "Both checks are needed before answering.",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_a",
+                            "function": {"name": "exec_sys_cmd", "arguments": '{"cmd":"whoami"}'},
+                        },
+                        {
+                            "type": "function",
+                            "id": "call_b",
+                            "function": {"name": "exec_sys_cmd", "arguments": '{"cmd":"pwd"}'},
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_a", "content": "user"},
+                {"role": "tool", "tool_call_id": "call_b", "content": "repo"},
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "exec_sys_cmd",
+                        "description": "Execute command",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            thinking=True,
+            thinking_effort="high",
+        ):
+            pass
+
+        payload_messages = session.calls[0]["json"]["messages"]
+        assistant = payload_messages[1]
+        self.assertEqual(assistant["reasoning_content"], "Both checks are needed before answering.")
+        self.assertEqual([tool_call["id"] for tool_call in assistant["tool_calls"]], ["call_a", "call_b"])
+
     def test_deepseek_reasoner_strips_reasoning_content_from_input(self):
         adapter = OpenAIAdapter()
 
