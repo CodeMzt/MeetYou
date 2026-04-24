@@ -34,6 +34,8 @@ def _gemini_usage(payload: dict | None) -> dict | None:
 
 
 class GeminiAdapter(LLMAdapter):
+    provider_name = "gemini"
+
     def _build_url(self, base_url: str, model: str, stream: bool, api_key: str) -> str:
         action = "streamGenerateContent" if stream else "generateContent"
         if "generateContent" in base_url or "streamGenerateContent" in base_url:

@@ -170,6 +170,16 @@ _DEFAULT_REUSABLE_SKILL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "scenarios": ["meeting notes", "coordination briefs", "follow-up actions"],
         "recommended_tools": ["organize_notes", "extract_action_items", "meeting_brief", "draft_message"],
     },
+    "model_capability_refresh": {
+        "id": "model_capability_refresh",
+        "skill_type": "reusable",
+        "title": "Model Capability Refresh Skill",
+        "summary": "刷新并核验模型 context/output 能力，优先官方 API，失败时落回官方文档或版本化 registry。",
+        "file_name": "model-capability-refresh",
+        "applicable_modes": ["normal", "research", "documents", "automation"],
+        "scenarios": ["model context lookup", "model update tracking", "provider capability refresh"],
+        "recommended_tools": [],
+    },
     "hotspot_tracking": {
         "id": "hotspot_tracking",
         "skill_type": "reusable",
@@ -247,12 +257,20 @@ class SkillRegistryManager:
     def _resolve_skill_path(self, file_name: str) -> Path:
         return self._skill_dir / file_name
 
+    def _read_skill_content(self, path: Path, *, include_content: bool) -> str:
+        if not include_content:
+            return ""
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return ""
+
     def _mode_skill_record(self, mode: str, *, include_content: bool = False) -> SkillRecord | None:
         payload = _DEFAULT_MODE_SKILL_DEFINITIONS.get(str(mode or "").strip())
         if payload is None:
             return None
         absolute_path = self._resolve_skill_path(payload["file_name"])
-        content = absolute_path.read_text(encoding="utf-8").strip() if include_content else ""
+        content = self._read_skill_content(absolute_path, include_content=include_content)
         return SkillRecord(
             skill_id=payload["id"],
             skill_type="mode",
@@ -270,7 +288,7 @@ class SkillRegistryManager:
         if payload is None:
             return None
         absolute_path = self._resolve_skill_path(payload["file_name"])
-        content = absolute_path.read_text(encoding="utf-8").strip() if include_content else ""
+        content = self._read_skill_content(absolute_path, include_content=include_content)
         return SkillRecord(
             skill_id=payload["id"],
             skill_type="reusable",

@@ -29,6 +29,8 @@ def _anthropic_usage(payload: dict | None) -> dict | None:
 
 
 class AnthropicAdapter(LLMAdapter):
+    provider_name = "anthropic"
+
     def format_messages(self, messages: list[dict]) -> dict:
         system_parts = []
         formatted = []

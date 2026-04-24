@@ -98,3 +98,22 @@ Docker runtime 自检：
 ```bash
 python scripts/check_core_runtime.py --profile docker --runtime-root deploy/docker/runtime
 ```
+
+## 5. 模型能力刷新（Context / Output）
+
+V3 起模型 context window 与 max output token 不再只靠 `adapters/base.py` 写死值，改为分层来源：
+
+1. **Provider API 优先**：
+   - Gemini: `models.get/list` 读取 `inputTokenLimit` / `outputTokenLimit`
+   - Anthropic: Models API 读取 `max_input_tokens` / `max_output_tokens`（或兼容字段）
+   - Ollama: `show/model_info` 读取 `context_length` / `num_ctx`
+2. **官方文档/版本化 registry 兜底**：
+   - DeepSeek 的 `/models` 不返回 token limit，使用官方文档映射（当前 `deepseek-v4-flash/pro`=1M context、384K output，`deepseek-chat/reasoner` 兼容映射到 v4-flash）
+   - OpenAI `/models` 字段不足时，使用项目内 `core/model_capabilities/default_registry.json`（来源标注为 models/compare 页面）
+3. **最终默认值**：仍保留回退值，但未知模型必须输出 diagnostic 与低置信度标记，禁止静默返回 8192。
+
+运行态缓存：
+
+- 默认缓存 TTL 为 24h（`MEETYOU_MODEL_CAPABILITY_CACHE_TTL_SECONDS` 可调）
+- 默认缓存路径：`user/runtime/model_capabilities_cache.json`（不进入 Git 追踪运行态）
+- 支持内部刷新方法 `refresh_model_capabilities`，返回来源、旧值、新值、置信度/人工确认标记
