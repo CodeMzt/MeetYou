@@ -14,7 +14,7 @@ a = Analysis(
     [str(repo_root / "desktop_agent" / "main.py")],
     pathex=[str(repo_root)],
     binaries=uiautomation_binaries,
-    datas=[],
+    datas=[(str(repo_root / "desktop_agent" / "build_info.json"), "desktop_agent")],
     hiddenimports=[
         "aiohttp",
         "platform_layer.windows",
