@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Cpu } from 'lucide-react'
 import type { RuntimeStateSnapshot, RuntimeUsageSnapshot, RuntimeHealthSnapshot, StatusFeedback } from '../../types'
@@ -16,6 +16,7 @@ interface StatusIslandProps {
 
 export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSnapshot, statusFeedback, preferredMode, danxiStatusText }: StatusIslandProps) {
   const [expanded, setExpanded] = useState(false)
+  const islandRef = useRef<HTMLDivElement | null>(null)
 
   const isConnected = !!healthSnapshot
   const status = runtimeSnapshot?.status || 'idle'
@@ -52,8 +53,23 @@ export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSna
     currentVariant = 'thinking'
   }
 
+  useEffect(() => {
+    if (!expanded) {
+      return
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!islandRef.current?.contains(event.target as Node)) {
+        setExpanded(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+    }
+  }, [expanded])
+
   return (
-    <div className={styles.islandContainer}>
+    <div className={styles.islandContainer} ref={islandRef}>
       <motion.div
         className={styles.islandPill}
         variants={variants}

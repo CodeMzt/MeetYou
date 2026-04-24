@@ -200,6 +200,42 @@
   color: var(--text-secondary);
 }
 
+.operationsCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-app);
+}
+
+.operationsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.operationsHint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.operationsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.operationItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 @media (max-width: 520px) {
   .statusGrid,
   .activityRow {
