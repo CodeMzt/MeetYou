@@ -111,6 +111,29 @@ class LocalToolAgentProxyTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(dispatcher.calls[0]['capability_suffix'], 'file.read')
             self.assertEqual(dispatcher.calls[1]['capability_suffix'], 'file.write')
 
+    async def test_document_tools_preserve_agent_local_paths_before_dispatch(self):
+        dispatcher = _FakeAgentDispatcher()
+        tools = DocumentTools(_FakeModeManager([]), agent_dispatcher=dispatcher)
+        windows_target = r'E:\Documents\test_write_confirm.md'
+        windows_source = r'E:\Documents\config.json'
+
+        write_payload = json.loads(
+            await tools.write_local_document(
+                windows_target,
+                'hello from agent',
+                preview=False,
+                session_id='sess_1',
+            )
+        )
+        read_payload = json.loads(await tools.read_local_documents([windows_source], session_id='sess_1'))
+
+        self.assertEqual(write_payload['path'], windows_target)
+        self.assertIsNone(write_payload['trusted_root'])
+        self.assertEqual(write_payload['execution_target'], 'desktop_agent')
+        self.assertEqual(read_payload['documents'][0]['type'], 'json')
+        self.assertEqual(dispatcher.calls[0]['arguments']['path'], windows_target)
+        self.assertEqual(dispatcher.calls[1]['arguments']['path'], windows_source)
+
     async def test_document_tools_use_agent_dispatcher_for_workspace_analysis(self):
         with tempfile.TemporaryDirectory() as trusted_dir:
             dispatcher = _FakeAgentDispatcher()

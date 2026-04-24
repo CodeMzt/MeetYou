@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+import re
 from typing import Any
+
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,10 @@ class ToolAuthorizationGateway:
         self._risk_classifier = risk_classifier
         self._mode_manager = mode_manager
         self._command_safety_checker = command_safety_checker
+        self._local_capability_dispatcher_available = False
+
+    def set_local_capability_dispatcher_available(self, available: bool) -> None:
+        self._local_capability_dispatcher_available = bool(available)
 
     def should_expose_tool(self, tool_name: str, *, route_context: dict[str, Any] | None = None) -> bool:
         decision = self.decide(tool_name, {}, route_context=route_context)
@@ -230,15 +237,19 @@ class ToolAuthorizationGateway:
         preview = bool(tool_args.get("preview", True))
         confirmed = bool(tool_args.get("confirmed", False))
         resolved_path = self._normalize_path(path_value)
-        trusted_root = self._is_trusted_write_path(resolved_path)
-        write_boundary = "preview" if preview else "trusted_root" if trusted_root else "untrusted_path"
+        agent_managed = self._local_capability_dispatcher_available
+        trusted_root = None if agent_managed else self._is_trusted_write_path(resolved_path)
+        write_boundary = "preview" if preview else "agent_managed" if agent_managed else "trusted_root" if trusted_root else "untrusted_path"
         details = {
             "tool_name": tool_name,
             "path": resolved_path,
             "preview": preview,
             "confirmed": confirmed,
             "trusted_root": trusted_root,
+            "execution_target": "desktop_agent" if agent_managed else "core_local_fallback",
         }
+        if agent_managed:
+            details["agent_enforces_write_roots"] = True
         if not preview and not confirmed:
             return AuthorizationDecision(
                 tool_name=tool_name,
@@ -256,7 +267,7 @@ class ToolAuthorizationGateway:
                 reason_message="Tool call requires explicit confirmation before writing a local document.",
                 details=details,
             )
-        if not preview and not trusted_root:
+        if not preview and not agent_managed and not trusted_root:
             trusted_roots = []
             if self._mode_manager is not None and hasattr(self._mode_manager, "get_trusted_write_roots"):
                 trusted_roots = list(self._mode_manager.get_trusted_write_roots())
@@ -294,6 +305,8 @@ class ToolAuthorizationGateway:
     def _normalize_path(path_value: str) -> str:
         if not path_value:
             return ""
+        if _WINDOWS_ABSOLUTE_PATH_RE.match(path_value):
+            return str(PureWindowsPath(path_value))
         try:
             return str(Path(path_value).expanduser().resolve())
         except Exception:
