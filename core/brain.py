@@ -2062,6 +2062,9 @@ class Brain:
                 tool_calls = list(result.get("tool_calls") or [])
                 assistant_message: dict[str, Any] = {"role": "assistant", "content": last_content or None}
                 if tool_calls:
+                    reasoning_content = str(result.get("reasoning_content") or "").strip()
+                    if reasoning_content:
+                        assistant_message["reasoning_content"] = reasoning_content
                     assistant_message["tool_calls"] = [
                         {
                             "type": "function",

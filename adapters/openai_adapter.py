@@ -222,10 +222,6 @@ class OpenAIAdapter(LLMAdapter):
         )
 
     @staticmethod
-    def _is_deepseek_reasoner_model(model: str) -> bool:
-        return str(model or "").strip().lower().startswith("deepseek-reasoner")
-
-    @staticmethod
     def _is_deepseek_family_model(model: str) -> bool:
         normalized_model = str(model or "").strip().lower()
         return (
@@ -237,8 +233,11 @@ class OpenAIAdapter(LLMAdapter):
     @staticmethod
     def _supports_chat_reasoning_content_roundtrip(url: str, model: str) -> bool:
         host = (urlparse(str(url or "").strip()).hostname or "").lower()
-        if OpenAIAdapter._is_deepseek_reasoner_model(model):
-            return False
+        return host == "api.deepseek.com" or OpenAIAdapter._is_deepseek_family_model(model)
+
+    @staticmethod
+    def _supports_chat_thinking_toggle(url: str, model: str) -> bool:
+        host = (urlparse(str(url or "").strip()).hostname or "").lower()
         return host == "api.deepseek.com" or OpenAIAdapter._is_deepseek_family_model(model)
 
     @staticmethod
@@ -360,6 +359,9 @@ class OpenAIAdapter(LLMAdapter):
             payload["reasoning_effort"] = effort
         elif thinking is False and self._supports_chat_reasoning_effort(request_url, model):
             payload["reasoning_effort"] = "none"
+
+        if thinking is not None and self._supports_chat_thinking_toggle(request_url, model):
+            payload["thinking"] = {"type": "enabled" if bool(thinking) else "disabled"}
 
         payload.update(kwargs)
 
@@ -545,7 +547,7 @@ class OpenAIAdapter(LLMAdapter):
             return None
         next_payload = dict(payload)
         removed = False
-        for key in ("stream_options", "reasoning_effort"):
+        for key in ("stream_options", "reasoning_effort", "thinking"):
             if key in next_payload:
                 next_payload.pop(key, None)
                 removed = True
@@ -640,6 +642,9 @@ class OpenAIAdapter(LLMAdapter):
             "tool_calls": [],
             "usage": _extract_chat_usage(data),
         }
+        reasoning_content = message.get("reasoning_content")
+        if isinstance(reasoning_content, str) and reasoning_content:
+            result["reasoning_content"] = reasoning_content
 
         if "tool_calls" in message:
             for tc in message["tool_calls"]:
