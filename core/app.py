@@ -1541,10 +1541,50 @@ class App:
                 return True
         return self.session_manager.get_binding(normalized_session_id) is not None
 
+    @staticmethod
+    def _empty_reply_control_snapshot() -> dict[str, Any]:
+        return {
+            "active_turn": None,
+            "pending_command": None,
+            "last_command": {},
+            "last_completed_command": {},
+            "last_finish_reason": "",
+            "checkpoint_count": 0,
+            "latest_replay_input": None,
+        }
+
     async def get_runtime_debug(self, session_id: str) -> dict[str, Any]:
         if not session_id:
             raise ValueError("session_id is required")
-        session_debug = self.brain.get_session_debug_snapshot(session_id)
+        try:
+            session_debug = self.brain.get_session_debug_snapshot(session_id)
+        except ValueError:
+            if not self._session_exists(session_id):
+                raise
+            session_debug = {
+                "session_id": session_id,
+                "route": {},
+                "route_history": [],
+                "context_plan": {},
+                "memory_scope": {
+                    "session_id": session_id,
+                    "prefetched": False,
+                    "found": False,
+                    "profile_count": 0,
+                    "fact_count": 0,
+                    "recent_event_count": 0,
+                },
+                "authorization": {"recent_decisions": []},
+                "object_operations": [],
+                "reply_control": self._empty_reply_control_snapshot(),
+                "checkpoints": [],
+                "runtime_state": self.brain.get_session_runtime_snapshot(session_id) or {},
+                "usage": self.brain.get_session_usage_snapshot(session_id) or {},
+                "request": {},
+                "compression": {},
+                "last_failure": {},
+                "updated_at": utcnow_iso(),
+            }
         route_snapshot = dict(session_debug.get("route") or {})
         tool_debug_getter = getattr(self.tools_manager, "get_route_debug_snapshot", None)
         route_authorization = (
