@@ -226,11 +226,20 @@ class OpenAIAdapter(LLMAdapter):
         return str(model or "").strip().lower().startswith("deepseek-reasoner")
 
     @staticmethod
+    def _is_deepseek_family_model(model: str) -> bool:
+        normalized_model = str(model or "").strip().lower()
+        return (
+            normalized_model.startswith("deepseek-")
+            or normalized_model.startswith("deepseek/")
+            or "/deepseek-" in normalized_model
+        )
+
+    @staticmethod
     def _supports_chat_reasoning_content_roundtrip(url: str, model: str) -> bool:
         host = (urlparse(str(url or "").strip()).hostname or "").lower()
-        if host != "api.deepseek.com":
+        if OpenAIAdapter._is_deepseek_reasoner_model(model):
             return False
-        return not OpenAIAdapter._is_deepseek_reasoner_model(model)
+        return host == "api.deepseek.com" or OpenAIAdapter._is_deepseek_family_model(model)
 
     @staticmethod
     def _is_official_openai(url: str) -> bool:
