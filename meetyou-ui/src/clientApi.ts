@@ -54,6 +54,15 @@ export interface MemoryClearResult {
   updated_at: string
 }
 
+export interface MemoryRecordMutationResult {
+  ok: boolean
+  memory_id: string
+  status: string
+  deleted: boolean
+  updated_at: string
+  record: Record<string, unknown> | null
+}
+
 function buildDesktopUrl(baseUrl: string, path: string): string {
   return `${baseUrl}/desktop${path}`
 }
@@ -697,6 +706,29 @@ export async function clearDesktopMemory(baseUrl: string): Promise<MemoryClearRe
     method: 'DELETE',
   })
   return readJsonOrThrow<MemoryClearResult>(response, 'Failed to clear memory')
+}
+
+export async function updateDesktopMemoryRecordStatus(
+  baseUrl: string,
+  memoryId: string,
+  status: 'active' | 'invalidated',
+): Promise<MemoryRecordMutationResult> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/memory/records/${encodeURIComponent(memoryId)}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+  return readJsonOrThrow<MemoryRecordMutationResult>(response, 'Failed to update memory record')
+}
+
+export async function deleteDesktopMemoryRecord(
+  baseUrl: string,
+  memoryId: string,
+): Promise<MemoryRecordMutationResult> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/memory/records/${encodeURIComponent(memoryId)}`), {
+    method: 'DELETE',
+  })
+  return readJsonOrThrow<MemoryRecordMutationResult>(response, 'Failed to delete memory record')
 }
 
 export async function createClientWsUrl(baseUrl: string, threadId: string): Promise<string> {

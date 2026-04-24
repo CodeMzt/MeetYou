@@ -1412,6 +1412,12 @@ class App:
             "updated_at": utcnow_iso(),
         }
 
+    async def update_memory_record_status(self, memory_id: str, status: str) -> dict[str, Any]:
+        return await self.memory.update_record_status(memory_id, status)
+
+    async def delete_memory_record(self, memory_id: str) -> dict[str, Any]:
+        return await self.memory.delete_record(memory_id)
+
     async def _sync_config_state_to_db(self) -> None:
         await sync_config_state_to_db(self)
 

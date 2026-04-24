@@ -12,7 +12,10 @@ class _FakeClientSession:
         return None
 
 
-sys.modules.setdefault("aiohttp", types.SimpleNamespace(ClientSession=_FakeClientSession))
+try:
+    import aiohttp  # noqa: F401
+except ImportError:
+    sys.modules.setdefault("aiohttp", types.SimpleNamespace(ClientSession=_FakeClientSession))
 
 from adapters.base import StreamEvent, ToolCallInfo
 from core.assistant_modes import RouteDecision
@@ -549,6 +552,90 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(adapter.second_call_provider_items), 2)
             self.assertEqual(adapter.second_call_provider_items[0]["type"], "reasoning")
             self.assertEqual(adapter.second_call_provider_items[1]["call_id"], "call_1")
+        finally:
+            await brain.close_brain()
+
+    async def test_brain_preserves_reasoning_content_for_tool_follow_up(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="reasoning", reasoning_text="Need the profile before answering."),
+                    StreamEvent(type="text", text="Let me check the profile."),
+                    StreamEvent(
+                        type="tool_calls",
+                        tool_calls=[
+                            ToolCallInfo(
+                                id="call_1",
+                                name="lookup_profile",
+                                arguments_str='{"name":"Alex"}',
+                            )
+                        ],
+                    ),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 8,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 3,
+                            "total_tokens": 13,
+                        },
+                    ),
+                ],
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 10,
+                            "completion_tokens": 1,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 11,
+                        },
+                    ),
+                ],
+            ],
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            events = []
+            async for event in brain.input_brain(
+                "session-deepseek-tool",
+                {"role": "user", "content": "Who is Alex?"},
+                "key",
+                "https://api.deepseek.com/v1/chat/completions",
+                "deepseek-v4-pro",
+            ):
+                events.append(event)
+
+            self.assertEqual("".join(event.text or "" for event in events if event.type == "answer_text"), "Let me check the profile.done")
+            second_call_messages = adapter.stream_calls[1]["messages"]
+            assistant_tool_messages = [
+                message
+                for message in second_call_messages
+                if message.get("role") == "assistant" and message.get("tool_calls")
+            ]
+            self.assertEqual(len(assistant_tool_messages), 1)
+            self.assertEqual(
+                assistant_tool_messages[0]["reasoning_content"],
+                "Need the profile before answering.",
+            )
+            self.assertEqual(assistant_tool_messages[0]["content"], "Let me check the profile.")
+            self.assertFalse(
+                any(
+                    message.get("role") == "assistant"
+                    and not message.get("tool_calls")
+                    and message.get("content") == "Let me check the profile."
+                    for message in second_call_messages
+                )
+            )
         finally:
             await brain.close_brain()
 

@@ -16,6 +16,8 @@ class GatewayDependencies:
     memory_snapshot_getter: Any = None
     memory_graph_getter: Any = None
     memory_clearer: Any = None
+    memory_record_status_updater: Any = None
+    memory_record_deleter: Any = None
     runtime_state_getter: Any = None
     runtime_usage_getter: Any = None
     runtime_debug_getter: Any = None

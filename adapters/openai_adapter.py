@@ -163,7 +163,8 @@ class OpenAIAdapter(LLMAdapter):
 
         return sanitized
 
-    def format_messages(self, messages: list[dict]) -> list[dict]:
+    def _format_chat_messages(self, messages: list[dict], *, url: str = "", model: str = "") -> list[dict]:
+        preserve_reasoning_content = self._supports_chat_reasoning_content_roundtrip(url, model)
         formatted = []
         for msg in self._sanitize_tool_message_history(messages):
             new_msg = {"role": msg["role"]}
@@ -194,11 +195,17 @@ class OpenAIAdapter(LLMAdapter):
 
             if "tool_calls" in msg:
                 new_msg["tool_calls"] = msg["tool_calls"]
+                reasoning_content = msg.get("reasoning_content")
+                if preserve_reasoning_content and isinstance(reasoning_content, str) and reasoning_content:
+                    new_msg["reasoning_content"] = reasoning_content
             if "tool_call_id" in msg:
                 new_msg["tool_call_id"] = msg["tool_call_id"]
 
             formatted.append(new_msg)
         return formatted
+
+    def format_messages(self, messages: list[dict]) -> list[dict]:
+        return self._format_chat_messages(messages)
 
     def format_tools(self, tools: list[dict]) -> list[dict] | None:
         return tools if tools else None
@@ -211,6 +218,17 @@ class OpenAIAdapter(LLMAdapter):
             host in {"api.openai.com", "api.deepseek.com"}
             or normalized_model.startswith(("gpt-", "o", "deepseek-"))
         )
+
+    @staticmethod
+    def _is_deepseek_reasoner_model(model: str) -> bool:
+        return str(model or "").strip().lower().startswith("deepseek-reasoner")
+
+    @staticmethod
+    def _supports_chat_reasoning_content_roundtrip(url: str, model: str) -> bool:
+        host = (urlparse(str(url or "").strip()).hostname or "").lower()
+        if host != "api.deepseek.com":
+            return False
+        return not OpenAIAdapter._is_deepseek_reasoner_model(model)
 
     @staticmethod
     def _is_official_openai(url: str) -> bool:
@@ -887,7 +905,7 @@ class OpenAIAdapter(LLMAdapter):
         }
         payload = {
             "model": model,
-            "messages": self.format_messages(messages),
+            "messages": self._format_chat_messages(messages, url=url, model=model),
             "stream": True,
         }
         ft = self.format_tools(tools)
@@ -976,7 +994,7 @@ class OpenAIAdapter(LLMAdapter):
 
         payload = {
             "model": model,
-            "messages": self.format_messages(messages),
+            "messages": self._format_chat_messages(messages, url=url, model=model),
             "stream": False,
         }
         ft = self.format_tools(tools)

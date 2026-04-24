@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 
-import { clearDesktopMemory } from '../clientApi'
+import { clearDesktopMemory, deleteDesktopMemoryRecord, updateDesktopMemoryRecordStatus } from '../clientApi'
 import { fetchWithAuth, readErrorMessage } from '../apiClient'
 import { DEFAULT_BASE_URL } from '../windowBridge'
 
@@ -82,6 +82,7 @@ export function useMemory(baseUrl: string = DEFAULT_BASE_URL) {
   const [graph, setGraph] = useState<MemoryGraph | null>(null)
   const [loading, setLoading] = useState(true)
   const [clearing, setClearing] = useState(false)
+  const [mutatingRecordIds, setMutatingRecordIds] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [clearFeedback, setClearFeedback] = useState<MemoryClearFeedback | null>(null)
 
@@ -138,6 +139,50 @@ export function useMemory(baseUrl: string = DEFAULT_BASE_URL) {
     }
   }, [baseUrl, fetchMemory])
 
+  const markRecordMutation = useCallback((memoryId: string, mutating: boolean) => {
+    setMutatingRecordIds((current) => {
+      const next = new Set(current)
+      if (mutating) {
+        next.add(memoryId)
+      } else {
+        next.delete(memoryId)
+      }
+      return next
+    })
+  }, [])
+
+  const updateRecordStatus = useCallback(async (memoryId: string, status: 'active' | 'invalidated') => {
+    try {
+      markRecordMutation(memoryId, true)
+      setError(null)
+      const result = await updateDesktopMemoryRecordStatus(baseUrl, memoryId, status)
+      await fetchMemory(true)
+      return result
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message)
+      throw err
+    } finally {
+      markRecordMutation(memoryId, false)
+    }
+  }, [baseUrl, fetchMemory, markRecordMutation])
+
+  const deleteRecord = useCallback(async (memoryId: string) => {
+    try {
+      markRecordMutation(memoryId, true)
+      setError(null)
+      const result = await deleteDesktopMemoryRecord(baseUrl, memoryId)
+      await fetchMemory(true)
+      return result
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message)
+      throw err
+    } finally {
+      markRecordMutation(memoryId, false)
+    }
+  }, [baseUrl, fetchMemory, markRecordMutation])
+
   useEffect(() => {
     fetchMemory()
   }, [fetchMemory])
@@ -147,9 +192,12 @@ export function useMemory(baseUrl: string = DEFAULT_BASE_URL) {
     graph,
     loading,
     clearing,
+    mutatingRecordIds,
     error,
     clearFeedback,
     refresh: fetchMemory,
     clearMemory,
+    updateRecordStatus,
+    deleteRecord,
   }
 }

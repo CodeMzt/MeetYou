@@ -393,6 +393,66 @@ class Memory(MemoryRepository):
             "cleared_global_summary": cleared_global_summary,
         }
 
+    def _project_memory_record_by_id(self, memory_id: str) -> dict[str, Any] | None:
+        target_id = str(memory_id or "").strip()
+        if not target_id:
+            return None
+        snapshot = self.get_memory_snapshot(include_invalidated=True)
+        for record in snapshot.get("records", []):
+            if str(record.get("id") or "") == target_id:
+                return dict(record)
+        return None
+
+    async def update_record_status(self, memory_id: str, status: str) -> dict[str, Any]:
+        target_id = str(memory_id or "").strip()
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"active", "invalidated"}:
+            raise ValueError("memory_status_invalid")
+        if not target_id:
+            raise ValueError("memory_id_required")
+
+        from tools.memory_layers import dt_to_iso, utcnow
+
+        updated_at = dt_to_iso(utcnow())
+        for record in self._store.get("records", []):
+            if str(record.get("id") or "") != target_id:
+                continue
+            record["status"] = normalized_status
+            record["last_updated_at"] = updated_at
+            await self.save_memory_graph()
+            return {
+                "ok": True,
+                "memory_id": target_id,
+                "status": normalized_status,
+                "deleted": False,
+                "updated_at": updated_at,
+                "record": self._project_memory_record_by_id(target_id),
+            }
+        raise KeyError(target_id)
+
+    async def delete_record(self, memory_id: str) -> dict[str, Any]:
+        target_id = str(memory_id or "").strip()
+        if not target_id:
+            raise ValueError("memory_id_required")
+
+        from tools.memory_layers import dt_to_iso, utcnow
+
+        if self._project_memory_record_by_id(target_id) is None:
+            raise KeyError(target_id)
+        changed = self._store_layer.delete_records({target_id})
+        if not changed:
+            raise KeyError(target_id)
+        updated_at = dt_to_iso(utcnow())
+        await self.save_memory_graph()
+        return {
+            "ok": True,
+            "memory_id": target_id,
+            "status": "deleted",
+            "deleted": True,
+            "updated_at": updated_at,
+            "record": None,
+        }
+
     def get_memory_snapshot(
         self,
         source_id: str = "",
