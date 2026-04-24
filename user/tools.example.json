@@ -4,7 +4,7 @@
       "type": "function",
       "function": {
         "name": "exec_sys_cmd",
-        "description": "Execute a local shell command. Dangerous commands may be blocked by policy.",
+        "description": "Execute a shell command on the user's local machine through Desktop Agent. Dangerous commands may be blocked by the local agent policy.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -772,7 +772,7 @@
       "type": "function",
       "function": {
         "name": "read_local_documents",
-        "description": "Read local files and extract normalized content chunks.",
+        "description": "Read files from the user's local machine through Desktop Agent and extract normalized content chunks.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -803,7 +803,7 @@
       "type": "function",
       "function": {
         "name": "write_local_document",
-        "description": "Write a local document, usually in preview mode first.",
+        "description": "Write a document on the user's local machine through Desktop Agent, usually in preview mode first. The local agent enforces trusted write roots.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -831,7 +831,7 @@
       "type": "function",
       "function": {
         "name": "rewrite_local_document",
-        "description": "Rewrite an existing local document with updated content.",
+        "description": "Rewrite an existing document on the user's local machine through Desktop Agent. The local agent enforces trusted write roots.",
         "parameters": {
           "type": "object",
           "properties": {
