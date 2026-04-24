@@ -5,9 +5,11 @@ Main conversational orchestration.
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import re
 from copy import deepcopy
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -173,6 +175,14 @@ class _ModeSwitchResult:
     from_mode: str
     to_mode: str
     applied: bool = False
+
+
+@dataclass
+class _ToolExecutionPlanItem:
+    index: int
+    tool_call: Any
+    args: dict[str, Any]
+    policy: dict[str, Any]
 
 
 class Brain:
@@ -1760,47 +1770,106 @@ class Brain:
         route_context: dict[str, Any],
         tool_activity_callback,
     ) -> None:
-        for tc in visible_tool_calls:
+        plan_items: list[_ToolExecutionPlanItem] = []
+        for index, tool_call in enumerate(visible_tool_calls):
             try:
-                args = tc.arguments
+                args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
             except Exception:
                 args = {}
+            plan_items.append(
+                _ToolExecutionPlanItem(
+                    index=index,
+                    tool_call=tool_call,
+                    args=dict(args),
+                    policy=self._get_tool_parallel_policy(tool_call.name, dict(args), route_context),
+                )
+            )
 
-            tool_context = bind_event_context(tool_call_id=tc.id)
+        max_parallel_tool_calls = self._resolve_max_parallel_tool_calls(route_context)
+        ordered_results: dict[int, ToolCallResult] = {}
+        pending_parallel_batch: list[_ToolExecutionPlanItem] = []
+
+        async def _execute_plan_item(item: _ToolExecutionPlanItem) -> ToolCallResult:
+            tool_call = item.tool_call
+            tool_context = bind_event_context(tool_call_id=tool_call.id)
             try:
-                try:
-                    context = get_event_context()
-                    result = await self._call_tool_with_route(
-                        tc.name,
-                        args,
-                        session_id=context.get("session_id", session_id),
-                        source=context.get("source"),
-                        tool_activity_callback=tool_activity_callback,
-                        route_context=route_context,
-                    )
-                except Exception as exc:
-                    result = ToolCallResult.failure(
-                        tool_name=tc.name,
-                        source=ToolSourceType.UNKNOWN,
-                        action_risk=self._get_action_risk_for_tools([tc.name]),
-                        code="tool_dispatch_failed",
-                        category=ToolErrorCategory.EXECUTION,
-                        message="Tool dispatch failed before producing a result.",
-                        details={
-                            "tool_name": tc.name,
-                            "exception_type": type(exc).__name__,
-                            "exception_message": str(exc),
-                        },
-                    )
+                context = get_event_context()
+                return await self._call_tool_with_route(
+                    tool_call.name,
+                    item.args,
+                    session_id=context.get("session_id", session_id),
+                    source=context.get("source"),
+                    tool_activity_callback=tool_activity_callback,
+                    route_context=route_context,
+                )
+            except Exception as exc:
+                return ToolCallResult.failure(
+                    tool_name=tool_call.name,
+                    source=ToolSourceType.UNKNOWN,
+                    action_risk=self._get_action_risk_for_tools([tool_call.name]),
+                    code="tool_dispatch_failed",
+                    category=ToolErrorCategory.EXECUTION,
+                    message="Tool dispatch failed before producing a result.",
+                    details={
+                        "tool_name": tool_call.name,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc),
+                    },
+                )
             finally:
                 reset_event_context(tool_context)
 
+        async def _flush_parallel_batch() -> None:
+            nonlocal pending_parallel_batch
+            if not pending_parallel_batch:
+                return
+            session.runtime_state.update(
+                status=session.runtime_state.status,
+                detail=session.runtime_state.detail,
+                active_tools=[item.tool_call.name for item in pending_parallel_batch],
+            )
+            task_results = await asyncio.gather(*[_execute_plan_item(item) for item in pending_parallel_batch])
+            for item, result in zip(pending_parallel_batch, task_results):
+                ordered_results[item.index] = result
+            pending_parallel_batch = []
+
+        for item in plan_items:
+            if not self._can_join_parallel_batch(
+                item,
+                current_batch=pending_parallel_batch,
+                global_limit=max_parallel_tool_calls,
+            ):
+                await _flush_parallel_batch()
+                if self._can_join_parallel_batch(item, current_batch=pending_parallel_batch, global_limit=max_parallel_tool_calls):
+                    pending_parallel_batch.append(item)
+                    continue
+                session.runtime_state.update(
+                    status=session.runtime_state.status,
+                    detail=session.runtime_state.detail,
+                    active_tools=[item.tool_call.name],
+                )
+                ordered_results[item.index] = await _execute_plan_item(item)
+                continue
+            pending_parallel_batch.append(item)
+        await _flush_parallel_batch()
+
+        for item in plan_items:
+            result = ordered_results.get(item.index)
+            if result is None:
+                result = ToolCallResult.failure(
+                    tool_name=item.tool_call.name,
+                    source=ToolSourceType.UNKNOWN,
+                    action_risk=self._get_action_risk_for_tools([item.tool_call.name]),
+                    code="tool_result_missing",
+                    category=ToolErrorCategory.EXECUTION,
+                    message="Tool scheduler produced no result.",
+                )
             self._record_authorization_result(session, result)
             session.chat_history.append(
                 {
                     "role": "tool",
                     "content": self._tool_message_content(result),
-                    "tool_call_id": tc.id,
+                    "tool_call_id": item.tool_call.id,
                 }
             )
 
@@ -1809,6 +1878,65 @@ class Brain:
         if callable(getter):
             return str(getter(tool_names))
         return "read"
+
+    def _resolve_max_parallel_tool_calls(self, route_context: dict[str, Any]) -> int:
+        route_limit = route_context.get("max_parallel_tool_calls")
+        try:
+            normalized_route_limit = int(route_limit)
+        except (TypeError, ValueError):
+            normalized_route_limit = 0
+        if normalized_route_limit > 0:
+            return normalized_route_limit
+        router_limit = self._get_router_limit("max_parallel_tool_calls", default=3)
+        return int(router_limit or 3)
+
+    def _get_tool_parallel_policy(self, tool_name: str, tool_args: dict[str, Any], route_context: dict[str, Any]) -> dict[str, Any]:
+        getter = getattr(self._tools_manager, "get_tool_parallel_metadata", None)
+        if callable(getter):
+            metadata = getter(tool_name, tool_args, route_context=route_context)
+            if isinstance(metadata, dict):
+                return dict(metadata)
+        action_risk = self._get_action_risk_for_tools([tool_name])
+        return {
+            "safe_parallel": action_risk == "read",
+            "parallel_group": action_risk,
+            "resource_key": f"tool:{tool_name}",
+            "mutates_state": action_risk != "read",
+            "requires_order": action_risk != "read",
+            "max_concurrency": 1 if action_risk != "read" else 3,
+        }
+
+    @staticmethod
+    def _can_join_parallel_batch(
+        item: _ToolExecutionPlanItem,
+        *,
+        current_batch: list[_ToolExecutionPlanItem],
+        global_limit: int,
+    ) -> bool:
+        if len(current_batch) >= global_limit:
+            return False
+        policy = item.policy
+        if not bool(policy.get("safe_parallel", False)):
+            return False
+        if bool(policy.get("requires_order", False)):
+            return False
+
+        resource_key = str(policy.get("resource_key") or "").strip()
+        parallel_group = str(policy.get("parallel_group") or "").strip()
+        try:
+            max_concurrency = max(1, int(policy.get("max_concurrency", 1) or 1))
+        except (TypeError, ValueError):
+            max_concurrency = 1
+        group_counter = Counter(
+            str(existing.policy.get("parallel_group") or "").strip()
+            for existing in current_batch
+            if str(existing.policy.get("parallel_group") or "").strip()
+        )
+        if parallel_group and group_counter[parallel_group] >= max_concurrency:
+            return False
+        if resource_key and any(str(existing.policy.get("resource_key") or "").strip() == resource_key for existing in current_batch):
+            return False
+        return True
 
     async def run_background_turn(
         self,
