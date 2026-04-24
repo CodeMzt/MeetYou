@@ -98,6 +98,31 @@ class ToolRegistry:
     def get_mcp_server(self, tool_name: str) -> str:
         return str(getattr(self._mcp_manager, "tool_map", {}).get(tool_name, ""))
 
+    def get_tool_capability_metadata(self, tool_name: str) -> dict[str, Any]:
+        normalized_tool_name = str(tool_name or "").strip()
+        metadata: dict[str, Any] = {
+            "tool_name": normalized_tool_name,
+            "source": "unknown",
+            "schema_metadata": {},
+        }
+        if self.has_builtin(normalized_tool_name):
+            metadata["source"] = "builtin"
+        elif self.has_mcp(normalized_tool_name):
+            metadata["source"] = "mcp"
+            metadata["mcp_server"] = self.get_mcp_server(normalized_tool_name)
+
+        schema = self._tool_schema_by_name(
+            normalized_tool_name,
+            sections=("common_tools", "chain_tools", "memory_tools", "background_tools", "web_tools", "mcp_tools"),
+        )
+        if isinstance(schema, dict):
+            function_schema = schema.get("function", {})
+            if isinstance(function_schema, dict):
+                schema_metadata = function_schema.get("metadata")
+                if isinstance(schema_metadata, dict):
+                    metadata["schema_metadata"] = dict(schema_metadata)
+        return metadata
+
     def _iter_llm_visible_tools(self, *, allowed_tool_names: set[str] | None = None) -> list[dict]:
         tools: list[dict] = []
         seen: set[str] = set()
