@@ -1,0 +1,165 @@
+{
+  "version": "2026-04-24",
+  "entries": [
+    {
+      "provider": "openai",
+      "model_patterns": ["gpt-5.4", "gpt-5.4-*"],
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "source_url": "https://platform.openai.com/docs/models/compare",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "OpenAI /models schema does not provide stable context/output fields; rely on versioned registry fallback."
+    },
+    {
+      "provider": "openai",
+      "model_patterns": ["gpt-4.1", "gpt-4.1-*"],
+      "context_window": 1048576,
+      "max_output_tokens": 32768,
+      "source_url": "https://platform.openai.com/docs/models/compare",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Versioned fallback for OpenAI model family."
+    },
+    {
+      "provider": "openai",
+      "model_patterns": ["gpt-4o", "gpt-4o-*"],
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "source_url": "https://platform.openai.com/docs/models/compare",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy compatibility baseline; provider documentation or refresh should override when available."
+    },
+    {
+      "provider": "openai",
+      "model_patterns": ["gpt-4-turbo", "gpt-4-turbo-*"],
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "source_url": "https://platform.openai.com/docs/models/compare",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy compatibility baseline."
+    },
+    {
+      "provider": "openai",
+      "model_patterns": ["gpt-4", "gpt-4-*"],
+      "context_window": 8192,
+      "max_output_tokens": 4096,
+      "source_url": "https://platform.openai.com/docs/models/compare",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy compatibility baseline."
+    },
+    {
+      "provider": "openai",
+      "model_patterns": ["gpt-3.5-turbo", "gpt-3.5-turbo-*"],
+      "context_window": 16385,
+      "max_output_tokens": 4096,
+      "source_url": "https://platform.openai.com/docs/models/compare",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy compatibility baseline."
+    },
+    {
+      "provider": "openai",
+      "model_patterns": ["o1", "o1-*", "o3-mini", "o3-mini-*"],
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "source_url": "https://platform.openai.com/docs/models/compare",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy compatibility baseline for reasoning models."
+    },
+    {
+      "provider": "deepseek",
+      "model_patterns": ["deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "source_url": "https://api-docs.deepseek.com/",
+      "source_checked_at": "2026-04-24",
+      "confidence": "high",
+      "notes": "DeepSeek /models does not expose token limits; deepseek-chat/reasoner are compatibility mappings to v4-flash capability profile."
+    },
+    {
+      "provider": "deepseek",
+      "model_patterns": ["deepseek-v4-pro"],
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "source_url": "https://api-docs.deepseek.com/",
+      "source_checked_at": "2026-04-24",
+      "confidence": "high",
+      "notes": "Official documentation fallback."
+    },
+    {
+      "provider": "anthropic",
+      "model_patterns": ["claude-*"],
+      "context_window": 200000,
+      "max_output_tokens": 8192,
+      "source_url": "https://docs.anthropic.com/",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Registry baseline; provider API can override when available."
+    },
+    {
+      "provider": "gemini",
+      "model_patterns": ["gemini-1.5-pro"],
+      "context_window": 2097152,
+      "max_output_tokens": 8192,
+      "source_url": "https://ai.google.dev/gemini-api/docs/models",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy compatibility baseline; provider API models.get/list should override."
+    },
+    {
+      "provider": "gemini",
+      "model_patterns": ["gemini-pro"],
+      "context_window": 32768,
+      "max_output_tokens": 8192,
+      "source_url": "https://ai.google.dev/gemini-api/docs/models",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy compatibility baseline; provider API models.get/list should override."
+    },
+    {
+      "provider": "gemini",
+      "model_patterns": ["gemini-*"],
+      "context_window": 1048576,
+      "max_output_tokens": 8192,
+      "source_url": "https://ai.google.dev/gemini-api/docs/models",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Registry baseline; provider API models.get/list should override."
+    },
+    {
+      "provider": "ollama",
+      "model_patterns": ["llama3.1", "llama3.1-*", "llama3.2", "llama3.2-*", "qwen2.5", "qwen2.5-*"],
+      "context_window": 131072,
+      "max_output_tokens": 4096,
+      "source_url": "https://ollama.com/library",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy local model baseline; Ollama /api/show should override."
+    },
+    {
+      "provider": "ollama",
+      "model_patterns": ["mistral", "mistral-*"],
+      "context_window": 32768,
+      "max_output_tokens": 4096,
+      "source_url": "https://ollama.com/library",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy local model baseline; Ollama /api/show should override."
+    },
+    {
+      "provider": "ollama",
+      "model_patterns": ["llama3", "llama3-*"],
+      "context_window": 8192,
+      "max_output_tokens": 4096,
+      "source_url": "https://ollama.com/library",
+      "source_checked_at": "2026-04-24",
+      "confidence": "medium",
+      "notes": "Legacy local model baseline; Ollama /api/show should override."
+    }
+  ]
+}

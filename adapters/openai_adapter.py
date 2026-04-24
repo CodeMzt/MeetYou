@@ -88,6 +88,8 @@ def _extract_error_message(error_body: dict[str, Any] | None, status: int) -> st
 
 
 class OpenAIAdapter(LLMAdapter):
+    provider_name = "openai"
+
     @staticmethod
     def _assistant_call_ids(message: dict[str, Any]) -> list[str]:
         call_ids: list[str] = []
