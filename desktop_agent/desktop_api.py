@@ -177,6 +177,8 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("GET", "/desktop/memory", lambda _request: "/operator/memory"),
         DesktopApiRoute("GET", "/desktop/memory/graph", lambda _request: "/operator/memory/graph"),
         DesktopApiRoute("DELETE", "/desktop/memory", lambda _request: "/operator/memory"),
+        DesktopApiRoute("PATCH", "/desktop/memory/records/{memory_id}", lambda request: f"/operator/memory/records/{request.match_info['memory_id']}"),
+        DesktopApiRoute("DELETE", "/desktop/memory/records/{memory_id}", lambda request: f"/operator/memory/records/{request.match_info['memory_id']}"),
         DesktopApiRoute("PATCH", "/desktop/workspaces/{workspace_id}", lambda request: f"/operator/workspaces/{request.match_info['workspace_id']}"),
         DesktopApiRoute("GET", "/desktop/source-profiles", lambda _request: "/operator/source-profiles"),
         DesktopApiRoute("GET", "/desktop/runtime/usage", lambda _request: "/runtime/usage"),

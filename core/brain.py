@@ -2679,7 +2679,7 @@ class Brain:
             if reasoning_content:
                 yield BrainOutputEvent(type="reasoning_end")
 
-            if assistant_content:
+            if assistant_content and not tool_calls:
                 assistant_message = {"role": "assistant", "content": assistant_content}
                 if transient_turn:
                     assistant_message["metadata"] = {"transient": True}
@@ -2733,25 +2733,26 @@ class Brain:
                     await self._persist_session_context(session)
                 break
 
-            session.chat_history.append(
-                {
-                    "role": "assistant",
-                    "content": None,
-                    **({"metadata": {"transient": True}} if transient_turn else {}),
-                    "tool_calls": [
-                        {
-                            "type": "function",
-                            "id": tc.id,
-                            "function": {
-                                "name": tc.name,
-                                "arguments": tc.arguments_str,
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
-                    "provider_items": provider_items,
-                }
-            )
+            tool_call_assistant_message = {
+                "role": "assistant",
+                "content": assistant_content or None,
+                **({"metadata": {"transient": True}} if transient_turn else {}),
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "id": tc.id,
+                        "function": {
+                            "name": tc.name,
+                            "arguments": tc.arguments_str,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+                "provider_items": provider_items,
+            }
+            if reasoning_content:
+                tool_call_assistant_message["reasoning_content"] = reasoning_content
+            session.chat_history.append(tool_call_assistant_message)
 
             mode_switch_calls = [tc for tc in tool_calls if tc.name == _INTERNAL_MODE_SWITCH_TOOL_NAME]
             visible_tool_calls = [tc for tc in tool_calls if tc.name != _INTERNAL_MODE_SWITCH_TOOL_NAME]

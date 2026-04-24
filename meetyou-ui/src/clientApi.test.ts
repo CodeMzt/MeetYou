@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   clearDesktopMemory,
   createDanxiReply,
+  deleteDesktopMemoryRecord,
   deleteDanxiReply,
   fetchRuntimeUsageSnapshot,
   getDanxiPostSummary,
@@ -20,6 +21,7 @@ import {
   updateOperatorWorkspaceGovernance,
   pinClientThreadProcedure,
   unpinClientThreadProcedure,
+  updateDesktopMemoryRecordStatus,
 } from './clientApi'
 import { DEFAULT_BASE_URL } from './windowBridge'
 
@@ -113,6 +115,57 @@ describe('clientApi', () => {
     expect(result.cleared_record_count).toBe(4)
     expect(globalThis.fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:8000/desktop/memory',
+      expect.objectContaining({
+        method: 'DELETE',
+      }),
+    )
+  })
+
+  it('updates and deletes individual memory records through desktop operator surface', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            memory_id: 'memory/one',
+            status: 'invalidated',
+            deleted: false,
+            updated_at: '2026-04-24T00:00:00Z',
+            record: { id: 'memory/one', status: 'invalidated' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            memory_id: 'memory/one',
+            status: 'deleted',
+            deleted: true,
+            updated_at: '2026-04-24T00:00:01Z',
+            record: null,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const updated = await updateDesktopMemoryRecordStatus('http://127.0.0.1:8000', 'memory/one', 'invalidated')
+    const deleted = await deleteDesktopMemoryRecord('http://127.0.0.1:8000', 'memory/one')
+
+    expect(updated.status).toBe('invalidated')
+    expect(deleted.deleted).toBe(true)
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8000/desktop/memory/records/memory%2Fone',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'invalidated' }),
+      }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8000/desktop/memory/records/memory%2Fone',
       expect.objectContaining({
         method: 'DELETE',
       }),

@@ -1,27 +1,117 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { Ban, RotateCcw, Trash2 } from 'lucide-react'
+import ConfirmModal from '../components/common/ConfirmModal'
 import GlassSelect from '../components/GlassSelect'
-import { MemorySnapshot } from '../hooks/useMemory'
+import { MemoryRecord, MemorySnapshot } from '../hooks/useMemory'
 
-export default function RecordsView({ snapshot }: { snapshot: MemorySnapshot | null }) {
+type MemoryRecordStatus = 'active' | 'invalidated'
+
+type PendingAction =
+  | { type: 'invalidate'; record: MemoryRecord }
+  | { type: 'restore'; record: MemoryRecord }
+  | { type: 'delete'; record: MemoryRecord }
+  | null
+
+interface RecordsViewProps {
+  snapshot: MemorySnapshot | null
+  mutatingRecordIds?: Set<string>
+  onUpdateStatus?: (memoryId: string, status: MemoryRecordStatus) => Promise<unknown>
+  onDeleteRecord?: (memoryId: string) => Promise<unknown>
+}
+
+function formatRecordType(type: string): string {
+  if (type === 'profile') return '画像'
+  if (type === 'fact') return '事实'
+  if (type === 'episode') return '事件'
+  return type || '记录'
+}
+
+function formatRecordStatus(status: string): string {
+  if (status === 'active') return '活跃'
+  if (status === 'invalidated') return '已失效'
+  return status || '未知'
+}
+
+function actionConfig(action: PendingAction) {
+  if (!action) {
+    return {
+      title: '',
+      message: '',
+      confirmText: '',
+    }
+  }
+  if (action.type === 'delete') {
+    return {
+      title: '删除这条记忆',
+      message: `这会永久删除记忆“${action.record.content}”，并移除相关图关系。`,
+      confirmText: '删除',
+    }
+  }
+  if (action.type === 'restore') {
+    return {
+      title: '恢复这条记忆',
+      message: `恢复后，这条记忆会重新参与后续召回：${action.record.content}`,
+      confirmText: '恢复',
+    }
+  }
+  return {
+    title: '使这条记忆失效',
+    message: `失效后，这条记忆不会继续参与默认召回：${action.record.content}`,
+    confirmText: '失效',
+  }
+}
+
+export default function RecordsView({
+  snapshot,
+  mutatingRecordIds = new Set(),
+  onUpdateStatus,
+  onDeleteRecord,
+}: RecordsViewProps) {
   const [filterType, setFilterType] = useState('all')
   const [filterStatus, setFilterStatus] = useState('active')
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null)
+  const [isConfirming, setIsConfirming] = useState(false)
+
+  const records = useMemo(() => {
+    return (snapshot?.records || []).filter((record) => {
+      if (filterType !== 'all' && record.type !== filterType) {
+        return false
+      }
+      if (filterStatus !== 'all' && record.status !== filterStatus) {
+        return false
+      }
+      return true
+    })
+  }, [filterStatus, filterType, snapshot])
 
   if (!snapshot) {
     return <div>正在加载记录...</div>
   }
 
-  const records = snapshot.records.filter((record) => {
-    if (filterType !== 'all' && record.type !== filterType) {
-      return false
+  const handleConfirmAction = async () => {
+    if (!pendingAction) {
+      return
     }
-    if (filterStatus !== 'all' && record.status !== filterStatus) {
-      return false
+    try {
+      setIsConfirming(true)
+      if (pendingAction.type === 'delete') {
+        await onDeleteRecord?.(pendingAction.record.id)
+      } else {
+        await onUpdateStatus?.(
+          pendingAction.record.id,
+          pendingAction.type === 'restore' ? 'active' : 'invalidated',
+        )
+      }
+      setPendingAction(null)
+    } finally {
+      setIsConfirming(false)
     }
-    return true
-  })
+  }
+
+  const confirmation = actionConfig(pendingAction)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 14 }}>
+    <div className="records-view">
       <div className="card records-toolbar">
         <div className="records-toolbar-filters">
           <div className="records-toolbar-label">筛选</div>
@@ -49,50 +139,78 @@ export default function RecordsView({ snapshot }: { snapshot: MemorySnapshot | n
       </div>
 
       <div className="records-grid">
-        {records.map((record) => (
-          <div key={record.id} className="card records-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <span
-                style={{
-                  fontSize: 11,
-                  background: 'var(--text-accent)',
-                  color: 'var(--text-inverse)',
-                  padding: '2px 6px',
-                  borderRadius: 'var(--radius-sm)',
-                  textTransform: 'uppercase',
-                }}
-              >
-                {record.type}
-              </span>
-              <span style={{ fontSize: 11, color: record.status === 'active' ? 'var(--text-success)' : 'var(--text-error)' }}>
-                {record.status}
-              </span>
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.45 }}>
-              {record.type === 'profile' && record.fact_key ? (
-                <span style={{ color: 'var(--text-secondary)' }}>[{record.fact_key}] </span>
-              ) : null}
-              {record.type === 'fact' && record.fact_key ? (
-                <span style={{ color: 'var(--text-secondary)' }}>[{record.fact_key}] </span>
-              ) : null}
-              {record.content}
-            </div>
-            <div style={{ marginTop: 'auto', paddingTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 11, background: 'var(--border-subtle)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
-                置信度: {(record.confidence * 100).toFixed(0)}%
-              </span>
-              <span style={{ fontSize: 11, background: 'var(--border-subtle)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
-                强度: {(record.strength * 100).toFixed(0)}%
-              </span>
-              {record.fact_value ? (
-                <span style={{ fontSize: 11, background: 'var(--border-subtle)', padding: '2px 6px', borderRadius: 'var(--radius-sm)' }}>
-                  值: {record.fact_value}
+        {records.map((record) => {
+          const isMutating = mutatingRecordIds.has(record.id)
+          const isInvalidated = record.status === 'invalidated'
+          return (
+            <div key={record.id} className="card records-card">
+              <div className="records-card-header">
+                <span className="records-type-chip">{formatRecordType(record.type)}</span>
+                <span className={`records-status-chip ${isInvalidated ? 'invalidated' : 'active'}`}>
+                  {formatRecordStatus(record.status)}
                 </span>
-              ) : null}
+              </div>
+              <div className="records-content">
+                {record.type === 'profile' && record.fact_key ? (
+                  <span className="records-fact-key">[{record.fact_key}] </span>
+                ) : null}
+                {record.type === 'fact' && record.fact_key ? (
+                  <span className="records-fact-key">[{record.fact_key}] </span>
+                ) : null}
+                {record.content}
+              </div>
+              <div className="records-meta">
+                <span>置信度 {(record.confidence * 100).toFixed(0)}%</span>
+                <span>强度 {(record.strength * 100).toFixed(0)}%</span>
+                {record.fact_value ? <span>值 {record.fact_value}</span> : null}
+              </div>
+              <div className="records-actions">
+                {isInvalidated ? (
+                  <button
+                    type="button"
+                    className="records-action-btn"
+                    disabled={isMutating}
+                    onClick={() => setPendingAction({ type: 'restore', record })}
+                  >
+                    <RotateCcw size={14} />
+                    恢复
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="records-action-btn"
+                    disabled={isMutating}
+                    onClick={() => setPendingAction({ type: 'invalidate', record })}
+                  >
+                    <Ban size={14} />
+                    失效
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="records-action-btn danger"
+                  disabled={isMutating}
+                  onClick={() => setPendingAction({ type: 'delete', record })}
+                >
+                  <Trash2 size={14} />
+                  删除
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
+
+      <ConfirmModal
+        isOpen={pendingAction !== null}
+        title={confirmation.title}
+        message={confirmation.message}
+        confirmText={isConfirming ? '处理中...' : confirmation.confirmText}
+        cancelText="取消"
+        isDestructive={pendingAction?.type !== 'restore'}
+        onConfirm={handleConfirmAction}
+        onCancel={() => setPendingAction(null)}
+      />
     </div>
   )
 }

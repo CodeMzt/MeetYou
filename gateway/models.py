@@ -318,6 +318,19 @@ class MemoryClearResponse(BaseModel):
     updated_at: str = ""
 
 
+class MemoryRecordPatchRequest(BaseModel):
+    status: str
+
+
+class MemoryRecordMutationResponse(BaseModel):
+    ok: bool = True
+    memory_id: str
+    status: str = ""
+    deleted: bool = False
+    updated_at: str = ""
+    record: MemoryRecordResponse | None = None
+
+
 class ClientThreadCreateRequest(BaseModel):
     workspace_id: str
     title: str = ""

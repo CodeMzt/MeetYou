@@ -3,7 +3,6 @@ import { getDanxiSessionStatus } from './clientApi'
 import { useMeetYou } from './hooks/useMeetYou'
 import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'
-import StatusStrip from './components/status/StatusStrip'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
 import { AssistantMode, ThinkingOverride } from './types'
@@ -21,7 +20,6 @@ export default function App() {
     desktopAgentConnected,
     runtimeSnapshot,
     usageSnapshot,
-    turnActivities,
     approvalDisplay,
     confirmRequest,
     pendingHumanInput,
@@ -133,12 +131,6 @@ export default function App() {
         />
 
         <div className={styles.contentArea}>
-          <StatusStrip
-            connectionState={connectionState}
-            runtimeSnapshot={runtimeSnapshot}
-            healthSnapshot={healthSnapshot}
-            turnActivities={turnActivities}
-          />
           <MessageList
             connected={connected}
             messages={messages}
