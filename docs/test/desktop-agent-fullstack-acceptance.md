@@ -64,8 +64,33 @@
    - `capability_id=agent.desktop-agent-2.mcp.filesystem_tools.read_file`
    - 目标路径：`E:\Documents\Project\MeetYou\AGENTS.md`
 5. 通过 `/desktop/messages` 发送普通消息并在 `/desktop/ws` 上观察主对话流。
+6. 创建 fresh session 后调用：
+   - `GET /desktop/runtime/debug?session_id=...`
+   - `GET /desktop/runtime/usage?session_id=...`
 
-### 4.4 自动化回归
+### 4.4 附件、审批工具与子页面数据面验证
+
+1. 附件链路：
+   - `POST /desktop/attachments/upload-ticket`
+   - `PUT upload_url`
+   - `POST /desktop/attachments/{attachment_id}/complete`
+   - `GET /desktop/threads/{thread_id}/attachments`
+   - `GET /desktop/attachments/{attachment_id}/download-ticket?client_id=desktop-app-2`
+   - `GET download_url`
+   - `DELETE /desktop/attachments/{attachment_id}`
+2. 审批工具链路：
+   - `POST /desktop/operations` 触发 `agent.desktop-agent-2.file.write`
+   - `POST /desktop/operations` 触发 `agent.desktop-agent-2.shell.exec`
+   - `POST /desktop/approvals/{approval_id}/decision` 批准后继续观察 `/desktop/ws`
+3. 非 Danxi 子页面数据面：
+   - `GET /desktop/config/schema`
+   - `GET /desktop/config`
+   - `GET /desktop/source-profiles`
+   - `GET /desktop/memory?source_id=desktop-app-2&session_id=...`
+   - `GET /desktop/memory/graph?source_id=desktop-app-2&session_id=...`
+   - `GET /desktop/threads/{thread_id}/procedure-context`
+
+### 4.5 自动化回归
 
 1. `cd meetyou-ui && npm run typecheck`
 2. `cd meetyou-ui && npm run test`
@@ -152,7 +177,7 @@
   - 本地 `/desktop/ws -> 云端 Core /client/ws` 实时主链正常可用。
 - 结果：通过。
 
-### 5.5 交互与主页面检查
+### 5.5 交互、主页面与非 Danxi 子页面检查
 
 #### 已由代码确认的交互
 
@@ -169,45 +194,86 @@
   - 已移除主页面默认空闲态的“已就绪：随时可以...”状态卡片。
 - [meetyou-ui/src/components/status/StatusStrip.test.tsx](/E:/Documents/Project/MeetYou/meetyou-ui/src/components/status/StatusStrip.test.tsx)
   - 已补测试，确保默认 ready 态隐藏，但连接中等非空闲态仍保留。
+- 非 Danxi 子页面对应的数据面接口全部返回 `200`：
+  - `/desktop/config/schema`
+  - `/desktop/config`
+  - `/desktop/source-profiles`
+  - `/desktop/memory`
+  - `/desktop/memory/graph`
+  - `/desktop/threads/{thread_id}/procedure-context`
+  - `/desktop/runtime/usage`
+  - `/desktop/runtime/debug`
+- 结果：通过。
+
+### 5.6 附件链路验收
+
+- `upload-ticket -> 上传 -> complete -> list -> download-ticket -> 下载 -> delete` 全链路完成。
+- 下载内容与上传内容一致：
+  - `desktop-attachment-proof-20260424`
+- 删除后附件状态返回 `deleted`。
+- 结果：通过。
+
+### 5.7 需审批写入/执行工具验收
+
+#### `file.write`
+
+- 初次触发后进入 `waiting_approval`。
+- 经 `/desktop/approvals/{approval_id}/decision` 批准后继续执行。
+- `/desktop/ws` 收到：
+  - `queued`
+  - `dispatching`
+  - `accepted`
+  - `waiting_approval`
+  - `running`
+  - `succeeded`
+- 实际写入 Windows 本地路径：
+  - `C:\Users\19243\Documents\MeetYouAgentWriteTest.txt`
+- 文件内容复核：
+  - `local-agent-write-proof-20260424`
+- 结果：通过。
+
+#### `shell.exec`
+
+- 初次触发后进入 `waiting_approval`。
+- 批准后执行命令：
+  - `echo runtime-shell-proof-20260424`
+- `/desktop/ws` 收到完整成功链路并返回标准输出：
+  - `runtime-shell-proof-20260424`
+- 结果：通过。
+
+### 5.8 云端 Core 复测结论
+
+- fresh session 下 `GET /desktop/runtime/debug?session_id=...` 现在返回 `200`，且为 bootstrap debug，不再是 `500`。
+- 缺失 session 的 runtime debug 现在返回结构化 `404`，不再是裸 `500`。
+- fresh session 下再次触发 `agent.desktop-agent-2.utility.echo`，`/desktop/ws` 收到 `queued -> dispatching -> accepted -> running -> succeeded` 全链路。
+- 云端 Core 部署滚动窗口内曾短暂出现 `/agent/ws` `502` 握手失败，但 Desktop Agent 自动重连后恢复；steady state 复测未再复现。
+- 本地最新日志未再看到此前那条 `provider_bad_request` 作为稳定复现问题。
+- 结果：通过。
 
 ## 6. 自动化验证结果
 
 - `npm run typecheck`：通过
-- `npm run test`：通过，`14` 个文件、`62` 个测试通过
+- `npm run test`：通过，`14` 个文件、`63` 个测试通过
+- `npm run build`：通过，产物位于 `meetyou-ui/release/MeetYou Setup 1.0.0.exe` 与 `meetyou-ui/release/win-unpacked/`
 - `tests.test_desktop_agent_runtime`：通过
 - `tests.test_desktop_agent_mcp_runtime`：通过
 - `tests.test_desktop_agent_ui_bridge`：通过
 - `tests.test_local_tool_agent_proxy`：通过
+- 后端最小相关 `unittest` 共 `27` 项通过
 
-## 7. 当前发现的剩余问题
+## 7. 当前边界说明
 
-### 7.1 云端 Core 侧问题，未在本轮本地修复
-
-1. `GET /desktop/runtime/debug?session_id=...`
-   - 当前返回 `500 Internal Server Error`
-   - 边界判断：更偏 Core / developer runtime surface
-2. Agent 刚连上云端 Core 时，系统会话里出现一次 `provider_bad_request`
-   - 错误内容涉及 `reasoning_content` 与 thinking mode
-   - 不阻塞用户正常会话，但属于 Core 侧系统提示链路异常
-3. 直接访问云端 `/operator/agents`
-   - 当前出现 `401`
-   - 但通过 `/desktop/workspaces/desktop-main/agents` 可以看到在线 Agent
-   - 需要后续单独确认 operator surface 的鉴权口径
-
-### 7.2 本轮未覆盖项
-
-1. Electron 多子窗口真机点击体感
-2. 附件上传 / 下载完整链路
-3. `file.write` / `shell.exec` 真实链路
-   - 这两项涉及审批或更强写入/执行风险，建议下一轮单独做顺序化验收
-4. 所有非 Danxi 子页面的逐页真机导航
-   - 本轮因不再走截图法，且未引入桌面级鼠标自动化，仅完成代码路径与 API 面验证
+1. 本轮不再采用截图法，也未引入桌面级鼠标自动化；Electron 多窗口“点击体感”属于人工主观走查项，不再作为当前阻塞。
+2. 非 Danxi 子页面本轮按“数据面接口 + 关键交互代码路径 + 自动化回归”完成验收，而不是逐页截图比对。
+3. 直接访问云端 `/operator/agents` 的 `401` 不再视为功能缺陷；当前验收以本地 `/desktop/workspaces/desktop-main/agents` 能正确枚举在线 Agent 为准。
 
 ## 8. 阶段性结论
 
 - 本地 Windows 侧最关键的 Agent 边界已经得到正向证据：
   - Agent 原生 `file.read` 在 Windows 本地执行。
   - Agent 侧注册 MCP `filesystem_tools.read_file` 也在 Windows 本地执行。
-- 本地桌面桥接到云端 Core 的正常对话主链可用。
+- Agent 原生 `file.write`、`shell.exec` 已在审批后完成真实链路验收，确认仍由本地 Windows Agent 执行。
+- 附件上传、下载、删除完整链路通过。
+- 本地桌面桥接到云端 Core 的正常对话主链、runtime debug / usage 与非 Danxi 子页面数据面可用。
 - 主页面默认“已就绪：随时可以...”卡片已去除，前端回归通过。
-- 当前剩余问题主要集中在云端 Core 的 debug / system-session 路径，以及尚未做的高风险写入类本地工具终验。
+- 按本轮“本地 Windows Desktop Agent + 云端 Core + 无截图”口径，当前验收已完成，可进入构建产物阶段。
