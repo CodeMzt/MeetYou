@@ -85,4 +85,45 @@ describe('WorkspacePanel', () => {
     expect(markup).toContain('工作区/本地知识')
     expect(markup).toContain('当前工作区优先')
   })
+
+  it('renders approval actions for pending approval-required operations', () => {
+    const markup = renderToStaticMarkup(
+      <WorkspacePanel
+        workspace={workspace}
+        procedureContext={procedureContext}
+        connectionState="connected"
+        desktopAgentConnected={false}
+        operations={[
+          {
+            operation_id: 'op_approval_1',
+            thread_id: 'thread_1',
+            workspace_id: 'personal',
+            status: 'running',
+            title: '需要审批的操作',
+            operation_type: 'tool.call',
+            execution_target: 'core_only',
+            target_agent_id: '',
+            capability_id: 'run_command',
+            call_id: 'call_1',
+            phase: 'waiting_approval',
+            detail: '',
+            result: {},
+            error: {},
+            summary: '',
+            tone: 'pending',
+            isBlocking: true,
+            approval_required: true,
+            approval_status: 'pending',
+            approval_id: 'approval_1',
+            attachments: [],
+          },
+        ] as OperationView[]}
+        approvalDisplay={null}
+        pendingHumanInput={null}
+      />,
+    )
+
+    expect(markup).toContain('批准')
+    expect(markup).toContain('拒绝')
+  })
 })

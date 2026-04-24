@@ -22,6 +22,15 @@ export default function StatusStrip({
     runtimeSnapshot?.source_profile ? `source:${runtimeSnapshot.source_profile}` : '',
     runtimeSnapshot?.action_risk ? `risk:${runtimeSnapshot.action_risk}` : '',
   ].filter(Boolean)
+  const isDefaultReadyState =
+    presentation.title === '已就绪' &&
+    presentation.phaseLabel === '就绪' &&
+    presentation.activePhase === null &&
+    !healthSnapshot?.degraded
+
+  if (isDefaultReadyState) {
+    return null
+  }
 
   return (
     <div className={styles.statusStrip}>
