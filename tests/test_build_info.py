@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from build_info import load_build_info, resolve_build_info, write_build_info
 
@@ -30,6 +31,30 @@ class BuildInfoTests(unittest.TestCase):
         self.assertEqual(loaded["component"], "core")
         self.assertEqual(loaded["package_version"], "1.2.3")
         self.assertNotIn("ignored", loaded)
+
+    def test_load_build_info_prefers_current_git_when_file_is_stale(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "build_info.json"
+            write_build_info(
+                path,
+                {
+                    "git_commit": "old-commit",
+                    "branch": "old-branch",
+                    "build_time": "2026-04-24T00:00:00Z",
+                    "component": "core",
+                    "package_version": "1.2.3",
+                },
+            )
+            with patch("build_info.infer_git_commit", return_value="current-commit"), patch(
+                "build_info.infer_git_branch",
+                return_value="main",
+            ):
+                loaded = load_build_info(path, component="core", package_version="0.0.0")
+
+        self.assertEqual(loaded["git_commit"], "current-commit")
+        self.assertEqual(loaded["branch"], "main")
+        self.assertEqual(loaded["component"], "core")
+        self.assertEqual(loaded["package_version"], "1.2.3")
 
     def test_load_build_info_falls_back_when_file_missing(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

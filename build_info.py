@@ -80,13 +80,21 @@ def load_build_info(
         except Exception:
             payload = {}
         if isinstance(payload, dict):
-            return {
+            loaded = {
                 "git_commit": str(payload.get("git_commit") or "unknown"),
                 "branch": str(payload.get("branch") or "unknown"),
                 "build_time": str(payload.get("build_time") or _utcnow_iso()),
                 "component": str(payload.get("component") or component),
                 "package_version": str(payload.get("package_version") or package_version),
             }
+            current_commit = infer_git_commit(path.parent)
+            if current_commit not in {"", "unknown"} and loaded["git_commit"] != current_commit:
+                return resolve_build_info(
+                    component=loaded["component"],
+                    package_version=loaded["package_version"],
+                    cwd=path.parent,
+                )
+            return loaded
     return resolve_build_info(component=component, package_version=package_version, cwd=path.parent)
 
 
