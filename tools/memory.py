@@ -54,6 +54,8 @@ class MemoryRecord(TypedDict, total=False):
     tags: list[str]
     entity_keys: list[str]
     source_record_ids: list[str]
+    source_attribution: dict[str, Any]
+    source_attributions: list[dict[str, Any]]
     fact_key: str
     fact_value: str
     workspace_tags: list[str]
@@ -167,14 +169,55 @@ class Memory(MemoryRepository):
             return 0.0
         return float(np.dot(arr1, arr2) / (n1 * n2))
 
+    @staticmethod
+    def _source_value(source, key: str) -> Any:
+        if source is None:
+            return ""
+        if isinstance(source, dict):
+            return source.get(key, "")
+        return getattr(source, key, "")
+
     def _resolve_user_id(self, source) -> str:
+        context = get_event_context()
+        principal_key = str(context.get("principal_key") or "").strip()
+        if principal_key:
+            return principal_key
+        principal_id = str(context.get("principal_id") or "").strip()
+        if principal_id:
+            return principal_id
         if source is None:
             return "global"
-        kind = getattr(source, "kind", "") or (source.get("kind") if isinstance(source, dict) else "")
-        source_id = getattr(source, "id", "") or (source.get("id") if isinstance(source, dict) else "")
+        kind = self._source_value(source, "kind")
+        source_id = self._source_value(source, "id")
         if kind in {"system", "heart"}:
             return "global"
         return str(source_id).strip() or "global"
+
+    def _source_attribution(self, source=None) -> dict[str, Any]:
+        context = get_event_context()
+        source = source if source is not None else context.get("source")
+        raw_metadata = self._source_value(source, "metadata")
+        source_metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        payload = {
+            "principal_key": str(context.get("principal_key") or "").strip(),
+            "principal_id": str(context.get("principal_id") or "").strip(),
+            "source_kind": str(self._source_value(source, "kind") or context.get("source_kind") or "").strip(),
+            "source_id": str(self._source_value(source, "id") or context.get("source_id") or "").strip(),
+            "source_display_name": str(self._source_value(source, "display_name") or "").strip(),
+            "source_metadata": source_metadata,
+            "client_id": str(context.get("client_id") or source_metadata.get("client_id") or "").strip(),
+            "agent_id": str(context.get("agent_id") or source_metadata.get("agent_id") or "").strip(),
+            "session_id": str(context.get("session_id") or "").strip(),
+            "thread_id": str(context.get("thread_id") or "").strip(),
+            "workspace_id": str(context.get("workspace_id") or "").strip(),
+            "active_workspace_id": str(context.get("active_workspace_id") or "").strip(),
+            "turn_id": str(context.get("turn_id") or "").strip(),
+        }
+        return {
+            key: value
+            for key, value in payload.items()
+            if value not in ("", {}, [])
+        }
 
     def _record_scope(self, user_id: str, session_id: str, record_type: str) -> MemoryScope:
         return {"user_id": user_id, "session_id": session_id if record_type == "episode" else ""}
@@ -226,6 +269,12 @@ class Memory(MemoryRepository):
         thread_id = str(context.get("thread_id") or "").strip()
         if thread_id and not str(record.get("thread_id") or "").strip():
             record["thread_id"] = thread_id
+        attribution = self._source_attribution()
+        if attribution:
+            existing = record.get("source_attribution")
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            merged.update(attribution)
+            record["source_attribution"] = merged
         return record
 
     async def save_memory_graph(self):
@@ -315,6 +364,12 @@ class Memory(MemoryRepository):
                 tag_text = str(tag or "").strip()
                 if tag_text and tag_text not in existing_tags:
                     existing_tags.append(tag_text)
+            attribution = self._source_attribution(source)
+            if attribution:
+                existing_attr = existing.get("source_attribution")
+                merged_attr = dict(existing_attr) if isinstance(existing_attr, dict) else {}
+                merged_attr.update(attribution)
+                existing["source_attribution"] = merged_attr
             self._enrich_record_workspace_scope(existing)
             if await self._apply_strong_consistent_memory_write(user_id, existing):
                 existing_tags = [tag for tag in existing_tags if tag != "pending_consolidation"]
@@ -351,6 +406,7 @@ class Memory(MemoryRepository):
             "tags": record_tags,
             "entity_keys": [],
             "source_record_ids": [],
+            "source_attribution": self._source_attribution(source),
         }
         self._enrich_record_workspace_scope(record)
         self._store["records"].append(record)

@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from core.db.models.context_pool import ContextPoolItem
 from core.db.repositories.base import RepositoryBase
 
 
 class ContextPoolRepository(RepositoryBase):
+    @staticmethod
+    def _sort_timestamp(value: datetime | None) -> datetime:
+        if value is None:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
     def create(
         self,
         *,
@@ -55,6 +65,43 @@ class ContextPoolRepository(RepositoryBase):
 
     def get_by_context_id(self, context_id: str) -> ContextPoolItem | None:
         return self.session.query(ContextPoolItem).filter_by(context_id=context_id).one_or_none()
+
+    def list_active_for_principal(self, *, principal_id, limit: int | None = None) -> list[ContextPoolItem]:
+        query = (
+            self.session.query(ContextPoolItem)
+            .filter(ContextPoolItem.principal_id == principal_id, ContextPoolItem.status == "active")
+            .order_by(ContextPoolItem.created_at.desc())
+        )
+        if limit is not None:
+            query = query.limit(max(1, int(limit or 1)))
+        return list(query.all())
+
+    def prune_for_principal(self, *, principal_id, max_items: int) -> int:
+        max_active = max(1, int(max_items or 1))
+        rows = self.list_active_for_principal(principal_id=principal_id)
+        if len(rows) <= max_active:
+            return 0
+        ranked = sorted(
+            rows,
+            key=lambda item: (
+                float(item.importance or 0.0),
+                self._sort_timestamp(item.created_at),
+            ),
+            reverse=True,
+        )
+        keep_ids = {item.id for item in ranked[:max_active]}
+        pruned_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        count = 0
+        for row in rows:
+            if row.id in keep_ids:
+                continue
+            row.status = "pruned"
+            merged_meta = dict(row.meta or {})
+            merged_meta.update({"pruned_reason": "context_pool_window", "pruned_at": pruned_at})
+            row.meta = merged_meta
+            count += 1
+        self.session.flush()
+        return count
 
     def list_candidates(
         self,

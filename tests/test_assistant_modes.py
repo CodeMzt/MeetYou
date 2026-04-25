@@ -663,6 +663,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "read_web_page",
                     "remember_knowledge",
                     "manage_memories",
+                    "list_workspaces",
                     "switch_workspace",
                     "list_skills",
                     "load_skill",

@@ -1,5 +1,18 @@
 # MeetYou V3 Implementation Plan
 
+## V3 Finalization Delta: Workspace, Memory, Context Continuity
+
+This pass closes the workspace/memory/context continuity gap across clients and agents. Workspaces remain affinity and ranking scopes rather than privacy boundaries. Runtime memory now resolves ownership to the current principal by default, while client/source/agent ids are retained as attribution metadata and can still drive operator filters. ContextPool remains principal-level, is bounded by an active-window retention policy, and now accepts salient tool and Agent operation results in addition to message turns.
+
+Implemented public surface:
+
+- assistant tool `list_workspaces`
+- existing assistant tool `switch_workspace`
+- existing `PATCH /client/sessions/{session_id}/active-workspace`
+- existing `GET /client/context-pool/query`
+
+Verification added/updated around cross-client memory recall, workspace tool discovery/switching, ContextPool window pruning, and Agent operation result ingestion.
+
 ## V3 Finalization Delta: Heartbeat, F324, Phase 5
 
 This pass closes the deployable V3 baseline around heartbeat idle poke, Windows-first desktop backend packaging, and the Phase 5 CI/observability baseline. Idle poke is configurable, no longer runs as a normal full-context transient turn, can compact context once, persists visible proactive messages when a client thread exists, and is manageable through `manage_heartbeat_settings` plus the schema-backed config APIs. F324 now uses `scripts/build-desktop-backend.ps1` to place a PyInstaller one-dir backend under `meetyou-ui/resources/desktop-backend`, which Electron packaged mode starts from `process.resourcesPath`. Phase 5 adds Linux CI and a manual Windows desktop release workflow.

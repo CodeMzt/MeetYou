@@ -116,6 +116,7 @@ class ToolsManager:
             "read_attachment": self._attachment_tools.read_attachment,
             "delete_attachment": self._attachment_tools.delete_attachment,
             "manage_procedures": self._procedure_tools.manage_procedures,
+            "list_workspaces": self._workspace_tools.list_workspaces,
             "switch_workspace": self._workspace_tools.switch_workspace,
             "summarize_text": self._lightweight_tools.summarize_text,
             "organize_notes": self._lightweight_tools.organize_notes,

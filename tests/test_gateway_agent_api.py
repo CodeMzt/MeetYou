@@ -11,6 +11,7 @@ from sqlalchemy import select
 from core.db.bootstrap import bootstrap_core_domain
 from core.db.models.agent import Agent, AgentCapabilitySnapshot
 from core.db.models.capability import Capability, CapabilityWorkspaceBinding
+from core.db.models.context_pool import ContextPoolItem
 from core.db.models.operation import Operation, OperationCall
 from core.event_bus import EventBus
 from core.io_protocol import EventSource, EventTarget, EventType, InboundEvent, OutboundEvent, SourceKind, TargetKind, make_source, make_target
@@ -514,6 +515,9 @@ class GatewayAgentApiTests(unittest.TestCase):
             self.assertEqual(operation.status, "succeeded")
             self.assertEqual(call.status, "succeeded")
             self.assertEqual(call.result["echo"], "hello-agent")
+            context_items = session.execute(select(ContextPoolItem).where(ContextPoolItem.item_type == "agent_result")).scalars().all()
+            self.assertTrue(any("hello-agent" in item.content for item in context_items))
+            self.assertTrue(any(item.source_agent_id == call.target_agent_id for item in context_items))
 
     def test_agent_call_result_normalizes_attachment_outputs(self):
         hello = {
