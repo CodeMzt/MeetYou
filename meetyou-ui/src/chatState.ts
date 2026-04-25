@@ -205,31 +205,37 @@ function appendClientMessage(turns: ChatTurn[], message: ClientMessage): ChatTur
   const existing = turns.findIndex(
     (turn) =>
       turn.id === message.message_id ||
-      (logicalTurnId && turn.turnId === logicalTurnId) ||
-      (message.temporary && message.role === 'assistant' && turn.temporary && turn.content === message.content),
+      (logicalTurnId && turn.turnId === logicalTurnId),
   )
   if (existing !== -1) {
     return turns
   }
-  return [
-    ...turns,
-    {
-      id: message.message_id,
-      streamId: '',
-      turnId: logicalTurnId,
-      role: message.role,
-      content: message.content,
-      reasoning: '',
-      activities: [],
-      isStreaming: false,
-      createdAt: Date.parse(message.created_at) || Date.now(),
-      error: buildMessageError(message.status, message.role),
-      temporary: Boolean(message.temporary),
-    },
-  ]
+  const nextTurn = {
+    id: message.message_id,
+    streamId: '',
+    turnId: logicalTurnId,
+    role: message.role,
+    content: message.content,
+    reasoning: '',
+    activities: [],
+    isStreaming: false,
+    createdAt: Date.parse(message.created_at) || Date.now(),
+    error: buildMessageError(message.status, message.role),
+    temporary: Boolean(message.temporary),
+  }
+  if (message.channel === 'short_reply') {
+    const last = turns[turns.length - 1]
+    if (last?.role === 'assistant' && last.isStreaming && !last.content && !last.reasoning) {
+      return [...turns.slice(0, -1), nextTurn, last]
+    }
+  }
+  return [...turns, nextTurn]
 }
 
 function completeStreamMessage(turns: ChatTurn[], message: ClientMessage, streamId: string, turnId: string): ChatTurn[] {
+  if (message.channel === 'short_reply' || message.temporary) {
+    return appendClientMessage(turns, message)
+  }
   const index = findTurnIndex(turns, streamId, turnId)
   if (index === -1) {
     return [
@@ -269,14 +275,11 @@ function completeStreamMessage(turns: ChatTurn[], message: ClientMessage, stream
 function appendTurnContent(turns: ChatTurn[], action: Extract<ChatAction, { type: 'append_message' }>): ChatTurn[] {
   const { turns: nextTurns, index } = upsertAssistantTurn(turns, action.streamId, action.turnId)
   const current = nextTurns[index]
-  const replaceTemporaryAnswer = action.channel === 'answer' && Boolean(current.temporary)
   nextTurns[index] = {
     ...current,
     content:
       action.channel === 'answer'
-        ? replaceTemporaryAnswer
-          ? action.content
-          : current.content + action.content
+        ? current.content + action.content
         : current.content,
     reasoning: action.channel === 'reasoning' ? current.reasoning + action.content : current.reasoning,
     temporary: action.channel === 'answer' ? false : current.temporary,

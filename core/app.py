@@ -8,6 +8,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 import logging
+import os
 import traceback
 from datetime import datetime, timezone
 from typing import Any
@@ -80,6 +81,9 @@ _CONTEXT_POOL_TOOL_SKIPLIST = {
     "switch_workspace",
     "list_workspaces",
     "update_context",
+    "emit_short_reply",
+    "emit_temporary_reply",
+    "restart_core",
 }
 
 
@@ -209,7 +213,7 @@ _RESTART_REQUIRED_KEYS = {
 
 
 class App:
-    def __init__(self, health_getter=None, telemetry_recorder=None):
+    def __init__(self, health_getter=None, telemetry_recorder=None, restart_requester=None):
         setup_logger(enable_console=True, component="service")
 
         self.event_bus = EventBus()
@@ -285,6 +289,7 @@ class App:
         self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
         self._health_getter = health_getter
         self._telemetry_recorder = telemetry_recorder
+        self._restart_requester = restart_requester
         self.tools_manager.set_execution_observer(self._observe_tool_result)
 
         self._brain_source = make_source(SourceKind.SYSTEM.value, "brain")
@@ -769,6 +774,7 @@ class App:
         system_tools.set_heartbeat_settings_provider(self.get_heartbeat_settings)
         system_tools.set_heartbeat_settings_updater(self.update_heartbeat_settings)
         system_tools.set_temporary_reply_emitter(self.emit_temporary_reply)
+        system_tools.set_core_restart_handler(self.request_core_restart)
 
     async def _refresh_mode_runtime(self):
         self.mode_manager = AssistantModeManager(self.config)
@@ -2013,21 +2019,69 @@ class App:
         resolved_session_id = str(session_id or context.get("session_id") or "").strip()
         if not resolved_session_id:
             return {"delivered": False, "reason": "session_unavailable"}
+        snapshot = self.brain.get_session_runtime_snapshot(resolved_session_id) or {}
+        status = str(snapshot.get("status") or "").strip()
+        if status not in {RuntimeStatus.THINKING.value, RuntimeStatus.TOOL_CALLING.value}:
+            return {
+                "delivered": False,
+                "reason": "short_reply_not_allowed",
+                "status": status,
+            }
+        context_turn_id = str(turn_id or context.get("turn_id") or "").strip()
+        active_turn_id = str(snapshot.get("turn_id") or "").strip()
+        if context_turn_id and active_turn_id and context_turn_id != active_turn_id:
+            return {
+                "delivered": False,
+                "reason": "turn_mismatch",
+                "turn_id": context_turn_id,
+                "active_turn_id": active_turn_id,
+            }
         bridge = self._get_client_thread_bridge()
-        result = await bridge.publish_temporary_assistant_message(
+        result = await bridge.publish_short_assistant_message(
             resolved_session_id,
             content=text,
-            turn_id=str(turn_id or context.get("turn_id") or "").strip(),
+            turn_id=active_turn_id or context_turn_id,
+            stream_id=str(snapshot.get("stream_id") or "").strip(),
         )
         if result.get("delivered"):
             logger.info(
-                "Temporary reply emitted",
+                "Short reply emitted",
                 extra={
                     "session_id": resolved_session_id,
-                    "turn_id": str(turn_id or context.get("turn_id") or "").strip(),
+                    "turn_id": active_turn_id or context_turn_id,
                 },
             )
         return result
+
+    async def request_core_restart(
+        self,
+        password: str,
+        *,
+        reason: str = "",
+        delay_seconds: int = 1,
+        session_id: str = "",
+        source=None,
+    ) -> dict[str, Any]:
+        del source
+        expected = (
+            os.getenv("MEETYOU_CORE_ADMIN_PASSWORD")
+            or str(self.config.get("core_admin_password") or "").strip()
+            or "123456"
+        )
+        if str(password or "") != expected:
+            return {"ok": False, "accepted": False, "reason": "invalid_password"}
+        requester = self._restart_requester
+        if not callable(requester):
+            return {"ok": False, "accepted": False, "reason": "restart_unsupported"}
+        delay = max(0, min(int(delay_seconds or 0), 30))
+        result = requester(reason=str(reason or "").strip(), delay_seconds=delay, session_id=str(session_id or "").strip())
+        if asyncio.iscoroutine(result):
+            result = await result
+        payload = dict(result or {})
+        payload.setdefault("ok", bool(payload.get("accepted")))
+        payload.setdefault("accepted", bool(payload.get("ok")))
+        payload.setdefault("delay_seconds", delay)
+        return payload
 
     async def apply_config_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
         snapshot = self.config.begin_transaction()

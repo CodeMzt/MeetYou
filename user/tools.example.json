@@ -182,14 +182,165 @@
     {
       "type": "function",
       "function": {
-        "name": "emit_temporary_reply",
-        "description": "Send a short temporary assistant reply to the current user while the turn continues. Keep it brief; it will be replaced by the final answer.",
+        "name": "list_active_agents",
+        "description": "List currently online Agent connections, optionally scoped to a workspace.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "workspace_id": {
+              "type": "string",
+              "description": "Optional workspace id."
+            },
+            "include_capabilities": {
+              "type": "boolean",
+              "description": "Include available capabilities for each agent.",
+              "default": false
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_active_clients",
+        "description": "List currently online Client websocket connections, optionally scoped to a workspace or thread.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "workspace_id": {
+              "type": "string",
+              "description": "Optional workspace id."
+            },
+            "thread_id": {
+              "type": "string",
+              "description": "Optional thread id."
+            },
+            "include_owned_agents": {
+              "type": "boolean",
+              "description": "Include online agents owned by each client.",
+              "default": false
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "send_endpoint_message",
+        "description": "Send a realtime notice or dispatch a capability call to a target Agent or Client.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "target_type": {
+              "type": "string",
+              "enum": [
+                "agent",
+                "client"
+              ]
+            },
+            "target_id": {
+              "type": "string"
+            },
+            "delivery_kind": {
+              "type": "string",
+              "enum": [
+                "notice",
+                "capability_call"
+              ],
+              "default": "notice"
+            },
+            "content": {
+              "type": "string"
+            },
+            "capability_ref": {
+              "type": "string"
+            },
+            "arguments": {
+              "type": "object",
+              "default": {}
+            },
+            "workspace_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "default": 120
+            },
+            "confirmed": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [
+            "target_type",
+            "target_id",
+            "delivery_kind"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "emit_short_reply",
+        "description": "Send a brief standalone assistant reply to the current session while the current turn is still thinking or tool-calling. May be called multiple times.",
         "parameters": {
           "type": "object",
           "properties": {
             "content": {
               "type": "string",
-              "description": "A short temporary reply, ideally one sentence."
+              "description": "A short standalone reply, ideally one sentence."
+            }
+          },
+          "required": [
+            "content"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "restart_core",
+        "description": "Restart the Core Service after validating the admin password.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "password": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "delay_seconds": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          "required": [
+            "password"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "emit_temporary_reply",
+        "description": "Compatibility alias for emit_short_reply. Sends a brief standalone assistant reply while the current turn is still thinking or tool-calling.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "A short standalone reply, ideally one sentence."
             }
           },
           "required": [

@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 import unittest
 
+from core.app import App
 from core.client_thread_bridge import ClientThreadBridge
 from core.io_protocol import EventTarget, TargetKind
 from core.session_manager import SessionManager
+from core.status import RuntimeStatus
 
 
 @dataclass
@@ -78,9 +80,26 @@ class _MessageServiceStub:
             role=kwargs.get("role", "assistant"),
             content=kwargs.get("content", ""),
             status=kwargs.get("status", "completed"),
-            channel="message",
+            channel=kwargs.get("channel", "message"),
             created_at=None,
         )
+
+
+class _BrainStub:
+    def __init__(self, snapshot: dict):
+        self.snapshot = snapshot
+
+    def get_session_runtime_snapshot(self, session_id: str):
+        return dict(self.snapshot)
+
+
+class _ShortReplyBridgeStub:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def publish_short_assistant_message(self, session_id: str, **kwargs):
+        self.calls.append({"session_id": session_id, **dict(kwargs)})
+        return {"delivered": True, "session_id": session_id, **dict(kwargs)}
 
 
 class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
@@ -186,6 +205,74 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway.thread_events[1]["payload"]["session_id"], "client-session-1")
         self.assertEqual(gateway.thread_events[1]["payload"]["message"]["session_id"], "client-session-1")
         self.assertEqual(gateway.thread_events[1]["payload"]["message"]["content"], "hello persisted")
+
+    async def test_short_reply_persists_as_standalone_message_created(self):
+        session_manager = SessionManager()
+        session_manager.bind_runtime_session(
+            source=SimpleNamespace(kind="system", id="agent:desktop-main-agent", metadata={}),
+            session_id="system:agent:desktop-main-agent",
+            default_target=EventTarget(kind=TargetKind.INTERNAL.value, id="desktop-main-agent"),
+            metadata={
+                "thread_id": "thr_recent",
+                "workspace_id": "desktop-main",
+                "client_id": "desktop-app",
+                "bridged_session_id": "client-session-1",
+            },
+        )
+        gateway = _GatewayStub(session_manager)
+        message_service = _MessageServiceStub()
+        bridged_session = _SessionRow(
+            id=9,
+            session_id="client-session-1",
+            thread_id=7,
+            workspace_id=3,
+            client_id=5,
+        )
+        core_services = SimpleNamespace(
+            session=_SessionServiceStub([bridged_session]),
+            thread=_ThreadServiceStub(_ThreadRow(id=7, thread_id="thr_recent", workspace_id=3)),
+            workspace=_WorkspaceServiceStub(),
+            message=message_service,
+        )
+        bridge = ClientThreadBridge(
+            gateway_getter=lambda: gateway,
+            core_services_getter=lambda: core_services,
+        )
+
+        result = await bridge.publish_short_assistant_message(
+            "system:agent:desktop-main-agent",
+            content="I will check that.",
+            stream_id="stream-1",
+            turn_id="turn-1",
+        )
+
+        self.assertTrue(result["delivered"])
+        self.assertEqual(len(message_service.created), 1)
+        self.assertEqual(message_service.created[0]["channel"], "short_reply")
+        self.assertEqual(message_service.created[0]["meta"]["short_reply"], True)
+        self.assertEqual(gateway.thread_events[0]["event_type"], "message.created")
+        self.assertEqual(gateway.thread_events[0]["payload"]["message"]["channel"], "short_reply")
+        self.assertNotIn("stream_id", gateway.thread_events[0]["payload"])
+
+    async def test_app_short_reply_only_allowed_during_active_turn(self):
+        app = App.__new__(App)
+        bridge = _ShortReplyBridgeStub()
+        app._get_client_thread_bridge = lambda: bridge
+        app.brain = _BrainStub({"status": RuntimeStatus.IDLE.value, "turn_id": "turn-1", "stream_id": "stream-1"})
+
+        rejected = await App.emit_temporary_reply(app, "not now", session_id="sess-1", turn_id="turn-1")
+
+        self.assertFalse(rejected["delivered"])
+        self.assertEqual(rejected["reason"], "short_reply_not_allowed")
+        self.assertEqual(bridge.calls, [])
+
+        app.brain = _BrainStub({"status": RuntimeStatus.TOOL_CALLING.value, "turn_id": "turn-1", "stream_id": "stream-1"})
+        accepted = await App.emit_temporary_reply(app, "checking", session_id="sess-1", turn_id="turn-1")
+
+        self.assertTrue(accepted["delivered"])
+        self.assertEqual(bridge.calls[0]["content"], "checking")
+        self.assertEqual(bridge.calls[0]["turn_id"], "turn-1")
+        self.assertEqual(bridge.calls[0]["stream_id"], "stream-1")
 
 
 if __name__ == "__main__":

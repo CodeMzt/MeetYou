@@ -10,6 +10,7 @@ from sqlalchemy import select
 from core.db.bootstrap import bootstrap_core_domain
 from core.db.models.operation import Operation, OperationCall
 from core.services.agent_dispatch_service import AgentDispatchError
+from tools.endpoint_tools import EndpointTools
 
 
 TEST_DATABASE_NAME = "meetyou_agent_dispatch_test"
@@ -270,3 +271,99 @@ class AgentDispatchServiceTests(unittest.IsolatedAsyncioTestCase):
             ).scalars().all()
             self.assertEqual(len(operations), 0)
             self.assertEqual(len(calls), 0)
+
+    async def test_specific_agent_capability_requires_confirmation_for_risky_capability(self):
+        self.domain.services.capability.replace_agent_capabilities(
+            agent=self.agent,
+            capabilities=[
+                {
+                    "capability_id": "agent.desktop-main-agent.file.write",
+                    "kind": "tool",
+                    "title": "Write Local File",
+                    "risk_level": "write",
+                    "requires_confirmation": True,
+                    "workspace_ids": ["desktop-main"],
+                }
+            ],
+            workspace_rows=[self.desktop_workspace],
+            revision=3,
+        )
+
+        with self.assertRaises(AgentDispatchError) as error_context:
+            await self.domain.agent_dispatch.dispatch_specific_agent_capability(
+                agent_id="desktop-main-agent",
+                capability_ref="file.write",
+                arguments={"path": "demo.txt", "content": "hello"},
+                session_id=self.session.session_id,
+                timeout_seconds=5,
+                confirmed=False,
+            )
+
+        self.assertEqual(error_context.exception.tool_error_code, "agent_capability_confirmation_required")
+
+    async def test_endpoint_tool_routes_client_capability_call_to_owned_agent(self):
+        class _AgentWsManager:
+            async def connected_agent_ids(self):
+                return {"desktop-main-agent"}
+
+            async def snapshot(self):
+                return [{"agent_id": "desktop-main-agent", "connected_at": "2026-04-08T00:00:00Z"}]
+
+        class _ClientWsManager:
+            async def snapshot(self, **kwargs):
+                if kwargs.get("client_id") == "electron-main":
+                    return [
+                        {
+                            "client_id": "electron-main",
+                            "session_id": self_session_id,
+                            "thread_id": self_thread_id,
+                            "workspace_id": "desktop-main",
+                            "connected_at": "2026-04-08T00:00:00Z",
+                        }
+                    ]
+                return []
+
+        class _Gateway:
+            agent_ws_manager = _AgentWsManager()
+            client_ws_manager = _ClientWsManager()
+
+        self_session_id = self.session.session_id
+        self_thread_id = self.thread.thread_id
+
+        async def fake_transport(*, agent_id: str, payload: dict) -> bool:
+            self.assertEqual(agent_id, "desktop-main-agent")
+            self.assertEqual(payload["payload"]["capability_id"], "agent.desktop-main-agent.file.read")
+            call_id = payload["payload"]["call_id"]
+
+            async def resolve_later():
+                await asyncio.sleep(0.01)
+                await self.domain.agent_dispatch.notify_call_result(
+                    call_id=call_id,
+                    result={"summary": "demo.txt", "content": "hello"},
+                )
+                self.domain.services.operation_call.mark_succeeded(
+                    call_id=call_id,
+                    result={"summary": "demo.txt", "content": "hello"},
+                )
+
+            asyncio.create_task(resolve_later())
+            return True
+
+        self.domain.agent_dispatch.set_transport(fake_transport)
+        tools = EndpointTools()
+        tools.set_core_domain(self.domain)
+        tools.set_runtime(gateway_getter=lambda: _Gateway())
+
+        result = await tools.send_endpoint_message(
+            target_type="client",
+            target_id="electron-main",
+            delivery_kind="capability_call",
+            capability_ref="file.read",
+            arguments={"path": "demo.txt"},
+            session_id=self.session.session_id,
+            timeout_seconds=5,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["agent_id"], "desktop-main-agent")
+        self.assertEqual(result["result"]["content"], "hello")

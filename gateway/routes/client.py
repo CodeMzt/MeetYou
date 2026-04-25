@@ -2257,6 +2257,10 @@ def build_client_router(gateway) -> APIRouter:
                         break
                     continue
                 source = make_source(SourceKind.WEB.value, str(command.client_id or "client-ws").strip() or "client-ws")
+                bound_client_id = str(command.client_id or "").strip()
+                bound_workspace_id = ""
+                bound_client_type = ""
+                bound_display_name = ""
                 if domain is not None:
                     session_row, thread_row, workspace_row, client_row, session_error_code, session_error_message = _resolve_client_session_for_thread(
                         domain,
@@ -2300,6 +2304,10 @@ def build_client_router(gateway) -> APIRouter:
                             "session_row_id": str(getattr(session_row, "id", "") or ""),
                         },
                     )
+                    bound_client_id = getattr(client_row, "client_id", "") or bound_client_id
+                    bound_workspace_id = getattr(workspace_row, "workspace_id", "")
+                    bound_client_type = getattr(client_row, "client_type", "")
+                    bound_display_name = getattr(client_row, "display_name", "")
                 else:
                     _bind_runtime_session(
                         gateway,
@@ -2310,6 +2318,15 @@ def build_client_router(gateway) -> APIRouter:
                             "client_id": str(command.client_id or "").strip(),
                         },
                     )
+                await gateway.client_ws_manager.bind_connection(
+                    websocket,
+                    thread_id=thread_id,
+                    client_id=bound_client_id,
+                    session_id=command_session_id,
+                    workspace_id=bound_workspace_id,
+                    client_type=bound_client_type,
+                    display_name=bound_display_name,
+                )
                 if action == "confirm_response":
                     if command.request_id is None or command.accepted is None:
                         sent = await gateway._safe_send_json(

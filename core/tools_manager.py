@@ -20,6 +20,7 @@ from tools.attachment_tools import AttachmentTools
 from tools.agent_memory import AgentMemoryTools
 from tools.danxi_tools import get_shared_danxi_tools
 from tools.document_tools import DocumentTools
+from tools.endpoint_tools import EndpointTools
 from tools.lightweight_tools import LightweightTools
 from tools.office_tools import OfficeTools
 from tools.procedure_tools import ProcedureTools
@@ -41,6 +42,10 @@ _ORDER_REQUIRED_TOOLS = {
     "manage_memories",
     "manage_tasks",
     "manage_scheduled_tasks",
+    "send_endpoint_message",
+    "emit_short_reply",
+    "emit_temporary_reply",
+    "restart_core",
     "danxi_login",
     "danxi_logout",
     "danxi_set_webvpn_cookie",
@@ -101,6 +106,7 @@ class ToolsManager:
         self._document_tools = (
             DocumentTools(mode_manager, allow_local_fallback=False) if mode_manager is not None else None
         )
+        self._endpoint_tools = EndpointTools()
         self._lightweight_tools = LightweightTools()
         self._procedure_tools = ProcedureTools()
         self._workspace_tools = WorkspaceTools()
@@ -128,7 +134,12 @@ class ToolsManager:
             "get_sys_vitals": system_tools_module.get_sys_vitals,
             "get_background_status": getattr(system_tools_module, "get_background_status", None),
             "manage_heartbeat_settings": getattr(system_tools_module, "manage_heartbeat_settings", None),
+            "restart_core": getattr(system_tools_module, "restart_core", None),
+            "emit_short_reply": getattr(system_tools_module, "emit_short_reply", None),
             "emit_temporary_reply": getattr(system_tools_module, "emit_temporary_reply", None),
+            "list_active_agents": self._endpoint_tools.list_active_agents,
+            "list_active_clients": self._endpoint_tools.list_active_clients,
+            "send_endpoint_message": self._endpoint_tools.send_endpoint_message,
             "search_web": self._web_search_tools.search_web,
             "read_web_page": self._web_search_tools.read_web_page,
             "research_topic": self._scenario_tools.research_topic,
@@ -232,9 +243,11 @@ class ToolsManager:
         self._attachment_tools.set_core_domain(core_domain)
         self._procedure_tools.set_core_domain(core_domain)
         self._workspace_tools.set_core_domain(core_domain)
+        self._endpoint_tools.set_core_domain(core_domain)
 
     def set_runtime_bridge(self, *, session_manager=None, gateway_getter=None) -> None:
         self._workspace_tools.set_runtime(session_manager=session_manager, gateway_getter=gateway_getter)
+        self._endpoint_tools.set_runtime(gateway_getter=gateway_getter)
 
     def set_state_backends(self, *, office_backend=None, study_backend=None, danxi_backend=None) -> None:
         if self._danxi_tools is not None and danxi_backend is not None:

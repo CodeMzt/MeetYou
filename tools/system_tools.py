@@ -24,6 +24,7 @@ _background_status_provider = None
 _heartbeat_settings_provider = None
 _heartbeat_settings_updater = None
 _temporary_reply_emitter = None
+_core_restart_handler = None
 _agent_dispatcher = None
 _allow_local_fallback = True
 
@@ -95,6 +96,11 @@ def set_heartbeat_settings_updater(updater):
 def set_temporary_reply_emitter(emitter):
     global _temporary_reply_emitter
     _temporary_reply_emitter = emitter
+
+
+def set_core_restart_handler(handler):
+    global _core_restart_handler
+    _core_restart_handler = handler
 
 
 def set_agent_dispatcher(dispatcher):
@@ -413,7 +419,7 @@ async def manage_heartbeat_settings(action: str = "get", updates: dict | None = 
     )
 
 
-async def emit_temporary_reply(content: str, session_id: str = "", source=None) -> str:
+async def emit_short_reply(content: str, session_id: str = "", source=None) -> str:
     text = re.sub(r"\s+", " ", str(content or "").strip())
     if not text:
         return json.dumps({"ok": False, "error": "content is required"}, ensure_ascii=False, indent=2)
@@ -441,5 +447,34 @@ async def emit_temporary_reply(content: str, session_id: str = "", source=None) 
     payload = dict(result or {})
     payload.setdefault("ok", bool(payload.get("delivered")))
     payload.setdefault("content", text)
+    payload.setdefault("session_id", resolved_session_id)
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+async def emit_temporary_reply(content: str, session_id: str = "", source=None) -> str:
+    return await emit_short_reply(content, session_id=session_id, source=source)
+
+
+async def restart_core(password: str, reason: str = "", delay_seconds: int = 1, session_id: str = "", source=None) -> str:
+    handler = _core_restart_handler
+    if handler is None:
+        return json.dumps(
+            {"ok": False, "accepted": False, "reason": "restart handler is not available"},
+            ensure_ascii=False,
+            indent=2,
+        )
+    context = get_event_context()
+    resolved_session_id = str(session_id or context.get("session_id") or "").strip()
+    result = handler(
+        str(password or ""),
+        reason=str(reason or ""),
+        delay_seconds=int(delay_seconds or 0),
+        session_id=resolved_session_id,
+        source=source if source is not None else context.get("source"),
+    )
+    if asyncio.iscoroutine(result):
+        result = await result
+    payload = dict(result or {})
+    payload.setdefault("ok", bool(payload.get("accepted")))
     payload.setdefault("session_id", resolved_session_id)
     return json.dumps(payload, ensure_ascii=False, indent=2)

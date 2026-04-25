@@ -146,13 +146,30 @@ describe('chatState', () => {
     expect(state.messages[0]?.isStreaming).toBe(false)
   })
 
-  it('keeps temporary assistant replies on the active turn until final answer arrives', () => {
+  it('keeps short replies as independent turns before the final answer', () => {
     let state = reduceChatState(createInitialChatState(), {
-      type: 'complete_stream_message',
-      streamId: 'stream-1',
-      turnId: 'turn-1',
+      type: 'sync_runtime',
+      snapshot: {
+        session_id: 'sess_1',
+        status: 'thinking',
+        detail: '',
+        active_tools: [],
+        current_mode: 'general',
+        route_reason: '',
+        action_risk: 'read',
+        source_profile: '',
+        stream_id: 'stream-1',
+        turn_id: 'turn-1',
+        finish_reason: '',
+        reply_control: {},
+        updated_at: '2026-04-08T00:00:00Z',
+      },
+    })
+
+    state = reduceChatState(state, {
+      type: 'append_client_message',
       message: {
-        message_id: 'msg_temp',
+        message_id: 'msg_short_1',
         thread_id: 'thr_1',
         session_id: 'sess_1',
         workspace_id: 'personal',
@@ -161,15 +178,27 @@ describe('chatState', () => {
         role: 'assistant',
         content: 'working on it',
         status: 'completed',
-        channel: 'message',
+        channel: 'short_reply',
         created_at: '2026-04-08T00:00:01Z',
-        temporary: true,
       },
     })
 
-    expect(state.messages[0]?.temporary).toBe(true)
-    expect(state.messages[0]?.isStreaming).toBe(true)
-    expect(state.messages[0]?.content).toBe('working on it')
+    state = reduceChatState(state, {
+      type: 'append_client_message',
+      message: {
+        message_id: 'msg_short_2',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        workspace_id: 'personal',
+        active_workspace_id: 'personal',
+        client_id: '',
+        role: 'assistant',
+        content: 'checking sources',
+        status: 'completed',
+        channel: 'short_reply',
+        created_at: '2026-04-08T00:00:02Z',
+      },
+    })
 
     state = reduceChatState(state, {
       type: 'append_message',
@@ -183,12 +212,14 @@ describe('chatState', () => {
       activeTurnId: 'turn-1',
     })
 
-    expect(state.messages[0]?.temporary).toBe(false)
-    expect(state.messages[0]?.content).toBe('final answer')
-    expect(state.messages[0]?.isStreaming).toBe(true)
+    expect(state.messages).toHaveLength(3)
+    expect(state.messages[0]?.content).toBe('working on it')
+    expect(state.messages[1]?.content).toBe('checking sources')
+    expect(state.messages[2]?.content).toBe('final answer')
+    expect(state.messages[2]?.turnId).toBe('turn-1')
   })
 
-  it('applies final completed payload after a temporary reply without changing the logical turn id', () => {
+  it('treats legacy temporary completed payloads as standalone replies', () => {
     let state = reduceChatState(createInitialChatState(), {
       type: 'complete_stream_message',
       streamId: 'stream-1',
@@ -210,29 +241,23 @@ describe('chatState', () => {
     })
 
     state = reduceChatState(state, {
-      type: 'complete_stream_message',
+      type: 'append_message',
+      role: 'assistant',
+      content: 'done',
       streamId: 'stream-1',
       turnId: 'turn-1',
-      message: {
-        message_id: 'msg_final',
-        thread_id: 'thr_1',
-        session_id: 'sess_1',
-        workspace_id: 'personal',
-        active_workspace_id: 'personal',
-        client_id: '',
-        role: 'assistant',
-        content: 'done',
-        status: 'completed',
-        channel: 'message',
-        created_at: '2026-04-08T00:00:02Z',
-      },
+      channel: 'answer',
+      phase: 'chunk',
+      eventId: 'evt-final',
+      activeTurnId: 'turn-1',
     })
 
-    expect(state.messages[0]?.id).toBe('msg_final')
-    expect(state.messages[0]?.turnId).toBe('turn-1')
-    expect(state.messages[0]?.temporary).toBe(false)
-    expect(state.messages[0]?.content).toBe('done')
-    expect(state.messages[0]?.isStreaming).toBe(false)
+    expect(state.messages).toHaveLength(2)
+    expect(state.messages[0]?.id).toBe('msg_temp')
+    expect(state.messages[0]?.temporary).toBe(true)
+    expect(state.messages[0]?.content).toBe('working on it')
+    expect(state.messages[1]?.turnId).toBe('turn-1')
+    expect(state.messages[1]?.content).toBe('done')
   })
 
   it('keeps newer ready usage snapshot when hydration returns older bootstrap data', () => {

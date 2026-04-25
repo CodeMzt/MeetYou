@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import logging
 from pathlib import Path
@@ -54,6 +55,8 @@ class ServiceRuntime:
         self._cil_client_factory = cil_client_factory or CILClient
         self._launcher_runner = launcher_runner or run_launcher
         self._app: App | None = None
+        self._restart_requested = False
+        self._restart_task: asyncio.Task | None = None
         self._mark_all_components(
             RuntimeHealthStatus.STARTING,
             "Runtime skeleton created",
@@ -116,17 +119,34 @@ class ServiceRuntime:
             raise
 
     async def _run_service(self) -> None:
-        self._app = self._build_app()
-        runner = getattr(self._app, "run", None)
-        if callable(runner):
-            run_params = inspect.signature(runner).parameters
-            if "on_ready" in run_params and "on_stopping" in run_params:
-                await runner(
-                    on_ready=self._on_service_ready,
-                    on_stopping=self._on_service_stopping,
-                )
+        while True:
+            self._restart_requested = False
+            self._app = self._build_app()
+            runner = getattr(self._app, "run", None)
+            if callable(runner):
+                run_params = inspect.signature(runner).parameters
+                if "on_ready" in run_params and "on_stopping" in run_params:
+                    await runner(
+                        on_ready=self._on_service_ready,
+                        on_stopping=self._on_service_stopping,
+                    )
+                else:
+                    await self._run_service_compat()
+            else:
+                await self._run_service_compat()
+            if self._restart_task is not None:
+                self._restart_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._restart_task
+                self._restart_task = None
+            if not self._restart_requested:
                 return
-        await self._run_service_compat()
+            self._emit_event(
+                kind=RuntimeEventKind.LIFECYCLE,
+                action="service.restart",
+                status=self.health.status,
+                payload={"reason": "restart_requested"},
+            )
 
     async def _run_service_compat(self) -> None:
         await self._app.setup()
@@ -163,14 +183,56 @@ class ServiceRuntime:
             "service.stop",
         )
 
+    async def request_core_restart(self, *, reason: str = "", delay_seconds: int = 1, session_id: str = "") -> dict[str, Any]:
+        if self.command.target != "service":
+            return {"accepted": False, "reason": "unsupported_runtime_target"}
+        if self._restart_requested:
+            return {"accepted": True, "already_pending": True}
+        self._restart_requested = True
+        delay = max(0, min(int(delay_seconds or 0), 30))
+        self._emit_event(
+            kind=RuntimeEventKind.LIFECYCLE,
+            action="service.restart.requested",
+            status=self.health.status,
+            payload={
+                "reason": str(reason or ""),
+                "delay_seconds": delay,
+                "session_id": str(session_id or ""),
+            },
+        )
+
+        async def _delayed_shutdown() -> None:
+            await asyncio.sleep(delay)
+            app = self._app
+            event_bus = getattr(app, "event_bus", None)
+            request_shutdown = getattr(event_bus, "request_shutdown", None)
+            if callable(request_shutdown):
+                request_shutdown()
+                return
+            stop = getattr(app, "stop", None)
+            if callable(stop):
+                result = stop()
+                if inspect.isawaitable(result):
+                    await result
+
+        self._restart_task = asyncio.create_task(_delayed_shutdown())
+        return {"accepted": True, "delay_seconds": delay, "reason": str(reason or "")}
+
     def _build_app(self) -> App:
         try:
             return self._app_factory(
                 health_getter=self.build_health_snapshot,
                 telemetry_recorder=self.telemetry,
+                restart_requester=self.request_core_restart,
             )
         except TypeError:
-            return self._app_factory(health_getter=self.build_health_snapshot)
+            try:
+                return self._app_factory(
+                    health_getter=self.build_health_snapshot,
+                    telemetry_recorder=self.telemetry,
+                )
+            except TypeError:
+                return self._app_factory(health_getter=self.build_health_snapshot)
 
     def _emit_event(
         self,

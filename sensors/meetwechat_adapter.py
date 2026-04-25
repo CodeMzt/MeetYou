@@ -47,7 +47,13 @@ MEETWECHAT_BASIC_TOOL_BUNDLE = [
     "load_skill",
     "create_skill",
     "manage_procedures",
+    "list_workspaces",
     "switch_workspace",
+    "list_active_agents",
+    "list_active_clients",
+    "send_endpoint_message",
+    "emit_short_reply",
+    "restart_core",
     "search_knowledge",
     "search_memory",
     "search_web",
@@ -369,6 +375,7 @@ class _OutboundMessage:
     text: str
     complete_pending: bool = True
     delay_before_send: bool = True
+    message_index: int = 1
 
 
 class MeetWeChatOutputService:
@@ -412,6 +419,7 @@ class MeetWeChatOutputService:
         )
         self._outbound_workers: list[asyncio.Task] = []
         self._outbound_locks: dict[str, asyncio.Lock] = {}
+        self._outbound_message_counts: dict[str, int] = {}
         self._rate_lock = asyncio.Lock()
         self._last_send_at = 0.0
 
@@ -538,7 +546,18 @@ class MeetWeChatOutputService:
                 if not request_id or value.get("request_id") == request_id:
                     self._pending_human_input_requests.pop(key, None)
             return
-        if event_type in {"message.created", "reasoning.delta", "operation.updated", "activity.status"}:
+        if event_type == "message.created":
+            message = event.get("message", {}) or {}
+            channel = str(message.get("channel") or "")
+            if channel in {"short_reply", "notice"} and pending is not None:
+                self._enqueue_outbound(
+                    pending,
+                    str(message.get("content") or ""),
+                    delay_before_send=False,
+                    complete_pending=False,
+                )
+            return
+        if event_type in {"reasoning.delta", "operation.updated", "activity.status"}:
             return
         if event_type == "message.delta":
             if str(event.get("channel") or "") == "answer":
@@ -563,19 +582,23 @@ class MeetWeChatOutputService:
         text: str,
         *,
         delay_before_send: bool = True,
+        complete_pending: bool = True,
     ) -> None:
         content = str(text or "").strip()
         if not content or not pending.allow_send:
-            self._complete_pending(pending.event.chat_id, True)
+            if complete_pending:
+                self._complete_pending(pending.event.chat_id, True)
             return
         self._ensure_outbound_workers()
         try:
+            message_index = self._next_outbound_message_index(pending.event.event_id)
             self._outbound_queue.put_nowait(
                 _OutboundMessage(
                     pending=pending,
                     text=content,
-                    complete_pending=True,
+                    complete_pending=complete_pending,
                     delay_before_send=delay_before_send,
+                    message_index=message_index,
                 )
             )
         except asyncio.QueueFull:
@@ -584,7 +607,16 @@ class MeetWeChatOutputService:
                 _mask(pending.event.chat_id),
                 _mask(pending.event.event_id),
             )
-            self._complete_pending(pending.event.chat_id, False, "outbound queue full")
+            if complete_pending:
+                self._complete_pending(pending.event.chat_id, False, "outbound queue full")
+
+    def _next_outbound_message_index(self, event_id: str) -> int:
+        key = str(event_id or "").strip()
+        if not key:
+            return 1
+        next_value = int(self._outbound_message_counts.get(key, 0) or 0) + 1
+        self._outbound_message_counts[key] = next_value
+        return next_value
 
     async def _run_outbound_worker(self) -> None:
         while True:
@@ -596,6 +628,7 @@ class MeetWeChatOutputService:
                         item.pending,
                         item.text,
                         delay_before_send=item.delay_before_send,
+                        message_index=item.message_index,
                     )
                 if item.complete_pending:
                     self._complete_pending(item.pending.event.chat_id, True)
@@ -613,7 +646,14 @@ class MeetWeChatOutputService:
             finally:
                 self._outbound_queue.task_done()
 
-    async def _send_for_pending(self, pending: _PendingReply, text: str, *, delay_before_send: bool = True) -> None:
+    async def _send_for_pending(
+        self,
+        pending: _PendingReply,
+        text: str,
+        *,
+        delay_before_send: bool = True,
+        message_index: int = 1,
+    ) -> None:
         content = str(text or "").strip()
         if not content:
             return
@@ -627,6 +667,7 @@ class MeetWeChatOutputService:
             await self._send_fragment_with_retry(
                 pending,
                 fragment,
+                message_index=message_index,
                 index=index,
             )
             if index < len(fragments):
@@ -641,7 +682,13 @@ class MeetWeChatOutputService:
                 await self._sleep(wait_seconds)
             self._last_send_at = loop.time()
 
-    async def _send_fragment_with_retry(self, pending: _PendingReply, fragment: str, *, index: int) -> None:
+    @staticmethod
+    def _idempotency_key(event_id: str, *, message_index: int, fragment_index: int) -> str:
+        if int(message_index or 1) <= 1:
+            return f"meetyou:{event_id}:{fragment_index}"
+        return f"meetyou:{event_id}:{message_index}:{fragment_index}"
+
+    async def _send_fragment_with_retry(self, pending: _PendingReply, fragment: str, *, message_index: int, index: int) -> None:
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
@@ -650,7 +697,11 @@ class MeetWeChatOutputService:
                     self._client.send_text(
                         chat_id=pending.event.chat_id,
                         text=fragment,
-                        idempotency_key=f"meetyou:{pending.event.event_id}:{index}",
+                        idempotency_key=self._idempotency_key(
+                            pending.event.event_id,
+                            message_index=message_index,
+                            fragment_index=index,
+                        ),
                         is_group_mention=pending.event.chat_type == "group",
                     ),
                     timeout=self._send_timeout_seconds,
