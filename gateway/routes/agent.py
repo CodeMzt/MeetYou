@@ -421,6 +421,21 @@ def build_agent_router(gateway) -> APIRouter:
                                     "result": result_payload,
                                 },
                             )
+                            try:
+                                operation = domain.services.operation.get_by_id(call_row.operation_id)
+                                thread = domain.services.thread.get_by_id(getattr(operation, "thread_id", None)) if operation is not None else None
+                                workspace = domain.services.workspace.get_by_id(getattr(operation, "workspace_id", None)) if operation is not None else None
+                                domain.services.context_pool.record_agent_operation_result(
+                                    principal_id=domain.principal.id,
+                                    agent=current_agent,
+                                    call=call_row,
+                                    operation=operation,
+                                    result=result_payload,
+                                    thread=thread,
+                                    workspace=workspace,
+                                )
+                            except Exception as exc:
+                                logger.debug("Failed to record agent result into ContextPool: %s", exc, exc_info=True)
                         continue
 
                     if envelope.type == "capability.call.error":

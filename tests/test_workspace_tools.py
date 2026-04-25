@@ -4,22 +4,47 @@ from types import SimpleNamespace
 import unittest
 
 from core.io_protocol import make_source
-from core.runtime_context import bind_event_context, reset_event_context
+from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.session_manager import SessionManager
 from tools.workspace_tools import WorkspaceTools
 
 
 class _WorkspaceService:
     def __init__(self):
+        self.personal = SimpleNamespace(
+            id="workspace-row-personal",
+            workspace_id="personal",
+            title="Personal",
+            base_mode="general",
+            description="",
+            default_execution_target="core_only",
+            meta={},
+        )
         self.workspace = SimpleNamespace(
             id="workspace-row-study",
             workspace_id="study",
             title="Study",
             base_mode="study",
+            description="Study zone",
+            default_execution_target="specific_agent",
+            meta={"memory_ranking_policy": "workspace_first"},
         )
 
     def get_by_workspace_id(self, workspace_id: str):
-        return self.workspace if workspace_id == "study" else None
+        return {"study": self.workspace, "personal": self.personal}.get(workspace_id)
+
+    def get_by_id(self, row_id):
+        return {"workspace-row-study": self.workspace, "workspace-row-personal": self.personal}.get(row_id)
+
+    def list_workspaces(self):
+        return [self.personal, self.workspace]
+
+    def get_governance_view(self, workspace):
+        return {
+            "description": getattr(workspace, "description", ""),
+            "default_execution_target": getattr(workspace, "default_execution_target", "core_only"),
+            "memory_ranking_policy": (getattr(workspace, "meta", {}) or {}).get("memory_ranking_policy", "workspace_first"),
+        }
 
 
 class _SessionService:
@@ -63,6 +88,18 @@ class _ClientService:
         self.binds.append(dict(kwargs))
         return SimpleNamespace(**kwargs)
 
+    def list_clients_for_workspace(self, workspace_id):
+        if workspace_id == "workspace-row-personal":
+            return [(SimpleNamespace(client_id="desktop-app", client_type="electron", display_name="Desktop"), SimpleNamespace())]
+        return []
+
+
+class _AgentService:
+    def list_agents_for_workspace(self, workspace_id):
+        if workspace_id == "workspace-row-study":
+            return [SimpleNamespace(agent_id="study-agent", agent_type="desktop", display_name="Study Agent", status="ready")]
+        return []
+
 
 class _Gateway:
     def __init__(self):
@@ -88,6 +125,7 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
                     session=session_service,
                     thread=_ThreadService(),
                     client=client_service,
+                    agent=_AgentService(),
                 )
             )
         )
@@ -96,6 +134,7 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
         token = bind_event_context(session_id="sess_1", source=source)
         try:
             result = await tools.switch_workspace("study", reason="continue study work")
+            runtime_context = get_event_context()
         finally:
             reset_event_context(token)
 
@@ -106,8 +145,37 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
         binding = session_manager.get_binding("sess_1")
         self.assertIsNotNone(binding)
         self.assertEqual(binding.metadata["active_workspace_id"], "study")
+        self.assertEqual(runtime_context["active_workspace_id"], "study")
         self.assertEqual(gateway.events[0]["event_type"], "workspace.changed")
         self.assertEqual(gateway.events[0]["payload"]["active_workspace_id"], "study")
+
+    async def test_list_workspaces_reports_active_workspace(self):
+        tools = WorkspaceTools()
+        tools.set_core_domain(
+            SimpleNamespace(
+                services=SimpleNamespace(
+                    workspace=_WorkspaceService(),
+                    session=_SessionService(),
+                    thread=_ThreadService(),
+                    client=_ClientService(),
+                    agent=_AgentService(),
+                )
+            )
+        )
+
+        token = bind_event_context(session_id="sess_1", active_workspace_id="study")
+        try:
+            result = await tools.list_workspaces(include_agents=True, include_clients=True)
+        finally:
+            reset_event_context(token)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["active_workspace_id"], "study")
+        rows = {item["workspace_id"]: item for item in result["workspaces"]}
+        self.assertTrue(rows["study"]["active"])
+        self.assertFalse(rows["personal"]["active"])
+        self.assertEqual(rows["study"]["agents"][0]["agent_id"], "study-agent")
+        self.assertEqual(rows["personal"]["clients"][0]["client_id"], "desktop-app")
 
 
 if __name__ == "__main__":

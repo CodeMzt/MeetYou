@@ -483,6 +483,7 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "load_skill",
     "create_skill",
     "manage_procedures",
+    "list_workspaces",
     "switch_workspace",
     "search_knowledge",
     "search_memory",
@@ -563,7 +564,7 @@ _MODE_PROMPT_FALLBACKS = {
         "- office: schedules, meeting briefs, drafts, notes sync, and coordination, with task_recognition available when task signals appear and the shared basic tools used for grounding\n"
         "- study: study plans, learning points, quizzes, flashcards, mastery tracking, and the study_coaching skill combined with the shared basic tools\n"
         "- danxi: FDU campus-forum browsing, thread search, favorites or subscriptions, messages, and normal-user post or reply actions through the Danxi tool suite\n"
-        "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, switch_workspace, ask_human, and get_current_system_time.\n"
+        "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, and get_current_system_time.\n"
         "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled work.\n"
         "If signals are mixed, prefer the smallest mode that directly matches the user's next job."
     ),
@@ -571,7 +572,7 @@ _MODE_PROMPT_FALLBACKS = {
         "[Normal Mode]\n"
         "You are operating as a general daily assistant.\n"
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
-        "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, switch_workspace, ask_human, and get_current_system_time.\n"
+        "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, and get_current_system_time.\n"
         "When the user's message clearly contains user TODO or scheduled-task work, the task_recognition skill can activate manage_tasks or manage_scheduled_tasks.\n"
         "Stay in normal mode unless the next immediate step clearly requires file tools, deep research constraints, office coordination tools, or study-specific tools."
     ),

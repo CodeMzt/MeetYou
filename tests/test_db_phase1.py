@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 import unittest
+from datetime import timedelta
 from pathlib import Path
 
 from alembic import command
@@ -9,6 +10,7 @@ from alembic.config import Config
 from psycopg import connect
 from sqlalchemy import inspect, text
 
+from core.db.base import utcnow
 from core.db.engine import create_db_engine, create_session_factory
 from core.db.repositories import (
     AgentRepository,
@@ -197,6 +199,32 @@ class DatabasePhase1Tests(unittest.TestCase):
         with self.engine.connect() as conn:
             value = conn.execute(text("SELECT 1")).scalar_one()
         self.assertEqual(value, 1)
+
+    def test_context_pool_prune_keeps_high_importance_and_bounds_active_window(self):
+        with self.session_factory() as session:
+            principal = PrincipalRepository(session).create(principal_key="context-prune", display_name="Context Prune")
+            repo = ContextPoolRepository(session)
+            now = utcnow()
+            rows = []
+            for idx in range(6):
+                row = repo.create(
+                    context_id=f"ctx_prune_{idx}",
+                    principal_id=principal.id,
+                    content=f"context item {idx}",
+                    canonical_text=f"context item {idx}",
+                    importance=0.95 if idx == 0 else 0.1,
+                )
+                row.created_at = now - timedelta(minutes=idx)
+                rows.append(row)
+
+            pruned = repo.prune_for_principal(principal_id=principal.id, max_items=3)
+            active = repo.list_active_for_principal(principal_id=principal.id)
+            active_ids = {row.context_id for row in active}
+
+            self.assertEqual(pruned, 3)
+            self.assertEqual(len(active), 3)
+            self.assertIn("ctx_prune_0", active_ids)
+            self.assertTrue(all(row.status == "pruned" for row in rows if row.context_id not in active_ids))
 
 
 if __name__ == "__main__":
