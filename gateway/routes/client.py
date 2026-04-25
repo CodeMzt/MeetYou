@@ -75,6 +75,28 @@ _DANXI_TOOLS = get_shared_danxi_tools()
 _DANXI_LOGIN_PURPOSE = "danxi.client.login.v1"
 _DANXI_WEBVPN_PURPOSE = "danxi.client.webvpn_cookie.v1"
 logger = logging.getLogger("meetyou.gateway.client")
+_CLIENT_ALWAYS_AVAILABLE_TOOLS = ("emit_short_reply", "send_endpoint_message")
+
+
+def _ensure_client_always_available_tools(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    normalized = dict(metadata or {})
+    allowed_tool_bundle = normalized.get("allowed_tool_bundle")
+    if not isinstance(allowed_tool_bundle, list):
+        return normalized
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in allowed_tool_bundle:
+        tool_name = str(item or "").strip()
+        if not tool_name or tool_name in seen:
+            continue
+        seen.add(tool_name)
+        cleaned.append(tool_name)
+    for tool_name in _CLIENT_ALWAYS_AVAILABLE_TOOLS:
+        if tool_name not in seen:
+            cleaned.append(tool_name)
+            seen.add(tool_name)
+    normalized["allowed_tool_bundle"] = cleaned
+    return normalized
 
 
 def _is_agent_available_status(status: str) -> bool:
@@ -839,8 +861,11 @@ def build_client_router(gateway) -> APIRouter:
         workspace = domain.services.workspace.get_by_workspace_id(workspace_id)
         if workspace is None:
             gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"未知 workspace: {workspace_id}")
+        connected_agent_ids = await gateway.agent_ws_manager.connected_agent_ids()
         rows = []
         for agent in domain.services.agent.list_agents():
+            if agent.agent_id not in connected_agent_ids:
+                continue
             if not _is_agent_available_status(agent.status):
                 continue
             bindings = domain.services.agent.list_workspace_bindings(agent.agent_id)
@@ -868,20 +893,34 @@ def build_client_router(gateway) -> APIRouter:
         workspace = domain.services.workspace.get_by_workspace_id(workspace_id)
         if workspace is None:
             gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"未知 workspace: {workspace_id}")
-        rows = []
-        for client, binding in domain.services.client.list_clients_for_workspace(workspace.id):
-            rows.append(
-                ClientAvailableClientResponse(
-                    client_id=client.client_id,
-                    display_name=client.display_name,
-                    client_type=client.client_type,
-                    status=client.status,
-                    workspace_ids=[workspace_id],
-                    membership_role=binding.membership_role,
-                    enabled=bool(binding.enabled),
-                )
+        bindings_by_client_id = {
+            client.client_id: binding
+            for client, binding in domain.services.client.list_clients_for_workspace(workspace.id)
+            if bool(getattr(binding, "enabled", True))
+        }
+        live_connections = await gateway.client_ws_manager.snapshot(workspace_id=workspace_id)
+        rows_by_client_id: dict[str, dict[str, Any]] = {}
+        for connection in live_connections:
+            client_id = str(connection.get("client_id") or "").strip()
+            if not client_id:
+                continue
+            client_row = domain.services.client.get_by_client_id(client_id)
+            binding = bindings_by_client_id.get(client_id)
+            row = rows_by_client_id.setdefault(
+                client_id,
+                {
+                    "client_id": client_id,
+                    "display_name": str(connection.get("display_name") or getattr(client_row, "display_name", "") or client_id),
+                    "client_type": str(connection.get("client_type") or getattr(client_row, "client_type", "") or ""),
+                    "status": "online",
+                    "workspace_ids": [],
+                    "membership_role": str(getattr(binding, "membership_role", "active") or "active"),
+                    "enabled": True,
+                },
             )
-        return rows
+            if workspace_id not in row["workspace_ids"]:
+                row["workspace_ids"].append(workspace_id)
+        return [ClientAvailableClientResponse(**row) for row in rows_by_client_id.values()]
 
     @router.get("/context-pool/query", response_model=ContextPoolQueryResponse)
     async def query_context_pool(
@@ -1497,6 +1536,14 @@ def build_client_router(gateway) -> APIRouter:
                 "session_row_id": str(getattr(session_record, "id", "") or ""),
             },
         )
+        await gateway.client_ws_manager.update_session_metadata(
+            session_id,
+            thread_id=thread.thread_id,
+            client_id=source_client_id,
+            workspace_id=workspace.workspace_id,
+            client_type=str(getattr(client, "client_type", "") or ""),
+            display_name=str(getattr(client, "display_name", "") or ""),
+        )
         await gateway.publish_client_thread_event(
             thread.thread_id,
             event_type="workspace.changed",
@@ -1571,6 +1618,15 @@ def build_client_router(gateway) -> APIRouter:
                 "session_row_id": str(getattr(session_record, "id", "") or ""),
             },
         )
+        await gateway.client_ws_manager.update_session_metadata(
+            session_record.session_id,
+            thread_id=payload.thread_id,
+            client_id=payload.client_id,
+            workspace_id=active_workspace_id,
+            client_type=payload.client_type,
+            display_name=payload.display_name or payload.client_id,
+        )
+        client_metadata = _ensure_client_always_available_tools(payload.metadata)
         inbound_metadata = {
             "thread_id": payload.thread_id,
             "message_id": message.message_id if False else "",
@@ -1584,7 +1640,7 @@ def build_client_router(gateway) -> APIRouter:
             "workspace_preferred_source_profiles": governance["preferred_source_profiles"],
             "workspace_memory_ranking_policy": governance["memory_ranking_policy"],
         }
-        inbound_metadata.update(dict(payload.metadata or {}))
+        inbound_metadata.update(client_metadata)
         if payload.client_message_id:
             inbound_metadata["client_message_id"] = payload.client_message_id
         inbound_metadata["preferred_mode"] = payload.preferred_mode or workspace.base_mode
@@ -1611,7 +1667,7 @@ def build_client_router(gateway) -> APIRouter:
                 "workspace_default_execution_target": governance["default_execution_target"],
                 "workspace_preferred_source_profiles": governance["preferred_source_profiles"],
                 "workspace_memory_ranking_policy": governance["memory_ranking_policy"],
-                **dict(payload.metadata or {}),
+                **client_metadata,
                 **({"client_message_id": payload.client_message_id} if payload.client_message_id else {}),
                 "preferred_mode": payload.preferred_mode or workspace.base_mode,
                 **({"input_options": dict(payload.options)} if payload.options else {}),
@@ -2208,6 +2264,77 @@ def build_client_router(gateway) -> APIRouter:
         await gateway.client_ws_manager.connect(thread_id, websocket)
         dependencies = getattr(gateway, "_dependencies", None)
         domain = getattr(dependencies, "core_domain", None)
+        initial_session_id = str(websocket.query_params.get("session_id") or "").strip()
+        initial_client_id = str(websocket.query_params.get("client_id") or "").strip()
+        initial_workspace_id = str(
+            websocket.query_params.get("active_workspace_id")
+            or websocket.query_params.get("workspace_id")
+            or ""
+        ).strip()
+        initial_client_type = str(websocket.query_params.get("client_type") or "").strip()
+        initial_display_name = str(websocket.query_params.get("display_name") or "").strip()
+        if initial_session_id or initial_client_id:
+            bound_client_id = initial_client_id
+            bound_workspace_id = initial_workspace_id
+            bound_client_type = initial_client_type
+            bound_display_name = initial_display_name
+            if domain is not None and initial_session_id:
+                session_row, thread_row, workspace_row, client_row, session_error_code, session_error_message = _resolve_client_session_for_thread(
+                    domain,
+                    session_id=initial_session_id,
+                    thread_id=thread_id,
+                )
+                if session_error_code:
+                    await gateway._safe_send_json(
+                        websocket,
+                        {
+                            "schema": "meetyou.client.ws.v1",
+                            "kind": "error",
+                            "error": RuntimeError(
+                                code=session_error_code,
+                                category="validation",
+                                message=session_error_message,
+                            ).model_dump(),
+                        },
+                    )
+                    await websocket.close(code=4400)
+                    await gateway.client_ws_manager.disconnect(thread_id, websocket)
+                    return
+                home_workspace_row = (
+                    _get_workspace_by_row_id(
+                        domain,
+                        getattr(thread_row, "home_workspace_id", None) or getattr(thread_row, "workspace_id", None),
+                    )
+                    if thread_row is not None
+                    else None
+                )
+                bound_client_id = getattr(client_row, "client_id", "") or bound_client_id
+                bound_workspace_id = getattr(workspace_row, "workspace_id", "") or bound_workspace_id
+                bound_client_type = getattr(client_row, "client_type", "") or bound_client_type
+                bound_display_name = getattr(client_row, "display_name", "") or bound_display_name
+                source = make_source(SourceKind.WEB.value, bound_client_id or "client-ws", client_id=bound_client_id)
+                _bind_runtime_session(
+                    gateway,
+                    session_id=initial_session_id,
+                    source=source,
+                    metadata={
+                        "thread_id": thread_id,
+                        "home_workspace_id": getattr(home_workspace_row, "workspace_id", ""),
+                        "active_workspace_id": bound_workspace_id,
+                        "workspace_id": bound_workspace_id,
+                        "client_id": bound_client_id,
+                        "session_row_id": str(getattr(session_row, "id", "") or ""),
+                    },
+                )
+            await gateway.client_ws_manager.bind_connection(
+                websocket,
+                thread_id=thread_id,
+                client_id=bound_client_id,
+                session_id=initial_session_id,
+                workspace_id=bound_workspace_id,
+                client_type=bound_client_type,
+                display_name=bound_display_name,
+            )
         connected = await gateway._safe_send_json(websocket, gateway.client_ws_manager.connection_payload(thread_id))
         if not connected:
             await gateway.client_ws_manager.disconnect(thread_id, websocket)

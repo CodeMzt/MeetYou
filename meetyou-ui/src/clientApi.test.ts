@@ -807,9 +807,17 @@ describe('clientApi', () => {
     ;(globalThis as { window?: Window }).window = {} as Window
 
     const { createClientWsUrl: createWsUrl } = await import('./clientApi')
-    const url = await createWsUrl('http://127.0.0.1:38951', 'thr_1')
+    const url = await createWsUrl('http://127.0.0.1:38951', 'thr_1', {
+      clientId: 'desktop-app',
+      sessionId: 'sess_1',
+      workspaceId: 'personal',
+      clientType: 'electron',
+      displayName: 'Desktop App',
+    })
 
-    expect(url).toBe('ws://127.0.0.1:38951/desktop/ws?thread_id=thr_1&access_token=local-bridge-token')
+    expect(url).toBe(
+      'ws://127.0.0.1:38951/desktop/ws?thread_id=thr_1&client_id=desktop-app&session_id=sess_1&workspace_id=personal&client_type=electron&display_name=Desktop+App&access_token=local-bridge-token',
+    )
   })
 
   it('prefers direct browser download for presigned attachment tickets', () => {

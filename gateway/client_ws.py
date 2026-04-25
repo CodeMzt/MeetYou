@@ -100,6 +100,36 @@ class ClientWebSocketManager:
             self._drop_index(self._client_connections, str(metadata.get("client_id") or "").strip(), websocket)
             self._drop_index(self._session_connections, str(metadata.get("session_id") or "").strip(), websocket)
 
+    async def update_session_metadata(
+        self,
+        session_id: str,
+        *,
+        thread_id: str = "",
+        client_id: str = "",
+        workspace_id: str = "",
+        client_type: str = "",
+        display_name: str = "",
+    ) -> int:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return 0
+        async with self._lock:
+            targets = [
+                (websocket, dict(self._connection_meta.get(websocket) or {}))
+                for websocket in self._session_connections.get(normalized_session_id, set())
+            ]
+        for websocket, previous in targets:
+            await self.bind_connection(
+                websocket,
+                thread_id=thread_id or str(previous.get("thread_id") or "").strip(),
+                client_id=client_id or str(previous.get("client_id") or "").strip(),
+                session_id=normalized_session_id,
+                workspace_id=workspace_id or str(previous.get("workspace_id") or "").strip(),
+                client_type=client_type or str(previous.get("client_type") or "").strip(),
+                display_name=display_name or str(previous.get("display_name") or "").strip(),
+            )
+        return len(targets)
+
     def has_connections(self, thread_id: str) -> bool:
         return bool(self._connections.get(thread_id, set()))
 
