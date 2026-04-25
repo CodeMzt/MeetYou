@@ -311,14 +311,36 @@ Phase 5  自动化测试、CI/CD 与可观测性
 - 之前尝试过仓库内本地联调脚本，但该路径依赖本机额外拉起 `service`，不应作为 Phase 2 非 Core 收口的必要阻塞条件。
 - 因此当前剩余缺口应表述为“尚未补远程 Core 场景下的桌面主链实机验收”，而不是“本地 service 未启动成功”。
 
-## 11. 验证要求
+## 11. 2026-04 Performance And Small-Concurrency Optimization
+
+- Core web search now uses adaptive depth, bounded parallel source extraction, short extract timeouts, and small TTL caching. Browser fallback remains serialized because the Playwright MCP session is stateful.
+- Read-only web tools can run concurrently when query/url resource keys differ. Mutating tools, browser state tools, shell, and Danxi write paths remain ordered.
+- Automatic memory prefetch is bounded by `memory_auto_search_timeout_ms`; automatic episode save is backgrounded when `memory_background_episode_save=true`. Explicit memory tools remain synchronous.
+- MeetWechat now uses bounded inbound and outbound queues. Inbound handling keeps each chat ordered while allowing cross-chat workers; outbound `/v1/messages/text` calls are queued from `/client/ws` callbacks and sent with conservative rate limiting.
+- Desktop/Edge Agent runtime now accepts capability calls without blocking the receive loop. Only known read-safe capabilities are parallel; write/shell/system capabilities remain serialized.
+- Renderer streaming batches `message.delta` updates before reducer dispatch and avoids full Markdown rendering while a message is actively streaming.
+
+New default knobs are documented in `user/config.example.json`, `.env.example`, `user/desktop_agent.example.json`, and `user/edge_agent.example.json`.
+
+Verification performed for this change:
+
+- `.venv\Scripts\python.exe -m unittest tests.test_web_search tests.test_meetwechat_adapter tests.test_meetwechat_client tests.test_tool_parallel_execution`
+- `.venv\Scripts\python.exe -m unittest tests.test_desktop_agent_runtime`
+- `.venv\Scripts\python.exe -m unittest tests.test_edge_agent_runtime`
+- `.venv\Scripts\python.exe -m unittest tests.test_runtime_ws`
+- `cd meetyou-ui && npm run typecheck`
+- `cd meetyou-ui && npm run test`
+
+PostgreSQL-backed `tests.test_agent_dispatch_service`, `tests.test_gateway_agent_api`, `tests.test_gateway_surface_routes`, and `tests.test_agent_release_compatibility` timed out in the local run before producing a product failure trace; they should be rerun in an environment with a responsive local PostgreSQL service.
+
+## 12. 验证要求
 
 - 文档改动若直接涉及部署主链、发布顺序或兼容窗口，至少跑 `tests/test_agent_release_compatibility.py`
 - 后端实现类改动按最小相关 `unittest` 模块执行
 - Frontend 改动先 `npm run typecheck`，再 `npm run test`
 - 只有在实际改到 Electron/Vite/build 链路时才补 `npm run build`
 
-## 12. 历史参考
+## 13. 历史参考
 
 V2 的实施细节、验收口径与迁移记录已归档到 `docs/archive/v2/`，包括：
 

@@ -41,6 +41,10 @@ class _FakeMCPManager:
         text = queue.pop(0)
         if text.startswith("RAISE:"):
             raise RuntimeError(text.split(":", 1)[1])
+        if text.startswith("SLEEP:"):
+            _, delay, payload = text.split(":", 2)
+            await asyncio.sleep(float(delay))
+            text = payload
         return _FakeResult(text)
 
     def get_server_diagnostic(self, server_name: str):
@@ -333,6 +337,32 @@ class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, ToolCallResult)
         self.assertFalse(result.ok)
         self.assertIn("read_web_page", result.error.message)
+
+    async def test_search_web_reads_sources_concurrently(self):
+        results = [
+            {"title": f"Source {index}", "url": f"https://example.com/{index}", "content": f"Snippet {index}"}
+            for index in range(3)
+        ]
+        manager = _FakeMCPManager(
+            responses={
+                "tavily-search": [json.dumps({"answer": "answer", "results": results})],
+                "tavily-extract": [
+                    "SLEEP:0.10:" + json.dumps({"results": [{"url": f"https://example.com/{index}", "raw_content": f"Full {index} " * 20}]})
+                    for index in range(3)
+                ],
+            },
+            tool_map={"tavily-search": "tavily_web", "tavily-extract": "tavily_web"},
+        )
+        tools = WebSearchTools(manager)
+
+        started_at = asyncio.get_running_loop().time()
+        raw = await tools.search_web("research example", max_results=3, quality="deep")
+        elapsed = asyncio.get_running_loop().time() - started_at
+        payload = json.loads(raw)
+
+        self.assertLess(elapsed, 0.25)
+        self.assertEqual(len(payload["sources"]), 3)
+        self.assertEqual([source["id"] for source in payload["sources"]], [1, 2, 3])
 
 
 if __name__ == "__main__":

@@ -31,6 +31,8 @@ def build_static_capabilities(config: EdgeAgentConfig, *, extra_capabilities: li
             "abstract_capability_key": "utility.echo",
             "risk_level": "read",
             "requires_confirmation": False,
+            "safe_parallel": True,
+            "max_concurrency": min(int(getattr(config, "max_parallel_calls", 2) or 2), 4),
             "workspace_ids": workspace_ids,
             "input_schema": {
                 "type": "object",
@@ -57,6 +59,8 @@ def build_static_capabilities(config: EdgeAgentConfig, *, extra_capabilities: li
             "abstract_capability_key": "math.add",
             "risk_level": "read",
             "requires_confirmation": False,
+            "safe_parallel": True,
+            "max_concurrency": min(int(getattr(config, "max_parallel_calls", 2) or 2), 4),
             "workspace_ids": workspace_ids,
             "input_schema": {
                 "type": "object",
@@ -86,6 +90,8 @@ def build_static_capabilities(config: EdgeAgentConfig, *, extra_capabilities: li
             "abstract_capability_key": "math.divide",
             "risk_level": "read",
             "requires_confirmation": False,
+            "safe_parallel": True,
+            "max_concurrency": min(int(getattr(config, "max_parallel_calls", 2) or 2), 4),
             "workspace_ids": workspace_ids,
             "input_schema": {
                 "type": "object",

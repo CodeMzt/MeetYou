@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path, PureWindowsPath
 import re
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from core.tool_runtime import (
     ToolCallResult,
@@ -61,14 +63,40 @@ _AGENT_LOCAL_FILE_TOOLS = {
 }
 _AGENT_DISPATCH_LOCAL_TOOLS = {"exec_sys_cmd", *_AGENT_LOCAL_FILE_TOOLS}
 
+_WEB_READ_TOOLS = {"search_web", "read_web_page"}
+_WEB_MCP_READ_PREFIXES = ("tavily",)
+
+
+def _stable_short_hash(value: str) -> str:
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _normalize_url_key(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw.lower()
+    return urlunparse(
+        (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            parsed.path or "/",
+            "",
+            parsed.query,
+            "",
+        )
+    )
+
 
 class ToolsManager:
-    def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None, task_manager=None):
+    def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None, task_manager=None, config=None):
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
         self._attachment_tools = AttachmentTools()
         self._agent_memory_tools = AgentMemoryTools(memory)
-        self._web_search_tools = WebSearchTools(mcp_manager)
+        self._web_search_tools = WebSearchTools(mcp_manager, config=config)
         self._danxi_tools = get_shared_danxi_tools()
         self._document_tools = (
             DocumentTools(mode_manager, allow_local_fallback=False) if mode_manager is not None else None
@@ -343,6 +371,17 @@ class ToolsManager:
             requires_order = True
 
         resource_key = str(schema_metadata.get("resource_key") or "").strip()
+        if not resource_key and normalized_tool_name == "search_web":
+            query = str(normalized_tool_args.get("query") or "").strip().lower()
+            quality = str(normalized_tool_args.get("quality") or "adaptive").strip().lower()
+            max_results = str(normalized_tool_args.get("max_results") or "")
+            resource_key = f"web-search:{_stable_short_hash(f'{query}|{quality}|{max_results}')}"
+        if not resource_key and normalized_tool_name == "read_web_page":
+            url = _normalize_url_key(str(normalized_tool_args.get("url") or ""))
+            resource_key = f"web-page:{_stable_short_hash(url)}" if url else "web-page:unknown_url"
+        if not resource_key and normalized_tool_name.startswith(_WEB_MCP_READ_PREFIXES):
+            serialized = repr(sorted(normalized_tool_args.items()))
+            resource_key = f"mcp-web:{normalized_tool_name}:{_stable_short_hash(serialized)}"
         if not resource_key and normalized_tool_name in _AGENT_LOCAL_FILE_TOOLS:
             path_candidate = normalized_tool_args.get("path") or normalized_tool_args.get("workspace_path")
             normalized_path = self._normalize_path(str(path_candidate or ""))
@@ -355,10 +394,14 @@ class ToolsManager:
 
         safe_parallel_default = action_risk == "read" and not requires_order
         safe_parallel = bool(schema_metadata.get("safe_parallel", safe_parallel_default))
+        if normalized_tool_name in _WEB_READ_TOOLS or normalized_tool_name.startswith(_WEB_MCP_READ_PREFIXES):
+            safe_parallel = action_risk == "read" and not requires_order
         if requires_order or action_risk in {"local_write", "external_write", "destructive"}:
             safe_parallel = False
 
         max_concurrency = schema_metadata.get("max_concurrency", 1 if not safe_parallel else 3)
+        if normalized_tool_name in _WEB_READ_TOOLS or normalized_tool_name.startswith(_WEB_MCP_READ_PREFIXES):
+            max_concurrency = schema_metadata.get("max_concurrency", 3)
         try:
             max_concurrency_int = max(1, int(max_concurrency))
         except (TypeError, ValueError):
@@ -369,6 +412,8 @@ class ToolsManager:
         ).strip()
         if not parallel_group:
             parallel_group = action_risk
+        if normalized_tool_name in _WEB_READ_TOOLS or normalized_tool_name.startswith(_WEB_MCP_READ_PREFIXES):
+            parallel_group = str(schema_metadata.get("parallel_group") or "web_io")
 
         return {
             "tool_name": normalized_tool_name,

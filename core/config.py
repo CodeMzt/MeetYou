@@ -42,6 +42,14 @@ _REMOVED_WECHAT_CONFIG_KEYS = {
             "poll_timeout_ms",
             "qr_output_path",
             "token_file",
+            "inbound_worker_count",
+            "inbound_queue_size",
+            "outbound_worker_count",
+            "outbound_queue_size",
+            "outbound_min_interval_ms",
+            "send_timeout_ms",
+            "state_flush_interval_ms",
+            "gateway_client_idle_ttl_seconds",
         )
     },
 }
@@ -56,6 +64,7 @@ _BOOLEAN_FALSE_VALUES = {"0", "false", "no", "off"}
 _BOOLEAN_KEYS = {
     "enable_feishu_bot",
     "enable_meetwechat_client",
+    "memory_background_episode_save",
     "thinking_enabled",
     "heartbeat_idle_poke_enabled",
     "heartbeat_idle_context_compaction_enabled",
@@ -71,6 +80,18 @@ _INTEGER_KEYS = {
     "meetwechat_error_backoff_seconds",
     "meetwechat_max_text_chars",
     "meetwechat_poll_interval_seconds",
+    "meetwechat_inbound_worker_count",
+    "meetwechat_inbound_queue_size",
+    "meetwechat_outbound_worker_count",
+    "meetwechat_outbound_queue_size",
+    "meetwechat_outbound_min_interval_ms",
+    "meetwechat_send_timeout_ms",
+    "meetwechat_state_flush_interval_ms",
+    "meetwechat_gateway_client_idle_ttl_seconds",
+    "max_parallel_tool_calls",
+    "web_search_parallel_reads",
+    "web_search_extract_timeout_seconds",
+    "memory_auto_search_timeout_ms",
 }
 _POSITIVE_INTEGER_KEYS = {
     "heartbeat_interval",
@@ -81,6 +102,18 @@ _POSITIVE_INTEGER_KEYS = {
     "meetwechat_error_backoff_seconds",
     "meetwechat_max_text_chars",
     "meetwechat_poll_interval_seconds",
+    "meetwechat_inbound_worker_count",
+    "meetwechat_inbound_queue_size",
+    "meetwechat_outbound_worker_count",
+    "meetwechat_outbound_queue_size",
+    "meetwechat_outbound_min_interval_ms",
+    "meetwechat_send_timeout_ms",
+    "meetwechat_state_flush_interval_ms",
+    "meetwechat_gateway_client_idle_ttl_seconds",
+    "max_parallel_tool_calls",
+    "web_search_parallel_reads",
+    "web_search_extract_timeout_seconds",
+    "memory_auto_search_timeout_ms",
 }
 _JSON_OBJECT_KEYS = {
     "assistant_modes",
@@ -122,6 +155,14 @@ _ENV_OVERRIDE_KEY_MAP = {
     "meetwechat_max_text_chars": "MEETYOU_MEETWECHAT_MAX_TEXT_CHARS",
     "meetwechat_poll_interval_seconds": "MEETYOU_MEETWECHAT_POLL_INTERVAL_SECONDS",
     "meetwechat_state_file": "MEETYOU_MEETWECHAT_STATE_FILE",
+    "meetwechat_inbound_worker_count": "MEETYOU_MEETWECHAT_INBOUND_WORKERS",
+    "meetwechat_inbound_queue_size": "MEETYOU_MEETWECHAT_INBOUND_QUEUE_SIZE",
+    "meetwechat_outbound_worker_count": "MEETYOU_MEETWECHAT_OUTBOUND_WORKERS",
+    "meetwechat_outbound_queue_size": "MEETYOU_MEETWECHAT_OUTBOUND_QUEUE_SIZE",
+    "meetwechat_outbound_min_interval_ms": "MEETYOU_MEETWECHAT_OUTBOUND_MIN_INTERVAL_MS",
+    "meetwechat_send_timeout_ms": "MEETYOU_MEETWECHAT_SEND_TIMEOUT_MS",
+    "meetwechat_state_flush_interval_ms": "MEETYOU_MEETWECHAT_STATE_FLUSH_INTERVAL_MS",
+    "meetwechat_gateway_client_idle_ttl_seconds": "MEETYOU_MEETWECHAT_GATEWAY_CLIENT_IDLE_TTL_SECONDS",
 }
 
 _KNOWN_CONFIG_KEYS = set(CONFIG_FIELD_KEYS)

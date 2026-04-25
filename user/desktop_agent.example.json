@@ -12,6 +12,7 @@
   "cmd_policy_path": "user/cmd_policy.json",
   "mcp_servers_path": "user/mcp_servers.json",
   "command_timeout_seconds": 120,
+  "max_parallel_calls": 2,
   "heartbeat_interval_seconds": 20,
   "reconnect_delay_seconds": 3,
   "supports_offline_cache": true,

@@ -20,6 +20,7 @@ class EdgeAgentConfig:
     workspace_ids: list[str] = field(default_factory=lambda: ["home-lab"])
     heartbeat_interval_seconds: int = 20
     reconnect_delay_seconds: int = 3
+    max_parallel_calls: int = 2
     supports_offline_cache: bool = False
     transport_profile: str = "edge_wss"
     config_file_path: str = str(DEFAULT_CONFIG_PATH)
@@ -69,6 +70,13 @@ def load_edge_agent_config(config_file_path: str | None = None) -> EdgeAgentConf
         workspace_ids=[str(item).strip() for item in (payload.get("workspace_ids") if isinstance(payload.get("workspace_ids"), list) else ["home-lab"]) if str(item).strip()],
         heartbeat_interval_seconds=max(int(os.environ.get("MEETYOU_EDGE_HEARTBEAT_SECONDS") or payload.get("heartbeat_interval_seconds") or 20), 1),
         reconnect_delay_seconds=max(int(os.environ.get("MEETYOU_EDGE_RECONNECT_SECONDS") or payload.get("reconnect_delay_seconds") or 3), 1),
+        max_parallel_calls=max(
+            1,
+            min(
+                int(os.environ.get("MEETYOU_EDGE_MAX_PARALLEL_CALLS") or os.environ.get("MEETYOU_AGENT_MAX_PARALLEL_CALLS") or payload.get("max_parallel_calls") or 2),
+                4,
+            ),
+        ),
         supports_offline_cache=bool(payload.get("supports_offline_cache", False)),
         transport_profile=str(payload.get("transport_profile") or "edge_wss"),
         config_file_path=str(file_path),

@@ -250,7 +250,8 @@ async def setup_app_runtime(app) -> None:
             base_url=str(app.config.get("meetwechat_base_url") or DEFAULT_MEETWECHAT_BASE_URL),
         )
         wechat_state_store = MeetWeChatStateStore(
-            str(app.config.get("meetwechat_state_file") or DEFAULT_STATE_FILE)
+            str(app.config.get("meetwechat_state_file") or DEFAULT_STATE_FILE),
+            flush_interval_ms=int(app.config.get("meetwechat_state_flush_interval_ms") or 500),
         )
         app.wechat_output = MeetWeChatOutputService(
             config=app.config,
@@ -305,6 +306,8 @@ async def shutdown_app_runtime(app) -> None:
         await app.feishu_output.close()
     if app.wechat_input is not None:
         await app.wechat_input.close()
+    elif app.wechat_output is not None:
+        await app.wechat_output.close()
     await app.mcp_manager.close_mcp_servers()
     await app.brain.close_brain()
     await app.heart.close_heart()

@@ -40,12 +40,14 @@ class ClientWebSocketManager:
         }
         async with self._lock:
             connections = list(self._connections.get(thread_id, set()))
-        for websocket in connections:
+        async def _send(websocket) -> None:
             try:
                 await websocket.send_json(frame)
             except Exception:
                 logger.debug("Client WS send failed, removing websocket: thread=%s", thread_id)
                 await self.disconnect(thread_id, websocket)
+        if connections:
+            await asyncio.gather(*(_send(websocket) for websocket in connections))
 
     @staticmethod
     def connection_payload(thread_id: str) -> dict:

@@ -90,11 +90,21 @@ class EdgeAgentRuntime(AgentRuntimeBase):
         )
 
     def collect_metrics(self) -> dict:
-        return {"workspace_count": len(self.config.workspace_ids)}
+        return {"workspace_count": len(self.config.workspace_ids), "active_calls": self._active_call_count}
 
     def call_progress_detail(self, capability_id: str) -> str:
         del capability_id
         return "Dispatching edge capability handler"
+
+    def allows_parallel_capability(self, capability_id: str) -> bool:
+        return any(
+            str(capability_id or "").endswith(suffix)
+            for suffix in (
+                ".utility.echo",
+                ".math.add",
+                ".math.divide",
+            )
+        )
 
     async def execute_capability(
         self,

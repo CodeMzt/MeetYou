@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import json
 import asyncio
+import contextlib
 import logging
 import re
+import time
 from copy import deepcopy
 from collections import Counter
 from dataclasses import dataclass
@@ -40,6 +42,7 @@ logger = logging.getLogger("meetyou.brain")
 
 _INTERNAL_MODE_SWITCH_TOOL_NAME = "switch_assistant_mode"
 _MODE_SWITCH_REASON_LIMIT = 160
+_DEFAULT_AUTO_MEMORY_SEARCH_TIMEOUT_MS = 1200
 
 
 class _FallbackClientSession:
@@ -200,6 +203,10 @@ class Brain:
         self._provider_name: str = ""
         self._global_context: str = ""
         self._model_context_budget_resolver = ModelContextBudgetResolver()
+        self._auto_memory_search_timeout_ms = _DEFAULT_AUTO_MEMORY_SEARCH_TIMEOUT_MS
+        self._memory_background_episode_save = True
+        self._default_max_parallel_tool_calls = 3
+        self._background_memory_tasks: set[asyncio.Task] = set()
 
     async def init_brain(self, sys_prompt: str):
         self._base_messages = [{"role": "system", "content": sys_prompt}]
@@ -217,6 +224,15 @@ class Brain:
     async def close_brain(self):
         for session in self._sessions.values():
             await self._save_session_context(session)
+        if self._background_memory_tasks:
+            done, pending = await asyncio.wait(self._background_memory_tasks, timeout=3)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                with contextlib.suppress(Exception):
+                    task.result()
         if self._http_session is not None:
             await self._http_session.close()
             self._http_session = None
@@ -234,6 +250,28 @@ class Brain:
 
     def set_mode_manager(self, mode_manager):
         self._mode_manager = mode_manager
+
+    def set_performance_config(self, config) -> None:
+        getter = getattr(config, "get", None)
+        if not callable(getter):
+            return
+        try:
+            timeout_ms = int(getter("memory_auto_search_timeout_ms") or _DEFAULT_AUTO_MEMORY_SEARCH_TIMEOUT_MS)
+        except (TypeError, ValueError):
+            timeout_ms = _DEFAULT_AUTO_MEMORY_SEARCH_TIMEOUT_MS
+        self._auto_memory_search_timeout_ms = max(100, min(timeout_ms, 10000))
+        try:
+            max_parallel = int(getter("max_parallel_tool_calls") or 3)
+        except (TypeError, ValueError):
+            max_parallel = 3
+        self._default_max_parallel_tool_calls = max(1, min(max_parallel, 8))
+        raw_background = getter("memory_background_episode_save")
+        if raw_background is None:
+            self._memory_background_episode_save = True
+        elif isinstance(raw_background, bool):
+            self._memory_background_episode_save = raw_background
+        else:
+            self._memory_background_episode_save = str(raw_background).strip().lower() not in {"0", "false", "no", "off"}
 
     async def refresh_base_prompt(self, sys_prompt: str, persisted_context: str):
         self._base_messages = [{"role": "system", "content": sys_prompt}]
@@ -1870,6 +1908,7 @@ class Brain:
         async def _execute_plan_item(item: _ToolExecutionPlanItem) -> ToolCallResult:
             tool_call = item.tool_call
             tool_context = bind_event_context(tool_call_id=tool_call.id)
+            started_at = time.perf_counter()
             try:
                 context = get_event_context()
                 return await self._call_tool_with_route(
@@ -1895,6 +1934,14 @@ class Brain:
                     },
                 )
             finally:
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                logger.debug(
+                    "Tool call completed name=%s elapsed_ms=%s parallel_group=%s resource_key=%s",
+                    tool_call.name,
+                    elapsed_ms,
+                    item.policy.get("parallel_group"),
+                    item.policy.get("resource_key"),
+                )
                 reset_event_context(tool_context)
 
         async def _flush_parallel_batch() -> None:
@@ -1906,7 +1953,14 @@ class Brain:
                 detail=session.runtime_state.detail,
                 active_tools=[item.tool_call.name for item in pending_parallel_batch],
             )
+            started_at = time.perf_counter()
             task_results = await asyncio.gather(*[_execute_plan_item(item) for item in pending_parallel_batch])
+            logger.debug(
+                "Tool batch completed size=%s elapsed_ms=%s max_parallel=%s",
+                len(pending_parallel_batch),
+                int((time.perf_counter() - started_at) * 1000),
+                max_parallel_tool_calls,
+            )
             for item, result in zip(pending_parallel_batch, task_results):
                 ordered_results[item.index] = result
             pending_parallel_batch = []
@@ -1965,8 +2019,8 @@ class Brain:
             normalized_route_limit = 0
         if normalized_route_limit > 0:
             return normalized_route_limit
-        router_limit = self._get_router_limit("max_parallel_tool_calls", default=3)
-        return int(router_limit or 3)
+        router_limit = self._get_router_limit("max_parallel_tool_calls", default=self._default_max_parallel_tool_calls)
+        return int(router_limit or self._default_max_parallel_tool_calls)
 
     def _get_tool_parallel_policy(self, tool_name: str, tool_args: dict[str, Any], route_context: dict[str, Any]) -> dict[str, Any]:
         getter = getattr(self._tools_manager, "get_tool_parallel_metadata", None)
@@ -2245,11 +2299,14 @@ class Brain:
 
         context = get_event_context()
         try:
-            result = await self._tools_manager.call_tool(
-                "search_memory",
-                {"query": content},
-                session_id=context.get("session_id", session_id),
-                source=context.get("source"),
+            result = await asyncio.wait_for(
+                self._tools_manager.call_tool(
+                    "search_memory",
+                    {"query": content},
+                    session_id=context.get("session_id", session_id),
+                    source=context.get("source"),
+                ),
+                timeout=max(self._auto_memory_search_timeout_ms / 1000, 0.1),
             )
             normalized_result = normalize_tool_result(
                 result,
@@ -2291,12 +2348,26 @@ class Brain:
         if memory is None:
             return
         context = get_event_context()
+        save_session_id = context.get("session_id", session_id)
+        save_source = context.get("source")
+
+        async def _save_episode() -> None:
+            try:
+                await memory.save_memory(
+                    memory_text=content,
+                    session_id=save_session_id,
+                    source=save_source,
+                )
+            except Exception as exc:
+                logger.warning("Automatic episode write failed: %s", exc)
+
+        if self._memory_background_episode_save:
+            task = asyncio.create_task(_save_episode())
+            self._background_memory_tasks.add(task)
+            task.add_done_callback(self._background_memory_tasks.discard)
+            return
         try:
-            await memory.save_memory(
-                memory_text=content,
-                session_id=context.get("session_id", session_id),
-                source=context.get("source"),
-            )
+            await _save_episode()
         except Exception as exc:
             logger.warning("Automatic episode write failed: %s", exc)
 
