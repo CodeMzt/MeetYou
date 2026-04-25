@@ -165,7 +165,30 @@ WeChat Bot 仍是外部客户端入口，不改变 `Core Service`、`desktop-age
 - [x] `Task 5` 实现 iLink session manager、long poller、input adapter 与 output service
 - [x] `Task 6` 使用真实扫码登录完成文本闭环联调
 
-## 9. 验收提示
+## 9. High-Frequency Send/Receive Optimization
+
+The iLink Bot is still a Core-side external client adapter. It does not move into Desktop Agent and it still enters MeetYou through the formal Client API plus `GET /client/ws`.
+
+Runtime behavior for frequent send/receive:
+
+- `getupdates` remains a single long-poll stream, but returned messages are normalized and placed into an inbound queue before processing.
+- Inbound workers process different WeChat users concurrently while each `(account_id, from_user_id)` remains ordered by a per-conversation lock.
+- `get_updates_buf`, `context_token`, and the dedupe window are kept in memory and flushed to the state file on a short debounce window, with forced flush on credential/session changes and shutdown.
+- Outbound replies from `/client/ws` callbacks are queued instead of awaiting `sendmessage` directly, so slow iLink sends do not block the client websocket read loop.
+- Outbound sends keep per-user order, apply a conservative global send interval, and retry transient send failures a small number of times.
+
+Default knobs:
+
+- `wechat_ilink_inbound_worker_count=4`
+- `wechat_ilink_inbound_queue_size=500`
+- `wechat_ilink_outbound_worker_count=2`
+- `wechat_ilink_outbound_queue_size=500`
+- `wechat_ilink_outbound_min_interval_ms=250`
+- `wechat_ilink_send_timeout_ms=10000`
+- `wechat_ilink_state_flush_interval_ms=500`
+- `wechat_ilink_gateway_client_idle_ttl_seconds=600`
+
+## 10. 验收提示
 
 实现完成前只承诺设计已收口，不承诺微信消息真实可用。
 
@@ -177,7 +200,7 @@ WeChat Bot 仍是外部客户端入口，不改变 `Core Service`、`desktop-age
 - 失效恢复：模拟 `errcode=-14` 后清理 token、游标与 context token
 - 安全：日志、错误、测试快照不泄露 `bot_token`、二维码 token、`context_token`
 
-## 10. 真实联调记录
+## 11. 真实联调记录
 
 ### 2026-04-22
 

@@ -55,9 +55,9 @@ export default function MessageList({
 
   useEffect(() => {
     if (autoFollowEnabled && scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+      scrollRef.current.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth', block: 'end' })
     }
-  }, [autoFollowEnabled, messages, approvalDisplay, pendingHumanInput, runtimeSnapshot?.status])
+  }, [autoFollowEnabled, messages, approvalDisplay, pendingHumanInput, runtimeSnapshot?.status, isStreaming])
 
   useEffect(() => {
     if (autoFollowEnabled && isNearBottom()) {
@@ -125,7 +125,7 @@ export default function MessageList({
               initial={{ opacity: 0, y: 15, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-              layout
+              layout={!isStreaming || !isLastAssistantTurn}
             >
               {message.role === 'assistant' && (
                 <div className={styles.avatar}>

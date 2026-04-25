@@ -59,6 +59,16 @@ class AgentRuntimeBase(ABC):
         self._last_connection_prompt: dict[str, Any] | None = None
         self._negotiated_protocol: dict[str, Any] = self._legacy_protocol_selection()
         self._requires_capability_snapshot = True
+        max_parallel_calls = getattr(config, "max_parallel_calls", 2)
+        try:
+            max_parallel_calls = int(max_parallel_calls)
+        except (TypeError, ValueError):
+            max_parallel_calls = 2
+        self._call_semaphore = asyncio.Semaphore(max(1, min(max_parallel_calls, 4)))
+        self._active_call_tasks: set[asyncio.Task] = set()
+        self._active_call_count = 0
+        self._call_locks: dict[str, asyncio.Lock] = {}
+        self._send_lock = asyncio.Lock()
 
     @property
     def protocol_schema(self) -> str:
@@ -168,6 +178,10 @@ class AgentRuntimeBase(ABC):
                             break
                 finally:
                     heartbeat_task.cancel()
+                    for task in list(self._active_call_tasks):
+                        task.cancel()
+                    if self._active_call_tasks:
+                        await asyncio.gather(*self._active_call_tasks, return_exceptions=True)
                     with contextlib.suppress(asyncio.CancelledError):
                         await heartbeat_task
                     if self._active_ws is ws:
@@ -194,7 +208,11 @@ class AgentRuntimeBase(ABC):
                 )
 
     async def _send_capability_snapshot(self, ws) -> None:
-        await ws.send_json(self.build_capabilities_snapshot_message(revision=self._capability_revision))
+        await self._send_ws_json(ws, self.build_capabilities_snapshot_message(revision=self._capability_revision))
+
+    async def _send_ws_json(self, ws, payload: dict[str, Any]) -> None:
+        async with self._send_lock:
+            await ws.send_json(payload)
 
     def _set_heartbeat_interval(self, interval: int, *, notify: bool = True) -> int:
         normalized = normalize_heartbeat_interval(interval)
@@ -213,7 +231,7 @@ class AgentRuntimeBase(ABC):
                 continue
             except asyncio.TimeoutError:
                 pass
-            await ws.send_json(self.build_heartbeat_message(metrics=self.collect_metrics()))
+            await self._send_ws_json(ws, self.build_heartbeat_message(metrics=self.collect_metrics()))
 
     async def _handle_server_message(self, payload: dict[str, Any], ready_received: bool, ws, session=None) -> bool:
         if str(payload.get("kind") or "").strip() == "error":
@@ -261,7 +279,9 @@ class AgentRuntimeBase(ABC):
             self._logger.info("%s ready: %s", self.runtime_label, payload.get("payload", {}))
             return True
         if message_type == "capability.call.request":
-            await self._handle_call_request(ws, payload, session)
+            task = asyncio.create_task(self._handle_call_request(ws, payload, session))
+            self._active_call_tasks.add(task)
+            task.add_done_callback(self._active_call_tasks.discard)
             return ready_received
         return ready_received
 
@@ -295,7 +315,8 @@ class AgentRuntimeBase(ABC):
         try:
             resolved_arguments = self._resolve_call_arguments(arguments, encrypted_arguments)
         except CredentialTransportError as exc:
-            await ws.send_json(
+            await self._send_ws_json(
+                ws,
                 self.build_call_error_message(
                     call_id=call_id,
                     correlation_id=correlation_id,
@@ -305,8 +326,9 @@ class AgentRuntimeBase(ABC):
             )
             return
 
-        await ws.send_json(self.build_call_accepted_message(call_id=call_id, correlation_id=correlation_id))
-        await ws.send_json(
+        await self._send_ws_json(ws, self.build_call_accepted_message(call_id=call_id, correlation_id=correlation_id))
+        await self._send_ws_json(
+            ws,
             self.build_call_progress_message(
                 call_id=call_id,
                 correlation_id=correlation_id,
@@ -315,14 +337,30 @@ class AgentRuntimeBase(ABC):
             )
         )
         try:
-            outcome = await self.execute_capability(
-                capability_id=capability_id,
-                arguments=resolved_arguments,
-                envelope_payload=envelope_payload,
-                session=session,
-            )
+            async with self._call_semaphore:
+                self._active_call_count += 1
+                try:
+                    if self.allows_parallel_capability(capability_id):
+                        outcome = await self.execute_capability(
+                            capability_id=capability_id,
+                            arguments=resolved_arguments,
+                            envelope_payload=envelope_payload,
+                            session=session,
+                        )
+                    else:
+                        lock = self._call_locks.setdefault(capability_id, asyncio.Lock())
+                        async with lock:
+                            outcome = await self.execute_capability(
+                                capability_id=capability_id,
+                                arguments=resolved_arguments,
+                                envelope_payload=envelope_payload,
+                                session=session,
+                            )
+                finally:
+                    self._active_call_count = max(0, self._active_call_count - 1)
         except CapabilityExecutionError as exc:
-            await ws.send_json(
+            await self._send_ws_json(
+                ws,
                 self.build_call_error_message(
                     call_id=call_id,
                     correlation_id=correlation_id,
@@ -332,8 +370,21 @@ class AgentRuntimeBase(ABC):
                 )
             )
             return
+        except Exception as exc:
+            await self._send_ws_json(
+                ws,
+                self.build_call_error_message(
+                    call_id=call_id,
+                    correlation_id=correlation_id,
+                    code="capability_execution_failed",
+                    message=str(exc),
+                    retryable=False,
+                )
+            )
+            return
 
-        await ws.send_json(
+        await self._send_ws_json(
+            ws,
             self.build_call_result_message(
                 call_id=call_id,
                 correlation_id=correlation_id,
@@ -351,7 +402,11 @@ class AgentRuntimeBase(ABC):
         )
 
     def collect_metrics(self) -> dict[str, Any]:
-        return {}
+        return {"active_calls": self._active_call_count}
+
+    def allows_parallel_capability(self, capability_id: str) -> bool:
+        del capability_id
+        return False
 
     def _legacy_protocol_selection(self) -> dict[str, Any]:
         return build_agent_protocol_selection(

@@ -330,6 +330,7 @@ class WeChatIlinkClient:
         context_token: str,
         text: str,
         client_id: str,
+        timeout_ms: int | None = None,
     ) -> dict[str, Any]:
         url = build_ilink_url(credentials.baseurl or self.base_url, "/ilink/bot/sendmessage")
         body = build_send_text_payload(
@@ -349,6 +350,7 @@ class WeChatIlinkClient:
                 channel_version=self.channel_version,
             ),
             json_body=body,
+            timeout_ms=timeout_ms,
         )
 
 

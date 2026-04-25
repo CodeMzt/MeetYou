@@ -16,6 +16,8 @@ import contextlib
 import hashlib
 import logging
 import os
+import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +45,14 @@ DEFAULT_QR_OUTPUT_PATH = "user/wechat-ilink-login-qr.png"
 DEFAULT_POLL_TIMEOUT_MS = 35000
 DEFAULT_LOGIN_POLL_INTERVAL_SECONDS = 3
 DEFAULT_MAX_TEXT_CHARS = 2000
+DEFAULT_INBOUND_WORKER_COUNT = 4
+DEFAULT_INBOUND_QUEUE_SIZE = 500
+DEFAULT_OUTBOUND_WORKER_COUNT = 2
+DEFAULT_OUTBOUND_QUEUE_SIZE = 500
+DEFAULT_OUTBOUND_MIN_INTERVAL_MS = 250
+DEFAULT_SEND_TIMEOUT_MS = 10000
+DEFAULT_STATE_FLUSH_INTERVAL_MS = 500
+DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS = 600
 _MAX_DEDUPE_KEYS = 4096
 _SUPPORTED_LOGIN_WAIT_STATUSES = {"", "wait", "waiting", "scaned", "scanned", "confirmed_on_phone"}
 
@@ -168,13 +178,32 @@ class WeChatIlinkState:
     credentials: WeChatIlinkCredentials | None
     get_updates_buf: str
     context_tokens: dict[str, dict[str, str]]
+    dedupe_keys: list[str]
+
+
+@dataclass(slots=True)
+class _InboundWorkItem:
+    message: dict[str, Any]
+    account_id: str
+    credentials: WeChatIlinkCredentials | None
+
+
+@dataclass(slots=True)
+class _OutboundTextItem:
+    user_id: str
+    text: str
+    attempt: int = 0
 
 
 class WeChatIlinkStateStore:
-    def __init__(self, token_file: str = DEFAULT_TOKEN_FILE):
+    def __init__(self, token_file: str = DEFAULT_TOKEN_FILE, *, flush_interval_ms: int = DEFAULT_STATE_FLUSH_INTERVAL_MS):
         self.path = Path(token_file or DEFAULT_TOKEN_FILE)
         self._lock = asyncio.Lock()
         self._state = self._load()
+        self._dedupe_set = set(self._state.dedupe_keys)
+        self._dirty = False
+        self._flush_task: asyncio.Task | None = None
+        self._flush_interval_seconds = max(_safe_positive_int(flush_interval_ms, DEFAULT_STATE_FLUSH_INTERVAL_MS), 50) / 1000
 
     def _empty_payload(self) -> dict[str, Any]:
         return {
@@ -182,6 +211,7 @@ class WeChatIlinkStateStore:
             "credentials": None,
             "get_updates_buf": "",
             "context_tokens": {},
+            "dedupe_keys": [],
             "updated_at": "",
         }
 
@@ -207,10 +237,14 @@ class WeChatIlinkStateStore:
                 for user_id, token in user_tokens.items()
                 if str(user_id).strip() and str(token).strip()
             }
+        dedupe_keys = payload.get("dedupe_keys")
+        if not isinstance(dedupe_keys, list):
+            dedupe_keys = []
         return WeChatIlinkState(
             credentials=WeChatIlinkCredentials.from_json(payload.get("credentials")),
             get_updates_buf=str(payload.get("get_updates_buf") or ""),
             context_tokens=normalized_contexts,
+            dedupe_keys=[str(item) for item in dedupe_keys[-_MAX_DEDUPE_KEYS:] if str(item).strip()],
         )
 
     def _to_payload(self) -> dict[str, Any]:
@@ -219,6 +253,7 @@ class WeChatIlinkStateStore:
             "credentials": self._state.credentials.to_json() if self._state.credentials else None,
             "get_updates_buf": self._state.get_updates_buf,
             "context_tokens": self._state.context_tokens,
+            "dedupe_keys": self._state.dedupe_keys[-_MAX_DEDUPE_KEYS:],
             "updated_at": _utcnow_iso(),
         }
 
@@ -226,6 +261,29 @@ class WeChatIlinkStateStore:
         atomic_write_json(str(self.path), self._to_payload())
         with contextlib.suppress(Exception):
             os.chmod(self.path, 0o600)
+
+    async def _mark_dirty_locked(self) -> None:
+        self._dirty = True
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_task = asyncio.create_task(self._flush_later())
+
+    async def _flush_later(self) -> None:
+        await asyncio.sleep(self._flush_interval_seconds)
+        await self.flush()
+
+    async def flush(self) -> None:
+        async with self._lock:
+            if not self._dirty:
+                return
+            self._dirty = False
+            await self._persist()
+
+    async def close(self) -> None:
+        if self._flush_task is not None and not self._flush_task.done():
+            self._flush_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._flush_task
+        await self.flush()
 
     def get_credentials(self) -> WeChatIlinkCredentials | None:
         return self._state.credentials
@@ -240,6 +298,8 @@ class WeChatIlinkStateStore:
             self._state.credentials = None
             self._state.get_updates_buf = ""
             self._state.context_tokens = {}
+            self._state.dedupe_keys = []
+            self._dedupe_set.clear()
             await self._persist()
 
     def get_update_buf(self) -> str:
@@ -248,7 +308,7 @@ class WeChatIlinkStateStore:
     async def set_update_buf(self, value: str) -> None:
         async with self._lock:
             self._state.get_updates_buf = str(value or "")
-            await self._persist()
+            await self._mark_dirty_locked()
 
     def get_context_token(self, account_id: str, user_id: str) -> str:
         return self._state.context_tokens.get(account_id, {}).get(user_id, "")
@@ -261,7 +321,25 @@ class WeChatIlinkStateStore:
             return
         async with self._lock:
             self._state.context_tokens.setdefault(account, {})[user] = value
-            await self._persist()
+            await self._mark_dirty_locked()
+
+    async def remember_dedupe_key(self, key: str) -> bool:
+        normalized = str(key or "").strip()
+        if not normalized:
+            return False
+        async with self._lock:
+            keys = self._state.dedupe_keys
+            if normalized in self._dedupe_set:
+                return True
+            keys.append(normalized)
+            self._dedupe_set.add(normalized)
+            if len(keys) > _MAX_DEDUPE_KEYS:
+                expired = keys[: len(keys) - _MAX_DEDUPE_KEYS]
+                del keys[: len(keys) - _MAX_DEDUPE_KEYS]
+                for item in expired:
+                    self._dedupe_set.discard(item)
+            await self._mark_dirty_locked()
+            return False
 
 
 class WeChatSessionManager:
@@ -387,7 +465,7 @@ class WeChatLongPoller:
         self._state_store = state_store
         self._timeout_ms = _safe_positive_int(config.get("wechat_ilink_poll_timeout_ms"), DEFAULT_POLL_TIMEOUT_MS)
 
-    async def poll_once(self) -> list[dict[str, Any]]:
+    async def poll_once_with_cursor(self) -> tuple[list[dict[str, Any]], str]:
         credentials = await self._session_manager.ensure_credentials()
         try:
             payload = await self._client.get_updates(
@@ -399,9 +477,13 @@ class WeChatLongPoller:
             await self._session_manager.invalidate()
             raise
         next_buf = _extract_update_buf(payload)
-        await self._state_store.set_update_buf(next_buf)
         self._timeout_ms = _extract_timeout_ms(payload, self._timeout_ms)
-        return _extract_messages(payload)
+        return _extract_messages(payload), next_buf
+
+    async def poll_once(self) -> list[dict[str, Any]]:
+        messages, next_buf = await self.poll_once_with_cursor()
+        await self._state_store.set_update_buf(next_buf)
+        return messages
 
 
 class WeChatOutputService:
@@ -420,6 +502,68 @@ class WeChatOutputService:
         self._stream_buffers: dict[str, list[str]] = {}
         self._pending_confirm_requests: dict[str, str] = {}
         self._pending_human_input_requests: dict[str, dict[str, Any]] = {}
+        self._outbound_queue: asyncio.Queue[_OutboundTextItem] = asyncio.Queue(
+            maxsize=_safe_positive_int(config.get("wechat_ilink_outbound_queue_size"), DEFAULT_OUTBOUND_QUEUE_SIZE)
+        )
+        self._outbound_worker_count = min(
+            _safe_positive_int(config.get("wechat_ilink_outbound_worker_count"), DEFAULT_OUTBOUND_WORKER_COUNT),
+            8,
+        )
+        self._outbound_tasks: list[asyncio.Task] = []
+        self._closed = False
+        self._send_timeout_seconds = max(_safe_positive_int(config.get("wechat_ilink_send_timeout_ms"), DEFAULT_SEND_TIMEOUT_MS), 1000) / 1000
+        self._min_interval_seconds = max(
+            _safe_positive_int(config.get("wechat_ilink_outbound_min_interval_ms"), DEFAULT_OUTBOUND_MIN_INTERVAL_MS),
+            0,
+        ) / 1000
+        self._last_send_at = 0.0
+        self._rate_lock = asyncio.Lock()
+        self._user_send_locks: dict[str, asyncio.Lock] = {}
+
+    async def run(self) -> None:
+        self._closed = False
+        if self._outbound_tasks:
+            return
+        for index in range(self._outbound_worker_count):
+            self._outbound_tasks.append(asyncio.create_task(self._outbound_worker_loop(index)))
+
+    async def close(self) -> None:
+        self._closed = True
+        if self._outbound_queue is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._outbound_queue.join(), timeout=3)
+        for task in self._outbound_tasks:
+            task.cancel()
+        if self._outbound_tasks:
+            await asyncio.gather(*self._outbound_tasks, return_exceptions=True)
+        self._outbound_tasks.clear()
+
+    async def _outbound_worker_loop(self, index: int) -> None:
+        del index
+        while True:
+            item = await self._outbound_queue.get()
+            try:
+                try:
+                    await self._send_text_now(item.user_id, item.text)
+                except WeChatIlinkSessionExpired:
+                    await self._session_manager.invalidate()
+                except Exception as exc:
+                    if item.attempt < 2 and not self._closed:
+                        await asyncio.sleep(min(2 ** item.attempt, 5))
+                        await self._outbound_queue.put(_OutboundTextItem(item.user_id, item.text, item.attempt + 1))
+                    else:
+                        logger.warning("WeChat iLink outbound send failed user=%s: %s", _mask(item.user_id), exc)
+            finally:
+                self._outbound_queue.task_done()
+
+    async def _respect_send_interval(self) -> None:
+        if self._min_interval_seconds <= 0:
+            return
+        async with self._rate_lock:
+            elapsed = time.monotonic() - self._last_send_at
+            if elapsed < self._min_interval_seconds:
+                await asyncio.sleep(self._min_interval_seconds - elapsed)
+            self._last_send_at = time.monotonic()
 
     def get_pending_confirm_request(self, user_id: str) -> str | None:
         return self._pending_confirm_requests.get(user_id)
@@ -461,7 +605,7 @@ class WeChatOutputService:
             return
         text = "".join(self._stream_buffers.pop(stream_key, []))
         if tail:
-            text += tail
+            text = tail
         if text:
             await self._send_text(user_id, text)
 
@@ -523,24 +667,38 @@ class WeChatOutputService:
     async def _send_text(self, user_id: str, text: str) -> None:
         if not user_id or not text:
             return
-        credentials = await self._session_manager.ensure_credentials()
-        context_token = self._state_store.get_context_token(credentials.account_id, user_id)
-        if not context_token:
-            logger.warning("WeChat iLink 缺少 context_token，无法主动回复 user=%s", _mask(user_id))
+        if self._outbound_tasks and not self._closed:
+            await self._outbound_queue.put(_OutboundTextItem(user_id=user_id, text=text))
             return
-        limit = _safe_positive_int(self._config.get("wechat_ilink_max_text_chars"), DEFAULT_MAX_TEXT_CHARS)
-        for fragment in split_text_naturally(text, limit=limit):
-            try:
-                await self._client.send_text(
-                    credentials,
-                    to_user_id=user_id,
-                    context_token=context_token,
-                    text=fragment,
-                    client_id=f"meetyou-{uuid4().hex}",
-                )
-            except WeChatIlinkSessionExpired:
-                await self._session_manager.invalidate()
+        await self._send_text_now(user_id, text)
+
+    async def _send_text_now(self, user_id: str, text: str) -> None:
+        if not user_id or not text:
+            return
+        lock = self._user_send_locks.setdefault(user_id, asyncio.Lock())
+        async with lock:
+            credentials = await self._session_manager.ensure_credentials()
+            context_token = self._state_store.get_context_token(credentials.account_id, user_id)
+            if not context_token:
+                logger.warning("WeChat iLink 缺少 context_token，无法主动回复 user=%s", _mask(user_id))
                 return
+            limit = _safe_positive_int(self._config.get("wechat_ilink_max_text_chars"), DEFAULT_MAX_TEXT_CHARS)
+            for fragment in split_text_naturally(text, limit=limit):
+                await self._respect_send_interval()
+                try:
+                    await asyncio.wait_for(
+                        self._client.send_text(
+                            credentials,
+                            to_user_id=user_id,
+                            context_token=context_token,
+                            text=fragment,
+                            client_id=f"meetyou-{uuid4().hex}",
+                        ),
+                        timeout=self._send_timeout_seconds,
+                    )
+                except WeChatIlinkSessionExpired:
+                    await self._session_manager.invalidate()
+                    return
 
     async def send(self, event) -> None:
         user_id = event.target.id or event.source.id
@@ -652,10 +810,22 @@ class WeChatInputAdapter:
             state_store=self._state_store,
         )
         self._gateway_clients: dict[str, Any] = {}
+        self._gateway_client_touched: dict[str, float] = {}
+        self._gateway_client_idle_ttl_seconds = _safe_positive_int(
+            config.get("wechat_ilink_gateway_client_idle_ttl_seconds"),
+            DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS,
+        )
         self._poll_task: asyncio.Task | None = None
+        self._inbound_workers: list[asyncio.Task] = []
+        self._inbound_worker_count = min(
+            _safe_positive_int(config.get("wechat_ilink_inbound_worker_count"), DEFAULT_INBOUND_WORKER_COUNT),
+            16,
+        )
+        self._inbound_queue: asyncio.Queue[_InboundWorkItem] = asyncio.Queue(
+            maxsize=_safe_positive_int(config.get("wechat_ilink_inbound_queue_size"), DEFAULT_INBOUND_QUEUE_SIZE)
+        )
+        self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._closed = False
-        self._dedupe_keys: list[str] = []
-        self._dedupe_set: set[str] = set()
 
         host = str(self._config.get("gateway_host") or "127.0.0.1").strip() or "127.0.0.1"
         if host in {"0.0.0.0", "::", "::0"}:
@@ -667,6 +837,11 @@ class WeChatInputAdapter:
     async def run(self) -> None:
         self._closed = False
         await self._client.init()
+        if hasattr(self._output_adapter, "run"):
+            await self._output_adapter.run()
+        if not self._inbound_workers:
+            for index in range(self._inbound_worker_count):
+                self._inbound_workers.append(asyncio.create_task(self._inbound_worker_loop(index)))
         if self._poll_task is None or self._poll_task.done():
             self._poll_task = asyncio.create_task(self._run_poll_loop())
         logger.info("WeChat iLink Bot 已启动后台长轮询。")
@@ -678,20 +853,32 @@ class WeChatInputAdapter:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._poll_task
             self._poll_task = None
+        if self._inbound_queue is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._inbound_queue.join(), timeout=3)
+        for task in self._inbound_workers:
+            task.cancel()
+        if self._inbound_workers:
+            await asyncio.gather(*self._inbound_workers, return_exceptions=True)
+        self._inbound_workers.clear()
         for client in self._gateway_clients.values():
             close = getattr(client, "close", None)
             if callable(close):
                 await close()
         self._gateway_clients.clear()
+        if hasattr(self._output_adapter, "close"):
+            await self._output_adapter.close()
+        await self._state_store.close()
         await self._client.close()
 
     async def _run_poll_loop(self) -> None:
         backoff_seconds = 2
         while not self._closed:
             try:
-                messages = await self._poller.poll_once()
+                messages, next_buf = await self._poller.poll_once_with_cursor()
                 backoff_seconds = 2
-                await self.handle_messages(messages)
+                await self._enqueue_messages(messages)
+                await self._state_store.set_update_buf(next_buf)
             except asyncio.CancelledError:
                 raise
             except WeChatIlinkSessionExpired:
@@ -705,6 +892,27 @@ class WeChatInputAdapter:
                 logger.exception("WeChat iLink 消息处理异常")
                 await asyncio.sleep(backoff_seconds)
                 backoff_seconds = min(backoff_seconds * 2, 30)
+
+    async def _enqueue_messages(self, messages: list[dict[str, Any]]) -> None:
+        credentials = self._state_store.get_credentials()
+        account_id = credentials.account_id if credentials else "default"
+        for message in messages:
+            await self._inbound_queue.put(_InboundWorkItem(message=message, account_id=account_id, credentials=credentials))
+
+    async def _inbound_worker_loop(self, index: int) -> None:
+        del index
+        while True:
+            item = await self._inbound_queue.get()
+            try:
+                from_user_id = _message_field(item.message, "from_user_id", "from_user", "sender_id")
+                lock_key = f"{item.account_id}:{from_user_id}" if from_user_id else "unknown"
+                lock = self._conversation_locks.setdefault(lock_key, asyncio.Lock())
+                async with lock:
+                    await self._handle_message(item.message, account_id=item.account_id, credentials=item.credentials)
+            except Exception:
+                logger.exception("WeChat iLink 入站消息 worker 处理异常")
+            finally:
+                self._inbound_queue.task_done()
 
     async def handle_messages(self, messages: list[dict[str, Any]]) -> None:
         credentials = self._state_store.get_credentials()
@@ -740,7 +948,7 @@ class WeChatInputAdapter:
         if context_token:
             await self._state_store.set_context_token(account_id, from_user_id, context_token)
         dedupe_key = self._dedupe_key(message, from_user_id, session_id, message_id, texts[0])
-        if self._remember_dedupe_key(dedupe_key):
+        if await self._remember_dedupe_key(dedupe_key):
             logger.debug("WeChat iLink 跳过重复消息 user=%s message_id=%s", _mask(from_user_id), _mask(message_id))
             return
         logger.info(
@@ -815,18 +1023,12 @@ class WeChatInputAdapter:
         digest = hashlib.sha256(f"{from_user_id}\n{session_id}\n{create_time}\n{text}".encode("utf-8")).hexdigest()
         return f"hash:{digest}"
 
-    def _remember_dedupe_key(self, key: str) -> bool:
-        if key in self._dedupe_set:
-            return True
-        self._dedupe_set.add(key)
-        self._dedupe_keys.append(key)
-        while len(self._dedupe_keys) > _MAX_DEDUPE_KEYS:
-            old_key = self._dedupe_keys.pop(0)
-            self._dedupe_set.discard(old_key)
-        return False
+    async def _remember_dedupe_key(self, key: str) -> bool:
+        return await self._state_store.remember_dedupe_key(key)
 
     async def _get_gateway_client(self, account_id: str, from_user_id: str) -> Any:
         conversation_key = f"wechat:account:{account_id}:user:{from_user_id}"
+        await self._cleanup_idle_gateway_clients()
         client = self._gateway_clients.get(conversation_key)
         if client is None:
             digest = hashlib.sha256(conversation_key.encode("utf-8")).hexdigest()[:20]
@@ -841,5 +1043,22 @@ class WeChatInputAdapter:
                 event_handler=lambda payload, user_id=from_user_id: self._output_adapter.send_client_event(user_id, payload),
             )
             self._gateway_clients[conversation_key] = client
+        self._gateway_client_touched[conversation_key] = time.monotonic()
         await client.start()
         return client
+
+    async def _cleanup_idle_gateway_clients(self) -> None:
+        ttl = max(int(self._gateway_client_idle_ttl_seconds or DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS), 1)
+        now = time.monotonic()
+        stale_keys = [
+            key
+            for key, touched_at in self._gateway_client_touched.items()
+            if now - touched_at > ttl
+        ]
+        for key in stale_keys:
+            client = self._gateway_clients.pop(key, None)
+            self._gateway_client_touched.pop(key, None)
+            close = getattr(client, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    await close()
