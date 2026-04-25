@@ -89,6 +89,20 @@ class _GatewayAgentReleaseTestCase(unittest.TestCase):
     def _auth_headers(self):
         return {"Authorization": f"Bearer {self.access_token}"}
 
+    def _wait_for_operator_agent_status(self, expected_status: str, *, timeout_seconds: float = 2.0):
+        deadline = time.time() + timeout_seconds
+        last_payload = None
+        while time.time() < deadline:
+            operator_resp = self.client.get("/operator/agents", headers=self._auth_headers())
+            self.assertEqual(operator_resp.status_code, 200)
+            last_payload = operator_resp.json()
+            if last_payload and last_payload[0].get("status") == expected_status:
+                return last_payload
+            time.sleep(0.05)
+        self.assertIsNotNone(last_payload)
+        self.assertTrue(last_payload)
+        self.assertEqual(last_payload[0]["status"], expected_status)
+
     def _hello_payload(self, *, protocol: dict | None):
         payload = {
             "agent_type": "desktop",
@@ -190,9 +204,7 @@ class GatewayAgentReleaseCompatibilityTests(_GatewayAgentReleaseTestCase):
                 self.assertEqual(ready["type"], "agent.ready")
 
                 websocket.send_json(self._heartbeat_payload(status="ready", cpu_percent=18.5))
-                operator_resp = self.client.get("/operator/agents", headers=self._auth_headers())
-                self.assertEqual(operator_resp.status_code, 200)
-                self.assertEqual(operator_resp.json()[0]["status"], "ready")
+                self._wait_for_operator_agent_status("ready")
 
                 thread = self._create_operation_thread()
                 operation_resp = self.client.post(
@@ -347,9 +359,7 @@ class GatewayAgentReleaseCompatibilityTests(_GatewayAgentReleaseTestCase):
             self.assertEqual(ready["type"], "agent.ready")
 
             websocket.send_json(self._heartbeat_payload(status="busy", cpu_percent=42.0))
-            operator_resp = self.client.get("/operator/agents", headers=self._auth_headers())
-            self.assertEqual(operator_resp.status_code, 200)
-            self.assertEqual(operator_resp.json()[0]["status"], "busy")
+            self._wait_for_operator_agent_status("busy")
 
             thread = self._create_operation_thread()
             operation_resp = self.client.post(
