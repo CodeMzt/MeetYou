@@ -473,6 +473,117 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant["reasoning_content"], "Both read-only checks can run before I answer.")
         self.assertEqual([tool_call["id"] for tool_call in assistant["tool_calls"]], ["call_a", "call_b"])
 
+    def test_deepseek_collapses_resolved_historical_tool_chain_on_new_turn(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter._format_chat_messages(
+            [
+                {"role": "user", "content": "Weather tomorrow?"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "Need live weather.",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_weather",
+                            "function": {"name": "search_web", "arguments": '{"query":"weather"}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_weather", "content": "Cloudy, 16-26C"},
+                {"role": "assistant", "content": "Tomorrow is cloudy."},
+                {"role": "user", "content": "Now inspect my workspace."},
+            ],
+            url="https://api.deepseek.com/chat/completions",
+            model="deepseek-v4-flash",
+        )
+
+        collapsed = formatted[1]
+        self.assertNotIn("tool_calls", collapsed)
+        self.assertNotIn("reasoning_content", collapsed)
+        self.assertIn("[Tool history collapsed", collapsed["content"])
+        self.assertIn("search_web", collapsed["content"])
+        self.assertFalse(any(message.get("role") == "tool" for message in formatted))
+        self.assertEqual(formatted[-1]["content"], "Now inspect my workspace.")
+
+    def test_deepseek_keeps_current_tail_tool_chain_after_collapsing_older_history(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter._format_chat_messages(
+            [
+                {"role": "user", "content": "Weather tomorrow?"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_weather",
+                            "function": {"name": "search_web", "arguments": '{"query":"weather"}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_weather", "content": "Cloudy, 16-26C"},
+                {"role": "assistant", "content": "Tomorrow is cloudy."},
+                {"role": "user", "content": "Inspect workspace."},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_workspace",
+                            "function": {"name": "analyze_workspace", "arguments": '{"path":"."}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_workspace", "content": "README.md, core/, meetyou-ui/"},
+            ],
+            url="https://api.deepseek.com/chat/completions",
+            model="deepseek-v4-flash",
+        )
+
+        tool_call_messages = [message for message in formatted if message.get("tool_calls")]
+        self.assertEqual(len(tool_call_messages), 1)
+        self.assertEqual(tool_call_messages[0]["tool_calls"][0]["id"], "call_workspace")
+        self.assertIn("reasoning_content", tool_call_messages[0])
+        self.assertEqual(tool_call_messages[0]["reasoning_content"], "")
+        self.assertEqual(formatted[-1]["role"], "tool")
+        self.assertEqual(formatted[-1]["tool_call_id"], "call_workspace")
+        self.assertTrue(any("[Tool history collapsed" in str(message.get("content") or "") for message in formatted))
+
+    def test_deepseek_collapses_provider_item_tool_history_for_chat_payloads(self):
+        adapter = OpenAIAdapter()
+
+        formatted = adapter._format_chat_messages(
+            [
+                {"role": "user", "content": "Use a provider-native tool"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "provider_items": [
+                        {
+                            "type": "function_call",
+                            "id": "item_1",
+                            "call_id": "call_provider",
+                            "name": "lookup",
+                            "arguments": '{"q":"x"}',
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_provider", "content": "provider result"},
+                {"role": "user", "content": "Continue"},
+            ],
+            url="https://api.deepseek.com/chat/completions",
+            model="deepseek-v4-flash",
+        )
+
+        self.assertFalse(any(message.get("role") == "tool" for message in formatted))
+        self.assertFalse(any(message.get("tool_calls") for message in formatted))
+        self.assertIn("lookup", formatted[1]["content"])
+        self.assertIn("provider result", formatted[1]["content"])
+
     async def test_deepseek_proxy_stream_payload_roundtrips_reasoning_content_for_parallel_tool_calls(self):
         adapter = OpenAIAdapter()
         session = FakeSession([FakeResponse(lines=["data: [DONE]"])])
