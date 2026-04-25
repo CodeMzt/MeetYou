@@ -201,6 +201,12 @@ class CILClient:
             return
 
         if event_type == "message.created":
+            message = evt.get("message", {}) or {}
+            channel = str(message.get("channel") or "")
+            role = str(message.get("role") or "")
+            content = str(message.get("content") or "").replace("\r", "").strip()
+            if channel in {"short_reply", "notice"} and role == "assistant" and content:
+                self._append(f"Mozart: {content}\n")
             return
 
         if event_type == "runtime.state" or event_type == "runtime.usage" or event_type == "operation.updated":

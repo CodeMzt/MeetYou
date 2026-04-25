@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import json
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlencode
 
 import aiohttp
 
@@ -49,6 +50,24 @@ class GatewayConversationClient:
 
         self.thread_id = str(thread_id or "").strip()
         self.session_id = ""
+
+    def _build_client_ws_url(self) -> str:
+        query_items = {
+            "thread_id": self.thread_id,
+            "session_id": self.session_id,
+            "client_id": self.client_id,
+            "workspace_id": self.workspace_id,
+            "client_type": self.client_type,
+            "display_name": self.display_name,
+        }
+        query_string = urlencode(
+            {
+                key: str(value)
+                for key, value in query_items.items()
+                if str(value or "").strip()
+            }
+        )
+        return f"{self.ws_base_url}/client/ws?{query_string}"
 
     def _auth_headers(self) -> dict[str, str]:
         if not self.access_token:
@@ -138,7 +157,7 @@ class GatewayConversationClient:
         await self._ensure_http_session()
         assert self._http_session is not None
         self._ws = await self._http_session.ws_connect(
-            f"{self.ws_base_url}/client/ws?thread_id={self.thread_id}",
+            self._build_client_ws_url(),
             headers=self._auth_headers(),
         )
         self._ws_connected.clear()

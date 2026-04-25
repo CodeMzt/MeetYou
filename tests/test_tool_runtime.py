@@ -328,6 +328,22 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.error.code, "tool_readonly_violation")
             self.assertTrue(result.metadata["authorization"]["read_only"])
 
+    async def test_emit_short_reply_schema_requires_call_before_slow_operations(self):
+        manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
+        tools_path = Path(__file__).resolve().parent.parent / "user" / "tools.json"
+
+        await manager.init_tools(str(tools_path), {})
+
+        schema = next(
+            tool
+            for tool in manager.get_all_tools()
+            if tool.get("function", {}).get("name") == "emit_short_reply"
+        )
+        description = schema["function"]["description"]
+        self.assertIn("must call", description)
+        self.assertIn("time-consuming", description)
+        self.assertIn("May be called multiple times", description)
+
     async def test_core_local_tools_fail_without_agent_dispatcher(self):
         with tempfile.TemporaryDirectory() as trusted_dir:
             manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([trusted_dir]))

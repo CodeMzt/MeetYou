@@ -140,6 +140,12 @@ class FeishuOutputAdapter:
             return
 
         if event_type == "message.created":
+            message = event.get("message", {}) or {}
+            channel = str(message.get("channel") or "")
+            role = str(message.get("role") or "")
+            content = str(message.get("content") or "").strip()
+            if channel in {"short_reply", "notice"} and role == "assistant" and content:
+                await self._send_text(chat_id, content)
             return
 
         if event_type == "reasoning.delta":

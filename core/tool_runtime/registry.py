@@ -100,7 +100,12 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "emit_short_reply",
-            "description": "Send a brief standalone assistant reply to the current session while the current turn is still thinking or tool-calling. May be called multiple times.",
+            "description": (
+                "Send a brief standalone assistant reply to the current session while the current turn is still "
+                "thinking or tool-calling. You must call this before any potentially time-consuming operation, "
+                "including web/page reading, research, local file or workspace work, shell/agent capability calls, "
+                "endpoint messaging, or other slow I/O. May be called multiple times."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -235,8 +240,11 @@ class ToolRegistry:
             if function.get("name") == "emit_temporary_reply":
                 function["description"] = (
                     "Compatibility alias for emit_short_reply. Sends a brief standalone assistant reply "
-                    "while the current turn is still thinking or tool-calling."
+                    "while the current turn is still thinking or tool-calling. Use before potentially "
+                    "time-consuming operations when the primary emit_short_reply name is unavailable."
                 )
+            if function.get("name") == "emit_short_reply":
+                function["description"] = _BUILTIN_FALLBACK_TOOL_SCHEMAS["emit_short_reply"]["function"]["description"]
 
     def has_builtin(self, tool_name: str) -> bool:
         return tool_name in self.supported_funcs

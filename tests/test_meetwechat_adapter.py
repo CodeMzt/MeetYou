@@ -303,6 +303,36 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
         await output.close()
 
+    async def test_notice_created_event_sends_without_pending_reply(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(
+            meetwechat_state_file=self.state_path,
+            meetwechat_outbound_min_interval_ms=1,
+        )
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+
+        await output.send_client_event(
+            "chat-1",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "message.created",
+                    "message": {
+                        "role": "assistant",
+                        "channel": "notice",
+                        "content": "direct notice",
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(meetwechat_client.sent[0]["chat_id"], "chat-1")
+        self.assertEqual(meetwechat_client.sent[0]["text"], "direct notice")
+        self.assertTrue(meetwechat_client.sent[0]["idempotency_key"].startswith("meetyou:direct:"))
+        await output.close()
+
     async def test_group_message_without_mention_is_acked_without_reply(self):
         adapter, _, meetwechat_client, gateway_clients, _ = self._build_adapter()
         event = self._event(chat_type="group", chat_id="group-1", is_group_mention=False)

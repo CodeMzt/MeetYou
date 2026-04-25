@@ -9,6 +9,7 @@ from fastapi.responses import Response
 from pydantic import ValidationError
 
 from agent_protocol import AGENT_ARGUMENTS_PURPOSE, build_capability_call_request
+from core.client_tool_bundles import ensure_client_always_available_tools
 from core.credential_transport import CredentialTransportError, decrypt_json_payload, protect_sensitive_arguments
 from core.http_headers import build_attachment_content_disposition
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
@@ -75,28 +76,10 @@ _DANXI_TOOLS = get_shared_danxi_tools()
 _DANXI_LOGIN_PURPOSE = "danxi.client.login.v1"
 _DANXI_WEBVPN_PURPOSE = "danxi.client.webvpn_cookie.v1"
 logger = logging.getLogger("meetyou.gateway.client")
-_CLIENT_ALWAYS_AVAILABLE_TOOLS = ("emit_short_reply", "send_endpoint_message")
 
 
 def _ensure_client_always_available_tools(metadata: dict[str, Any] | None) -> dict[str, Any]:
-    normalized = dict(metadata or {})
-    allowed_tool_bundle = normalized.get("allowed_tool_bundle")
-    if not isinstance(allowed_tool_bundle, list):
-        return normalized
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for item in allowed_tool_bundle:
-        tool_name = str(item or "").strip()
-        if not tool_name or tool_name in seen:
-            continue
-        seen.add(tool_name)
-        cleaned.append(tool_name)
-    for tool_name in _CLIENT_ALWAYS_AVAILABLE_TOOLS:
-        if tool_name not in seen:
-            cleaned.append(tool_name)
-            seen.add(tool_name)
-    normalized["allowed_tool_bundle"] = cleaned
-    return normalized
+    return ensure_client_always_available_tools(metadata)
 
 
 def _is_agent_available_status(status: str) -> bool:
@@ -864,20 +847,17 @@ def build_client_router(gateway) -> APIRouter:
         connected_agent_ids = await gateway.agent_ws_manager.connected_agent_ids()
         rows = []
         for agent in domain.services.agent.list_agents():
-            if agent.agent_id not in connected_agent_ids:
-                continue
-            if not _is_agent_available_status(agent.status):
-                continue
             bindings = domain.services.agent.list_workspace_bindings(agent.agent_id)
             if not any(binding.enabled and binding.workspace_id == workspace.id for binding in bindings):
                 continue
             owner_client = domain.services.client.get_by_id(agent.owner_client_id) if getattr(agent, "owner_client_id", None) else None
+            status = "online" if agent.agent_id in connected_agent_ids and _is_agent_available_status(agent.status) else agent.status
             rows.append(
                 ClientAvailableAgentResponse(
                     agent_id=agent.agent_id,
                     display_name=agent.display_name,
                     agent_type=agent.agent_type,
-                    status=agent.status,
+                    status=status,
                     transport_profile=agent.transport_profile,
                     owner_client_id=getattr(owner_client, "client_id", ""),
                     workspace_ids=[workspace_id],
@@ -893,34 +873,28 @@ def build_client_router(gateway) -> APIRouter:
         workspace = domain.services.workspace.get_by_workspace_id(workspace_id)
         if workspace is None:
             gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"未知 workspace: {workspace_id}")
-        bindings_by_client_id = {
-            client.client_id: binding
-            for client, binding in domain.services.client.list_clients_for_workspace(workspace.id)
-            if bool(getattr(binding, "enabled", True))
-        }
         live_connections = await gateway.client_ws_manager.snapshot(workspace_id=workspace_id)
-        rows_by_client_id: dict[str, dict[str, Any]] = {}
-        for connection in live_connections:
-            client_id = str(connection.get("client_id") or "").strip()
-            if not client_id:
+        live_client_ids = {
+            str(connection.get("client_id") or "").strip()
+            for connection in live_connections
+            if str(connection.get("client_id") or "").strip()
+        }
+        rows = []
+        for client, binding in domain.services.client.list_clients_for_workspace(workspace.id):
+            if not bool(getattr(binding, "enabled", True)):
                 continue
-            client_row = domain.services.client.get_by_client_id(client_id)
-            binding = bindings_by_client_id.get(client_id)
-            row = rows_by_client_id.setdefault(
-                client_id,
-                {
-                    "client_id": client_id,
-                    "display_name": str(connection.get("display_name") or getattr(client_row, "display_name", "") or client_id),
-                    "client_type": str(connection.get("client_type") or getattr(client_row, "client_type", "") or ""),
-                    "status": "online",
-                    "workspace_ids": [],
-                    "membership_role": str(getattr(binding, "membership_role", "active") or "active"),
-                    "enabled": True,
-                },
+            rows.append(
+                ClientAvailableClientResponse(
+                    client_id=client.client_id,
+                    display_name=client.display_name,
+                    client_type=client.client_type,
+                    status="online" if client.client_id in live_client_ids else client.status,
+                    workspace_ids=[workspace_id],
+                    membership_role=str(getattr(binding, "membership_role", "member") or "member"),
+                    enabled=bool(getattr(binding, "enabled", True)),
+                )
             )
-            if workspace_id not in row["workspace_ids"]:
-                row["workspace_ids"].append(workspace_id)
-        return [ClientAvailableClientResponse(**row) for row in rows_by_client_id.values()]
+        return rows
 
     @router.get("/context-pool/query", response_model=ContextPoolQueryResponse)
     async def query_context_pool(

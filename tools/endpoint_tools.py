@@ -189,6 +189,95 @@ class EndpointTools:
             clients.append(payload)
         return {"ok": True, "count": len(clients), "clients": clients}
 
+    @staticmethod
+    def _filter_client_notice_snapshot(snapshot: list[dict[str, Any]], *, session_id: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
+        filtered = list(snapshot or [])
+        normalized_session_id = str(session_id or "").strip()
+        normalized_workspace_id = str(workspace_id or "").strip()
+        if normalized_session_id:
+            filtered = [item for item in filtered if str(item.get("session_id") or "").strip() == normalized_session_id]
+        if normalized_workspace_id:
+            filtered = [item for item in filtered if str(item.get("workspace_id") or "").strip() == normalized_workspace_id]
+        return filtered
+
+    @staticmethod
+    def _build_notice_message(
+        *,
+        client_id: str,
+        thread_id: str,
+        session_id: str,
+        workspace_id: str,
+        content: str,
+        target_type: str,
+        target_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "message_id": f"msg_notice_{uuid4().hex}",
+            "thread_id": thread_id,
+            "session_id": session_id,
+            "active_workspace_id": workspace_id,
+            "workspace_id": workspace_id,
+            "client_id": client_id,
+            "role": "assistant",
+            "content": content,
+            "status": "completed",
+            "channel": "notice",
+            "created_at": _utcnow_iso(),
+            "metadata": {
+                "source": "send_endpoint_message",
+                "delivery_kind": "notice",
+                "target_type": target_type,
+                "target_id": target_id,
+            },
+        }
+
+    async def _deliver_notice_to_client_snapshots(
+        self,
+        gateway,
+        *,
+        client_id: str,
+        snapshots: list[dict[str, Any]],
+        content: str,
+        target_type: str,
+        target_id: str,
+    ) -> dict[str, Any]:
+        delivered_count = 0
+        message_ids: list[str] = []
+        seen_routes: set[tuple[str, str, str]] = set()
+        for item in snapshots:
+            thread_id = str(item.get("thread_id") or "").strip()
+            payload_session_id = str(item.get("session_id") or "").strip()
+            payload_workspace_id = str(item.get("workspace_id") or "").strip()
+            route_key = (thread_id, payload_session_id, payload_workspace_id)
+            if route_key in seen_routes:
+                continue
+            seen_routes.add(route_key)
+            message = self._build_notice_message(
+                client_id=client_id,
+                thread_id=thread_id,
+                session_id=payload_session_id,
+                workspace_id=payload_workspace_id,
+                content=content,
+                target_type=target_type,
+                target_id=target_id,
+            )
+            route_count = await gateway.client_ws_manager.publish_client_event(
+                client_id,
+                event_type="message.created",
+                payload={
+                    "thread_id": thread_id,
+                    "session_id": payload_session_id,
+                    "message": message,
+                },
+                thread_id=thread_id,
+                session_id=payload_session_id,
+                workspace_id=payload_workspace_id,
+            )
+            if route_count > 0:
+                delivered_count += route_count
+                message_ids.append(message["message_id"])
+        return {"connection_count": delivered_count, "message_ids": message_ids}
+
     async def _send_notice(self, *, target_type: str, target_id: str, content: str, session_id: str = "", workspace_id: str = "") -> dict[str, Any]:
         gateway = self._gateway()
         target = str(target_type or "").strip().lower()
@@ -197,64 +286,87 @@ class EndpointTools:
         if not text:
             raise _tool_error("content_required", "content is required for notice delivery.")
         if target == "agent":
+            domain = self._domain()
             payload = build_agent_message(
                 agent_id=normalized_target_id,
                 session_id=session_id,
                 content=text,
                 role="assistant",
                 event_type="notice",
-                metadata={"source": "send_endpoint_message", "delivery_kind": "notice"},
+                metadata={
+                    "source": "send_endpoint_message",
+                    "delivery_kind": "notice",
+                    "target_type": "agent",
+                    "target_id": normalized_target_id,
+                },
             )
             delivered = await gateway.agent_ws_manager.send_to_agent(normalized_target_id, payload)
             if not delivered:
                 raise _tool_error("agent_offline", f"Agent is offline: {normalized_target_id}", retryable=True)
-            return {"ok": True, "delivered": True, "target_type": "agent", "target_id": normalized_target_id}
+            owner_client_id = ""
+            owner_connection_count = 0
+            owner_message_ids: list[str] = []
+            agent_row = domain.services.agent.get_by_agent_id(normalized_target_id)
+            owner_client_row_id = getattr(agent_row, "owner_client_id", None) if agent_row is not None else None
+            if owner_client_row_id is not None:
+                owner_client = domain.services.client.get_by_id(owner_client_row_id)
+                owner_client_id = str(getattr(owner_client, "client_id", "") or "").strip()
+                if owner_client_id:
+                    owner_snapshot = await gateway.client_ws_manager.snapshot(client_id=owner_client_id)
+                    owner_snapshot = self._filter_client_notice_snapshot(
+                        owner_snapshot,
+                        session_id=session_id,
+                        workspace_id=workspace_id,
+                    )
+                    owner_delivery = await self._deliver_notice_to_client_snapshots(
+                        gateway,
+                        client_id=owner_client_id,
+                        snapshots=owner_snapshot,
+                        content=text,
+                        target_type="agent",
+                        target_id=normalized_target_id,
+                    )
+                    owner_connection_count = int(owner_delivery["connection_count"])
+                    owner_message_ids = list(owner_delivery["message_ids"])
+            return {
+                "ok": True,
+                "delivered": True,
+                "target_type": "agent",
+                "target_id": normalized_target_id,
+                "agent_delivered": True,
+                "owner_client_id": owner_client_id,
+                "owner_client_connection_count": owner_connection_count,
+                "owner_client_message_ids": owner_message_ids,
+            }
         if target == "client":
             snapshot = await gateway.client_ws_manager.snapshot(client_id=normalized_target_id)
-            if session_id:
-                snapshot = [item for item in snapshot if item.get("session_id") == session_id] or snapshot
-            if workspace_id:
-                snapshot = [item for item in snapshot if item.get("workspace_id") == workspace_id] or snapshot
+            snapshot = self._filter_client_notice_snapshot(
+                snapshot,
+                session_id=session_id,
+                workspace_id=workspace_id,
+            )
             if not snapshot:
                 raise _tool_error("client_offline", f"Client is offline: {normalized_target_id}", retryable=True)
-            first = snapshot[0]
-            payload_session_id = session_id or str(first.get("session_id") or "")
-            payload_thread_id = str(first.get("thread_id") or "")
-            payload_workspace_id = workspace_id or str(first.get("workspace_id") or "")
-            message = {
-                "message_id": f"msg_notice_{uuid4().hex}",
-                "thread_id": payload_thread_id,
-                "session_id": payload_session_id,
-                "active_workspace_id": payload_workspace_id,
-                "workspace_id": payload_workspace_id,
-                "client_id": normalized_target_id,
-                "role": "assistant",
-                "content": text,
-                "status": "completed",
-                "channel": "notice",
-                "created_at": _utcnow_iso(),
-            }
-            delivered_count = await gateway.client_ws_manager.publish_client_event(
-                normalized_target_id,
-                event_type="message.created",
-                payload={
-                    "thread_id": payload_thread_id,
-                    "session_id": payload_session_id,
-                    "message": message,
-                },
-                thread_id=payload_thread_id,
-                session_id=payload_session_id,
-                workspace_id=payload_workspace_id,
+            delivery = await self._deliver_notice_to_client_snapshots(
+                gateway,
+                client_id=normalized_target_id,
+                snapshots=snapshot,
+                content=text,
+                target_type="client",
+                target_id=normalized_target_id,
             )
+            delivered_count = int(delivery["connection_count"])
             if delivered_count <= 0:
                 raise _tool_error("client_delivery_failed", f"Client delivery failed: {normalized_target_id}", retryable=True)
+            message_ids = list(delivery["message_ids"])
             return {
                 "ok": True,
                 "delivered": True,
                 "target_type": "client",
                 "target_id": normalized_target_id,
                 "connection_count": delivered_count,
-                "message_id": message["message_id"],
+                "message_id": message_ids[0] if message_ids else "",
+                "message_ids": message_ids,
             }
         raise _tool_error("unsupported_target_type", f"Unsupported target_type: {target_type}")
 

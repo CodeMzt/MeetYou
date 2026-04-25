@@ -134,6 +134,38 @@ class EdgeAgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ws.sent[-1]["payload"]["error"]["code"], "edge_call_failed")
         self.assertEqual(ws.sent[-1]["payload"]["error"]["message"], "Division by zero is not allowed")
 
+    async def test_runtime_accepts_agent_notice_message_from_core(self):
+        config = EdgeAgentConfig(agent_id="edge-test-agent", workspace_ids=["home-lab"])
+        runtime = EdgeAgentRuntime(config)
+
+        class _FakeWs:
+            def __init__(self):
+                self.sent = []
+
+            async def send_json(self, payload):
+                self.sent.append(payload)
+
+        ws = _FakeWs()
+        ready_received = await runtime._handle_server_message(
+            {
+                "schema": "meetyou.agent.v1",
+                "type": "agent.message",
+                "message_id": "notice-1",
+                "payload": {
+                    "session_id": "sess-1",
+                    "event_type": "notice",
+                    "role": "assistant",
+                    "content": "edge notice",
+                    "metadata": {"source": "send_endpoint_message"},
+                },
+            },
+            False,
+            ws,
+        )
+
+        self.assertFalse(ready_received)
+        self.assertEqual(ws.sent, [])
+
     async def test_hello_ack_applies_heartbeat_interval_without_waiting_old_interval(self):
         config = EdgeAgentConfig(
             agent_id="edge-test-agent",

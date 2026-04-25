@@ -175,6 +175,10 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(fake_client.messages[0][0], "hello from feishu")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["chat_id"], "oc_test")
+        self.assertEqual(fake_client.messages[0][1]["metadata"]["transport"], "feishu")
+        self.assertEqual(fake_client.messages[0][1]["metadata"]["tool_scope"], "basic")
+        self.assertIn("emit_short_reply", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("send_endpoint_message", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
         self.assertIsNone(fake_client.messages[0][1]["preferred_mode"])
         self.assertTrue(self.event_bus.inbound_queue.empty())
 

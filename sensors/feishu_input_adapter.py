@@ -9,6 +9,7 @@ from pathlib import Path
 
 from clients.gateway_client import GatewayConversationClient
 from adapters.feishu_ws_client import FeishuWSClient
+from core.client_tool_bundles import EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE
 from core.interaction_response_service import InteractionResponseService
 from core.io_protocol import (
     SourceKind,
@@ -257,6 +258,11 @@ class FeishuInputAdapter:
             await client.send_message(
                 text,
                 metadata={
+                    "source": "feishu",
+                    "transport": "feishu",
+                    "tool_scope": "basic",
+                    "allowed_tool_bundle": list(EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE),
+                    "allowed_mcp_servers": [],
                     "message_id": message.get("message_id", ""),
                     "chat_id": chat_id,
                     "chat_type": message.get("chat_type", ""),
