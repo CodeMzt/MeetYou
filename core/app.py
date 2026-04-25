@@ -70,6 +70,18 @@ from tools.task_manager import TaskManager
 
 logger = logging.getLogger("meetyou.app")
 
+_CONTEXT_POOL_TOOL_SKIPLIST = {
+    "search_memory",
+    "recall_memory",
+    "recall_memory_structured",
+    "remember_knowledge",
+    "save_memory",
+    "manage_memories",
+    "switch_workspace",
+    "list_workspaces",
+    "update_context",
+}
+
 
 @dataclass(slots=True)
 class SessionExecutionRequest:
@@ -264,8 +276,7 @@ class App:
         self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
         self._health_getter = health_getter
         self._telemetry_recorder = telemetry_recorder
-        if self._telemetry_recorder is not None:
-            self.tools_manager.set_execution_observer(self._telemetry_recorder.observe_tool_result)
+        self.tools_manager.set_execution_observer(self._observe_tool_result)
 
         self._brain_source = make_source(SourceKind.SYSTEM.value, "brain")
         self._runtime_source = make_source(SourceKind.SYSTEM.value, "runtime")
@@ -298,6 +309,42 @@ class App:
         )
         self._client_thread_bridge = bridge
         return bridge
+
+    def _runtime_principal_context(self) -> dict[str, str]:
+        principal = getattr(getattr(self, "core_domain", None), "principal", None)
+        if principal is None:
+            return {}
+        payload = {
+            "principal_id": str(getattr(principal, "id", "") or "").strip(),
+            "principal_key": str(getattr(principal, "principal_key", "") or "").strip(),
+        }
+        return {key: value for key, value in payload.items() if value}
+
+    def _observe_tool_result(self, tool_name: str, result, tool_args: dict | None = None) -> None:
+        if self._telemetry_recorder is not None:
+            try:
+                self._telemetry_recorder.observe_tool_result(tool_name, result, tool_args=tool_args)
+            except Exception as exc:
+                logger.debug("Tool telemetry observer failed: %s", exc, exc_info=True)
+        if str(tool_name or "").strip() in _CONTEXT_POOL_TOOL_SKIPLIST:
+            return
+        if not getattr(result, "ok", False):
+            return
+        core_services = getattr(self, "core_services", None)
+        context_pool = getattr(core_services, "context_pool", None) if core_services is not None else None
+        principal = getattr(getattr(self, "core_domain", None), "principal", None)
+        if context_pool is None or principal is None:
+            return
+        try:
+            context_pool.record_tool_result_by_context(
+                principal_id=principal.id,
+                tool_name=tool_name,
+                result=result,
+                tool_args=tool_args,
+                event_context=get_event_context(),
+            )
+        except Exception as exc:
+            logger.debug("Failed to record tool result into ContextPool: %s", exc, exc_info=True)
 
     def _get_main_provider(self) -> str:
         return self.config.get("api_provider") or "openai"
@@ -1179,6 +1226,7 @@ class App:
             source=self._task_source(task_record),
             target=self._task_delivery(task_record)[1],
             job_id=task_key,
+            **self._runtime_principal_context(),
         )
         try:
             if should_notify:
@@ -1264,6 +1312,7 @@ class App:
             source=task_source,
             target=task_target,
             job_id=task_key,
+            **self._runtime_principal_context(),
         )
         try:
             result = await self.brain.run_background_turn(
@@ -2324,16 +2373,33 @@ class App:
         stream_id = ""
         turn_id = uuid4().hex
         answer_chunks: list[str] = []
+        metadata = dict(request.input_info.get("metadata") or {})
+        source = request.event.source
+        source_metadata = getattr(source, "metadata", {}) if source is not None else {}
+        if not isinstance(source_metadata, dict):
+            source_metadata = {}
+        source_kind = str(getattr(source, "kind", "") or "").strip()
+        source_id = str(getattr(source, "id", "") or "").strip()
+        client_id = str(metadata.get("client_id") or source_metadata.get("client_id") or "").strip()
+        if not client_id and source_kind in {"web", "feishu", "wechat", "cli"}:
+            client_id = source_id
+        agent_id = str(metadata.get("agent_id") or source_metadata.get("agent_id") or "").strip()
+        active_workspace_id = str(metadata.get("active_workspace_id") or metadata.get("workspace_id") or "").strip()
         token = bind_event_context(
             trace_id=getattr(request.event, "event_id", ""),
             session_id=request.session_id,
             turn_id=turn_id,
             source=request.event.source,
             target=request.target,
-            active_workspace_id=str((request.input_info.get("metadata") or {}).get("active_workspace_id") or (request.input_info.get("metadata") or {}).get("workspace_id") or ""),
-            workspace_id=str((request.input_info.get("metadata") or {}).get("active_workspace_id") or (request.input_info.get("metadata") or {}).get("workspace_id") or ""),
-            thread_id=str((request.input_info.get("metadata") or {}).get("thread_id") or ""),
-            pinned_procedure_id=str((request.input_info.get("metadata") or {}).get("pinned_procedure_id") or ""),
+            source_kind=source_kind,
+            source_id=source_id,
+            client_id=client_id,
+            agent_id=agent_id,
+            active_workspace_id=active_workspace_id,
+            workspace_id=active_workspace_id,
+            thread_id=str(metadata.get("thread_id") or ""),
+            pinned_procedure_id=str(metadata.get("pinned_procedure_id") or ""),
+            **self._runtime_principal_context(),
         )
         reasoning_started = False
         reasoning_ended = False

@@ -26,9 +26,11 @@ class DummyConfig:
 
 
 class DummySource:
-    def __init__(self, kind: str = "cli", source_id: str = "user-1"):
+    def __init__(self, kind: str = "cli", source_id: str = "user-1", metadata: dict | None = None):
         self.kind = kind
         self.id = source_id
+        self.display_name = source_id
+        self.metadata = dict(metadata or {})
 
 
 class FakeAdapter:
@@ -637,6 +639,53 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("feishu-user", user_ids)
         self.assertIn("desktop-app", user_ids)
         self.assertEqual(len(graph["nodes"]), snapshot["stats"]["record_count"])
+
+    async def test_principal_scoped_memory_cross_client_recall_preserves_source_attribution(self):
+        feishu_source = DummySource(kind="feishu", source_id="feishu-user", metadata={"client_id": "feishu-bot"})
+        desktop_source = DummySource(kind="web", source_id="desktop-app", metadata={"client_id": "desktop-app"})
+
+        feishu_token = bind_event_context(
+            principal_key="self",
+            principal_id="principal-row-1",
+            source=feishu_source,
+            client_id="feishu-bot",
+            workspace_id="personal",
+            active_workspace_id="personal",
+            thread_id="thr_feishu",
+        )
+        try:
+            await self.memory.save_memory("payment callback retry failures came from Feishu", 0.8, session_id="feishu-session", source=feishu_source)
+        finally:
+            reset_event_context(feishu_token)
+
+        desktop_token = bind_event_context(
+            principal_key="self",
+            principal_id="principal-row-1",
+            source=desktop_source,
+            client_id="desktop-app",
+            workspace_id="desktop-main",
+            active_workspace_id="desktop-main",
+            thread_id="thr_desktop",
+        )
+        try:
+            payload = json.loads(
+                await self.memory.recall_memory_structured(
+                    "payment callback retry failures",
+                    session_id="desktop-session",
+                    source=desktop_source,
+                    reinforce=False,
+                )
+            )
+        finally:
+            reset_event_context(desktop_token)
+
+        self.assertTrue(payload["recent_events"])
+        event = payload["recent_events"][0]
+        self.assertEqual(event["scope"]["user_id"], "self")
+        self.assertEqual(event["source_attribution"]["source_id"], "feishu-user")
+        self.assertEqual(event["source_attribution"]["client_id"], "feishu-bot")
+        source_view = self.memory.get_memory_snapshot(source_id="feishu-user")
+        self.assertTrue(any(record["source_attribution"]["source_id"] == "feishu-user" for record in source_view["records"]))
 
     async def test_explicit_remember_batch_falls_back_to_profile_memory_when_patch_is_empty(self):
         await self.memory.save_memory(

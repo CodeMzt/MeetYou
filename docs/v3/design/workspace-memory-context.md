@@ -17,8 +17,10 @@ This document records the simplified V3 model for workspace, memory, and cross-c
 ## Memory Semantics
 
 - Memory is principal-level and consistent across all clients and agents.
+- Runtime memory record ownership uses the principal key/id. Client, agent, and source ids are attribution metadata, not the default visibility filter.
 - Workspace, thread, and session are ranking/tag signals, not independent memory stores.
 - Current workspace receives priority, but records from other workspaces are not hidden by default.
+- Memory views may still filter by source attribution for operator/UI inspection.
 - Stable facts, preferences, and user profile information belong in memory.
 - Memory write/delete operations remain bounded by existing confirmation and risk rules.
 
@@ -28,6 +30,8 @@ This document records the simplified V3 model for workspace, memory, and cross-c
 - It complements memory; it does not replace long-term memory.
 - Context building uses current short-tail history, ContextPool recall, and memory recall together.
 - ContextPool retrieval is principal-level with boosts for same session, same thread, and same workspace.
+- ContextPool keeps a bounded active window per principal. Retention favors salient and recent items; pruned items are marked inactive instead of being deleted.
+- User/assistant turns, salient tool results, and Agent operation results can all contribute ContextPool items. Agent-originated items populate `source_agent_id` when an Agent row is known.
 - Old session summaries and conversation summaries should not become a second long-term context source; new consolidation should go through ContextPool or memory.
 
 ## Public Interface Direction
@@ -38,6 +42,7 @@ This document records the simplified V3 model for workspace, memory, and cross-c
 - `PATCH /client/sessions/{session_id}/active-workspace` switches the active workspace.
 - `GET /client/context-pool/query` explains which context pool items are currently recalled.
 - `GET /client/workspaces/{workspace_id}/clients` exposes client membership for a workspace.
+- The assistant-facing `list_workspaces` tool exposes available workspaces before switching.
 - The assistant-facing `switch_workspace` tool uses the same active workspace semantics as the HTTP API.
 
 ## Acceptance Boundary

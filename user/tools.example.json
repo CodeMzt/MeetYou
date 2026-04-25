@@ -22,6 +22,34 @@
     {
       "type": "function",
       "function": {
+        "name": "list_workspaces",
+        "description": "List available workspaces and show which workspace is currently active. Workspaces are preference and locality scopes, not hard visibility boundaries.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "include_agents": {
+              "type": "boolean",
+              "description": "Include agents registered in each workspace."
+            },
+            "include_clients": {
+              "type": "boolean",
+              "description": "Include clients registered in each workspace."
+            },
+            "session_id": {
+              "type": "string",
+              "description": "Optional session id. Defaults to the current runtime session."
+            }
+          },
+          "required": []
+        },
+        "metadata": {
+          "safe_parallel": true
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "switch_workspace",
         "description": "Switch the current client session to a different active workspace. Workspaces are preference and locality scopes, not hard visibility boundaries.",
         "parameters": {
