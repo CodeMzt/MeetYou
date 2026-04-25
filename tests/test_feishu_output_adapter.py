@@ -229,6 +229,34 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(message_calls), 1)
 
+    async def test_message_created_notice_is_sent_as_independent_message(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
+
+        await adapter.send_client_event(
+            "oc_test",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "message.created",
+                    "message": {
+                        "role": "assistant",
+                        "channel": "notice",
+                        "content": "desktop notice",
+                    },
+                },
+            },
+        )
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+        self.assertIn("desktop notice", message_calls[0]["json"]["content"])
+
     async def test_human_input_request_renders_numbered_options(self):
         adapter = self._build_adapter(
             [

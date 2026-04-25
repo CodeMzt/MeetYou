@@ -104,6 +104,24 @@ class CILClientStreamTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.client.output_field.text, "Mozart: hello\n")
 
+    async def test_message_created_notice_renders_independent_line(self):
+        await self.client._handle_client_ws_payload(
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "message.created",
+                    "message": {
+                        "role": "assistant",
+                        "channel": "notice",
+                        "content": "desktop notice",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(self.client.output_field.text, "Mozart: desktop notice\n")
+
     async def test_confirm_response_prefers_resource_endpoint(self):
         self.client._pending_confirm_request_id = "confirm-1"
 

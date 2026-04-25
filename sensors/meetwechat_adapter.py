@@ -17,6 +17,7 @@ from adapters.meetwechat_client import (
     MeetWeChatSendResult,
 )
 from clients.gateway_client import GatewayConversationClient
+from core.client_tool_bundles import EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE
 from core.interaction_response_service import InteractionResponseService
 from core.persistence import atomic_write_json, load_json_with_recovery
 
@@ -40,30 +41,7 @@ DEFAULT_STATE_FLUSH_INTERVAL_MS = 500
 DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS = 600
 _MAX_STATE_EVENTS = 4096
 _BLOCKED_SEND_STATUSES = {"manual_only", "mute", "read_only", "blocked"}
-MEETWECHAT_BASIC_TOOL_BUNDLE = [
-    "ask_human",
-    "get_current_system_time",
-    "list_skills",
-    "load_skill",
-    "create_skill",
-    "manage_procedures",
-    "list_workspaces",
-    "switch_workspace",
-    "list_active_agents",
-    "list_active_clients",
-    "send_endpoint_message",
-    "emit_short_reply",
-    "restart_core",
-    "search_knowledge",
-    "search_memory",
-    "search_web",
-    "read_web_page",
-    "remember_knowledge",
-    "manage_memories",
-    "summarize_text",
-    "organize_notes",
-    "extract_action_items",
-]
+MEETWECHAT_BASIC_TOOL_BUNDLE = list(EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE)
 
 
 def _utcnow_iso() -> str:
@@ -556,6 +534,13 @@ class MeetWeChatOutputService:
                     delay_before_send=False,
                     complete_pending=False,
                 )
+            elif channel in {"short_reply", "notice"}:
+                content = str(message.get("content") or "")
+                if content.strip():
+                    try:
+                        await self._send_direct_text(chat_id, content)
+                    except Exception as exc:
+                        logger.warning("MeetWeChat direct notice send failed chat=%s error=%s", _mask(chat_id), exc)
             return
         if event_type in {"reasoning.delta", "operation.updated", "activity.status"}:
             return
@@ -609,6 +594,26 @@ class MeetWeChatOutputService:
             )
             if complete_pending:
                 self._complete_pending(pending.event.chat_id, False, "outbound queue full")
+
+    async def _send_direct_text(self, chat_id: str, text: str) -> None:
+        content = str(text or "").strip()
+        if not chat_id or not content:
+            return
+        limit = _safe_positive_int(self._config.get("meetwechat_max_text_chars"), DEFAULT_MAX_TEXT_CHARS)
+        fragments = split_text_naturally(content, limit=limit)
+        seed = hashlib.sha256(f"{chat_id}:{content}:{datetime.now(timezone.utc).isoformat()}".encode("utf-8")).hexdigest()[:16]
+        for index, fragment in enumerate(fragments, start=1):
+            await self._wait_global_send_slot()
+            result = await asyncio.wait_for(
+                self._client.send_text(
+                    chat_id=chat_id,
+                    text=fragment,
+                    idempotency_key=f"meetyou:direct:{seed}:{index}",
+                    is_group_mention=False,
+                ),
+                timeout=self._send_timeout_seconds,
+            )
+            self._check_send_result(result)
 
     def _next_outbound_message_index(self, event_id: str) -> int:
         key = str(event_id or "").strip()

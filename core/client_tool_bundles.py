@@ -1,0 +1,52 @@
+"""Shared tool bundles for external client adapters."""
+
+from typing import Any
+
+
+CLIENT_ALWAYS_AVAILABLE_TOOLS = ("emit_short_reply", "send_endpoint_message")
+
+EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE = [
+    "ask_human",
+    "get_current_system_time",
+    "list_skills",
+    "load_skill",
+    "create_skill",
+    "manage_procedures",
+    "list_workspaces",
+    "switch_workspace",
+    "list_active_agents",
+    "list_active_clients",
+    "send_endpoint_message",
+    "emit_short_reply",
+    "restart_core",
+    "search_knowledge",
+    "search_memory",
+    "search_web",
+    "read_web_page",
+    "remember_knowledge",
+    "manage_memories",
+    "summarize_text",
+    "organize_notes",
+    "extract_action_items",
+]
+
+
+def ensure_client_always_available_tools(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    normalized = dict(metadata or {})
+    allowed_tool_bundle = normalized.get("allowed_tool_bundle")
+    if not isinstance(allowed_tool_bundle, list):
+        return normalized
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in allowed_tool_bundle:
+        tool_name = str(item or "").strip()
+        if not tool_name or tool_name in seen:
+            continue
+        seen.add(tool_name)
+        cleaned.append(tool_name)
+    for tool_name in CLIENT_ALWAYS_AVAILABLE_TOOLS:
+        if tool_name not in seen:
+            cleaned.append(tool_name)
+            seen.add(tool_name)
+    normalized["allowed_tool_bundle"] = cleaned
+    return normalized
