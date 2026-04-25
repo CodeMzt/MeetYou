@@ -214,6 +214,16 @@ class DesktopAgentRuntime(AgentRuntimeBase):
         del capability_id
         return "Dispatching capability handler"
 
+    def allows_parallel_capability(self, capability_id: str) -> bool:
+        return any(
+            str(capability_id or "").endswith(suffix)
+            for suffix in (
+                ".utility.echo",
+                ".workspace.analyze",
+                ".file.read",
+            )
+        )
+
     async def execute_capability(
         self,
         *,
@@ -256,4 +266,6 @@ class DesktopAgentRuntime(AgentRuntimeBase):
         }
 
     def collect_metrics(self) -> dict[str, float | int]:
-        return self._collect_metrics()
+        metrics = self._collect_metrics()
+        metrics["active_calls"] = self._active_call_count
+        return metrics

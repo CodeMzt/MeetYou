@@ -236,6 +236,7 @@ class App:
             system_tools,
             self.mode_manager,
             task_manager=self.task_manager,
+            config=self.config,
         )
         self.brain = Brain(
             self.main_adapter,
@@ -245,6 +246,7 @@ class App:
             self.exception_router,
             mode_manager=self.mode_manager,
         )
+        self.brain.set_performance_config(self.config)
         self.brain.set_provider_name(self._get_main_provider())
         self.heart = Heart(
             self.heart_adapter,

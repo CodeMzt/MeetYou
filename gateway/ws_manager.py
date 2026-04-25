@@ -34,7 +34,7 @@ class WebSocketManager:
         payload = self._serialize_event(event)
         async with self._lock:
             connections = list(self._connections.get(session_id, set()))
-        for websocket in connections:
+        async def _send(websocket):
             try:
                 await websocket.send_json(payload)
                 self._notify_delivery_observer(
@@ -55,6 +55,8 @@ class WebSocketManager:
                     metadata=self._payload_metadata(payload),
                 )
                 await self.disconnect(session_id, websocket)
+        if connections:
+            await asyncio.gather(*(_send(websocket) for websocket in connections))
 
     async def broadcast_event(self, event):
         payload = self._serialize_event(event)

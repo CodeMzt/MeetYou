@@ -37,6 +37,7 @@ _BOOLEAN_FALSE_VALUES = {"0", "false", "no", "off"}
 _BOOLEAN_KEYS = {
     "enable_feishu_bot",
     "enable_wechat_bot",
+    "memory_background_episode_save",
     "thinking_enabled",
     "heartbeat_idle_poke_enabled",
     "heartbeat_idle_context_compaction_enabled",
@@ -52,6 +53,18 @@ _INTEGER_KEYS = {
     "wechat_ilink_login_poll_interval_seconds",
     "wechat_ilink_max_text_chars",
     "wechat_ilink_poll_timeout_ms",
+    "wechat_ilink_inbound_worker_count",
+    "wechat_ilink_inbound_queue_size",
+    "wechat_ilink_outbound_worker_count",
+    "wechat_ilink_outbound_queue_size",
+    "wechat_ilink_outbound_min_interval_ms",
+    "wechat_ilink_send_timeout_ms",
+    "wechat_ilink_state_flush_interval_ms",
+    "wechat_ilink_gateway_client_idle_ttl_seconds",
+    "max_parallel_tool_calls",
+    "web_search_parallel_reads",
+    "web_search_extract_timeout_seconds",
+    "memory_auto_search_timeout_ms",
 }
 _POSITIVE_INTEGER_KEYS = {
     "heartbeat_interval",
@@ -62,6 +75,18 @@ _POSITIVE_INTEGER_KEYS = {
     "wechat_ilink_login_poll_interval_seconds",
     "wechat_ilink_max_text_chars",
     "wechat_ilink_poll_timeout_ms",
+    "wechat_ilink_inbound_worker_count",
+    "wechat_ilink_inbound_queue_size",
+    "wechat_ilink_outbound_worker_count",
+    "wechat_ilink_outbound_queue_size",
+    "wechat_ilink_outbound_min_interval_ms",
+    "wechat_ilink_send_timeout_ms",
+    "wechat_ilink_state_flush_interval_ms",
+    "wechat_ilink_gateway_client_idle_ttl_seconds",
+    "max_parallel_tool_calls",
+    "web_search_parallel_reads",
+    "web_search_extract_timeout_seconds",
+    "memory_auto_search_timeout_ms",
 }
 _JSON_OBJECT_KEYS = {"assistant_modes", "mode_router", "document_parsers", "office_integrations"}
 _LIST_KEYS = {"trusted_write_roots", "feishu_broadcast_chat_ids", "gateway_cors_origins"}
@@ -97,6 +122,14 @@ _ENV_OVERRIDE_KEY_MAP = {
     "wechat_ilink_token_file": "MEETYOU_WECHAT_TOKEN_FILE",
     "wechat_ilink_qr_output_path": "MEETYOU_WECHAT_LOGIN_QR_PATH",
     "wechat_ilink_poll_timeout_ms": "MEETYOU_WECHAT_POLL_TIMEOUT_MS",
+    "wechat_ilink_inbound_worker_count": "MEETYOU_WECHAT_INBOUND_WORKERS",
+    "wechat_ilink_inbound_queue_size": "MEETYOU_WECHAT_INBOUND_QUEUE_SIZE",
+    "wechat_ilink_outbound_worker_count": "MEETYOU_WECHAT_OUTBOUND_WORKERS",
+    "wechat_ilink_outbound_queue_size": "MEETYOU_WECHAT_OUTBOUND_QUEUE_SIZE",
+    "wechat_ilink_outbound_min_interval_ms": "MEETYOU_WECHAT_OUTBOUND_MIN_INTERVAL_MS",
+    "wechat_ilink_send_timeout_ms": "MEETYOU_WECHAT_SEND_TIMEOUT_MS",
+    "wechat_ilink_state_flush_interval_ms": "MEETYOU_WECHAT_STATE_FLUSH_INTERVAL_MS",
+    "wechat_ilink_gateway_client_idle_ttl_seconds": "MEETYOU_WECHAT_GATEWAY_CLIENT_IDLE_TTL_SECONDS",
 }
 
 _KNOWN_CONFIG_KEYS = set(CONFIG_FIELD_KEYS)

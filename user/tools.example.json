@@ -1742,11 +1742,21 @@
             "max_results": {
               "type": "integer",
               "description": "Optional maximum number of search results."
+            },
+            "quality": {
+              "type": "string",
+              "enum": ["adaptive", "fast", "balanced", "deep"],
+              "description": "Optional speed/quality mode. Defaults to adaptive."
             }
           },
           "required": [
             "query"
           ]
+        },
+        "metadata": {
+          "safe_parallel": true,
+          "parallel_group": "web_io",
+          "max_concurrency": 3
         }
       }
     },
@@ -1766,6 +1776,11 @@
           "required": [
             "url"
           ]
+        },
+        "metadata": {
+          "safe_parallel": true,
+          "parallel_group": "web_io",
+          "max_concurrency": 3
         }
       }
     }

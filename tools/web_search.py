@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
+import asyncio
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -18,10 +20,16 @@ ActivityCallback = Callable[[str, str, dict[str, Any] | None], Awaitable[None]]
 
 _DEFAULT_SEARCH_RESULTS = 5
 _MAX_SEARCH_RESULTS = 8
-_MIN_TAVILY_RESULTS = 5
 _READ_TOP_K = 3
+_FAST_READ_TOP_K = 1
+_BALANCED_READ_TOP_K = 2
 _SNIPPET_LIMIT = 280
 _SUMMARY_LIMIT = 1200
+_DEFAULT_MCP_TIMEOUT_SECONDS = 10
+_DEFAULT_BROWSER_TIMEOUT_SECONDS = 30
+_SEARCH_CACHE_TTL_SECONDS = 300
+_EXTRACT_CACHE_TTL_SECONDS = 600
+_CACHE_MAX_ITEMS = 128
 _TAVILY_SEARCH_TOOL_CANDIDATES = ("tavily-search", "tavily_search")
 _TAVILY_EXTRACT_TOOL_CANDIDATES = ("tavily-extract", "tavily_extract")
 
@@ -47,6 +55,26 @@ _NEWS_HINTS = (
     "\u65b0\u95fb",
     "\u5934\u6761",
 )
+_DEEP_SEARCH_HINTS = (
+    "research",
+    "source",
+    "sources",
+    "evidence",
+    "verify",
+    "investigate",
+    "\u7814\u7a76",
+    "\u8bc1\u636e",
+    "\u6838\u5b9e",
+    "\u67e5\u8bc1",
+)
+
+
+def _bounded_int(value: Any, *, default: int, minimum: int = 1, maximum: int = _MAX_SEARCH_RESULTS) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(number, maximum))
 
 
 def _trim_text(text: str, limit: int) -> str:
@@ -72,6 +100,30 @@ def _guess_tavily_topic(query: str) -> str:
     if any(hint in lowered for hint in _NEWS_HINTS):
         return "news"
     return "general"
+
+
+def _normalize_quality(value: str, *, query: str, source_profile: str = "") -> str:
+    requested = str(value or "adaptive").strip().lower()
+    if requested in {"fast", "balanced", "deep"}:
+        return requested
+    lowered = f"{query or ''} {source_profile or ''}".lower()
+    if "research" in lowered or any(hint in lowered for hint in _DEEP_SEARCH_HINTS):
+        return "deep"
+    if any(hint in lowered for hint in _NEWS_HINTS):
+        return "deep"
+    return "balanced"
+
+
+def _search_depth_for_quality(quality: str) -> str:
+    return "advanced" if quality == "deep" else "basic"
+
+
+def _read_top_k_for_quality(quality: str, max_results: int) -> int:
+    if quality == "fast":
+        return min(_FAST_READ_TOP_K, max_results)
+    if quality == "deep":
+        return min(_READ_TOP_K, max_results)
+    return min(_BALANCED_READ_TOP_K, max_results)
 
 
 def _extract_json_payload(text: str) -> dict[str, Any] | list[Any] | None:
@@ -289,8 +341,43 @@ def _normalize_playwright_payload(text: str, url: str, fallback_title: str = "")
 
 
 class WebSearchTools:
-    def __init__(self, mcp_manager):
+    def __init__(self, mcp_manager, config=None):
         self._mcp_manager = mcp_manager
+        self._cache: dict[tuple[Any, ...], tuple[float, Any]] = {}
+        self._playwright_lock = asyncio.Lock()
+        self._parallel_reads = _bounded_int(
+            getattr(config, "get", lambda key, default=None: default)("web_search_parallel_reads", 3) if config is not None else 3,
+            default=3,
+            minimum=1,
+            maximum=6,
+        )
+        self._extract_timeout_seconds = _bounded_int(
+            getattr(config, "get", lambda key, default=None: default)("web_search_extract_timeout_seconds", _DEFAULT_MCP_TIMEOUT_SECONDS) if config is not None else _DEFAULT_MCP_TIMEOUT_SECONDS,
+            default=_DEFAULT_MCP_TIMEOUT_SECONDS,
+            minimum=1,
+            maximum=30,
+        )
+        self._default_quality = str(
+            getattr(config, "get", lambda key, default=None: default)("web_search_quality", "adaptive") if config is not None else "adaptive"
+        ).strip() or "adaptive"
+        self._extract_semaphore = asyncio.Semaphore(self._parallel_reads)
+
+    def _get_cached(self, key: tuple[Any, ...], ttl_seconds: int) -> Any | None:
+        now = time.monotonic()
+        cached = self._cache.get(key)
+        if cached is None:
+            return None
+        stored_at, value = cached
+        if now - stored_at > ttl_seconds:
+            self._cache.pop(key, None)
+            return None
+        return value
+
+    def _set_cached(self, key: tuple[Any, ...], value: Any) -> None:
+        if len(self._cache) >= _CACHE_MAX_ITEMS:
+            oldest_key = min(self._cache, key=lambda item: self._cache[item][0])
+            self._cache.pop(oldest_key, None)
+        self._cache[key] = (time.monotonic(), value)
 
     def _get_tavily_diagnostic(self) -> dict[str, Any]:
         getter = getattr(self._mcp_manager, "get_server_diagnostic", None)
@@ -452,8 +539,17 @@ class WebSearchTools:
             return
         await callback(phase, content, metadata or {})
 
-    async def _call_mcp_text(self, tool_name: str, tool_args: dict[str, Any]) -> str:
-        result = await self._mcp_manager.call_mcp_tool(tool_name, tool_args)
+    async def _call_mcp_text(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        *,
+        timeout_seconds: int = _DEFAULT_MCP_TIMEOUT_SECONDS,
+    ) -> str:
+        result = await asyncio.wait_for(
+            self._mcp_manager.call_mcp_tool(tool_name, tool_args),
+            timeout=max(int(timeout_seconds or _DEFAULT_MCP_TIMEOUT_SECONDS), 1),
+        )
         return "\n".join(
             item.text
             for item in result.content
@@ -466,6 +562,8 @@ class WebSearchTools:
         *,
         title: str = "",
         activity_callback: ActivityCallback | None = None,
+        allow_playwright: bool = True,
+        extract_timeout_seconds: int = _DEFAULT_MCP_TIMEOUT_SECONDS,
     ) -> tuple[dict[str, Any] | None, str | None]:
         extract_error: str | None = None
 
@@ -474,7 +572,16 @@ class WebSearchTools:
             try:
                 if not extract_tool_name:
                     raise RuntimeError("Tavily extract tool is unavailable")
-                text = await self._call_mcp_text(extract_tool_name, {"urls": [url]})
+                cache_key = ("extract", extract_tool_name, url)
+                text = self._get_cached(cache_key, _EXTRACT_CACHE_TTL_SECONDS)
+                if text is None:
+                    async with self._extract_semaphore:
+                        text = await self._call_mcp_text(
+                            extract_tool_name,
+                            {"urls": [url]},
+                            timeout_seconds=extract_timeout_seconds,
+                        )
+                    self._set_cached(cache_key, text)
                 backend_error = _extract_tavily_error(text)
                 if backend_error:
                     raise RuntimeError(backend_error)
@@ -490,16 +597,25 @@ class WebSearchTools:
                 logger.warning("Tavily extract failed for %s: %s", url, exc)
                 extract_error = f"Tavily extract failed for {url}: {exc}"
 
-        if self.has_playwright():
+        if allow_playwright and self.has_playwright():
             try:
-                await self._emit_activity(
-                    activity_callback,
-                    "browsing_page",
-                    f"Opening page: {title or url}",
-                    {"url": url},
-                )
-                await self._call_mcp_text("browser_navigate", {"url": url})
-                snapshot_text = await self._call_mcp_text("browser_snapshot", {})
+                async with self._playwright_lock:
+                    await self._emit_activity(
+                        activity_callback,
+                        "browsing_page",
+                        f"Opening page: {title or url}",
+                        {"url": url},
+                    )
+                    await self._call_mcp_text(
+                        "browser_navigate",
+                        {"url": url},
+                        timeout_seconds=_DEFAULT_BROWSER_TIMEOUT_SECONDS,
+                    )
+                    snapshot_text = await self._call_mcp_text(
+                        "browser_snapshot",
+                        {},
+                        timeout_seconds=_DEFAULT_BROWSER_TIMEOUT_SECONDS,
+                    )
                 normalized = _normalize_playwright_payload(snapshot_text, url, title)
                 if normalized and normalized.get("summary"):
                     return normalized, extract_error
@@ -520,6 +636,7 @@ class WebSearchTools:
         source=None,
         activity_callback: ActivityCallback | None = None,
         source_profile: str = "",
+        quality: str = "",
     ) -> str | ToolCallResult:
         del session_id, source
 
@@ -550,10 +667,10 @@ class WebSearchTools:
         if not search_tool_name:
             return self._tavily_unavailable_result()
 
-        try:
-            safe_max_results = max(_MIN_TAVILY_RESULTS, min(int(max_results), _MAX_SEARCH_RESULTS))
-        except (TypeError, ValueError):
-            safe_max_results = _DEFAULT_SEARCH_RESULTS
+        safe_max_results = _bounded_int(max_results, default=_DEFAULT_SEARCH_RESULTS)
+        resolved_quality = _normalize_quality(quality or self._default_quality, query=normalized_query, source_profile=source_profile)
+        search_depth = _search_depth_for_quality(resolved_quality)
+        read_top_k = _read_top_k_for_quality(resolved_quality, safe_max_results)
 
         topic = _guess_tavily_topic(normalized_query)
 
@@ -565,16 +682,27 @@ class WebSearchTools:
         )
 
         try:
-            search_text = await self._call_mcp_text(
-                search_tool_name,
-                {
-                    "query": normalized_query,
-                    "max_results": safe_max_results,
-                    "search_depth": "advanced",
-                    "topic": topic,
-                    "include_raw_content": False,
-                    "include_images": False,
-                },
+            search_started_at = time.perf_counter()
+            search_args = {
+                "query": normalized_query,
+                "max_results": safe_max_results,
+                "search_depth": search_depth,
+                "topic": topic,
+                "include_raw_content": False,
+                "include_images": False,
+            }
+            cache_key = ("search", search_tool_name, normalized_query.lower(), safe_max_results, search_depth, topic)
+            search_text = self._get_cached(cache_key, _SEARCH_CACHE_TTL_SECONDS)
+            was_cached = search_text is not None
+            if search_text is None:
+                search_text = await self._call_mcp_text(search_tool_name, search_args)
+                self._set_cached(cache_key, search_text)
+            logger.debug(
+                "Web search backend completed query=%r depth=%s elapsed_ms=%s cached=%s",
+                normalized_query,
+                search_depth,
+                int((time.perf_counter() - search_started_at) * 1000),
+                was_cached,
             )
         except Exception as exc:
             logger.error("Tavily search failed: %s", exc)
@@ -626,6 +754,8 @@ class WebSearchTools:
                     "query": normalized_query,
                     "search_backend": "tavily",
                     "topic": topic,
+                    "quality": resolved_quality,
+                    "search_depth": search_depth,
                     "source_profile": str(source_profile or ""),
                     "citation_style": "No results were found.",
                     "summary_hint": normalized["answer"],
@@ -637,22 +767,24 @@ class WebSearchTools:
 
         sources: list[dict[str, Any]] = []
         failures: list[str] = []
+        source_candidates = results[:read_top_k]
 
-        for index, result in enumerate(results[: min(_READ_TOP_K, len(results))], start=1):
+        if source_candidates:
             await self._emit_activity(
                 activity_callback,
                 "reading_sources",
-                f"Reading source {index}: {result['title']}",
-                {"url": result["url"], "title": result["title"]},
+                f"Reading {len(source_candidates)} source(s)",
+                {"count": len(source_candidates)},
             )
+
+        async def read_source(index: int, result: dict[str, Any]) -> tuple[int, dict[str, Any], str | None]:
             detailed, failure = await self._read_url_with_fallback(
                 result["url"],
                 title=result["title"],
                 activity_callback=activity_callback,
+                allow_playwright=index == 1,
+                extract_timeout_seconds=self._extract_timeout_seconds,
             )
-            if failure:
-                failures.append(failure)
-
             merged = {
                 "id": index,
                 "title": result["title"],
@@ -667,7 +799,24 @@ class WebSearchTools:
                 merged["url"] = detailed.get("url") or merged["url"]
                 merged["reader"] = detailed.get("reader") or merged["reader"]
                 merged["summary"] = detailed.get("summary") or merged["summary"]
-            sources.append(merged)
+            return index, merged, failure
+
+        if source_candidates:
+            read_results = await asyncio.gather(
+                *(read_source(index, result) for index, result in enumerate(source_candidates, start=1)),
+                return_exceptions=True,
+            )
+            for item in sorted(
+                (entry for entry in read_results if not isinstance(entry, Exception)),
+                key=lambda entry: entry[0],
+            ):
+                _, merged, failure = item
+                if failure:
+                    failures.append(failure)
+                sources.append(merged)
+            for item in read_results:
+                if isinstance(item, Exception):
+                    failures.append(f"Source read failed: {item}")
 
         additional_results = [
             {
@@ -676,7 +825,7 @@ class WebSearchTools:
                 "snippet": item["snippet"],
                 "published_date": item["published_date"],
             }
-            for item in results[len(sources) : safe_max_results]
+            for item in results[read_top_k:safe_max_results]
         ]
 
         return json.dumps(
@@ -684,6 +833,8 @@ class WebSearchTools:
                 "query": normalized_query,
                 "search_backend": "tavily",
                 "topic": topic,
+                "quality": resolved_quality,
+                "search_depth": search_depth,
                 "source_profile": str(source_profile or ""),
                 "citation_style": "Answer first, then cite sources inline like [1], [2] using the source ids below.",
                 "summary_hint": normalized["answer"],

@@ -123,6 +123,7 @@ class WeChatIlinkAdapterTests(unittest.IsolatedAsyncioTestCase):
         await store.set_credentials(credentials)
         await store.set_update_buf("cursor-1")
         await store.set_context_token("bot-1", "wx-user", "ctx-1")
+        await store.flush()
 
         reloaded = WeChatIlinkStateStore(str(path))
         self.assertEqual(reloaded.get_credentials().bot_token, "bot-token")
@@ -203,6 +204,42 @@ class WeChatIlinkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["text"] for item in client.sent], ["hello", "world"])
         self.assertTrue(all(item["context_token"] == "ctx-1" for item in client.sent))
         self.assertTrue(all(item["to_user_id"] == "wx-user" for item in client.sent))
+
+    async def test_output_service_queues_when_workers_are_running(self):
+        path = self.temp_root / "wechat_state.json"
+        store = WeChatIlinkStateStore(str(path))
+        credentials = WeChatIlinkCredentials(bot_token="bot-token", ilink_bot_id="bot-1")
+        await store.set_credentials(credentials)
+        await store.set_context_token("bot-1", "wx-user", "ctx-1")
+        client = _FakeIlinkClient()
+        output = WeChatOutputService(
+            config=_Config(
+                wechat_ilink_max_text_chars=2000,
+                wechat_ilink_outbound_worker_count=1,
+                wechat_ilink_outbound_min_interval_ms=1,
+            ),
+            client=client,
+            session_manager=_FakeSessionManager(credentials),
+            state_store=store,
+        )
+        await output.run()
+        try:
+            await output.send_client_event(
+                "wx-user",
+                {
+                    "schema": "meetyou.client.ws.v1",
+                    "kind": "event",
+                    "event": {
+                        "type": "message.completed",
+                        "message": {"content": "queued reply"},
+                    },
+                },
+            )
+            self.assertEqual(client.sent, [])
+            await output.close()
+            self.assertEqual([item["text"] for item in client.sent], ["queued reply"])
+        finally:
+            await output.close()
 
     def test_split_text_prefers_natural_boundaries(self):
         self.assertEqual(split_text_naturally("hello world", limit=7), ["hello", "world"])

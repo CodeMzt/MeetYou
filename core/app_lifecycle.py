@@ -256,7 +256,8 @@ async def setup_app_runtime(app) -> None:
             channel_version=str(app.config.get("wechat_ilink_channel_version") or DEFAULT_CHANNEL_VERSION),
         )
         wechat_state_store = WeChatIlinkStateStore(
-            str(app.config.get("wechat_ilink_token_file") or DEFAULT_TOKEN_FILE)
+            str(app.config.get("wechat_ilink_token_file") or DEFAULT_TOKEN_FILE),
+            flush_interval_ms=int(app.config.get("wechat_ilink_state_flush_interval_ms") or 500),
         )
         wechat_session_manager = WeChatSessionManager(
             config=app.config,
@@ -318,6 +319,8 @@ async def shutdown_app_runtime(app) -> None:
         await app.feishu_output.close()
     if app.wechat_input is not None:
         await app.wechat_input.close()
+    elif app.wechat_output is not None:
+        await app.wechat_output.close()
     await app.mcp_manager.close_mcp_servers()
     await app.brain.close_brain()
     await app.heart.close_heart()

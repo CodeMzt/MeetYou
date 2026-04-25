@@ -8,6 +8,10 @@ from typing import Any, Awaitable, Callable
 import aiohttp
 
 
+_HTTP_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15, sock_connect=5, sock_read=15)
+_HTTP_SESSION_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=5)
+
+
 class GatewayClientError(RuntimeError):
     pass
 
@@ -52,12 +56,18 @@ class GatewayConversationClient:
 
     async def _ensure_http_session(self) -> None:
         if self._http_session is None:
-            self._http_session = aiohttp.ClientSession(headers=self._auth_headers())
+            self._http_session = aiohttp.ClientSession(headers=self._auth_headers(), timeout=_HTTP_SESSION_TIMEOUT)
 
     async def request_json(self, method: str, path: str, *, params: dict[str, Any] | None = None, json_body: dict[str, Any] | None = None) -> dict[str, Any] | list[Any]:
         await self._ensure_http_session()
         assert self._http_session is not None
-        async with self._http_session.request(method, f"{self.base_url}{path}", params=params, json=json_body) as response:
+        async with self._http_session.request(
+            method,
+            f"{self.base_url}{path}",
+            params=params,
+            json=json_body,
+            timeout=_HTTP_REQUEST_TIMEOUT,
+        ) as response:
             payload = await response.json()
             if response.status >= 400:
                 message = payload.get("error", {}).get("message") if isinstance(payload, dict) else str(payload)
@@ -101,6 +111,8 @@ class GatewayConversationClient:
 
     async def start(self) -> None:
         await self.ensure_context()
+        if self._ws_task is not None and not self._ws_task.done() and self._ws_connected.is_set():
+            return
         if self._ws_task is None or self._ws_task.done():
             self._closed = False
             self._ws_task = asyncio.create_task(self._maintain_ws())
