@@ -1234,6 +1234,33 @@ class Brain:
                         if existing_reason
                         else inferred_reason
                     )
+        allowed_tool_bundle = metadata.get("allowed_tool_bundle")
+        if isinstance(allowed_tool_bundle, list):
+            clean_tools = []
+            seen_tools = set()
+            for item in allowed_tool_bundle:
+                tool_name = str(item or "").strip()
+                if not tool_name or tool_name in seen_tools:
+                    continue
+                seen_tools.add(tool_name)
+                clean_tools.append(tool_name)
+            route_dict["tool_bundle"] = clean_tools
+            allowed_mcp_servers = metadata.get("allowed_mcp_servers")
+            route_dict["mcp_servers"] = [
+                str(item).strip()
+                for item in allowed_mcp_servers
+                if str(item).strip()
+            ] if isinstance(allowed_mcp_servers, list) else []
+            tool_scope = str(metadata.get("tool_scope") or "custom").strip() or "custom"
+            route_dict["client_tool_scope"] = tool_scope
+            existing_reason = str(route_dict.get("route_reason") or "").strip()
+            scope_reason = f"Client tool scope: {tool_scope}"
+            if scope_reason not in existing_reason:
+                route_dict["route_reason"] = (
+                    f"{existing_reason} {scope_reason}".strip()
+                    if existing_reason
+                    else scope_reason
+                )
         route_dict["disable_tools"] = bool(metadata.get("disable_tools"))
         if metadata.get("disable_tools"):
             route_dict["tool_bundle"] = []

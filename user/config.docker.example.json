@@ -59,14 +59,17 @@
   "mcp_registry_url": "https://registry.modelcontextprotocol.io/v0.1/servers",
   "research_contact_email": "",
   "enable_feishu_bot": false,
-  "enable_wechat_bot": false,
-  "wechat_ilink_base_url": "https://ilinkai.weixin.qq.com",
-  "wechat_ilink_channel_version": "2.1.7",
-  "wechat_ilink_token_file": "user/wechat_ilink_state.json",
-  "wechat_ilink_qr_output_path": "user/wechat-ilink-login-qr.png",
-  "wechat_ilink_poll_timeout_ms": 35000,
-  "wechat_ilink_login_poll_interval_seconds": 3,
-  "wechat_ilink_max_text_chars": 2000,
+  "enable_meetwechat_client": false,
+  "meetwechat_base_url": "http://127.0.0.1:38961",
+  "meetwechat_poll_interval_seconds": 2,
+  "meetwechat_error_backoff_seconds": 2,
+  "meetwechat_max_text_chars": 1800,
+  "meetwechat_state_file": "user/meetwechat_client_state.json",
+  "meetwechat_proxy_policy": {
+    "mode": "guarded_auto",
+    "private_default": "auto",
+    "group_default": "mention_only"
+  },
   "gateway_cors_origins": [
     "http://127.0.0.1:5173",
     "http://localhost:5173"
