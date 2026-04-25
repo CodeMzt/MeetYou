@@ -92,6 +92,117 @@ class OpenAIAdapter(LLMAdapter):
     provider_name = "openai"
 
     @staticmethod
+    def _tool_call_summary(tool_call: dict[str, Any]) -> str:
+        function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+        name = str(function.get("name") or tool_call.get("name") or "function")
+        arguments = function.get("arguments", tool_call.get("arguments", ""))
+        if not isinstance(arguments, str):
+            try:
+                arguments = _json_dumps(arguments)
+            except (TypeError, ValueError):
+                arguments = str(arguments)
+        call_id = str(tool_call.get("id") or tool_call.get("call_id") or "").strip()
+        suffix = f" id={call_id}" if call_id else ""
+        return f"- {name}{suffix} args={str(arguments)[:1200]}"
+
+    @staticmethod
+    def _tool_result_summary(message: dict[str, Any]) -> str:
+        call_id = str(message.get("tool_call_id") or "").strip()
+        content = OpenAIAdapter._stringify_content(message.get("content")).strip()
+        prefix = f"- result for {call_id}: " if call_id else "- result: "
+        return prefix + content[:1600]
+
+    @classmethod
+    def _active_tail_tool_chain_start(cls, messages: list[dict[str, Any]]) -> int | None:
+        idx = len(messages) - 1
+        while idx >= 0 and str(messages[idx].get("role") or "") == "tool":
+            idx -= 1
+        if idx < 0:
+            return None
+        candidate = messages[idx]
+        if str(candidate.get("role") or "") != "assistant" or not candidate.get("tool_calls"):
+            return None
+        expected_ids = set(cls._assistant_call_ids(candidate))
+        if not expected_ids:
+            return None
+        seen_ids = {
+            str(message.get("tool_call_id") or "").strip()
+            for message in messages[idx + 1 :]
+            if str(message.get("role") or "") == "tool"
+        }
+        return idx if expected_ids.issubset(seen_ids) else None
+
+    @classmethod
+    def _collapse_resolved_tool_history(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep only the current tail tool protocol chain; summarize older chains as text.
+
+        DeepSeek thinking mode is strict about historical assistant tool-call
+        messages. Resolved older chains are not needed as provider protocol
+        state on later turns, and keeping them can make old persisted turns
+        fail even when the current turn is valid.
+        """
+        keep_from = cls._active_tail_tool_chain_start(messages)
+        collapsed: list[dict[str, Any]] = []
+        index = 0
+        while index < len(messages):
+            message = messages[index]
+            if keep_from is not None and index >= keep_from:
+                collapsed.append(message)
+                index += 1
+                continue
+            if str(message.get("role") or "") != "assistant":
+                collapsed.append(message)
+                index += 1
+                continue
+
+            call_ids = cls._assistant_call_ids(message)
+            if not call_ids:
+                collapsed.append(message)
+                index += 1
+                continue
+            call_id_set = set(call_ids)
+            result_messages: list[dict[str, Any]] = []
+            next_index = index + 1
+            seen_ids: set[str] = set()
+            while next_index < len(messages) and str(messages[next_index].get("role") or "") == "tool":
+                tool_message = messages[next_index]
+                tool_call_id = str(tool_message.get("tool_call_id") or "").strip()
+                if tool_call_id and tool_call_id in call_id_set:
+                    result_messages.append(tool_message)
+                    seen_ids.add(tool_call_id)
+                    next_index += 1
+                    if seen_ids.issuperset(call_id_set):
+                        break
+                    continue
+                break
+
+            if not call_id_set or not seen_ids.issuperset(call_id_set):
+                collapsed.append(message)
+                index += 1
+                continue
+
+            lines = ["[Tool history collapsed for provider compatibility]"]
+            content = cls._stringify_content(message.get("content")).strip()
+            if content:
+                lines.append(f"assistant_content: {content[:1600]}")
+            protocol_items = list(message.get("tool_calls") or [])
+            if not protocol_items:
+                protocol_items = [
+                    item
+                    for item in message.get("provider_items") or []
+                    if isinstance(item, dict) and item.get("type") == "function_call"
+                ]
+            lines.append("tool_calls:")
+            lines.extend(cls._tool_call_summary(tool_call) for tool_call in protocol_items)
+            if result_messages:
+                lines.append("tool_results:")
+                lines.extend(cls._tool_result_summary(tool_message) for tool_message in result_messages)
+            collapsed.append({"role": "assistant", "content": "\n".join(lines)})
+            index = next_index
+
+        return collapsed
+
+    @staticmethod
     def _assistant_call_ids(message: dict[str, Any]) -> list[str]:
         call_ids: list[str] = []
         for tool_call in message.get("tool_calls") or []:
@@ -169,7 +280,10 @@ class OpenAIAdapter(LLMAdapter):
     def _format_chat_messages(self, messages: list[dict], *, url: str = "", model: str = "") -> list[dict]:
         preserve_reasoning_content = self._supports_chat_reasoning_content_roundtrip(url, model)
         formatted = []
-        for msg in self._sanitize_tool_message_history(messages):
+        sanitized_messages = self._sanitize_tool_message_history(messages)
+        if preserve_reasoning_content:
+            sanitized_messages = self._collapse_resolved_tool_history(sanitized_messages)
+        for msg in sanitized_messages:
             new_msg = {"role": msg["role"]}
             content = msg.get("content")
 
