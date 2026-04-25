@@ -346,6 +346,8 @@ class MemoryViewLayer:
         workspace_tags = self._owner._normalize_workspace_tags(record.get("workspace_tags"))
         origin_workspace_id = self._owner._normalize_workspace_id(record.get("origin_workspace_id"))
         match = self._owner._retriever_layer.workspace_match(record)
+        source_attribution = record.get("source_attribution")
+        source_attributions = record.get("source_attributions")
         payload = {
             "id": str(record.get("id") or ""),
             "type": str(record.get("type") or ""),
@@ -369,6 +371,14 @@ class MemoryViewLayer:
             "workspace_match": match["kind"],
             "source_label": match["label"],
         }
+        if isinstance(source_attribution, dict):
+            payload["source_attribution"] = deepcopy(source_attribution)
+        if isinstance(source_attributions, list):
+            payload["source_attributions"] = [
+                deepcopy(item)
+                for item in source_attributions
+                if isinstance(item, dict)
+            ]
         return payload
 
     def _project_edge(self, edge: dict[str, Any]) -> dict[str, Any]:
@@ -428,8 +438,28 @@ class MemoryViewLayer:
                 continue
             if record.get("status") not in allowed_status:
                 continue
-            if requested_user_id and record.get("scope", {}).get("user_id") not in {requested_user_id, "global"}:
-                continue
+            if requested_user_id:
+                scope_user_id = str(record.get("scope", {}).get("user_id") or "")
+                if scope_user_id == "global":
+                    records.append(self._project_record(record))
+                    continue
+                source_values = {scope_user_id}
+                attribution = record.get("source_attribution")
+                if isinstance(attribution, dict):
+                    source_values.update(
+                        str(attribution.get(key) or "").strip()
+                        for key in ("source_id", "client_id", "agent_id", "principal_key", "principal_id")
+                    )
+                attributions = record.get("source_attributions")
+                if isinstance(attributions, list):
+                    for item in attributions:
+                        if isinstance(item, dict):
+                            source_values.update(
+                                str(item.get(key) or "").strip()
+                                for key in ("source_id", "client_id", "agent_id", "principal_key", "principal_id")
+                            )
+                if requested_user_id not in {value for value in source_values if value}:
+                    continue
             records.append(self._project_record(record))
         return records
 
@@ -964,6 +994,64 @@ class MemoryConsolidatorLayer:
                 records.append(record)
         return records
 
+    @staticmethod
+    def _source_attribution_key(attribution: dict[str, Any]) -> tuple[str, ...]:
+        return tuple(
+            str(attribution.get(key) or "").strip()
+            for key in (
+                "principal_key",
+                "principal_id",
+                "source_kind",
+                "source_id",
+                "client_id",
+                "agent_id",
+                "session_id",
+                "thread_id",
+            )
+        )
+
+    def source_attributions(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        seen: set[tuple[str, ...]] = set()
+        for record in records:
+            candidates: list[dict[str, Any]] = []
+            attribution = record.get("source_attribution")
+            if isinstance(attribution, dict):
+                candidates.append(attribution)
+            attributions = record.get("source_attributions")
+            if isinstance(attributions, list):
+                candidates.extend(item for item in attributions if isinstance(item, dict))
+            for item in candidates:
+                normalized = {
+                    key: deepcopy(value)
+                    for key, value in item.items()
+                    if value not in ("", {}, [])
+                }
+                if not normalized:
+                    continue
+                key = self._source_attribution_key(normalized)
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append(normalized)
+        return result
+
+    def merge_source_attributions(self, target: dict[str, Any], source_records: list[dict[str, Any]]) -> bool:
+        existing_records: list[dict[str, Any]] = []
+        attribution = target.get("source_attribution")
+        if isinstance(attribution, dict):
+            existing_records.append({"source_attribution": attribution})
+        attributions = target.get("source_attributions")
+        if isinstance(attributions, list):
+            existing_records.extend({"source_attribution": item} for item in attributions if isinstance(item, dict))
+        merged = self.source_attributions(existing_records + source_records)
+        changed = target.get("source_attributions") != merged
+        if merged:
+            target["source_attributions"] = merged
+            if not isinstance(target.get("source_attribution"), dict):
+                target["source_attribution"] = deepcopy(merged[0])
+        return changed
+
     def average_importance(self, records: list[dict[str, Any]]) -> float:
         if not records:
             return 0.6
@@ -984,6 +1072,7 @@ class MemoryConsolidatorLayer:
         now = dt_to_iso(utcnow())
         source_records = self.source_records(source_ids)
         importance = self._owner._clamp(self.average_importance(source_records), 0.2, 1.0)
+        source_attributions = self.source_attributions(source_records)
 
         existing = None
         for record in self._owner._store.get("records", []):
@@ -1008,6 +1097,7 @@ class MemoryConsolidatorLayer:
                 existing["confidence"] = max(float(existing.get("confidence", 0.0) or 0.0), confidence)
                 existing["last_updated_at"] = now
                 existing["source_record_ids"] = sorted(set(existing.get("source_record_ids", [])) | set(source_ids))
+                self.merge_source_attributions(existing, source_records)
                 self._owner._store_layer.link_semantic_edges(existing)
                 for source_id in source_ids:
                     self._owner._store_layer.upsert_edge(existing["id"], source_id, derived_from=True)
@@ -1039,6 +1129,9 @@ class MemoryConsolidatorLayer:
             "fact_key": fact_key,
             "fact_value": fact_value,
         }
+        if source_attributions:
+            record["source_attributions"] = source_attributions
+            record["source_attribution"] = deepcopy(source_attributions[0])
         self._owner._store["records"].append(record)
         self._owner._store_layer.link_semantic_edges(record)
         if existing is not None:
@@ -1063,6 +1156,7 @@ class MemoryConsolidatorLayer:
             return False
         source_records = self.source_records(source_ids)
         importance = self._owner._clamp(self.average_importance(source_records), 0.2, 1.0)
+        source_attributions = self.source_attributions(source_records)
         now = dt_to_iso(utcnow())
         canonical = self._owner._canonicalize(content)
 
@@ -1097,6 +1191,7 @@ class MemoryConsolidatorLayer:
             best_match["confidence"] = max(float(best_match.get("confidence", 0.0) or 0.0), confidence)
             best_match["last_updated_at"] = now
             best_match["source_record_ids"] = sorted(set(best_match.get("source_record_ids", [])) | set(source_ids))
+            self.merge_source_attributions(best_match, source_records)
             self._owner._store_layer.link_semantic_edges(best_match)
             for source_id in source_ids:
                 self._owner._store_layer.upsert_edge(best_match["id"], source_id, derived_from=True)
@@ -1124,6 +1219,9 @@ class MemoryConsolidatorLayer:
             "fact_key": fact_key or None,
             "fact_value": fact_value or None,
         }
+        if source_attributions:
+            record["source_attributions"] = source_attributions
+            record["source_attribution"] = deepcopy(source_attributions[0])
         self._owner._store["records"].append(record)
         self._owner._store_layer.link_semantic_edges(record)
         if best_match is not None and best_similarity >= LONG_TERM_EDGE_SIM_THRESHOLD:
@@ -1217,6 +1315,7 @@ class MemoryConsolidatorLayer:
         if primary.get("source_record_ids") != source_ids:
             primary["source_record_ids"] = source_ids
             changed = True
+        changed = self.merge_source_attributions(primary, [absorbed]) or changed
         primary["strength"] = max(float(primary.get("strength", 0.0) or 0.0), float(absorbed.get("strength", 0.0) or 0.0))
         primary["importance"] = max(float(primary.get("importance", 0.0) or 0.0), float(absorbed.get("importance", 0.0) or 0.0))
         primary["confidence"] = max(float(primary.get("confidence", 0.0) or 0.0), float(absorbed.get("confidence", 0.0) or 0.0))

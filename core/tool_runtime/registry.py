@@ -6,6 +6,41 @@ from typing import Any
 
 logger = logging.getLogger("meetyou.tools_manager")
 
+_BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "list_workspaces": {
+        "type": "function",
+        "function": {
+            "name": "list_workspaces",
+            "description": "List available workspaces and show which workspace is currently active.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "include_agents": {
+                        "type": "boolean",
+                        "description": "Include agents registered in each workspace.",
+                        "default": False,
+                    },
+                    "include_clients": {
+                        "type": "boolean",
+                        "description": "Include clients registered in each workspace.",
+                        "default": False,
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional session id for resolving the active workspace.",
+                        "default": "",
+                    },
+                },
+                "required": [],
+            },
+            "metadata": {
+                "capability_ref": "workspace.list",
+                "action_risk": "read",
+            },
+        },
+    },
+}
+
 
 def _tool_name(tool: dict[str, Any] | None) -> str:
     if not isinstance(tool, dict):
@@ -58,6 +93,7 @@ class ToolRegistry:
                 source_label=f"tools schema section [{key}]",
             )
             self.tools_schema_dict[key] = tools
+        self._inject_builtin_fallback_tool_schemas()
 
         await self._mcp_manager.init_mcp_servers(mcp_servers)
         self.tools_schema_dict["mcp_tools"] = []
@@ -85,6 +121,21 @@ class ToolRegistry:
             len(self.supported_funcs),
             len(self.tools_schema_dict.get("mcp_tools", [])),
         )
+
+    def _inject_builtin_fallback_tool_schemas(self) -> None:
+        visible_sections = ("common_tools", "chain_tools", "memory_tools", "background_tools", "web_tools")
+        known_names = {
+            _tool_name(tool)
+            for section in visible_sections
+            for tool in self.tools_schema_dict.get(section, [])
+            if _tool_name(tool)
+        }
+        common_tools = self.tools_schema_dict.setdefault("common_tools", [])
+        for tool_name, schema in _BUILTIN_FALLBACK_TOOL_SCHEMAS.items():
+            if tool_name not in self.supported_funcs or tool_name in known_names:
+                continue
+            common_tools.append(schema)
+            known_names.add(tool_name)
 
     def has_builtin(self, tool_name: str) -> bool:
         return tool_name in self.supported_funcs
