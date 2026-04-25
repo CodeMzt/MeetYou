@@ -512,7 +512,7 @@ Core 在服务端拉起 `npx` 型 MCP 时会默认复用工作目录下的 `.npm
 - 该操作不会删除 thread/message 历史；它只清除后续推理会继续引用的记忆层
 - 桌面端当前在 Memory Dashboard 暴露一键清除入口，并要求用户输入确认短语后才执行
 
-WeChat Bot 已切换为官方 iLink 路径：启用 `enable_wechat_bot` 后通过二维码登录获取 `bot_token`，使用 `POST /ilink/bot/getupdates` 长轮询接收入站消息，并用 `POST /ilink/bot/sendmessage` 携带 `context_token` 回发文本回复。当前已落地最小文本闭环骨架，真实扫码验收记录见 `docs/v3/design/bot-integration.md`。
+WeChat 接入已切换为 MeetWeChat Client：启用 `enable_meetwechat_client` 后，Core 通过 `meetwechat_base_url` 的 `/v1/events` 轮询新消息，经正式 `/client/* + /client/ws` 主链处理，并用 `/v1/messages/text` 回发文本。默认私聊自动代理，群聊仅 @ 助理时回复；入站会显式开放基础工具白名单，详见 `docs/v3/design/bot-integration.md` 与 `docs/MeetWechat_API.md`。
 
 兼容说明：
 

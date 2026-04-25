@@ -94,18 +94,18 @@ Phase 5  自动化测试、CI/CD 与可观测性
 
 ### Phase 3
 
-- `F330` WeChat iLink transport 接入骨架。范围：新增官方 iLink client、二维码登录 session manager、`getupdates` 长轮询与 `sendmessage` 文本发送封装。边界：`adapters/`、`sensors/`、必要的 token/state 持久化与测试。状态：已完成，真实扫码登录与文本闭环已通过本机联调。
-- `F331` Bot -> Client 主链桥接。范围：复用或扩展 `clients/gateway_client.py`，让 iLink 入站消息通过正式 Client API 与 `/client/ws` 接入。边界：`clients/`、`sensors/`、Gateway 相关测试。状态：已完成，真实入站文本已进入 `Client API + GET /client/ws` 主链，会话键为 `wechat:account:{ilink_bot_id}:user:{from_user_id}`。
-- `F332` Bot 交互语义补齐。范围：`context_token` 缓存、入站去重、自发消息过滤、长文本分片、confirm、human input、附件与低风险用户操作的正式桥接。边界：`sensors/`、`clients/`、相关测试与文档。状态：文本、去重、`context_token`、自发消息过滤与交互请求骨架已完成；媒体能力待 CDN 加解密链路补齐后扩展。
+- `F330` MeetWeChat Client 接入。范围：新增 `adapters/meetwechat_client.py`，封装 `GET /v1/health`、`GET /v1/chats`、`GET /v1/events`、`POST /v1/events/ack`、`POST /v1/messages/text`、`PUT /v1/overrides/{chat_id}`。边界：`adapters/`、相关单测与 API 文档。状态：本轮实现。
+- `F331` MeetWeChat -> Client 主链桥接。范围：新增 `sensors/meetwechat_adapter.py`，让 MeetWeChat 入站消息通过正式 Client API 与 `/client/ws` 接入，并复用稳定 thread。边界：`clients/`、`sensors/`、Gateway 相关测试。状态：本轮实现，会话键为 `wechat:meetwechat:chat:{chat_id}` / `wechat:meetwechat:group:{chat_id}`。
+- `F332` 微信代理语义补齐。范围：轮询通知、ACK 补偿、群聊发送人区分、confirm / human input 按发送人绑定、低频分段发送、基础工具白名单开放与 override 阻断。边界：`sensors/`、`clients/`、`core/brain.py`、相关测试与文档。状态：本轮实现；媒体消息继续跳过并 ACK。
 
 当前 Task 清单：
 
-- [x] `Task 1` 建立 `docs/v3/design/bot-integration.md`，并将 `Phase 3` 范围收口为仅支持 `WeChat Bot`
-- [x] `Task 2` 对齐官方 iLink / OpenClaw Weixin channel 说明，确认扫码登录、长轮询 `getupdates`、`sendmessage` + `context_token` 是新的默认方案
-- [x] `Task 3` 删除旧第三方微信接入方案的 transport、callback、Docker 服务、验收脚本、配置项、测试与文档说明
-- [x] `Task 4` 结合官方说明与 `docs/wechatbot.txt` 重写 `docs/v3/design/bot-integration.md`
-- [x] `Task 5` 实现 iLink session manager、long poller、input adapter 与 output service
-- [x] `Task 6` 完成真实扫码登录与文本闭环联调
+- [x] `Task 1` 删除旧微信 adapter、sensor、测试、配置入口和历史说明
+- [x] `Task 2` 按 `docs/MeetWechat_API.md` 新增 MeetWeChat `/v1` HTTP client
+- [x] `Task 3` 实现 MeetWeChat 轮询通知、事件去重、ACK 补偿和 per-chat 顺序处理
+- [x] `Task 4` 实现私聊默认代理、群聊 @ 代理、群聊发送人区分和交互请求发送人绑定
+- [x] `Task 5` 将 MeetWeChat 入站接入正式 `/client/* + /client/ws` 主链并开放基础工具白名单
+- [x] `Task 6` 更新配置、文档与最小相关测试
 
 ### Phase 4
 

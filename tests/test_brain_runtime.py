@@ -1908,6 +1908,65 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
+    async def test_client_allowed_tool_bundle_overrides_mode_tools(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 4,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ]
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-client-tool-scope",
+                {
+                    "role": "user",
+                    "content": "Analyze the local project files.",
+                    "metadata": {
+                        "tool_scope": "basic",
+                        "allowed_tool_bundle": ["research_topic", "inspect_page", "research_topic"],
+                        "allowed_mcp_servers": [],
+                    },
+                },
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-client-tool-scope")
+            tool_names = adapter.stream_calls[0]["tool_names"]
+            self.assertIn("research_topic", tool_names)
+            self.assertIn("inspect_page", tool_names)
+            self.assertNotIn("documents_tool", tool_names)
+            self.assertEqual(
+                session.metadata["current_route"]["tool_bundle"],
+                ["research_topic", "inspect_page"],
+            )
+            self.assertEqual(session.metadata["current_route"]["mcp_servers"], [])
+            self.assertEqual(session.metadata["current_route"]["client_tool_scope"], "basic")
+        finally:
+            await brain.close_brain()
+
     async def test_transient_signal_turn_does_not_persist_context_or_history(self):
         context_manager = FakeContextManager()
         brain = Brain(

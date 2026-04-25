@@ -20,6 +20,12 @@ class ConfigManagerTests(unittest.TestCase):
             "MEETYOU_DATABASE_URL": os.environ.get("MEETYOU_DATABASE_URL"),
             "MEETYOU_FEISHU_APP_ID": os.environ.get("MEETYOU_FEISHU_APP_ID"),
             "MEETYOU_FEISHU_APP_SECRET": os.environ.get("MEETYOU_FEISHU_APP_SECRET"),
+            "MEETYOU_MEETWECHAT_ENABLE": os.environ.get("MEETYOU_MEETWECHAT_ENABLE"),
+            "MEETYOU_MEETWECHAT_BASE_URL": os.environ.get("MEETYOU_MEETWECHAT_BASE_URL"),
+            "MEETYOU_MEETWECHAT_POLL_INTERVAL_SECONDS": os.environ.get("MEETYOU_MEETWECHAT_POLL_INTERVAL_SECONDS"),
+            "MEETYOU_MEETWECHAT_ERROR_BACKOFF_SECONDS": os.environ.get("MEETYOU_MEETWECHAT_ERROR_BACKOFF_SECONDS"),
+            "MEETYOU_MEETWECHAT_MAX_TEXT_CHARS": os.environ.get("MEETYOU_MEETWECHAT_MAX_TEXT_CHARS"),
+            "MEETYOU_MEETWECHAT_STATE_FILE": os.environ.get("MEETYOU_MEETWECHAT_STATE_FILE"),
             "NOTION_TOKEN": os.environ.get("NOTION_TOKEN"),
             "TAVILY_API_KEY": os.environ.get("TAVILY_API_KEY"),
         }
@@ -159,6 +165,9 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertIn("1 个服务端 MCP", diagnostic["message"])
 
     def test_load_config_strips_removed_legacy_keys(self):
+        old_enable_key = "enable_" + "wechat_bot"
+        old_base_url_key = "wechat_" + "i" + "link_" + "base_url"
+        old_token_file_key = "wechat_" + "i" + "link_" + "token_file"
         (self.temp_root / "user" / "config.json").write_text(
             json.dumps(
                 {
@@ -166,6 +175,9 @@ class ConfigManagerTests(unittest.TestCase):
                     "model": "gpt-4o",
                     "enable_gateway": True,
                     "source_profiles": {"legacy": {}},
+                    old_enable_key: True,
+                    old_base_url_key: "https://legacy-wechat.example.test",
+                    old_token_file_key: "user/wechat_state.json",
                 },
                 ensure_ascii=False,
             ),
@@ -180,8 +192,55 @@ class ConfigManagerTests(unittest.TestCase):
         snapshot = json.loads((self.temp_root / "user" / "config.json").read_text(encoding="utf-8"))
         self.assertNotIn("enable_gateway", snapshot)
         self.assertNotIn("source_profiles", snapshot)
+        self.assertNotIn(old_enable_key, snapshot)
+        self.assertNotIn(old_base_url_key, snapshot)
+        self.assertNotIn(old_token_file_key, snapshot)
         self.assertFalse(config.is_manageable_key("enable_gateway"))
         self.assertFalse(config.is_manageable_key("source_profiles"))
+        self.assertFalse(config.is_manageable_key(old_enable_key))
+        self.assertFalse(config.is_manageable_key(old_base_url_key))
+
+    def test_meetwechat_settings_are_manageable_and_typed(self):
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        applied_keys, warnings = config.apply_updates(
+            {
+                "enable_meetwechat_client": "true",
+                "meetwechat_base_url": "http://127.0.0.1:38961",
+                "meetwechat_poll_interval_seconds": "2",
+                "meetwechat_error_backoff_seconds": 3,
+                "meetwechat_max_text_chars": "1800",
+                "meetwechat_state_file": "user/meetwechat_client_state.json",
+                "meetwechat_proxy_policy": {
+                    "mode": "guarded_auto",
+                    "private_default": "auto",
+                    "group_default": "mention_only",
+                },
+            }
+        )
+        config.reload()
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            set(applied_keys),
+            {
+                "enable_meetwechat_client",
+                "meetwechat_base_url",
+                "meetwechat_poll_interval_seconds",
+                "meetwechat_error_backoff_seconds",
+                "meetwechat_max_text_chars",
+                "meetwechat_state_file",
+                "meetwechat_proxy_policy",
+            },
+        )
+        self.assertIs(config.get("enable_meetwechat_client"), True)
+        self.assertEqual(config.get("meetwechat_poll_interval_seconds"), 2)
+        self.assertEqual(config.get("meetwechat_error_backoff_seconds"), 3)
+        self.assertEqual(config.get("meetwechat_max_text_chars"), 1800)
+        self.assertEqual(config.get("meetwechat_proxy_policy")["mode"], "guarded_auto")
 
     def test_apply_updates_persists_json_and_env(self):
         config = ConfigManager(

@@ -23,6 +23,7 @@ class GatewayConversationClient:
         workspace_id: str = "personal",
         access_token: str = "",
         thread_title: str = "",
+        thread_id: str = "",
         event_handler: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ):
         self.base_url = base_url.rstrip("/")
@@ -42,7 +43,7 @@ class GatewayConversationClient:
         self._context_lock = asyncio.Lock()
         self._ws_connected = asyncio.Event()
 
-        self.thread_id = ""
+        self.thread_id = str(thread_id or "").strip()
         self.session_id = ""
 
     def _auth_headers(self) -> dict[str, str]:
@@ -76,16 +77,17 @@ class GatewayConversationClient:
             workspace = next((item for item in workspaces if item.get("workspace_id") == self.workspace_id), workspaces[0])
             self.workspace_id = str(workspace.get("workspace_id") or self.workspace_id)
 
-            thread = await self.request_json(
-                "POST",
-                "/client/threads",
-                json_body={
-                    "workspace_id": self.workspace_id,
-                    "title": self.thread_title,
-                    "mode": "general",
-                },
-            )
-            self.thread_id = str(thread.get("thread_id") or "")
+            if not self.thread_id:
+                thread = await self.request_json(
+                    "POST",
+                    "/client/threads",
+                    json_body={
+                        "workspace_id": self.workspace_id,
+                        "title": self.thread_title,
+                        "mode": "general",
+                    },
+                )
+                self.thread_id = str(thread.get("thread_id") or "")
             session = await self.request_json(
                 "POST",
                 "/client/sessions",
