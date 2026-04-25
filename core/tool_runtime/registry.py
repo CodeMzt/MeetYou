@@ -39,6 +39,95 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "list_active_agents": {
+        "type": "function",
+        "function": {
+            "name": "list_active_agents",
+            "description": "List currently online Agent connections, optionally scoped to a workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
+                    "include_capabilities": {"type": "boolean", "description": "Include available capabilities for each agent.", "default": False},
+                },
+                "required": [],
+            },
+            "metadata": {"action_risk": "read", "safe_parallel": True},
+        },
+    },
+    "list_active_clients": {
+        "type": "function",
+        "function": {
+            "name": "list_active_clients",
+            "description": "List currently online Client websocket connections, optionally scoped to a workspace or thread.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
+                    "thread_id": {"type": "string", "description": "Optional thread id.", "default": ""},
+                    "include_owned_agents": {"type": "boolean", "description": "Include online agents owned by each client.", "default": False},
+                },
+                "required": [],
+            },
+            "metadata": {"action_risk": "read", "safe_parallel": True},
+        },
+    },
+    "send_endpoint_message": {
+        "type": "function",
+        "function": {
+            "name": "send_endpoint_message",
+            "description": "Send a realtime notice or dispatch a capability call to a target Agent or Client. Client capability calls are routed through the client's owned Agent.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_type": {"type": "string", "enum": ["agent", "client"], "description": "Target endpoint type."},
+                    "target_id": {"type": "string", "description": "Target agent_id or client_id."},
+                    "delivery_kind": {"type": "string", "enum": ["notice", "capability_call"], "default": "notice"},
+                    "content": {"type": "string", "description": "Notice text when delivery_kind is notice.", "default": ""},
+                    "capability_ref": {"type": "string", "description": "Capability id, suffix, or abstract ref for capability_call.", "default": ""},
+                    "arguments": {"type": "object", "description": "Capability call arguments.", "default": {}},
+                    "workspace_id": {"type": "string", "description": "Workspace id for capability lookup.", "default": ""},
+                    "session_id": {"type": "string", "description": "Session id for operation tracking.", "default": ""},
+                    "timeout_seconds": {"type": "integer", "default": 120},
+                    "confirmed": {"type": "boolean", "description": "Set true after explicit confirmation for risky capability calls.", "default": False},
+                },
+                "required": ["target_type", "target_id", "delivery_kind"],
+            },
+            "metadata": {"action_risk": "external_write", "safe_parallel": False},
+        },
+    },
+    "emit_short_reply": {
+        "type": "function",
+        "function": {
+            "name": "emit_short_reply",
+            "description": "Send a brief standalone assistant reply to the current session while the current turn is still thinking or tool-calling. May be called multiple times.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "A short standalone reply, ideally one sentence."}
+                },
+                "required": ["content"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
+    "restart_core": {
+        "type": "function",
+        "function": {
+            "name": "restart_core",
+            "description": "Restart the Core Service after validating the admin password.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "password": {"type": "string", "description": "Core admin password."},
+                    "reason": {"type": "string", "description": "Optional restart reason.", "default": ""},
+                    "delay_seconds": {"type": "integer", "description": "Delay before graceful restart.", "default": 1},
+                },
+                "required": ["password"],
+            },
+            "metadata": {"action_risk": "destructive", "safe_parallel": False},
+        },
+    },
 }
 
 
@@ -94,6 +183,7 @@ class ToolRegistry:
             )
             self.tools_schema_dict[key] = tools
         self._inject_builtin_fallback_tool_schemas()
+        self._patch_builtin_tool_schemas()
 
         await self._mcp_manager.init_mcp_servers(mcp_servers)
         self.tools_schema_dict["mcp_tools"] = []
@@ -136,6 +226,17 @@ class ToolRegistry:
                 continue
             common_tools.append(schema)
             known_names.add(tool_name)
+
+    def _patch_builtin_tool_schemas(self) -> None:
+        for tool in self.tools_schema_dict.get("common_tools", []):
+            function = tool.get("function") if isinstance(tool, dict) else None
+            if not isinstance(function, dict):
+                continue
+            if function.get("name") == "emit_temporary_reply":
+                function["description"] = (
+                    "Compatibility alias for emit_short_reply. Sends a brief standalone assistant reply "
+                    "while the current turn is still thinking or tool-calling."
+                )
 
     def has_builtin(self, tool_name: str) -> bool:
         return tool_name in self.supported_funcs

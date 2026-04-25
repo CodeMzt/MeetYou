@@ -180,6 +180,217 @@ class AgentDispatchService:
             timeout_seconds=timeout_seconds,
         )
 
+    def _resolve_dispatch_workspace(self, *, session_id: str = "", workspace_id: str = ""):
+        normalized_session_id = str(session_id or "").strip()
+        if normalized_session_id:
+            session_row = self._session_service.get_by_session_id(normalized_session_id)
+            if session_row is not None:
+                workspace = self._workspace_service.get_by_id(getattr(session_row, "active_workspace_id", None))
+                if workspace is not None:
+                    return workspace, session_row
+                thread_row = self._thread_service.get_by_id(getattr(session_row, "thread_id", None))
+                workspace = self._workspace_service.get_by_id(getattr(thread_row, "workspace_id", None)) if thread_row is not None else None
+                if workspace is not None:
+                    return workspace, session_row
+        normalized_workspace_id = str(workspace_id or "").strip()
+        if normalized_workspace_id:
+            workspace = self._workspace_service.get_by_workspace_id(normalized_workspace_id)
+            if workspace is not None:
+                return workspace, None
+        return None, None
+
+    def resolve_specific_capability(self, *, agent_id: str, capability_ref: str, workspace_id: str = ""):
+        normalized_agent_id = str(agent_id or "").strip()
+        normalized_ref = str(capability_ref or "").strip().strip(".")
+        if not normalized_agent_id or not normalized_ref:
+            return None
+        workspace = self._workspace_service.get_by_workspace_id(str(workspace_id or "").strip()) if workspace_id else None
+        candidate_ids = []
+        if normalized_ref.startswith("agent."):
+            candidate_ids.append(normalized_ref)
+        else:
+            candidate_ids.append(f"agent.{normalized_agent_id}.{normalized_ref}")
+            candidate_ids.append(normalized_ref)
+        for capability_id in candidate_ids:
+            capability = self._capability_service.get_by_capability_id(capability_id)
+            if capability is None:
+                continue
+            if str(getattr(capability, "provider_ref", "") or "") != normalized_agent_id:
+                continue
+            if workspace is not None and not self._capability_service.is_available_in_workspace(
+                capability_id=getattr(capability, "capability_id", ""),
+                workspace_id=workspace.id,
+            ):
+                continue
+            return capability
+        if workspace is not None:
+            return self._capability_service.resolve_capability_reference(
+                capability_ref=normalized_ref,
+                workspace_id=workspace.id,
+                target_agent_id=normalized_agent_id,
+            )
+        return None
+
+    @staticmethod
+    def _specific_capability_requires_confirmation(capability) -> bool:
+        risk_level = str(getattr(capability, "risk_level", "") or "").strip().lower()
+        return bool(getattr(capability, "requires_confirmation", False)) or risk_level in {
+            "write",
+            "system",
+            "local_write",
+            "external_write",
+            "destructive",
+            "high",
+        }
+
+    async def dispatch_specific_agent_capability(
+        self,
+        *,
+        agent_id: str,
+        capability_ref: str,
+        arguments: dict[str, Any],
+        session_id: str = "",
+        workspace_id: str = "",
+        title: str = "",
+        operation_type: str = "tool_call",
+        timeout_seconds: int = 120,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        normalized_agent_id = str(agent_id or "").strip()
+        if not normalized_agent_id:
+            raise AgentDispatchError("agent_id_required", "agent_id is required")
+        agent = self._agent_service.get_by_agent_id(normalized_agent_id)
+        if agent is None:
+            raise AgentDispatchError("agent_not_found", f"Unknown agent: {normalized_agent_id}")
+        workspace, session_row = self._resolve_dispatch_workspace(session_id=session_id, workspace_id=workspace_id)
+        if workspace is None:
+            raise AgentDispatchError(
+                "missing_workspace_context",
+                "Specific agent capability dispatch requires a valid workspace_id or session_id",
+                details={"agent_id": normalized_agent_id, "workspace_id": workspace_id, "session_id": session_id},
+            )
+        if not self._agent_service.is_bound_to_workspace(agent_id=normalized_agent_id, workspace_id=workspace.workspace_id):
+            raise AgentDispatchError(
+                "agent_workspace_mismatch",
+                f"Agent {normalized_agent_id} is not bound to workspace: {workspace.workspace_id}",
+                details={"agent_id": normalized_agent_id, "workspace_id": workspace.workspace_id},
+            )
+        if str(getattr(agent, "status", "") or "").strip().lower() not in {"online", "ready"}:
+            raise AgentDispatchError("agent_offline", f"Agent is offline: {normalized_agent_id}", retryable=True)
+        capability = self.resolve_specific_capability(
+            agent_id=normalized_agent_id,
+            capability_ref=capability_ref,
+            workspace_id=workspace.workspace_id,
+        )
+        if capability is None:
+            raise AgentDispatchError(
+                "capability_not_found",
+                f"Capability is unavailable on agent {normalized_agent_id}: {capability_ref}",
+                details={"agent_id": normalized_agent_id, "capability_ref": capability_ref, "workspace_id": workspace.workspace_id},
+            )
+        if self._specific_capability_requires_confirmation(capability) and not confirmed:
+            raise AgentDispatchError(
+                "agent_capability_confirmation_required",
+                "Capability call requires explicit confirmation before dispatch.",
+                details={
+                    "agent_id": normalized_agent_id,
+                    "capability_id": getattr(capability, "capability_id", ""),
+                    "risk_level": getattr(capability, "risk_level", ""),
+                    "requires_confirmation": bool(getattr(capability, "requires_confirmation", False)),
+                },
+            )
+
+        thread_row = self._thread_service.get_by_id(session_row.thread_id) if session_row is not None else None
+        if session_row is None or thread_row is None:
+            raise AgentDispatchError(
+                "missing_session_context",
+                "Capability dispatch requires a valid session_id so operation results can be tracked.",
+                details={"agent_id": normalized_agent_id, "capability_ref": capability_ref, "session_id": session_id},
+            )
+        try:
+            protected_arguments = protect_sensitive_arguments(
+                arguments,
+                purpose=AGENT_ARGUMENTS_PURPOSE,
+            )
+        except CredentialTransportError as exc:
+            raise AgentDispatchError(
+                exc.code,
+                exc.message,
+                details={"capability_id": getattr(capability, "capability_id", "")},
+            ) from exc
+
+        operation = self._operation_service.create_operation(
+            thread_id=getattr(thread_row, "id", None),
+            workspace_id=workspace.id,
+            operation_type=operation_type,
+            execution_target="specific_agent",
+            title=title or f"Agent capability: {capability_ref}",
+            target_agent_id=agent.id,
+            requested_by_session_id=getattr(session_row, "id", None),
+            status="queued",
+            metadata={
+                "target_agent_key": normalized_agent_id,
+                "capability_id": getattr(capability, "capability_id", ""),
+                "arguments": dict(protected_arguments.public_arguments or {}),
+                "arguments_encrypted": bool(protected_arguments.encrypted_arguments),
+                "confirmed": bool(confirmed),
+            },
+        )
+        call = self._operation_call_service.create_call(
+            operation_id=operation.id,
+            capability_id=capability.id,
+            target_agent_id=agent.id,
+            status="queued",
+            arguments=dict(protected_arguments.public_arguments or {}),
+        )
+
+        if self._transport is None:
+            self._operation_call_service.mark_failed(
+                call_id=call.call_id,
+                error={"code": "agent_transport_unavailable", "message": "Agent transport is unavailable"},
+            )
+            raise AgentDispatchError("agent_transport_unavailable", "Agent transport is unavailable")
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+        async with self._lock:
+            self._pending[call.call_id] = future
+        dispatched = await self._transport(
+            agent_id=normalized_agent_id,
+            payload=build_capability_call_request(
+                agent_id=normalized_agent_id,
+                message_id=f"dispatch-{call.call_id}",
+                operation_id=operation.operation_id,
+                call_id=call.call_id,
+                workspace_id=workspace.workspace_id,
+                capability_id=getattr(capability, "capability_id", ""),
+                arguments=dict(protected_arguments.public_arguments or {}),
+                encrypted_arguments=protected_arguments.encrypted_arguments,
+                timeout_seconds=timeout_seconds,
+                audit_context={"principal_id": "self", "session_id": session_id, "operation_type": operation_type},
+            ),
+        )
+        if not dispatched:
+            async with self._lock:
+                self._pending.pop(call.call_id, None)
+            self._operation_call_service.mark_failed(
+                call_id=call.call_id,
+                error={"code": "agent_offline", "message": f"Agent is offline: {normalized_agent_id}"},
+            )
+            raise AgentDispatchError("agent_offline", f"Agent is offline: {normalized_agent_id}", retryable=True)
+        self._operation_call_service.mark_dispatched(call_id=call.call_id)
+        try:
+            return await asyncio.wait_for(future, timeout=max(5, timeout_seconds))
+        except asyncio.TimeoutError as exc:
+            self._operation_call_service.mark_failed(
+                call_id=call.call_id,
+                error={"code": "agent_timeout", "message": f"Agent call timed out after {timeout_seconds} seconds"},
+            )
+            raise AgentDispatchError("agent_timeout", f"Agent call timed out after {timeout_seconds} seconds", retryable=True) from exc
+        finally:
+            async with self._lock:
+                self._pending.pop(call.call_id, None)
+
     async def notify_call_result(self, *, call_id: str, result: dict[str, Any]) -> None:
         async with self._lock:
             future = self._pending.get(call_id)

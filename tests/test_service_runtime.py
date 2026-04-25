@@ -2,8 +2,10 @@ import asyncio
 import json
 import logging
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 
+from core.app import App
 from core.logger import StructuredFormatter
 from core.runtime_context import bind_event_context, reset_event_context
 from core.tool_runtime.models import ToolCallResult, ToolErrorCategory, ToolSourceType
@@ -83,6 +85,28 @@ class _ManagedRunApp(_FakeApp):
             self.stopping_callback_called = True
 
 
+class _RestartAwareApp(_FakeApp):
+    instances: list["_RestartAwareApp"] = []
+
+    def __init__(self, health_getter=None, telemetry_recorder=None, restart_requester=None):
+        super().__init__(health_getter=health_getter, telemetry_recorder=telemetry_recorder)
+        self.restart_requester = restart_requester
+        self.restart_result = None
+        _RestartAwareApp.instances.append(self)
+
+    async def run(self, *, on_ready=None, on_stopping=None):
+        if on_ready is not None:
+            await on_ready()
+        if len(_RestartAwareApp.instances) == 1 and self.restart_requester is not None:
+            self.restart_result = await self.restart_requester(
+                reason="test restart",
+                delay_seconds=0,
+                session_id="sess-1",
+            )
+        if on_stopping is not None:
+            await on_stopping()
+
+
 class ServiceRuntimeTests(unittest.TestCase):
     def test_default_runtime_boundaries_cover_service_layers(self):
         boundaries = build_default_runtime_boundaries()
@@ -153,6 +177,37 @@ class ServiceRuntimeTests(unittest.TestCase):
         health_events = [event for event in runtime.events if event.kind == RuntimeEventKind.HEALTH.value]
         self.assertEqual(len(health_events), 1)
         self.assertEqual(health_events[0].action, "service.ready")
+
+    def test_service_runtime_rebuilds_app_after_restart_request(self):
+        _RestartAwareApp.instances = []
+        runtime = ServiceRuntime(RuntimeCommand.service(), app_factory=_RestartAwareApp)
+
+        asyncio.run(runtime.run())
+
+        self.assertEqual(len(_RestartAwareApp.instances), 2)
+        self.assertTrue(_RestartAwareApp.instances[0].restart_result["accepted"])
+        actions = [event.action for event in runtime.events]
+        self.assertIn("service.restart.requested", actions)
+        self.assertIn("service.restart", actions)
+
+    def test_app_restart_core_validates_password_before_requesting_restart(self):
+        calls = []
+        app = App.__new__(App)
+        app.config = SimpleNamespace(get=lambda key: "secret" if key == "core_admin_password" else "")
+
+        async def requester(**kwargs):
+            calls.append(dict(kwargs))
+            return {"accepted": True}
+
+        app._restart_requester = requester
+        with mock.patch.dict("os.environ", {"MEETYOU_CORE_ADMIN_PASSWORD": ""}, clear=False):
+            bad = asyncio.run(App.request_core_restart(app, "wrong"))
+            good = asyncio.run(App.request_core_restart(app, "secret", reason="manual", delay_seconds=0))
+
+        self.assertFalse(bad["accepted"])
+        self.assertEqual(bad["reason"], "invalid_password")
+        self.assertTrue(good["accepted"])
+        self.assertEqual(calls[0]["reason"], "manual")
 
     def test_health_snapshot_reports_degraded_background_and_telemetry_metrics(self):
         class _DegradedApp(_FakeApp):

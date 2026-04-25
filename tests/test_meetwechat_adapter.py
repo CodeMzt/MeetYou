@@ -187,6 +187,8 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
             gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"],
             MEETWECHAT_BASIC_TOOL_BUNDLE,
         )
+        self.assertIn("emit_short_reply", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("send_endpoint_message", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
         self.assertEqual(meetwechat_client.sent[0]["chat_id"], "chat-1")
         self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
         self.assertEqual(meetwechat_client.sent[0]["idempotency_key"], "meetyou:evt-1:1")
@@ -232,6 +234,73 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
+        await output.close()
+
+    async def test_short_reply_created_event_sends_without_completing_pending_reply(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(
+            meetwechat_state_file=self.state_path,
+            meetwechat_outbound_min_interval_ms=1,
+            meetwechat_proxy_policy={
+                "mode": "guarded_auto",
+                "private_default": "auto",
+                "group_default": "mention_only",
+                "merge_window_seconds": 0,
+                "reply_delay_seconds": 0,
+                "fragment_pause_seconds": 0,
+                "reply_timeout_seconds": 1,
+            },
+        )
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        future = output.begin_event(self._event(), allow_send=True)
+
+        await output.send_client_event(
+            "chat-1",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "message.created",
+                    "message": {
+                        "role": "assistant",
+                        "channel": "short_reply",
+                        "content": "I will check.",
+                    },
+                },
+            },
+        )
+
+        for _ in range(20):
+            if meetwechat_client.sent:
+                break
+            await asyncio.sleep(0.01)
+
+        self.assertEqual(meetwechat_client.sent[0]["text"], "I will check.")
+        self.assertFalse(future.done())
+
+        await output.send_client_event(
+            "chat-1",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "message.completed",
+                    "stream_id": "stream-1",
+                    "message": {"content": "assistant reply"},
+                },
+            },
+        )
+
+        result = await asyncio.wait_for(future, timeout=1)
+        await asyncio.wait_for(output._outbound_queue.join(), timeout=1)  # noqa: SLF001
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["I will check.", "assistant reply"])
+        self.assertEqual(
+            [item["idempotency_key"] for item in meetwechat_client.sent],
+            ["meetyou:evt-1:1", "meetyou:evt-1:2:1"],
+        )
         await output.close()
 
     async def test_group_message_without_mention_is_acked_without_reply(self):
