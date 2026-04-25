@@ -24,17 +24,12 @@ from core.status import RuntimeStatus
 from gateway.api import FastAPIGateway
 from sensors.feishu_input_adapter import FeishuInputAdapter
 from sensors.feishu_output_adapter import FeishuOutputAdapter
-from sensors.wechat_ilink_adapter import (
-    DEFAULT_TOKEN_FILE,
-    WeChatIlinkStateStore,
-    WeChatInputAdapter,
-    WeChatOutputService,
-    WeChatSessionManager,
-)
-from adapters.wechat_ilink_client import (
-    DEFAULT_CHANNEL_VERSION,
-    DEFAULT_ILINK_BASE_URL,
-    WeChatIlinkClient,
+from adapters.meetwechat_client import DEFAULT_MEETWECHAT_BASE_URL, MeetWeChatClient
+from sensors.meetwechat_adapter import (
+    DEFAULT_STATE_FILE,
+    MeetWeChatInputAdapter,
+    MeetWeChatOutputService,
+    MeetWeChatStateStore,
 )
 from tools import system_tools
 
@@ -250,36 +245,28 @@ async def setup_app_runtime(app) -> None:
         await app.feishu_input.run()
         logger.info("Feishu Bot 已通过 Client API + client/ws 正式主链接入。")
 
-    if app.config.get_bool("enable_wechat_bot"):
-        wechat_client = WeChatIlinkClient(
-            base_url=str(app.config.get("wechat_ilink_base_url") or DEFAULT_ILINK_BASE_URL),
-            channel_version=str(app.config.get("wechat_ilink_channel_version") or DEFAULT_CHANNEL_VERSION),
+    if app.config.get_bool("enable_meetwechat_client"):
+        wechat_client = MeetWeChatClient(
+            base_url=str(app.config.get("meetwechat_base_url") or DEFAULT_MEETWECHAT_BASE_URL),
         )
-        wechat_state_store = WeChatIlinkStateStore(
-            str(app.config.get("wechat_ilink_token_file") or DEFAULT_TOKEN_FILE)
+        wechat_state_store = MeetWeChatStateStore(
+            str(app.config.get("meetwechat_state_file") or DEFAULT_STATE_FILE)
         )
-        wechat_session_manager = WeChatSessionManager(
+        app.wechat_output = MeetWeChatOutputService(
             config=app.config,
             client=wechat_client,
             state_store=wechat_state_store,
         )
-        app.wechat_output = WeChatOutputService(
-            config=app.config,
-            client=wechat_client,
-            session_manager=wechat_session_manager,
-            state_store=wechat_state_store,
-        )
-        app.wechat_input = WeChatInputAdapter(
+        app.wechat_input = MeetWeChatInputAdapter(
             app.event_bus,
             app.session_manager,
             app.config,
-            ilink_client=wechat_client,
+            client=wechat_client,
             state_store=wechat_state_store,
-            ilink_session_manager=wechat_session_manager,
             output_adapter=app.wechat_output,
         )
         await app.wechat_input.run()
-        logger.info("WeChat iLink Bot 已通过 Client API + client/ws 正式主链接入。")
+        logger.info("MeetWeChat Client is connected through Client API + client/ws.")
 
     app.status_manager.set_global(RuntimeStatus.IDLE.value, "")
     logger.info("Service runtime initialized")

@@ -15,7 +15,7 @@ The idle poke path does not require a live websocket when a client thread can be
 
 桌面 UI 与 `desktop-agent` 仍属于用户设备侧交付物，不部署到 Linux Core 服务器上作为主链。
 
-WeChat Bot 已切换为官方 iLink 方案。iLink 登录、长轮询和文本消息回发作为 Core 内置外部客户端适配器启用；当前部署文档不再包含第三方微信协议服务。
+WeChat 接入已切换为 MeetWeChat Client。真实微信账号、登录态和微信侧连接由已部署的 MeetWeChat 服务持有；Core 只通过 `docs/MeetWechat_API.md` 的 `/v1` HTTP API 轮询事件、ACK 和发送文本，并继续走正式 `/client/* + /client/ws` 主链。
 
 ## 1. Docker Compose 部署
 
@@ -51,23 +51,26 @@ scripts\docker-core-acceptance.cmd start
 
 这里的 PostgreSQL service 不是第二套数据模型，也不是替代仓库已有 SQL 代码；它只是给没有现成数据库的部署场景顺带启动一个 PostgreSQL 进程。Core 仍然只通过 `MEETYOU_DATABASE_URL` 访问一套正式 PostgreSQL，并由 Core Service 持有 Alembic migration 主导权。
 
-## 2. WeChat iLink 边界
+## 2. MeetWeChat Client 边界
 
-WeChat Bot 当前方案见 `docs/v3/design/bot-integration.md`。部署层只保留以下原则：
+MeetWeChat Client 当前方案见 `docs/v3/design/bot-integration.md`。部署层只保留以下原则：
 
 - 不再在 Compose 中托管第三方微信协议服务
-- 默认保持 `MEETYOU_WECHAT_ENABLE=false`，完成扫码联调后再按环境启用
-- iLink 凭证不写入普通配置模板
-- `bot_token`、`get_updates_buf` 与 `context_token` 写入 `wechat_ilink_token_file` 指向的受限权限状态文件
-- 当前只承诺文本闭环骨架；生产可用前仍需完成真实扫码登录和低频顺序化文本验收
+- MeetWeChat 服务应在 Core 可访问的网络地址上运行，默认 `http://127.0.0.1:38961`
+- 默认保持 `MEETYOU_MEETWECHAT_ENABLE=false`，完成低频顺序验收后再按环境启用
+- MeetWeChat 凭证、cookie、联系人名和完整聊天正文不得写入配置模板或验收记录
+- Core 侧只持有 `meetwechat_state_file` 中的事件状态、ACK 补偿、thread 绑定和群成员别名
+- 入站消息显式开放基础工具白名单，不开放本地文件/Shell/Desktop Agent 能力
+- 当前只承诺文本闭环；媒体消息跳过并 ACK
 
 最小联调步骤：
 
-1. 设置 `MEETYOU_WECHAT_ENABLE=true`，并确认 `MEETYOU_WECHAT_TOKEN_FILE` 与 `MEETYOU_WECHAT_LOGIN_QR_PATH` 指向运行容器/主机内可写路径。
+1. 确认 MeetWeChat 服务 `GET /v1/health` 正常。
 2. 启动 `python -m service_runtime` 或对应 Docker Core 服务。
-3. 查看日志中的二维码输出路径；若接口返回的是二维码链接而非图片，系统会在二维码路径旁生成 `.txt` 文件。
-4. 使用微信扫码并确认授权。
-5. 向 Bot 发送一条低风险文本消息，确认 MeetYou 经 `/client/* + /client/ws` 生成回复并通过 iLink `sendmessage` 回发。
+3. 设置 `MEETYOU_MEETWECHAT_ENABLE=true`，必要时设置 `MEETYOU_MEETWECHAT_BASE_URL`。
+4. 私聊发送一条低风险文本消息，确认 MeetYou 经 `/client/* + /client/ws` 生成回复并通过 `/v1/messages/text` 回发。
+5. 群聊普通消息应只 ACK 不回复；群聊 @ 助理时才回复。
+6. 设置 MeetWeChat override 为 `manual_only`，确认 Core 不再发送微信回复。
 
 ## 3. Host / systemd 部署
 

@@ -90,7 +90,7 @@ V3 的跨平台改造应优先做：
 - `gateway_access_token` 等敏感配置的注入方式
 - Docker 配置模板中 `gateway_host=0.0.0.0` 的要求
 - PostgreSQL service 只是部署便利项；若服务器已提供 PostgreSQL，可把 `MEETYOU_DATABASE_URL` 指向现有数据库，避免重复启动数据库实例
-- WeChat Bot 当前采用官方 iLink 方案，作为 Core 内置外部客户端适配器启用；不再作为 Core Compose 内部第三方服务托管
+- WeChat 接入当前采用 MeetWeChat Client；Core 仅调用已部署 MeetWeChat 服务的 `/v1` API，不在 Core Compose 内部托管微信协议服务
 
 ### 4.2 Linux 部署模板延续
 

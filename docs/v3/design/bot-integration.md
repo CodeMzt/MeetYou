@@ -1,192 +1,124 @@
-# MeetYou V3 Bot Integration
+# Bot Integration Design
 
-## 1. 目的
+## 1. Current Scope
 
-本文档定义 V3 `Phase 3` 的 Bot 接入真源边界。当前范围仅包含基于官方 WeChat iLink / OpenClaw Weixin channel 的 `WeChat Bot`。
+V3 的微信接入统一切换为 `MeetWeChat Client`。Core 不再直接维护旧微信登录、长轮询或 `context_token` 状态；真实微信账号由已经部署的 MeetWeChat 服务持有，MeetYou 只通过 `docs/MeetWechat_API.md` 定义的 `/v1` HTTP API 接入。
 
-本轮文档收口目标：
+本轮范围只支持文本消息：
 
-- 明确 `Phase 3` 不再包含 QQ 相关接入范围
-- 将 WeChat Bot 默认方案切换为官方 iLink 路径
-- 约束 WeChat Bot 与现有 Core / Client / Agent 主链的集成方式
-- 为后续 `F330` - `F332` 的实现与验收提供统一口径
+- MeetYou 后台轮询 `GET /v1/events`
+- 跳过或处理入站事件后调用 `POST /v1/events/ack`
+- 需要回复时调用 `POST /v1/messages/text`
+- 继续作为外部 Client 走正式 `/client/* + /client/ws` 主链
+- 每条入站消息显式携带 `tool_scope=basic` 和基础工具白名单，Core 本轮只向该 Client 暴露共享基础工具
 
-## 2. 参考来源
+旧微信 client、adapter、配置项、测试和历史说明已移除，不再保留旧配置入口。
 
-当前方案以官方路径为准，`docs/wechatbot.txt` 仅作为本仓库内的方案草案参考。
+## 2. Runtime Shape
 
-- OpenClaw WeChat channel docs: `https://docs.openclaw.ai/channels/wechat`
-- Tencent OpenClaw Weixin plugin: `https://github.com/Tencent/openclaw-weixin`
-- iLink protocol reference: `https://www.wechatbot.dev/en/protocol`
-- Local draft: `docs/wechatbot.txt`
+```mermaid
+flowchart LR
+  MW["MeetWeChat service"] -->|GET /v1/events| Poller["MeetWeChat poller"]
+  Poller --> Rules["Proxy policy + dedupe + ACK state"]
+  Rules -->|private or group mention| Client["GatewayConversationClient"]
+  Client -->|/client/messages + /client/ws| Core["Core Service"]
+  Core --> Client
+  Client --> Output["MeetWeChat output service"]
+  Output -->|POST /v1/messages/text| MW
+  Rules -->|POST /v1/events/ack| MW
+```
 
-关键事实：
+模块边界：
 
-- WeChat 接入由 `@tencent-weixin/openclaw-weixin` 外部 channel plugin 承担，OpenClaw Core 本身保持 channel-agnostic。
-- 官方插件负责二维码登录、Tencent iLink API 调用、媒体上传下载、`context_token` 与账号监控。
-- iLink 使用扫码登录获取 `bot_token`，业务请求使用 `AuthorizationType: ilink_bot_token`、`Authorization: Bearer <bot_token>` 与随机 `X-WECHAT-UIN`。
-- 入站消息通过 `POST /ilink/bot/getupdates` 长轮询获取，不是 WebSocket 或第三方 callback。
-- 出站消息通过 `POST /ilink/bot/sendmessage` 发送，回复必须携带入站消息中的 `context_token`。
+- `adapters/meetwechat_client.py` 封装 MeetWeChat `/v1` API。
+- `sensors/meetwechat_adapter.py` 负责轮询通知、代理规则、去重、ACK 补偿、群聊发言人区分、Core 输入桥接与回复输出。
+- `core/app_lifecycle.py` 只在 `enable_meetwechat_client=true` 时挂载新客户端。
+- `clients/gateway_client.py` 支持传入已有 `thread_id`，用于微信会话跨重启复用 Core thread。
 
-## 3. 范围收口
+## 3. Proxy Rules
 
-### 3.1 In Scope
+默认策略为 `guarded_auto`：
 
-- 基于官方 iLink 的 WeChat Bot 接入设计
-- 二维码登录、凭证持久化、会话恢复与过期重登策略
-- `getupdates` 长轮询到正式 `Client API + GET /client/ws` 主链的桥接
-- `sendmessage` 文本回复回发与 `context_token` 缓存
-- 最小文本闭环、去重、自发消息过滤、确认/补充输入语义
-- 后续图片、文件、语音、视频等媒体能力的扩展边界
+- 私聊文本默认进入助理并允许自动回复。
+- 群聊普通文本只 ACK，不自动回复。
+- 群聊 `is_group_mention=true` 时进入助理并允许回复。
+- `is_self=true`、非文本、空文本直接跳过并 ACK。
+- `manual_only`、`mute` 不进入 Core；`read_only` 进入 Core 但不发送回复。
 
-### 3.2 Out Of Scope
+会话键：
 
-- QQBot 或任何 QQ 平台接入
-- 继续维护第三方个人微信协议适配器
-- 在同一轮需求里同时铺开多 Bot 平台抽象
-- 绕过正式 Client 面，直接把 Bot 逻辑塞进 Core 内部私有链路
-- 把本地文件、Shell、桌面能力等 Desktop Agent 职责混入 Bot 适配层
+- 私聊：`wechat:meetwechat:chat:{chat_id}`
+- 群聊：`wechat:meetwechat:group:{chat_id}`
 
-## 4. 架构方向
+群聊发送人区分：
 
-WeChat Bot 仍是外部客户端入口，不改变 `Core Service`、`desktop-agent`、`edge-agent` 的发布边界。
+- metadata 保留 `chat_id`、`sender_id`、`sender_name_present`、`sender_alias`、`message_id`、`event_id`。
+- 群聊输入会添加稳定前缀，例如 `member#4f2a: ...`。
+- confirm 与 human-input 按 `chat_id + sender_id` 绑定，只有触发该请求的群成员可以继续响应。
 
-推荐主链：
+发送策略：
 
-1. `WeChat iLink transport` 通过二维码登录取得 `bot_token` 与账号标识
-2. `WeChatLongPoller` 调用 `POST /ilink/bot/getupdates` 长轮询入站消息
-3. `WeChatInputAdapter` 将 `WeixinMessage` 标准化为 MeetYou 输入事件
-4. 桥接层复用正式 `Client API + GET /client/ws` 与 Core 建立会话
-5. Core 继续沿用现有模式、会话、工具与附件处理主链
-6. `WeChatOutputService` 调用 `POST /ilink/bot/sendmessage` 回发文本或后续媒体消息
+- 同一 `chat_id` 串行处理，避免并发多条回复。
+- 回复前短延迟，长文本按 `meetwechat_max_text_chars` 自然分段。
+- `idempotency_key` 使用 `meetyou:{event_id}:{fragment_index}`。
+- 群聊发送统一携带 `is_group_mention=true`，符合 MeetWeChat 群聊出站约束。
 
-## 5. 模块边界
+## 4. Basic Tools
 
-- `WeChatSessionManager`
-  - 负责 `GET /ilink/bot/get_bot_qrcode?bot_type=3`
-  - 负责 `GET /ilink/bot/get_qrcode_status?qrcode=...`
-  - 保存 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`baseurl`
-  - 遇到 `errcode=-14` 或会话失效时清理凭证并重新登录
-- `WeChatLongPoller`
-  - 负责 `POST /ilink/bot/getupdates`
-  - 持久化并原样传回 `get_updates_buf`
-  - 按服务端返回的 `longpolling_timeout_ms` 调整下一轮超时
-  - 失败时使用低频 backoff，避免高频打满 iLink 服务
-- `WeChatInputAdapter`
-  - 过滤机器人自身消息
-  - 识别文本 `MessageItem.type=1`
-  - 将 `from_user_id`、`session_id`、`message_id`、`context_token` 写入 metadata
-  - 通过 `GatewayConversationClient` 复用正式 Client 主链
-- `WeChatOutputService`
-  - 生成唯一 `client_id`
-  - 构造 `message_type=2`、`message_state=2` 的 Bot 回复
-  - 从缓存读取目标用户最新 `context_token`
-  - 对长文本做自然边界分片
-- `ContextTokenStore`
-  - 缓存并持久化 `(account_id, from_user_id) -> context_token`
-  - 会话过期或重新登录时清理旧 token
-  - 禁止跨用户、跨账号复用 token
+MeetWeChat Client 默认开放共享基础工具，不开放本地文件、Shell、Desktop Agent 或边缘 Agent 能力。入站 metadata 带有：
 
-## 6. 协议约束
+- `tool_scope=basic`
+- `allowed_tool_bundle=[...]`
+- `allowed_mcp_servers=[]`
 
-- 默认 base URL 为 `https://ilinkai.weixin.qq.com`，但登录成功后必须优先使用返回的 `baseurl`
-- 所有业务 POST 请求都应包含：
-  - `Content-Type: application/json`
-  - `AuthorizationType: ilink_bot_token`
-  - `Authorization: Bearer <bot_token>`
-  - `X-WECHAT-UIN: <base64(random_uint32_as_decimal_string)>`
-- 所有 iLink 请求还应按官方插件线携带 `iLink-App-Id: bot` 与 `iLink-App-ClientVersion`
-- 请求体需要包含 `base_info.channel_version`，默认按当前官方插件线使用 `2.1.7`
-- 首次拉取消息时 `get_updates_buf` 为空字符串
-- 每次 `getupdates` 返回的新 `get_updates_buf` 是不透明游标，必须原样保存并传回
-- 每条回复必须携带入站消息里的 `context_token`
-- `ret=0` 表示成功；`errcode=-14` 表示会话过期，需要清理状态并重新扫码
+当前基础工具白名单包括：`ask_human`、`get_current_system_time`、`list_skills`、`load_skill`、`create_skill`、`manage_procedures`、`switch_workspace`、`search_knowledge`、`search_memory`、`search_web`、`read_web_page`、`remember_knowledge`、`manage_memories`、`summarize_text`、`organize_notes`、`extract_action_items`。
 
-## 7. Feature 对应关系
+## 5. Notification And ACK
 
-### F330 WeChat iLink Transport 接入骨架
+MeetWeChat 当前没有入站推送，MeetYou 建立内部轮询通知机制：
 
-状态：已落地最小文本闭环骨架，待真实扫码联调。
+- 后台按 `meetwechat_poll_interval_seconds` 调用 `/v1/events?limit=20`。
+- 轮询失败按 `meetwechat_error_backoff_seconds` 指数退避，最高 30 秒。
+- 本地状态文件 `meetwechat_state_file` 保存事件状态、待补 ACK、Core thread 绑定和群成员别名。
+- 已跳过、已交给 Core 且无需回复、或回复发送成功后 ACK。
+- Core 处理失败或发送失败时不 ACK，依靠 MeetWeChat pending 队列和本地幂等状态重试。
+- ACK 失败会保留 `ack_pending`，下一轮优先补偿。
 
-目标：
+## 6. Configuration
 
-- 删除旧第三方微信 transport 方案
-- 已建立 iLink client、session manager 与 long poller
-- 已最小支持二维码登录状态机、凭证保存、长轮询、文本发送
-- 已将运行态配置限定为 iLink 所需字段
+新增配置：
 
-建议配置：
+- `enable_meetwechat_client`
+- `meetwechat_base_url`，默认 `http://127.0.0.1:38961`
+- `meetwechat_poll_interval_seconds`，默认 `2`
+- `meetwechat_error_backoff_seconds`，默认 `2`
+- `meetwechat_max_text_chars`，默认 `1800`
+- `meetwechat_state_file`，默认 `user/meetwechat_client_state.json`
+- `meetwechat_proxy_policy`，JSON 对象，默认 `guarded_auto`
 
-- `enable_wechat_bot`
-- `wechat_ilink_base_url`
-- `wechat_ilink_channel_version`
-- `wechat_ilink_token_file`
-- `wechat_ilink_qr_output_path`
-- `wechat_ilink_poll_timeout_ms`
+可用环境变量覆盖：
 
-密钥与登录凭证不进入普通 `user/config.json`；`bot_token` 等运行凭证写入受限权限的 token file 或后续加密状态后端。
+- `MEETYOU_MEETWECHAT_ENABLE`
+- `MEETYOU_MEETWECHAT_BASE_URL`
+- `MEETYOU_MEETWECHAT_POLL_INTERVAL_SECONDS`
+- `MEETYOU_MEETWECHAT_ERROR_BACKOFF_SECONDS`
+- `MEETYOU_MEETWECHAT_MAX_TEXT_CHARS`
+- `MEETYOU_MEETWECHAT_STATE_FILE`
 
-### F331 Bot -> Client 主链桥接
+## 7. Verification
 
-状态：已落地最小桥接骨架，待真实微信消息验收。
+最小自动验证：
 
-目标：
+```powershell
+.venv\Scripts\python.exe -m unittest tests.test_meetwechat_client tests.test_meetwechat_adapter tests.test_config_manager tests.test_service_runtime
+```
 
-- 每个微信用户以 `wechat:account:{ilink_bot_id}:user:{from_user_id}` 作为稳定会话键
-- 入站文本已通过 `GatewayConversationClient` 进入正式 Client 主链
-- `message_id` 或 `(seq, session_id, create_time_ms)` 已作为幂等键候选
-- metadata 保留 `context_token` 是否存在、`from_user_id`、`session_id`、`ilink_user_id`
+真实链路验收应低频顺序执行：
 
-### F332 Bot 交互语义补齐
+1. `GET /v1/health`
+2. 私聊文本收发
+3. 群聊普通消息不回复
+4. 群聊 @ 回复
+5. `manual_only` 阻断
 
-状态：已落地文本、去重、`context_token` 与交互请求骨架，待真实闭环验收。
-
-首期完成判定仍以文本闭环为准：
-
-- 已忽略机器人自身消息
-- 已做入站消息去重
-- 已支持文本回复回发
-- 已支持长文本分片
-- 已支持 `errcode=-14` 会话过期清理并重新扫码
-- 已支持最小 `confirm` / `human input` 交互桥接
-
-后续扩展：
-
-- 图片、文件、语音、视频需要补 CDN 上传下载、AES-128-ECB 加解密与附件桥接
-- typing 状态可通过 `getconfig` + `sendtyping` 增强长任务体验
-- 群聊当前不作为承诺能力，需等官方能力元数据明确后再扩展
-
-## 8. 当前任务清单
-
-- [x] `Task 1` 建立 `bot-integration.md` 真源文档，并将 `Phase 3` 范围收口为仅支持 `WeChat Bot`
-- [x] `Task 2` 确认官方 iLink / OpenClaw Weixin channel 是新的默认方案
-- [x] `Task 3` 删除旧第三方微信接入方案的代码、脚本、配置项与文档说明
-- [x] `Task 4` 结合官方说明与 `docs/wechatbot.txt` 重写 Phase 3 设计口径
-- [x] `Task 5` 实现 iLink session manager、long poller、input adapter 与 output service
-- [x] `Task 6` 使用真实扫码登录完成文本闭环联调
-
-## 9. 验收提示
-
-实现完成前只承诺设计已收口，不承诺微信消息真实可用。
-
-最小验收矩阵应覆盖：
-
-- 单测：iLink headers、二维码登录状态机、`get_updates_buf` 持久化、`context_token` 缓存、文本 `sendmessage` body
-- 集成：长轮询消息进入 `Client API + GET /client/ws`
-- 真链路：微信扫码登录、向 Bot 发文本、MeetYou 回复文本
-- 失效恢复：模拟 `errcode=-14` 后清理 token、游标与 context token
-- 安全：日志、错误、测试快照不泄露 `bot_token`、二维码 token、`context_token`
-
-## 10. 真实联调记录
-
-### 2026-04-22
-
-- 已确认旧第三方微信路径不再作为 MeetYou 方案继续推进
-- 已将 Phase 3 设计改为官方 iLink / OpenClaw Weixin channel 路径
-- 已删除旧 transport、callback、Docker 服务、验收脚本与测试文件
-- 已实现 iLink client、状态文件、长轮询输入适配器、`sendmessage` 输出服务与配置 schema
-- 新增单测覆盖 headers/body、状态持久化、入站桥接、出站 `context_token` 文本回复
-- 已修复 iLink `ilink_user_id` 误判为 bot 自身消息导致入站消息被过滤的问题；`ilink_user_id` 表示扫码用户，只应过滤 `ilink_bot_id` 与 `@im.bot` 自身账号
-- 已在 Windows 本机通过 `python -m service_runtime` + Docker PostgreSQL + 官方 iLink 完成真实扫码登录与文本闭环联调
-- 验收消息：用户向 Bot 发送 `测试：ping`，日志确认 iLink 入站文本进入 `Client API + GET /client/ws` 主链，用户确认微信侧收到正常回复
-- 当前 Phase 3 最小文本闭环已完成；媒体附件、群聊与 typing 状态仍按后续扩展项处理
+验收记录不得包含完整聊天正文、联系人名、cookie 或 token。
