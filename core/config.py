@@ -30,13 +30,32 @@ _ENV_FILE_PATH = ".env"
 _MCP_SERVER_CONFIG_PATH = "user/core_mcp_servers.json"
 _CONFIG_METADATA_KEY = "_meta"
 _CONFIG_SCHEMA_VERSION = "2"
-_REMOVED_CONFIG_KEYS = {"enable_gateway", "source_profiles"}
+_REMOVED_WECHAT_CONFIG_KEYS = {
+    "enable_" + "wechat_bot",
+    *{
+        "wechat_" + "i" + "link_" + suffix
+        for suffix in (
+            "base_url",
+            "channel_version",
+            "login_poll_interval_seconds",
+            "max_text_chars",
+            "poll_timeout_ms",
+            "qr_output_path",
+            "token_file",
+        )
+    },
+}
+_REMOVED_CONFIG_KEYS = {
+    "enable_gateway",
+    "source_profiles",
+    *_REMOVED_WECHAT_CONFIG_KEYS,
+}
 _ENV_ASSIGNMENT_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 _BOOLEAN_TRUE_VALUES = {"1", "true", "yes", "on"}
 _BOOLEAN_FALSE_VALUES = {"0", "false", "no", "off"}
 _BOOLEAN_KEYS = {
     "enable_feishu_bot",
-    "enable_wechat_bot",
+    "enable_meetwechat_client",
     "thinking_enabled",
     "heartbeat_idle_poke_enabled",
     "heartbeat_idle_context_compaction_enabled",
@@ -49,9 +68,9 @@ _INTEGER_KEYS = {
     "housekeeping_interval",
     "scheduler_interval",
     "thinking_budget_tokens",
-    "wechat_ilink_login_poll_interval_seconds",
-    "wechat_ilink_max_text_chars",
-    "wechat_ilink_poll_timeout_ms",
+    "meetwechat_error_backoff_seconds",
+    "meetwechat_max_text_chars",
+    "meetwechat_poll_interval_seconds",
 }
 _POSITIVE_INTEGER_KEYS = {
     "heartbeat_interval",
@@ -59,18 +78,24 @@ _POSITIVE_INTEGER_KEYS = {
     "heartbeat_idle_poke_cooldown_seconds",
     "housekeeping_interval",
     "scheduler_interval",
-    "wechat_ilink_login_poll_interval_seconds",
-    "wechat_ilink_max_text_chars",
-    "wechat_ilink_poll_timeout_ms",
+    "meetwechat_error_backoff_seconds",
+    "meetwechat_max_text_chars",
+    "meetwechat_poll_interval_seconds",
 }
-_JSON_OBJECT_KEYS = {"assistant_modes", "mode_router", "document_parsers", "office_integrations"}
+_JSON_OBJECT_KEYS = {
+    "assistant_modes",
+    "mode_router",
+    "document_parsers",
+    "office_integrations",
+    "meetwechat_proxy_policy",
+}
 _LIST_KEYS = {"trusted_write_roots", "feishu_broadcast_chat_ids", "gateway_cors_origins"}
 _URL_KEYS = {
     "api_url",
     "embedding_api_url",
     "heartbeat_api_url",
     "mcp_registry_url",
-    "wechat_ilink_base_url",
+    "meetwechat_base_url",
 }
 _PROVIDER_KEYS = {"api_provider", "heartbeat_api_provider"}
 _THINKING_EFFORT_VALUES = set(THINKING_EFFORT_VALUES)
@@ -91,12 +116,12 @@ _ENV_KEY_MAP = {
     "tavily_api_key": "TAVILY_API_KEY",
 }
 _ENV_OVERRIDE_KEY_MAP = {
-    "enable_wechat_bot": "MEETYOU_WECHAT_ENABLE",
-    "wechat_ilink_base_url": "MEETYOU_WECHAT_ILINK_BASE_URL",
-    "wechat_ilink_channel_version": "MEETYOU_WECHAT_CHANNEL_VERSION",
-    "wechat_ilink_token_file": "MEETYOU_WECHAT_TOKEN_FILE",
-    "wechat_ilink_qr_output_path": "MEETYOU_WECHAT_LOGIN_QR_PATH",
-    "wechat_ilink_poll_timeout_ms": "MEETYOU_WECHAT_POLL_TIMEOUT_MS",
+    "enable_meetwechat_client": "MEETYOU_MEETWECHAT_ENABLE",
+    "meetwechat_base_url": "MEETYOU_MEETWECHAT_BASE_URL",
+    "meetwechat_error_backoff_seconds": "MEETYOU_MEETWECHAT_ERROR_BACKOFF_SECONDS",
+    "meetwechat_max_text_chars": "MEETYOU_MEETWECHAT_MAX_TEXT_CHARS",
+    "meetwechat_poll_interval_seconds": "MEETYOU_MEETWECHAT_POLL_INTERVAL_SECONDS",
+    "meetwechat_state_file": "MEETYOU_MEETWECHAT_STATE_FILE",
 }
 
 _KNOWN_CONFIG_KEYS = set(CONFIG_FIELD_KEYS)

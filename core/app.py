@@ -61,7 +61,7 @@ from platform_layer.detector import detect_platform
 from sensors.feishu_input_adapter import FeishuInputAdapter
 from sensors.feishu_output_adapter import FeishuOutputAdapter
 from sensors.proprioceptor import Proprioceptor
-from sensors.wechat_ilink_adapter import WeChatInputAdapter, WeChatOutputService
+from sensors.meetwechat_adapter import MeetWeChatInputAdapter, MeetWeChatOutputService
 from service_runtime.models import RuntimeError
 from tools import system_tools
 from tools.mcp import MCPManager
@@ -165,7 +165,7 @@ _RESTART_REQUIRED_KEYS = {
     "cmd_policy_path",
     "database_url",
     "enable_feishu_bot",
-    "enable_wechat_bot",
+    "enable_meetwechat_client",
     "feishu_app_id",
     "feishu_app_secret",
     "feishu_broadcast_chat_ids",
@@ -179,13 +179,12 @@ _RESTART_REQUIRED_KEYS = {
     "task_file_path",
     "tavily_api_key",
     "tools_schema_path",
-    "wechat_ilink_base_url",
-    "wechat_ilink_channel_version",
-    "wechat_ilink_login_poll_interval_seconds",
-    "wechat_ilink_max_text_chars",
-    "wechat_ilink_poll_timeout_ms",
-    "wechat_ilink_qr_output_path",
-    "wechat_ilink_token_file",
+    "meetwechat_base_url",
+    "meetwechat_error_backoff_seconds",
+    "meetwechat_max_text_chars",
+    "meetwechat_poll_interval_seconds",
+    "meetwechat_proxy_policy",
+    "meetwechat_state_file",
 }
 
 
@@ -259,8 +258,8 @@ class App:
         self.core_services = None
         self.feishu_input: FeishuInputAdapter | None = None
         self.feishu_output: FeishuOutputAdapter | None = None
-        self.wechat_input: WeChatInputAdapter | None = None
-        self.wechat_output: WeChatOutputService | None = None
+        self.wechat_input: MeetWeChatInputAdapter | None = None
+        self.wechat_output: MeetWeChatOutputService | None = None
         self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
         self._health_getter = health_getter
         self._telemetry_recorder = telemetry_recorder
