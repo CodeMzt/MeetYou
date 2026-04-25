@@ -487,8 +487,9 @@ def build_agent_router(gateway) -> APIRouter:
                         break
         finally:
             if current_agent is not None:
-                await gateway.agent_ws_manager.disconnect(current_agent.agent_id, websocket)
-                domain.services.agent.record_heartbeat(agent_id=current_agent.agent_id, status="offline", metrics={})
+                disconnected_current = await gateway.agent_ws_manager.disconnect(current_agent.agent_id, websocket)
+                if disconnected_current:
+                    domain.services.agent.record_heartbeat(agent_id=current_agent.agent_id, status="offline", metrics={})
 
     @router.post("/attachments/upload-ticket")
     async def create_agent_attachment_upload_ticket(request: Request, payload: dict):

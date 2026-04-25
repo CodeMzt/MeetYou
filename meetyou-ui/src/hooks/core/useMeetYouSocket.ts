@@ -54,7 +54,13 @@ export function useMeetYouSocket(
     setClientConnectionState('connecting')
 
     void (async () => {
-      const url = await createClientWsUrl(baseUrl, clientContext.threadId)
+      const url = await createClientWsUrl(baseUrl, clientContext.threadId, {
+        clientId: clientContext.clientId,
+        sessionId: clientContext.session.session_id,
+        workspaceId: clientContext.workspace.workspace_id,
+        clientType: 'electron',
+        displayName: 'Desktop App',
+      })
       if (clientWsRef.current?.readyState === WebSocket.OPEN || clientWsRef.current?.readyState === WebSocket.CONNECTING) {
         return
       }

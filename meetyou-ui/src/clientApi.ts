@@ -766,9 +766,34 @@ export async function deleteDesktopMemoryRecord(
   return readJsonOrThrow<MemoryRecordMutationResult>(response, 'Failed to delete memory record')
 }
 
-export async function createClientWsUrl(baseUrl: string, threadId: string): Promise<string> {
+export async function createClientWsUrl(
+  baseUrl: string,
+  threadId: string,
+  identity: {
+    clientId?: string
+    sessionId?: string
+    workspaceId?: string
+    clientType?: string
+    displayName?: string
+  } = {},
+): Promise<string> {
   const url = new URL(`${toClientWsBaseUrl(baseUrl)}/desktop/ws`)
   url.searchParams.set('thread_id', threadId)
+  if (identity.clientId) {
+    url.searchParams.set('client_id', identity.clientId)
+  }
+  if (identity.sessionId) {
+    url.searchParams.set('session_id', identity.sessionId)
+  }
+  if (identity.workspaceId) {
+    url.searchParams.set('workspace_id', identity.workspaceId)
+  }
+  if (identity.clientType) {
+    url.searchParams.set('client_type', identity.clientType)
+  }
+  if (identity.displayName) {
+    url.searchParams.set('display_name', identity.displayName)
+  }
   const token = await resolveAccessToken()
   if (token) {
     url.searchParams.set('access_token', token)
