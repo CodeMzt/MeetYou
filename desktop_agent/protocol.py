@@ -30,6 +30,8 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
             "tags": ["desktop", "utility", "debug"],
             "risk_level": "read",
             "requires_confirmation": False,
+            "safe_parallel": True,
+            "max_concurrency": min(int(getattr(config, "max_parallel_calls", 2) or 2), 4),
             "workspace_ids": workspace_ids,
         },
         {
@@ -40,6 +42,8 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
             "tags": ["desktop", "workspace", "read"],
             "risk_level": "read",
             "requires_confirmation": False,
+            "safe_parallel": True,
+            "max_concurrency": min(int(getattr(config, "max_parallel_calls", 2) or 2), 4),
             "workspace_ids": workspace_ids,
         },
         {
@@ -50,6 +54,8 @@ def build_static_capabilities(config: DesktopAgentConfig, *, extra_capabilities:
             "tags": ["desktop", "documents", "read"],
             "risk_level": "read",
             "requires_confirmation": False,
+            "safe_parallel": True,
+            "max_concurrency": min(int(getattr(config, "max_parallel_calls", 2) or 2), 4),
             "workspace_ids": workspace_ids,
         },
         {

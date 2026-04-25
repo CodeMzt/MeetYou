@@ -122,3 +122,37 @@ MeetWeChat 当前没有入站推送，MeetYou 建立内部轮询通知机制：
 5. `manual_only` 阻断
 
 验收记录不得包含完整聊天正文、联系人名、cookie 或 token。
+## 8. High-Frequency Send/Receive Optimization
+
+MeetWechat remains a Core-side external client adapter and still enters MeetYou through the formal Client API plus `GET /client/ws`.
+
+Runtime behavior for frequent send/receive:
+
+- `/v1/events` polling stays single-source, but returned batches are placed into a bounded inbound queue before Core processing.
+- Inbound workers process different chats concurrently while each `chat_id` remains ordered by a per-conversation lock.
+- Event, ACK, thread, and alias state is kept in memory and flushed to `meetwechat_state_file` on a short debounce window, with forced flush on shutdown.
+- Outbound replies from `/client/ws` callbacks are queued instead of awaiting `/v1/messages/text` directly, so slow MeetWechat sends do not block the client WebSocket read loop.
+- Outbound sends keep per-chat order, apply a conservative global send interval, and retry transient timeout, 429, and 5xx failures.
+- Cached `GatewayConversationClient` instances are reused per MeetWechat conversation and closed after an idle TTL.
+
+Default knobs:
+
+- `meetwechat_inbound_worker_count=4`
+- `meetwechat_inbound_queue_size=500`
+- `meetwechat_outbound_worker_count=2`
+- `meetwechat_outbound_queue_size=500`
+- `meetwechat_outbound_min_interval_ms=250`
+- `meetwechat_send_timeout_ms=10000`
+- `meetwechat_state_flush_interval_ms=500`
+- `meetwechat_gateway_client_idle_ttl_seconds=600`
+
+Environment overrides:
+
+- `MEETYOU_MEETWECHAT_INBOUND_WORKERS`
+- `MEETYOU_MEETWECHAT_INBOUND_QUEUE_SIZE`
+- `MEETYOU_MEETWECHAT_OUTBOUND_WORKERS`
+- `MEETYOU_MEETWECHAT_OUTBOUND_QUEUE_SIZE`
+- `MEETYOU_MEETWECHAT_OUTBOUND_MIN_INTERVAL_MS`
+- `MEETYOU_MEETWECHAT_SEND_TIMEOUT_MS`
+- `MEETYOU_MEETWECHAT_STATE_FLUSH_INTERVAL_MS`
+- `MEETYOU_MEETWECHAT_GATEWAY_CLIENT_IDLE_TTL_SECONDS`

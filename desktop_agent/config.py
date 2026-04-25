@@ -37,6 +37,7 @@ class DesktopAgentConfig:
     cmd_policy_path: str = "user/cmd_policy.json"
     mcp_servers_path: str = "user/mcp_servers.json"
     command_timeout_seconds: int = 120
+    max_parallel_calls: int = 2
     heartbeat_interval_seconds: int = 20
     reconnect_delay_seconds: int = 3
     supports_offline_cache: bool = True
@@ -149,6 +150,13 @@ def load_desktop_agent_config(config_file_path: str | None = None) -> DesktopAge
         cmd_policy_path=str(payload.get("cmd_policy_path") or "user/cmd_policy.json"),
         mcp_servers_path=str(payload.get("mcp_servers_path") or "user/mcp_servers.json"),
         command_timeout_seconds=int(payload.get("command_timeout_seconds") or 120),
+        max_parallel_calls=max(
+            1,
+            min(
+                int(os.environ.get("MEETYOU_AGENT_MAX_PARALLEL_CALLS") or payload.get("max_parallel_calls") or 2),
+                4,
+            ),
+        ),
         heartbeat_interval_seconds=int(os.environ.get("MEETYOU_AGENT_HEARTBEAT_SECONDS") or payload.get("heartbeat_interval_seconds") or 20),
         reconnect_delay_seconds=int(os.environ.get("MEETYOU_AGENT_RECONNECT_SECONDS") or payload.get("reconnect_delay_seconds") or 3),
         supports_offline_cache=bool(payload.get("supports_offline_cache", True)),

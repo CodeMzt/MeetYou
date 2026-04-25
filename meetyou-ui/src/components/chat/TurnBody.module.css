@@ -3,6 +3,10 @@
   overflow-wrap: break-word;
 }
 
+.streamingText {
+  white-space: pre-wrap;
+}
+
 .temporaryBadge {
   display: inline-flex;
   align-items: center;

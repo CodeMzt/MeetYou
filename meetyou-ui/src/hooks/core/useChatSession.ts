@@ -48,6 +48,14 @@ function buildAckMessage(ack: AckPayload): string {
   return ''
 }
 
+type BufferedDelta = {
+  content: string
+  streamId: string
+  turnId: string
+  channel: 'answer' | 'reasoning'
+  phase: string
+}
+
 export function useChatSession(
   baseUrl: string,
   clientContext: ClientContext | null,
@@ -59,6 +67,8 @@ export function useChatSession(
 ) {
   const [chatState, dispatchChat] = useReducer(reduceChatState, undefined, createInitialChatState)
   const activeTurnIdRef = useRef('')
+  const deltaBufferRef = useRef<Map<string, BufferedDelta>>(new Map())
+  const deltaFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   activeTurnIdRef.current = chatState.runtimeSnapshot?.turn_id || ''
 
@@ -99,6 +109,50 @@ export function useChatSession(
     }
     void hydrateRuntimeUsage(clientContext.session.session_id)
   }, [clientContext?.session.session_id, hydrateRuntimeUsage])
+
+  const flushBufferedDeltas = useCallback(() => {
+    if (deltaFlushTimerRef.current) {
+      clearTimeout(deltaFlushTimerRef.current)
+      deltaFlushTimerRef.current = null
+    }
+    const buffered = Array.from(deltaBufferRef.current.values())
+    deltaBufferRef.current.clear()
+    if (buffered.length === 0) {
+      return
+    }
+    startTransition(() => {
+      for (const item of buffered) {
+        dispatchChat({
+          type: 'append_message',
+          role: 'assistant',
+          content: item.content,
+          streamId: item.streamId,
+          turnId: item.turnId,
+          channel: item.channel,
+          phase: item.phase,
+          eventId: `${item.channel}:${item.streamId}:${item.turnId}:${item.content.length}:${Date.now()}`,
+          activeTurnId: activeTurnIdRef.current || item.turnId,
+        })
+      }
+    })
+  }, [])
+
+  const scheduleDeltaFlush = useCallback(() => {
+    if (deltaFlushTimerRef.current) {
+      return
+    }
+    deltaFlushTimerRef.current = setTimeout(flushBufferedDeltas, 50)
+  }, [flushBufferedDeltas])
+
+  useEffect(() => {
+    return () => {
+      if (deltaFlushTimerRef.current) {
+        clearTimeout(deltaFlushTimerRef.current)
+        deltaFlushTimerRef.current = null
+      }
+      deltaBufferRef.current.clear()
+    }
+  }, [])
 
   const approvalDisplay = useMemo((): ApprovalDisplayModel | null => {
     if (!chatState.confirmRequest) return null
@@ -377,21 +431,21 @@ export function useChatSession(
         })
         break
       case 'message_delta':
-        startTransition(() => {
-          dispatchChat({
-            type: 'append_message',
-            role: 'assistant',
-            content: update.delta,
+        {
+          const key = `${update.channel}:${update.streamId}:${update.turnId}`
+          const existing = deltaBufferRef.current.get(key)
+          deltaBufferRef.current.set(key, {
+            content: `${existing?.content || ''}${update.delta}`,
             streamId: update.streamId,
             turnId: update.turnId,
-            channel: update.channel,
+            channel: update.channel === 'reasoning' ? 'reasoning' : 'answer',
             phase: update.phase,
-            eventId: `${update.channel}:${update.streamId}:${update.turnId}:${update.delta.length}`,
-            activeTurnId: activeTurnIdRef.current || update.turnId,
           })
-        })
+          scheduleDeltaFlush()
+        }
         break
       case 'message_completed':
+        flushBufferedDeltas()
         startTransition(() => {
           dispatchChat({
             type: 'complete_stream_message',
@@ -402,7 +456,7 @@ export function useChatSession(
         })
         break
     }
-  }, [])
+  }, [flushBufferedDeltas, scheduleDeltaFlush])
 
   return {
     chatState,

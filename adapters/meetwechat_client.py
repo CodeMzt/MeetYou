@@ -8,6 +8,7 @@ import aiohttp
 
 
 DEFAULT_MEETWECHAT_BASE_URL = "http://127.0.0.1:38961"
+DEFAULT_MEETWECHAT_REQUEST_TIMEOUT_SECONDS = 10
 
 
 class MeetWeChatError(RuntimeError):
@@ -87,16 +88,19 @@ class MeetWeChatClient:
         *,
         base_url: str = DEFAULT_MEETWECHAT_BASE_URL,
         access_token: str = "",
+        request_timeout_seconds: float = DEFAULT_MEETWECHAT_REQUEST_TIMEOUT_SECONDS,
         session: aiohttp.ClientSession | None = None,
     ):
         self.base_url = str(base_url or DEFAULT_MEETWECHAT_BASE_URL).strip().rstrip("/") or DEFAULT_MEETWECHAT_BASE_URL
         self.access_token = str(access_token or "").strip()
+        self.request_timeout_seconds = float(request_timeout_seconds or DEFAULT_MEETWECHAT_REQUEST_TIMEOUT_SECONDS)
         self._session = session
         self._owns_session = session is None
 
     async def init(self) -> None:
         if self._session is None:
-            self._session = aiohttp.ClientSession(headers=self._auth_headers())
+            timeout = aiohttp.ClientTimeout(total=max(self.request_timeout_seconds, 0.1))
+            self._session = aiohttp.ClientSession(headers=self._auth_headers(), timeout=timeout)
             self._owns_session = True
 
     async def close(self) -> None:

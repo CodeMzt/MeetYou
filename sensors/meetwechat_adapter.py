@@ -13,6 +13,7 @@ from adapters.meetwechat_client import (
     DEFAULT_MEETWECHAT_BASE_URL,
     MeetWeChatClient,
     MeetWeChatEvent,
+    MeetWeChatHTTPError,
     MeetWeChatSendResult,
 )
 from clients.gateway_client import GatewayConversationClient
@@ -29,6 +30,14 @@ DEFAULT_MAX_ERROR_BACKOFF_SECONDS = 30
 DEFAULT_MAX_TEXT_CHARS = 1800
 DEFAULT_EVENT_LIMIT = 20
 DEFAULT_REPLY_TIMEOUT_SECONDS = 120
+DEFAULT_INBOUND_WORKER_COUNT = 4
+DEFAULT_INBOUND_QUEUE_SIZE = 500
+DEFAULT_OUTBOUND_WORKER_COUNT = 2
+DEFAULT_OUTBOUND_QUEUE_SIZE = 500
+DEFAULT_OUTBOUND_MIN_INTERVAL_MS = 250
+DEFAULT_SEND_TIMEOUT_MS = 10000
+DEFAULT_STATE_FLUSH_INTERVAL_MS = 500
+DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS = 600
 _MAX_STATE_EVENTS = 4096
 _BLOCKED_SEND_STATUSES = {"manual_only", "mute", "read_only", "blocked"}
 MEETWECHAT_BASIC_TOOL_BUNDLE = [
@@ -194,10 +203,12 @@ class MeetWeChatProxyPolicy:
 
 
 class MeetWeChatStateStore:
-    def __init__(self, state_file: str = DEFAULT_STATE_FILE):
+    def __init__(self, state_file: str = DEFAULT_STATE_FILE, *, flush_interval_ms: int = 0):
         self.path = Path(state_file or DEFAULT_STATE_FILE)
         self._lock = asyncio.Lock()
         self._payload = self._load()
+        self._flush_interval_seconds = max(int(flush_interval_ms or 0), 0) / 1000
+        self._flush_task: asyncio.Task | None = None
 
     def _empty_payload(self) -> dict[str, Any]:
         return {
@@ -225,7 +236,7 @@ class MeetWeChatStateStore:
             payload["sender_aliases"] = {}
         return payload
 
-    async def _persist_locked(self) -> None:
+    def _persist_now_locked(self) -> None:
         events = self._payload.setdefault("events", {})
         if isinstance(events, dict) and len(events) > _MAX_STATE_EVENTS:
             ordered = sorted(
@@ -235,6 +246,40 @@ class MeetWeChatStateStore:
             self._payload["events"] = dict(ordered[-_MAX_STATE_EVENTS:])
         self._payload["updated_at"] = _utcnow_iso()
         atomic_write_json(str(self.path), self._payload)
+
+    async def _flush_after_delay(self) -> None:
+        try:
+            await asyncio.sleep(self._flush_interval_seconds)
+            async with self._lock:
+                self._flush_task = None
+                self._persist_now_locked()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("MeetWeChat state flush failed: %s", exc)
+
+    async def _persist_locked(self, *, force: bool = False) -> None:
+        if force or self._flush_interval_seconds <= 0:
+            if self._flush_task is not None:
+                self._flush_task.cancel()
+                self._flush_task = None
+            self._persist_now_locked()
+            return
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_task = asyncio.create_task(self._flush_after_delay())
+
+    async def flush(self) -> None:
+        task = self._flush_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        async with self._lock:
+            self._flush_task = None
+            self._persist_now_locked()
+
+    async def close(self) -> None:
+        await self.flush()
 
     def get_event_status(self, event_id: str) -> str:
         event = self._payload.get("events", {}).get(str(event_id or ""), {})
@@ -318,6 +363,14 @@ class _PendingReply:
     future: asyncio.Future
 
 
+@dataclass(slots=True)
+class _OutboundMessage:
+    pending: _PendingReply
+    text: str
+    complete_pending: bool = True
+    delay_before_send: bool = True
+
+
 class MeetWeChatOutputService:
     def __init__(
         self,
@@ -337,8 +390,38 @@ class MeetWeChatOutputService:
         self._pending_replies: dict[str, _PendingReply] = {}
         self._pending_confirm_requests: dict[str, str] = {}
         self._pending_human_input_requests: dict[str, dict[str, Any]] = {}
+        self._outbound_queue: asyncio.Queue[_OutboundMessage] = asyncio.Queue(
+            maxsize=_safe_positive_int(
+                config.get("meetwechat_outbound_queue_size"),
+                DEFAULT_OUTBOUND_QUEUE_SIZE,
+            )
+        )
+        self._outbound_worker_count = _safe_positive_int(
+            config.get("meetwechat_outbound_worker_count"),
+            DEFAULT_OUTBOUND_WORKER_COUNT,
+        )
+        self._send_timeout_seconds = (
+            _safe_positive_int(config.get("meetwechat_send_timeout_ms"), DEFAULT_SEND_TIMEOUT_MS) / 1000
+        )
+        self._min_send_interval_seconds = (
+            _safe_positive_int(
+                config.get("meetwechat_outbound_min_interval_ms"),
+                DEFAULT_OUTBOUND_MIN_INTERVAL_MS,
+            )
+            / 1000
+        )
+        self._outbound_workers: list[asyncio.Task] = []
+        self._outbound_locks: dict[str, asyncio.Lock] = {}
+        self._rate_lock = asyncio.Lock()
+        self._last_send_at = 0.0
 
     async def close(self) -> None:
+        for worker in self._outbound_workers:
+            worker.cancel()
+        for worker in self._outbound_workers:
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker
+        self._outbound_workers.clear()
         for pending in list(self._pending_replies.values()):
             if not pending.future.done():
                 pending.future.cancel()
@@ -428,8 +511,7 @@ class MeetWeChatOutputService:
                 request_id = str(event.get("request_id") or "")
                 self._pending_confirm_requests[pending.participant_key] = request_id
                 text = f"{event.get('content', '')}\nConfirm ID: {request_id}\nReply y/yes to approve, n/no to reject."
-                await self._send_for_pending(pending, text)
-                self._complete_pending(chat_id, True)
+                self._enqueue_outbound(pending, text, delay_before_send=False)
             return
         if event_type == "confirm.resolved":
             request_id = str(event.get("request_id") or "")
@@ -448,8 +530,7 @@ class MeetWeChatOutputService:
                 option_lines = "\n".join(f"{index}. {option}" for index, option in enumerate(options, start=1))
                 suffix = f"\n{option_lines}" if option_lines else ""
                 text = f"{event.get('question', '')}{suffix}\nReply with a number or text.\nRequest ID: {request_id}"
-                await self._send_for_pending(pending, text)
-                self._complete_pending(chat_id, True)
+                self._enqueue_outbound(pending, text, delay_before_send=False)
             return
         if event_type == "human_input.resolved":
             request_id = str(event.get("request_id") or "")
@@ -469,38 +550,124 @@ class MeetWeChatOutputService:
             text += str(message.get("content") or "")
             if pending is None:
                 return
+            self._enqueue_outbound(pending, text)
+
+    def _ensure_outbound_workers(self) -> None:
+        self._outbound_workers = [worker for worker in self._outbound_workers if not worker.done()]
+        while len(self._outbound_workers) < self._outbound_worker_count:
+            self._outbound_workers.append(asyncio.create_task(self._run_outbound_worker()))
+
+    def _enqueue_outbound(
+        self,
+        pending: _PendingReply,
+        text: str,
+        *,
+        delay_before_send: bool = True,
+    ) -> None:
+        content = str(text or "").strip()
+        if not content or not pending.allow_send:
+            self._complete_pending(pending.event.chat_id, True)
+            return
+        self._ensure_outbound_workers()
+        try:
+            self._outbound_queue.put_nowait(
+                _OutboundMessage(
+                    pending=pending,
+                    text=content,
+                    complete_pending=True,
+                    delay_before_send=delay_before_send,
+                )
+            )
+        except asyncio.QueueFull:
+            logger.warning(
+                "MeetWeChat outbound queue full chat=%s event=%s",
+                _mask(pending.event.chat_id),
+                _mask(pending.event.event_id),
+            )
+            self._complete_pending(pending.event.chat_id, False, "outbound queue full")
+
+    async def _run_outbound_worker(self) -> None:
+        while True:
+            item = await self._outbound_queue.get()
             try:
-                await self._send_for_pending(pending, text)
+                lock = self._outbound_locks.setdefault(item.pending.event.chat_id, asyncio.Lock())
+                async with lock:
+                    await self._send_for_pending(
+                        item.pending,
+                        item.text,
+                        delay_before_send=item.delay_before_send,
+                    )
+                if item.complete_pending:
+                    self._complete_pending(item.pending.event.chat_id, True)
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 logger.warning(
                     "MeetWeChat send failed chat=%s event=%s error=%s",
-                    _mask(chat_id),
-                    _mask(pending.event.event_id),
+                    _mask(item.pending.event.chat_id),
+                    _mask(item.pending.event.event_id),
                     exc,
                 )
-                self._complete_pending(chat_id, False, "send failed")
-                return
-            self._complete_pending(chat_id, True)
+                if item.complete_pending:
+                    self._complete_pending(item.pending.event.chat_id, False, "send failed")
+            finally:
+                self._outbound_queue.task_done()
 
-    async def _send_for_pending(self, pending: _PendingReply, text: str) -> None:
+    async def _send_for_pending(self, pending: _PendingReply, text: str, *, delay_before_send: bool = True) -> None:
         content = str(text or "").strip()
         if not content:
             return
         if not pending.allow_send:
             return
-        await self._sleep(self._policy.reply_delay_seconds)
+        if delay_before_send:
+            await self._sleep(self._policy.reply_delay_seconds)
         limit = _safe_positive_int(self._config.get("meetwechat_max_text_chars"), DEFAULT_MAX_TEXT_CHARS)
         fragments = split_text_naturally(content, limit=limit)
         for index, fragment in enumerate(fragments, start=1):
-            result = await self._client.send_text(
-                chat_id=pending.event.chat_id,
-                text=fragment,
-                idempotency_key=f"meetyou:{pending.event.event_id}:{index}",
-                is_group_mention=pending.event.chat_type == "group",
+            await self._send_fragment_with_retry(
+                pending,
+                fragment,
+                index=index,
             )
-            self._check_send_result(result)
             if index < len(fragments):
                 await self._sleep(self._policy.fragment_pause_seconds)
+
+    async def _wait_global_send_slot(self) -> None:
+        async with self._rate_lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            wait_seconds = self._min_send_interval_seconds - (now - self._last_send_at)
+            if wait_seconds > 0:
+                await self._sleep(wait_seconds)
+            self._last_send_at = loop.time()
+
+    async def _send_fragment_with_retry(self, pending: _PendingReply, fragment: str, *, index: int) -> None:
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                await self._wait_global_send_slot()
+                result = await asyncio.wait_for(
+                    self._client.send_text(
+                        chat_id=pending.event.chat_id,
+                        text=fragment,
+                        idempotency_key=f"meetyou:{pending.event.event_id}:{index}",
+                        is_group_mention=pending.event.chat_type == "group",
+                    ),
+                    timeout=self._send_timeout_seconds,
+                )
+                self._check_send_result(result)
+                return
+            except Exception as exc:
+                if attempt >= max_attempts - 1 or not self._is_transient_send_error(exc):
+                    raise
+                await self._sleep(min(0.5 * (2**attempt), 3.0))
+
+    def _is_transient_send_error(self, exc: Exception) -> bool:
+        if isinstance(exc, asyncio.TimeoutError):
+            return True
+        if isinstance(exc, MeetWeChatHTTPError):
+            return exc.status == 429 or exc.status >= 500
+        return isinstance(exc, (ConnectionError, OSError))
 
     def _check_send_result(self, result: MeetWeChatSendResult) -> None:
         if result.ok:
@@ -532,7 +699,11 @@ class MeetWeChatInputAdapter:
             base_url=str(config.get("meetwechat_base_url") or DEFAULT_MEETWECHAT_BASE_URL),
         )
         self._state_store = state_store or MeetWeChatStateStore(
-            str(config.get("meetwechat_state_file") or DEFAULT_STATE_FILE)
+            str(config.get("meetwechat_state_file") or DEFAULT_STATE_FILE),
+            flush_interval_ms=_safe_positive_int(
+                config.get("meetwechat_state_flush_interval_ms"),
+                DEFAULT_STATE_FLUSH_INTERVAL_MS,
+            ),
         )
         self._output_adapter = output_adapter or MeetWeChatOutputService(
             config=config,
@@ -541,11 +712,26 @@ class MeetWeChatInputAdapter:
             policy=self._policy,
         )
         self._gateway_clients: dict[str, Any] = {}
+        self._gateway_client_last_used: dict[str, float] = {}
+        self._gateway_client_idle_ttl_seconds = _safe_positive_int(
+            config.get("meetwechat_gateway_client_idle_ttl_seconds"),
+            DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS,
+        )
         self._poll_task: asyncio.Task | None = None
         self._closed = False
         self._persistent_workers = False
-        self._chat_queues: dict[str, asyncio.Queue[MeetWeChatEvent]] = {}
-        self._chat_workers: dict[str, asyncio.Task] = {}
+        self._inbound_worker_count = _safe_positive_int(
+            config.get("meetwechat_inbound_worker_count"),
+            DEFAULT_INBOUND_WORKER_COUNT,
+        )
+        self._inbound_queue: asyncio.Queue[MeetWeChatEvent] = asyncio.Queue(
+            maxsize=_safe_positive_int(
+                config.get("meetwechat_inbound_queue_size"),
+                DEFAULT_INBOUND_QUEUE_SIZE,
+            )
+        )
+        self._inbound_workers: list[asyncio.Task] = []
+        self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._cursor = ""
 
         host = str(self._config.get("gateway_host") or "127.0.0.1").strip() or "127.0.0.1"
@@ -559,6 +745,7 @@ class MeetWeChatInputAdapter:
         self._closed = False
         self._persistent_workers = True
         await self._client.init()
+        self._ensure_inbound_workers()
         if self._poll_task is None or self._poll_task.done():
             self._poll_task = asyncio.create_task(self._run_poll_loop())
         logger.info("MeetWeChat Client polling started")
@@ -571,19 +758,15 @@ class MeetWeChatInputAdapter:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._poll_task
             self._poll_task = None
-        for worker in list(self._chat_workers.values()):
-            worker.cancel()
-        for worker in list(self._chat_workers.values()):
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker
-        self._chat_workers.clear()
-        self._chat_queues.clear()
+        await self._stop_inbound_workers()
         for client in self._gateway_clients.values():
             close = getattr(client, "close", None)
             if callable(close):
                 await close()
         self._gateway_clients.clear()
+        self._gateway_client_last_used.clear()
         await self._output_adapter.close()
+        await self._state_store.close()
         await self._client.close()
 
     async def _run_poll_loop(self) -> None:
@@ -596,10 +779,15 @@ class MeetWeChatInputAdapter:
             try:
                 await self._ack_pending_events()
                 events, cursor = await self._client.get_events(limit=DEFAULT_EVENT_LIMIT, cursor=self._cursor)
+                if not self._enqueue_events_nowait(events):
+                    logger.warning("MeetWeChat inbound queue full; cursor is not advanced")
+                    await asyncio.sleep(backoff_seconds)
+                    backoff_seconds = min(backoff_seconds * 2, DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
+                    continue
                 if cursor:
                     self._cursor = cursor
                 backoff_seconds = base_backoff
-                await self.handle_events(events)
+                await self._close_idle_gateway_clients()
                 await asyncio.sleep(
                     _safe_positive_int(
                         self._config.get("meetwechat_poll_interval_seconds"),
@@ -614,43 +802,57 @@ class MeetWeChatInputAdapter:
                 backoff_seconds = min(backoff_seconds * 2, DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
 
     async def handle_events(self, events: list[MeetWeChatEvent]) -> None:
-        touched_queues: list[asyncio.Queue[MeetWeChatEvent]] = []
-        touched_keys: list[str] = []
+        self._ensure_inbound_workers()
         for event in events:
-            chat_key = event.chat_id or "__missing__"
-            queue = self._chat_queues.setdefault(chat_key, asyncio.Queue())
-            self._ensure_chat_worker(chat_key, queue)
-            await queue.put(event)
-            if queue not in touched_queues:
-                touched_queues.append(queue)
-                touched_keys.append(chat_key)
-        for queue in touched_queues:
-            await queue.join()
+            await self._inbound_queue.put(event)
+        await self._inbound_queue.join()
         if not self._persistent_workers:
-            for chat_key in touched_keys:
-                worker = self._chat_workers.pop(chat_key, None)
-                if worker is not None:
-                    worker.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await worker
-                self._chat_queues.pop(chat_key, None)
+            await self._stop_inbound_workers()
 
-    def _ensure_chat_worker(self, chat_key: str, queue: asyncio.Queue[MeetWeChatEvent]) -> None:
-        worker = self._chat_workers.get(chat_key)
-        if worker is None or worker.done():
-            self._chat_workers[chat_key] = asyncio.create_task(self._run_chat_worker(chat_key, queue))
+    def _ensure_inbound_workers(self) -> None:
+        self._inbound_workers = [worker for worker in self._inbound_workers if not worker.done()]
+        while len(self._inbound_workers) < self._inbound_worker_count:
+            self._inbound_workers.append(asyncio.create_task(self._run_inbound_worker()))
 
-    async def _run_chat_worker(self, chat_key: str, queue: asyncio.Queue[MeetWeChatEvent]) -> None:
+    async def _stop_inbound_workers(self) -> None:
+        for worker in self._inbound_workers:
+            worker.cancel()
+        for worker in self._inbound_workers:
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker
+        self._inbound_workers.clear()
+
+    def _enqueue_events_nowait(self, events: list[MeetWeChatEvent]) -> bool:
+        if not events:
+            return True
+        self._ensure_inbound_workers()
+        maxsize = int(self._inbound_queue.maxsize or 0)
+        if maxsize > 0 and self._inbound_queue.qsize() + len(events) > maxsize:
+            return False
+        try:
+            for event in events:
+                self._inbound_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            return False
+        return True
+
+    def _event_order_key(self, event: MeetWeChatEvent) -> str:
+        return event.chat_id or event.sender_id or "__missing__"
+
+    async def _run_inbound_worker(self) -> None:
         while not self._closed:
-            event = await queue.get()
+            event = await self._inbound_queue.get()
+            order_key = self._event_order_key(event)
             try:
-                await self._handle_event(event)
+                lock = self._conversation_locks.setdefault(order_key, asyncio.Lock())
+                async with lock:
+                    await self._handle_event(event)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("MeetWeChat chat worker failed chat=%s error=%s", _mask(chat_key), exc)
+                logger.warning("MeetWeChat inbound worker failed chat=%s error=%s", _mask(order_key), exc)
             finally:
-                queue.task_done()
+                self._inbound_queue.task_done()
 
     async def _handle_event(self, event: MeetWeChatEvent) -> None:
         if not event.event_id:
@@ -788,6 +990,25 @@ class MeetWeChatInputAdapter:
         prefix = "group" if event.chat_type == "group" else "chat"
         return f"wechat:meetwechat:{prefix}:{event.chat_id}"
 
+    async def _close_idle_gateway_clients(self) -> None:
+        if self._gateway_client_idle_ttl_seconds <= 0 or not self._gateway_clients:
+            return
+        now = asyncio.get_running_loop().time()
+        stale_keys = [
+            key
+            for key, last_used in self._gateway_client_last_used.items()
+            if now - float(last_used or 0) >= self._gateway_client_idle_ttl_seconds
+        ]
+        for conversation_key in stale_keys:
+            client = self._gateway_clients.pop(conversation_key, None)
+            self._gateway_client_last_used.pop(conversation_key, None)
+            if client is None:
+                continue
+            close = getattr(client, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    await close()
+
     async def _get_gateway_client(self, event: MeetWeChatEvent) -> Any:
         conversation_key = self._conversation_key(event)
         client = self._gateway_clients.get(conversation_key)
@@ -810,6 +1031,7 @@ class MeetWeChatInputAdapter:
             )
             self._gateway_clients[conversation_key] = client
         await client.start()
+        self._gateway_client_last_used[conversation_key] = asyncio.get_running_loop().time()
         thread_id = str(getattr(client, "thread_id", "") or "")
         if thread_id:
             await self._state_store.set_thread_id(conversation_key, thread_id)

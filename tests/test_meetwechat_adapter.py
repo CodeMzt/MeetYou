@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -161,6 +162,17 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reloaded.list_ack_pending(), ["evt-1"])
         self.assertEqual(reloaded.get_thread_id("wechat:meetwechat:chat:chat-1"), "thread-1")
 
+    async def test_state_store_debounces_and_flushes_state_writes(self):
+        store = MeetWeChatStateStore(self.state_path, flush_interval_ms=10000)
+
+        await store.mark_event_status("evt-1", "sent", chat_id="chat-1")
+        self.assertFalse(Path(self.state_path).exists())
+
+        await store.flush()
+        reloaded = MeetWeChatStateStore(self.state_path)
+
+        self.assertEqual(reloaded.get_event_status("evt-1"), "sent")
+
     async def test_private_text_bridges_to_core_sends_reply_and_acks(self):
         adapter, _, meetwechat_client, gateway_clients, state = self._build_adapter()
 
@@ -180,6 +192,47 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meetwechat_client.sent[0]["idempotency_key"], "meetyou:evt-1:1")
         self.assertEqual(meetwechat_client.acked, ["evt-1"])
         self.assertEqual(state.get_event_status("evt-1"), "acked")
+
+    async def test_outbound_send_is_queued_from_ws_callback(self):
+        class _SlowSendClient(_FakeMeetWeChatClient):
+            def __init__(self):
+                super().__init__()
+                self.send_started = asyncio.Event()
+                self.release_send = asyncio.Event()
+
+            async def send_text(self, **kwargs):
+                self.send_started.set()
+                await self.release_send.wait()
+                return await super().send_text(**kwargs)
+
+        meetwechat_client = _SlowSendClient()
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        future = output.begin_event(self._event(), allow_send=True)
+
+        await output.send_client_event(
+            "chat-1",
+            {
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {
+                    "type": "message.completed",
+                    "stream_id": "stream-1",
+                    "message": {"content": "assistant reply"},
+                },
+            },
+        )
+
+        await asyncio.wait_for(meetwechat_client.send_started.wait(), timeout=1)
+        self.assertFalse(future.done())
+
+        meetwechat_client.release_send.set()
+        result = await asyncio.wait_for(future, timeout=1)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
+        await output.close()
 
     async def test_group_message_without_mention_is_acked_without_reply(self):
         adapter, _, meetwechat_client, gateway_clients, _ = self._build_adapter()
@@ -237,6 +290,51 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         aliases = [message["metadata"]["sender_alias"] for message in gateway_clients[0].messages]
         self.assertEqual(len(set(aliases)), 2)
+
+    async def test_inbound_workers_process_different_chats_concurrently(self):
+        config = _Config(meetwechat_state_file=self.state_path, meetwechat_inbound_worker_count=2)
+        state = MeetWeChatStateStore(self.state_path)
+        meetwechat_client = _FakeMeetWeChatClient()
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        started_contents = []
+        all_started = asyncio.Event()
+        release = asyncio.Event()
+
+        class _BlockingGatewayClient(_FakeGatewayClient):
+            async def send_message(self, content, **kwargs):
+                started_contents.append(content)
+                if len(started_contents) >= 2:
+                    all_started.set()
+                await release.wait()
+                return await super().send_message(content, **kwargs)
+
+        def factory(**kwargs):
+            return _BlockingGatewayClient(**kwargs)
+
+        adapter = MeetWeChatInputAdapter(
+            None,
+            None,
+            config,
+            client=meetwechat_client,
+            state_store=state,
+            output_adapter=output,
+            gateway_client_factory=factory,
+        )
+
+        task = asyncio.create_task(
+            adapter.handle_events(
+                [
+                    self._event(event_id="evt-a", message_id="msg-a", chat_id="chat-a", text="first"),
+                    self._event(event_id="evt-b", message_id="msg-b", chat_id="chat-b", text="second"),
+                ]
+            )
+        )
+
+        await asyncio.wait_for(all_started.wait(), timeout=1)
+        release.set()
+        await asyncio.wait_for(task, timeout=1)
+
+        self.assertEqual(set(started_contents), {"first", "second"})
 
     async def test_confirm_response_is_bound_to_group_sender(self):
         confirm_payload = {

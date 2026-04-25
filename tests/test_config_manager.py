@@ -219,6 +219,14 @@ class ConfigManagerTests(unittest.TestCase):
                     "private_default": "auto",
                     "group_default": "mention_only",
                 },
+                "meetwechat_inbound_worker_count": "4",
+                "meetwechat_inbound_queue_size": "500",
+                "meetwechat_outbound_worker_count": "2",
+                "meetwechat_outbound_queue_size": "500",
+                "meetwechat_outbound_min_interval_ms": "250",
+                "meetwechat_send_timeout_ms": "10000",
+                "meetwechat_state_flush_interval_ms": "500",
+                "meetwechat_gateway_client_idle_ttl_seconds": "600",
             }
         )
         config.reload()
@@ -234,6 +242,14 @@ class ConfigManagerTests(unittest.TestCase):
                 "meetwechat_max_text_chars",
                 "meetwechat_state_file",
                 "meetwechat_proxy_policy",
+                "meetwechat_inbound_worker_count",
+                "meetwechat_inbound_queue_size",
+                "meetwechat_outbound_worker_count",
+                "meetwechat_outbound_queue_size",
+                "meetwechat_outbound_min_interval_ms",
+                "meetwechat_send_timeout_ms",
+                "meetwechat_state_flush_interval_ms",
+                "meetwechat_gateway_client_idle_ttl_seconds",
             },
         )
         self.assertIs(config.get("enable_meetwechat_client"), True)
@@ -241,6 +257,9 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(config.get("meetwechat_error_backoff_seconds"), 3)
         self.assertEqual(config.get("meetwechat_max_text_chars"), 1800)
         self.assertEqual(config.get("meetwechat_proxy_policy")["mode"], "guarded_auto")
+        self.assertEqual(config.get("meetwechat_inbound_worker_count"), 4)
+        self.assertEqual(config.get("meetwechat_outbound_worker_count"), 2)
+        self.assertEqual(config.get("meetwechat_send_timeout_ms"), 10000)
 
     def test_apply_updates_persists_json_and_env(self):
         config = ConfigManager(
