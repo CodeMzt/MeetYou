@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -196,7 +197,10 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
         self.assertEqual(meetwechat_client.sent[0]["idempotency_key"], "meetyou:evt-1:1")
         self.assertEqual(meetwechat_client.acked, ["evt-1"])
-        self.assertEqual(state.get_event_status("evt-1"), "acked")
+        self.assertEqual(state.get_event_status("evt-1"), "sent")
+        with open(self.state_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertTrue(payload["events"]["evt-1"]["acked"])
 
     async def test_outbound_send_is_queued_from_ws_callback(self):
         class _SlowSendClient(_FakeMeetWeChatClient):
@@ -552,6 +556,118 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
             [item["idempotency_key"] for item in meetwechat_client.sent],
             ["meetyou:evt-1:1", "meetyou:evt-1:2", "meetyou:evt-1:3"],
         )
+
+    async def test_send_blocked_marks_terminal_blocked_and_acks(self):
+        class _BlockedSendClient(_FakeMeetWeChatClient):
+            async def send_text(self, **kwargs):
+                self.sent.append(dict(kwargs))
+                return MeetWeChatSendResult(
+                    ok=False,
+                    status="blocked",
+                    detail="chat override active: manual_only",
+                )
+
+        meetwechat_client = _BlockedSendClient()
+        adapter, output, _, gateway_clients, state = self._build_adapter(meetwechat_client=meetwechat_client)
+
+        await adapter.handle_events([self._event()])
+
+        self.assertEqual(len(gateway_clients[0].messages), 1)
+        self.assertEqual(len(meetwechat_client.sent), 1)
+        self.assertEqual(meetwechat_client.acked, ["evt-1"])
+        self.assertEqual(state.get_event_status("evt-1"), "blocked")
+        with open(self.state_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertIn("send blocked", payload["events"]["evt-1"]["reason"])
+        self.assertTrue(payload["events"]["evt-1"]["acked"])
+        await output.close()
+
+    async def test_uncertain_send_failure_retries_same_idempotency_without_ack(self):
+        class _UncertainSendClient(_FakeMeetWeChatClient):
+            async def send_text(self, **kwargs):
+                self.sent.append(dict(kwargs))
+                return MeetWeChatSendResult(
+                    ok=False,
+                    status="failed",
+                    detail="agent-wechat sidecar is unreachable",
+                )
+
+        meetwechat_client = _UncertainSendClient()
+        config = _Config(
+            meetwechat_state_file=self.state_path,
+            meetwechat_proxy_policy={
+                "mode": "guarded_auto",
+                "private_default": "auto",
+                "group_default": "mention_only",
+                "merge_window_seconds": 0,
+                "reply_delay_seconds": 0,
+                "fragment_pause_seconds": 0,
+                "reply_timeout_seconds": 5,
+            },
+        )
+        adapter, output, _, gateway_clients, state = self._build_adapter(
+            config=config,
+            meetwechat_client=meetwechat_client,
+        )
+
+        await adapter.handle_events([self._event()])
+
+        self.assertEqual(len(gateway_clients[0].messages), 1)
+        self.assertEqual(len(meetwechat_client.sent), 3)
+        self.assertEqual(
+            {item["idempotency_key"] for item in meetwechat_client.sent},
+            {"meetyou:evt-1:1"},
+        )
+        self.assertEqual(meetwechat_client.acked, [])
+        self.assertEqual(state.get_event_status("evt-1"), "failed")
+        with open(self.state_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertIn("sidecar is unreachable", payload["events"]["evt-1"]["reason"])
+        await output.close()
+
+    async def test_core_bridge_timeout_clears_pending_without_ack(self):
+        config = _Config(
+            meetwechat_state_file=self.state_path,
+            meetwechat_proxy_policy={
+                "mode": "guarded_auto",
+                "private_default": "auto",
+                "group_default": "mention_only",
+                "merge_window_seconds": 0,
+                "reply_delay_seconds": 0,
+                "fragment_pause_seconds": 0,
+                "reply_timeout_seconds": 0.01,
+            },
+        )
+        adapter, output, meetwechat_client, gateway_clients, state = self._build_adapter(
+            config=config,
+            reply_payload={
+                "schema": "meetyou.client.ws.v1",
+                "kind": "event",
+                "event": {"type": "activity.status", "content": "thinking"},
+            },
+        )
+
+        await adapter.handle_events([self._event()])
+
+        self.assertEqual(len(gateway_clients[0].messages), 1)
+        self.assertEqual(meetwechat_client.sent, [])
+        self.assertEqual(meetwechat_client.acked, [])
+        self.assertEqual(state.get_event_status("evt-1"), "failed")
+        self.assertEqual(output._pending_replies, {})  # noqa: SLF001
+        with open(self.state_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertEqual(payload["events"]["evt-1"]["reason"], "bridge:TimeoutError")
+        await output.close()
+
+    async def test_cursor_does_not_advance_for_failed_events(self):
+        adapter, _, _, _, state = self._build_adapter()
+        event = self._event()
+
+        await state.mark_event_status("evt-1", "failed", chat_id="chat-1", reason="bridge:TimeoutError")
+        self.assertFalse(adapter._events_are_complete_for_cursor_advance([event]))  # noqa: SLF001
+
+        await state.mark_event_status("evt-1", "sent", chat_id="chat-1")
+        self.assertTrue(adapter._events_are_complete_for_cursor_advance([event]))  # noqa: SLF001
 
     async def test_ack_failure_leaves_pending_for_retry_without_duplicate_core_send(self):
         class _AckFailOnceClient(_FakeMeetWeChatClient):

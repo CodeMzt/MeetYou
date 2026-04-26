@@ -44,6 +44,24 @@ _BLOCKED_SEND_STATUSES = {"manual_only", "mute", "read_only", "blocked"}
 MEETWECHAT_BASIC_TOOL_BUNDLE = list(EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE)
 
 
+class MeetWeChatSendBlocked(RuntimeError):
+    def __init__(self, result: MeetWeChatSendResult):
+        self.result = result
+        status = str(result.status or "blocked")
+        detail = str(result.detail or "")
+        message = f"{status}: {detail}" if detail else status
+        super().__init__(message)
+
+
+class MeetWeChatSendUncertain(RuntimeError):
+    def __init__(self, result: MeetWeChatSendResult):
+        self.result = result
+        status = str(result.status or "failed")
+        detail = str(result.detail or "")
+        message = f"{status}: {detail}" if detail else status
+        super().__init__(message)
+
+
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -272,6 +290,10 @@ class MeetWeChatStateStore:
     def list_ack_pending(self) -> list[str]:
         return [str(item) for item in self._payload.get("ack_pending", []) if str(item).strip()]
 
+    def event_is_acked(self, event_id: str) -> bool:
+        event = self._payload.get("events", {}).get(str(event_id or ""), {})
+        return bool(event.get("acked"))
+
     async def mark_event_status(
         self,
         event_id: str,
@@ -290,11 +312,28 @@ class MeetWeChatStateStore:
                 {
                     "status": str(status or ""),
                     "chat_id": str(chat_id or current.get("chat_id") or ""),
-                    "reason": str(reason or ""),
+                    "reason": str(reason or current.get("reason") or ""),
                     "updated_at": _utcnow_iso(),
                 }
             )
             events[event_key] = current
+            await self._persist_locked()
+
+    async def mark_events_acked(self, event_ids: list[str]) -> None:
+        clean_ids = [str(item).strip() for item in event_ids if str(item).strip()]
+        if not clean_ids:
+            return
+        async with self._lock:
+            events = self._payload.setdefault("events", {})
+            acked_at = _utcnow_iso()
+            for event_id in clean_ids:
+                current = dict(events.get(event_id) or {})
+                if not str(current.get("status") or "").strip():
+                    current["status"] = "acked"
+                current["acked"] = True
+                current["acked_at"] = acked_at
+                current["updated_at"] = acked_at
+                events[event_id] = current
             await self._persist_locked()
 
     async def mark_ack_pending(self, event_ids: list[str]) -> None:
@@ -417,6 +456,9 @@ class MeetWeChatOutputService:
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         participant_key = self.participant_key(event)
+        previous = self._pending_replies.get(event.chat_id)
+        if previous is not None and not previous.future.done():
+            previous.future.cancel()
         self._pending_replies[event.chat_id] = _PendingReply(
             event=event,
             allow_send=allow_send,
@@ -464,11 +506,19 @@ class MeetWeChatOutputService:
         if stream_key:
             self._stream_buffers.setdefault(stream_key, []).append(content)
 
-    def _complete_pending(self, chat_id: str, ok: bool, detail: str = "") -> None:
+    def _complete_pending(self, chat_id: str, ok: bool, detail: str = "", *, terminal: bool = False) -> None:
         pending = self._pending_replies.pop(chat_id, None)
         if pending is None or pending.future.done():
             return
-        pending.future.set_result({"ok": ok, "detail": detail})
+        pending.future.set_result({"ok": ok, "detail": detail, "terminal": bool(terminal)})
+
+    def discard_pending(self, chat_id: str, event_id: str) -> None:
+        pending = self._pending_replies.get(chat_id)
+        if pending is None or pending.event.event_id != event_id:
+            return
+        self._pending_replies.pop(chat_id, None)
+        if not pending.future.done():
+            pending.future.cancel()
 
     async def _sleep(self, seconds: float) -> None:
         if seconds <= 0:
@@ -640,14 +690,23 @@ class MeetWeChatOutputService:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                if isinstance(exc, MeetWeChatSendBlocked):
+                    detail = f"send blocked: {exc}"
+                else:
+                    detail = f"{exc.__class__.__name__}: {exc}".strip()
                 logger.warning(
                     "MeetWeChat send failed chat=%s event=%s error=%s",
                     _mask(item.pending.event.chat_id),
                     _mask(item.pending.event.event_id),
-                    exc,
+                    detail,
                 )
                 if item.complete_pending:
-                    self._complete_pending(item.pending.event.chat_id, False, "send failed")
+                    self._complete_pending(
+                        item.pending.event.chat_id,
+                        False,
+                        detail or "send failed",
+                        terminal=isinstance(exc, MeetWeChatSendBlocked),
+                    )
             finally:
                 self._outbound_queue.task_done()
 
@@ -719,6 +778,8 @@ class MeetWeChatOutputService:
                 await self._sleep(min(0.5 * (2**attempt), 3.0))
 
     def _is_transient_send_error(self, exc: Exception) -> bool:
+        if isinstance(exc, MeetWeChatSendUncertain):
+            return True
         if isinstance(exc, asyncio.TimeoutError):
             return True
         if isinstance(exc, MeetWeChatHTTPError):
@@ -729,7 +790,22 @@ class MeetWeChatOutputService:
         if result.ok:
             return
         if result.status in _BLOCKED_SEND_STATUSES:
-            return
+            raise MeetWeChatSendBlocked(result)
+        status = str(result.status or "").strip().lower()
+        detail = str(result.detail or "").strip().lower()
+        if status in {"failed", "timeout", "unknown", "pending"} or any(
+            marker in detail
+            for marker in (
+                "sidecar",
+                "unreachable",
+                "timeout",
+                "timed out",
+                "connection",
+                "temporarily",
+                "dispatcher",
+            )
+        ):
+            raise MeetWeChatSendUncertain(result)
         raise RuntimeError(result.detail or result.status or "MeetWeChat send rejected")
 
 
@@ -835,11 +911,16 @@ class MeetWeChatInputAdapter:
             try:
                 await self._ack_pending_events()
                 events, cursor = await self._client.get_events(limit=DEFAULT_EVENT_LIMIT, cursor=self._cursor)
-                if not self._enqueue_events_nowait(events):
-                    logger.warning("MeetWeChat inbound queue full; cursor is not advanced")
-                    await asyncio.sleep(backoff_seconds)
-                    backoff_seconds = min(backoff_seconds * 2, DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
-                    continue
+                if events:
+                    await self.handle_events(events)
+                    if not self._events_are_complete_for_cursor_advance(events):
+                        logger.warning(
+                            "MeetWeChat cursor held because %s event(s) are not complete",
+                            len(events),
+                        )
+                        await asyncio.sleep(backoff_seconds)
+                        backoff_seconds = min(backoff_seconds * 2, DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
+                        continue
                 if cursor:
                     self._cursor = cursor
                 backoff_seconds = base_backoff
@@ -856,6 +937,15 @@ class MeetWeChatInputAdapter:
                 logger.warning("MeetWeChat polling failed: %s", exc)
                 await asyncio.sleep(backoff_seconds)
                 backoff_seconds = min(backoff_seconds * 2, DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
+
+    def _events_are_complete_for_cursor_advance(self, events: list[MeetWeChatEvent]) -> bool:
+        for event in events:
+            if not event.event_id:
+                continue
+            status = self._state_store.get_event_status(event.event_id)
+            if status not in {"acked", "sent", "skipped", "read_only", "blocked"}:
+                return False
+        return True
 
     async def handle_events(self, events: list[MeetWeChatEvent]) -> None:
         self._ensure_inbound_workers()
@@ -915,7 +1005,7 @@ class MeetWeChatInputAdapter:
             logger.debug("MeetWeChat skipped event without event_id chat=%s", _mask(event.chat_id))
             return
         status = self._state_store.get_event_status(event.event_id)
-        if status in {"acked", "sent", "skipped", "read_only"}:
+        if status in {"acked", "sent", "skipped", "read_only", "blocked"}:
             await self._ack_event(event.event_id, status=status)
             return
         if event.is_self or event.content_type != "text" or not event.text.strip():
@@ -973,16 +1063,29 @@ class MeetWeChatInputAdapter:
             )
             result = await asyncio.wait_for(future, timeout=self._policy.reply_timeout_seconds)
         except Exception as exc:
+            self._output_adapter.discard_pending(event.chat_id, event.event_id)
+            reason = f"bridge:{exc.__class__.__name__}"
             logger.warning(
-                "MeetWeChat Core bridge failed chat=%s event=%s error=%s",
+                "MeetWeChat Core bridge failed chat=%s event=%s error=%s:%s",
                 _mask(event.chat_id),
                 _mask(event.event_id),
+                exc.__class__.__name__,
                 exc,
             )
-            await self._state_store.mark_event_status(event.event_id, "failed", chat_id=event.chat_id, reason="bridge")
+            await self._state_store.mark_event_status(event.event_id, "failed", chat_id=event.chat_id, reason=reason)
             return
         if not bool(result.get("ok")):
-            await self._state_store.mark_event_status(event.event_id, "failed", chat_id=event.chat_id, reason="reply")
+            reason = str(result.get("detail") or "reply")
+            if bool(result.get("terminal")):
+                await self._state_store.mark_event_status(
+                    event.event_id,
+                    "blocked",
+                    chat_id=event.chat_id,
+                    reason=reason,
+                )
+                await self._ack_event(event.event_id, status="blocked")
+                return
+            await self._state_store.mark_event_status(event.event_id, "failed", chat_id=event.chat_id, reason=reason)
             return
         final_status = "sent" if allow_send else "read_only"
         await self._state_store.mark_event_status(event.event_id, final_status, chat_id=event.chat_id)
@@ -1039,8 +1142,8 @@ class MeetWeChatInputAdapter:
             await self._state_store.mark_ack_pending(clean_ids)
             return
         await self._state_store.clear_ack_pending(clean_ids)
-        for event_id in clean_ids:
-            await self._state_store.mark_event_status(event_id, "acked" if status != "failed" else status)
+        if status != "failed":
+            await self._state_store.mark_events_acked(clean_ids)
 
     def _conversation_key(self, event: MeetWeChatEvent) -> str:
         prefix = "group" if event.chat_type == "group" else "chat"
