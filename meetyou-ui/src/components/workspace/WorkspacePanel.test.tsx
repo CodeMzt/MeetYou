@@ -11,14 +11,14 @@ const workspace: ClientWorkspace = {
   description: '默认个人工作空间。',
   prompt_overlay: '',
   default_execution_target: 'core_only',
-  capability_policy: 'allow_all',
-  allowed_capability_ids: [],
-  preferred_agent_ids: [],
-  preferred_agent_types: [],
+  tool_policy: 'allow_all',
+  allowed_tool_ids: [],
+  preferred_target_client_ids: [],
+  preferred_target_client_types: [],
   preferred_source_profiles: ['workspace_local'],
-  agent_routing_policy: 'balanced',
+  tool_target_routing_policy: 'balanced',
   memory_ranking_policy: 'workspace_first',
-  capability_routing_overrides: {},
+  tool_routing_overrides: {},
 }
 
 const procedureContext: ClientThreadProcedureContext = {
@@ -29,11 +29,11 @@ const procedureContext: ClientThreadProcedureContext = {
     title: '代码审查',
     description: '围绕代码变更、风险与验证给出结构化审查。',
     applicable_modes: ['general'],
-    recommended_capabilities: ['search_memory', 'summarize_text'],
-    preferred_capability_ref: 'search_memory',
-    preferred_agent_ids: [],
-    preferred_agent_types: [],
-    agent_routing_policy: 'balanced',
+    recommended_tools: ['search_memory', 'summarize_text'],
+    preferred_tool_key: 'search_memory',
+    preferred_target_client_ids: [],
+    preferred_target_client_types: [],
+    tool_target_routing_policy: 'balanced',
     default_execution_target: 'core_only',
     risk_profile: 'read',
     status: 'active',
@@ -46,11 +46,11 @@ const procedureContext: ClientThreadProcedureContext = {
     title: '代码审查',
     description: '围绕代码变更、风险与验证给出结构化审查。',
     applicable_modes: ['general'],
-    recommended_capabilities: ['search_memory', 'summarize_text'],
-    preferred_capability_ref: 'search_memory',
-    preferred_agent_ids: [],
-    preferred_agent_types: [],
-    agent_routing_policy: 'balanced',
+    recommended_tools: ['search_memory', 'summarize_text'],
+    preferred_tool_key: 'search_memory',
+    preferred_target_client_ids: [],
+    preferred_target_client_types: [],
+    tool_target_routing_policy: 'balanced',
     default_execution_target: 'core_only',
     risk_profile: 'read',
     status: 'active',
@@ -70,7 +70,7 @@ describe('WorkspacePanel', () => {
         workspace={workspace}
         procedureContext={procedureContext}
         connectionState="connected"
-        desktopAgentConnected={false}
+        desktopToolsAvailable={false}
         operations={[] as OperationView[]}
         approvalDisplay={null}
         pendingHumanInput={null}
@@ -92,7 +92,7 @@ describe('WorkspacePanel', () => {
         workspace={workspace}
         procedureContext={procedureContext}
         connectionState="connected"
-        desktopAgentConnected={false}
+        desktopToolsAvailable={false}
         operations={[
           {
             operation_id: 'op_approval_1',
@@ -102,8 +102,9 @@ describe('WorkspacePanel', () => {
             title: '需要审批的操作',
             operation_type: 'tool.call',
             execution_target: 'core_only',
-            target_agent_id: '',
-            capability_id: 'run_command',
+            target_client_id: '',
+            tool_key: 'shell.exec',
+            tool_id: 'client.desktop-main.shell.exec',
             call_id: 'call_1',
             phase: 'waiting_approval',
             detail: '',

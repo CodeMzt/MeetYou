@@ -1,0 +1,4 @@
+# Edge Client production dependencies.
+aiohttp
+pydantic
+python-dotenv

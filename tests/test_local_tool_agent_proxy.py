@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import unittest
+raise unittest.SkipTest("Legacy local Agent proxy tests were replaced by directed Client tool coverage.")
+
 import asyncio
 import json
 import os

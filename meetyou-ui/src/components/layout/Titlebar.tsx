@@ -7,7 +7,7 @@ import styles from './Titlebar.module.css'
 interface TitlebarProps {
   connectionState: ConnectionState
   workspace: ClientWorkspace | null
-  desktopAgentConnected: boolean
+  desktopToolsAvailable: boolean
   isPinned: boolean
   onTogglePin: () => void
 }
@@ -15,7 +15,7 @@ interface TitlebarProps {
 export default function Titlebar({
   connectionState,
   workspace,
-  desktopAgentConnected,
+  desktopToolsAvailable,
   isPinned,
   onTogglePin,
 }: TitlebarProps) {
@@ -37,7 +37,7 @@ export default function Titlebar({
         <div className={styles.titleContent}>
           <div 
             className={styles.envPill}
-            title={`服务端：${connectionText} | 本地代理：${desktopAgentConnected ? '在线' : '离线'}`}
+            title={`服务端：${connectionText} | 本地工具：${desktopToolsAvailable ? '在线' : '离线'}`}
           >
             <span className={styles.envWorkspaceName}>
               {workspace?.title || workspace?.workspace_id || '未绑定'}

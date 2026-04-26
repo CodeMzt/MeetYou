@@ -160,7 +160,7 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task["recurrence"]["freq"], "daily")
         self.assertTrue(task["next_run_at"])
 
-    async def test_scheduled_task_carries_capability_and_routing_preferences(self):
+    async def test_scheduled_task_carries_tool_and_routing_preferences(self):
         manager = TaskManager(_FakeMemory())
         due_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -171,27 +171,27 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 schedule_kind="once",
                 due_at=due_at,
                 auto_run=True,
-                preferred_capability_ref="manage_tasks",
-                preferred_agent_ids=["desktop-main-agent"],
-                preferred_agent_types=["desktop"],
-                agent_routing_policy="strict_preferred",
+                preferred_tool_key="manage_tasks",
+                preferred_target_client_ids=["desktop-main-client"],
+                preferred_target_client_types=["desktop"],
+                tool_target_routing_policy="strict_preferred",
                 source={"id": "desktop-user"},
                 session_id="web:session:1",
             )
         )
 
         task = created["tasks"][0]
-        self.assertEqual(task["preferred_capability_ref"], "manage_tasks")
-        self.assertEqual(task["preferred_agent_ids"], ["desktop-main-agent"])
-        self.assertEqual(task["preferred_agent_types"], ["desktop"])
-        self.assertEqual(task["agent_routing_policy"], "strict_preferred")
+        self.assertEqual(task["preferred_tool_key"], "manage_tasks")
+        self.assertEqual(task["preferred_target_client_ids"], ["desktop-main-client"])
+        self.assertEqual(task["preferred_target_client_types"], ["desktop"])
+        self.assertEqual(task["tool_target_routing_policy"], "strict_preferred")
 
         claimed = await manager.claim_due_tasks()
         self.assertEqual(len(claimed), 1)
-        self.assertEqual(claimed[0]["preferred_capability_ref"], "manage_tasks")
-        self.assertEqual(claimed[0]["preferred_agent_ids"], ["desktop-main-agent"])
-        self.assertEqual(claimed[0]["preferred_agent_types"], ["desktop"])
-        self.assertEqual(claimed[0]["agent_routing_policy"], "strict_preferred")
+        self.assertEqual(claimed[0]["preferred_tool_key"], "manage_tasks")
+        self.assertEqual(claimed[0]["preferred_target_client_ids"], ["desktop-main-client"])
+        self.assertEqual(claimed[0]["preferred_target_client_types"], ["desktop"])
+        self.assertEqual(claimed[0]["tool_target_routing_policy"], "strict_preferred")
 
     async def test_weekly_recurrence_object_requires_explicit_trigger_hour(self):
         manager = TaskManager(_FakeMemory())

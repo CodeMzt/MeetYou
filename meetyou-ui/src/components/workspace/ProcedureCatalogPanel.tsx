@@ -220,7 +220,7 @@ export default function ProcedureCatalogPanel({
               <div className={styles.statusRow}>
                 <span className={styles.statusChip}><Sparkles size={12} /> {formatRiskProfileLabel(selectedDetail.risk_profile)}</span>
                 <span className={styles.statusChip}>{formatExecutionTargetLabel(selectedDetail.default_execution_target)}</span>
-                <span className={styles.statusChip}>{formatRoutingPolicyLabel(selectedDetail.agent_routing_policy)}</span>
+                <span className={styles.statusChip}>{formatRoutingPolicyLabel(selectedDetail.tool_target_routing_policy)}</span>
               </div>
 
               {selectedDetail.description ? <p className={styles.paragraph}>{selectedDetail.description}</p> : null}
@@ -241,10 +241,10 @@ export default function ProcedureCatalogPanel({
               </div>
 
               <div className={styles.section}>
-                <div className={styles.sectionLabel}>推荐能力</div>
+                <div className={styles.sectionLabel}>推荐工具</div>
                 <div className={styles.tagRow}>
-                  {selectedDetail.recommended_capabilities.length > 0 ? (
-                    selectedDetail.recommended_capabilities.map((item) => (
+                  {selectedDetail.recommended_tools.length > 0 ? (
+                    selectedDetail.recommended_tools.map((item) => (
                       <span key={item} className={styles.tag}>{item}</span>
                     ))
                   ) : (

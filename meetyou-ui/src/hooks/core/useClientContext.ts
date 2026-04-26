@@ -2,14 +2,14 @@ import { useCallback, useRef, useState, useReducer } from 'react'
 import {
   createClientSession,
   createClientThread,
-  listClientAvailableAgents,
+  listClientAvailableClients,
   listClientWorkspaces,
 } from '../../clientApi'
 import { createInitialTransportState, reduceTransportState } from '../../transportState'
 import { createSystemTurn } from '../../chatState'
-import type { ClientAvailableAgent, ClientSession, ClientWorkspace, RuntimeErrorPayload } from '../../types'
+import type { ClientAvailableClient, ClientSession, ClientWorkspace, RuntimeErrorPayload } from '../../types'
 
-export const DESKTOP_AGENT_REFRESH_INTERVAL_MS = 10000
+export const DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS = 10000
 
 export interface ClientContext {
   workspace: ClientWorkspace
@@ -18,25 +18,25 @@ export interface ClientContext {
   clientId: string
 }
 
-export function chooseDesktopAgent(agents: ClientAvailableAgent[], workspaceId: string, clientId: string): string {
-  const matched = agents.find(
-    (agent) =>
-      agent.agent_type === 'desktop' &&
-      agent.status === 'online' &&
-      agent.workspace_ids.includes(workspaceId) &&
-      (!agent.owner_client_id || agent.owner_client_id === clientId),
+export function chooseDesktopToolClient(clients: ClientAvailableClient[], workspaceId: string, clientId: string): string {
+  const matched = clients.find(
+    (client) =>
+      client.client_type === 'desktop' &&
+      client.status === 'online' &&
+      client.workspace_ids.includes(workspaceId) &&
+      (client.client_id === clientId || client.executable_tools.includes('file.read') || client.executable_tools.includes('shell.exec')),
   )
-  return matched?.agent_id || ''
+  return matched?.client_id || ''
 }
 
-export async function resolveDesktopAgentId(
-  loadAvailableAgents: (baseUrl: string, workspaceId: string) => Promise<ClientAvailableAgent[]>,
+export async function resolveDesktopToolClientId(
+  loadAvailableClients: (baseUrl: string, workspaceId: string) => Promise<ClientAvailableClient[]>,
   baseUrl: string,
   workspaceId: string,
   clientId: string,
 ): Promise<string> {
-  const availableAgents = await loadAvailableAgents(baseUrl, workspaceId)
-  return chooseDesktopAgent(availableAgents, workspaceId, clientId)
+  const availableClients = await loadAvailableClients(baseUrl, workspaceId)
+  return chooseDesktopToolClient(availableClients, workspaceId, clientId)
 }
 
 function chooseWorkspace(workspaces: ClientWorkspace[]): ClientWorkspace | null {
@@ -65,28 +65,28 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
   )
   
   const [clientContext, setClientContext] = useState<ClientContext | null>(null)
-  const [desktopAgentId, setDesktopAgentId] = useState('')
+  const [desktopToolClientId, setDesktopToolClientId] = useState('')
   const clientInitPromiseRef = useRef<Promise<ClientContext> | null>(null)
 
   const sessionId = clientContext?.session.session_id || transportState.sessionId
   const clientId = clientContext?.clientId || sourceIdRef.current
 
-  const refreshAvailableAgents = useCallback(async (contextOverride?: ClientContext | null) => {
+  const refreshDesktopToolClient = useCallback(async (contextOverride?: ClientContext | null) => {
     const activeContext = contextOverride ?? clientContext
     if (!activeContext) {
       return ''
     }
     try {
-      const nextAgentId = await resolveDesktopAgentId(
-        listClientAvailableAgents,
+      const nextClientId = await resolveDesktopToolClientId(
+        listClientAvailableClients,
         baseUrl,
         activeContext.workspace.workspace_id,
         activeContext.clientId,
       )
-      setDesktopAgentId((current) => (current === nextAgentId ? current : nextAgentId))
-      return nextAgentId
+      setDesktopToolClientId((current) => (current === nextClientId ? current : nextClientId))
+      return nextClientId
     } catch (error) {
-      console.warn('Failed to load available agents:', error)
+      console.warn('Failed to load available client tool targets:', error)
       return ''
     }
   }, [baseUrl, clientContext])
@@ -160,11 +160,11 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
       }
       setClientContext(nextContext)
 
-      let nextAgentId = await refreshAvailableAgents(nextContext)
-      if (!nextAgentId) {
-        for (let attempt = 0; attempt < 4 && !nextAgentId; attempt += 1) {
+      let nextClientId = await refreshDesktopToolClient(nextContext)
+      if (!nextClientId) {
+        for (let attempt = 0; attempt < 4 && !nextClientId; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 500))
-          nextAgentId = await refreshAvailableAgents(nextContext)
+          nextClientId = await refreshDesktopToolClient(nextContext)
         }
       }
       dispatchTransport({ type: 'sync_session', sessionId: session.session_id })
@@ -187,17 +187,17 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
         clientInitPromiseRef.current = null
       }
     }
-  }, [baseUrl, clientContext, onInitSuccess, onError, refreshAvailableAgents])
+  }, [baseUrl, clientContext, onInitSuccess, onError, refreshDesktopToolClient])
 
   return {
     clientContext,
-    desktopAgentId,
+    desktopToolClientId,
     transportState,
     dispatchTransport,
     sessionId,
     clientId,
     initializeClientContext,
-    refreshAvailableAgents,
+    refreshDesktopToolClient,
     refreshWorkspace,
   }
 }

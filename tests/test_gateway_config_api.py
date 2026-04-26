@@ -154,19 +154,18 @@ class GatewayConfigApiTests(unittest.TestCase):
         self.assertEqual(response.json()["kind"], "error")
         self.assertIn("gateway_port", response.json()["error"]["message"])
 
-    def test_agent_websocket_does_not_fallback_to_gateway_access_token(self):
+    def test_client_websocket_rejects_wrong_access_token(self):
         gateway = FastAPIGateway(
             EventBus(),
             SessionManager(),
             access_token="gateway-token",
-            agent_access_token="agent-ws-token",
         )
         client = TestClient(gateway.app)
         self.addCleanup(client.close)
 
         with client.websocket_connect(
-            "/agent/ws",
-            headers={"Authorization": "Bearer gateway-token"},
+            "/client/ws",
+            headers={"Authorization": "Bearer wrong-token"},
         ) as websocket:
             payload = websocket.receive_json()
 

@@ -40,54 +40,54 @@ class WorkspaceService(ServiceBase):
     @classmethod
     def normalize_governance_metadata(cls, metadata: dict | None = None) -> dict:
         raw = dict(metadata or {})
-        allowed_capability_ids = cls._normalize_string_list(raw.get("allowed_capability_ids"))
-        preferred_agent_ids = cls._normalize_string_list(raw.get("preferred_agent_ids"))
-        preferred_agent_types = cls._normalize_string_list(raw.get("preferred_agent_types"))
+        allowed_tool_ids = cls._normalize_string_list(raw.get("allowed_tool_ids"))
+        preferred_target_client_ids = cls._normalize_string_list(raw.get("preferred_target_client_ids"))
+        preferred_target_client_types = cls._normalize_string_list(raw.get("preferred_target_client_types"))
         preferred_source_profiles = cls._normalize_string_list(raw.get("preferred_source_profiles"))
-        capability_routing_overrides = cls._normalize_capability_routing_overrides(raw.get("capability_routing_overrides"))
-        capability_policy = str(raw.get("capability_policy") or "").strip().lower()
-        if capability_policy not in {"allow_all", "allowlist"}:
-            capability_policy = "allowlist" if allowed_capability_ids else "allow_all"
-        agent_routing_policy = cls._normalize_routing_policy(raw.get("agent_routing_policy"))
+        tool_routing_overrides = cls._normalize_tool_routing_overrides(raw.get("tool_routing_overrides"))
+        tool_policy = str(raw.get("tool_policy") or "").strip().lower()
+        if tool_policy not in {"allow_all", "allowlist"}:
+            tool_policy = "allowlist" if allowed_tool_ids else "allow_all"
+        tool_target_routing_policy = cls._normalize_routing_policy(raw.get("tool_target_routing_policy"))
         memory_ranking_policy = cls._normalize_memory_ranking_policy(raw.get("memory_ranking_policy"))
         return {
             **{
                 key: value
                 for key, value in raw.items()
                 if key not in {
-                    "capability_policy",
-                    "allowed_capability_ids",
-                    "preferred_agent_ids",
-                    "preferred_agent_types",
+                    "tool_policy",
+                    "allowed_tool_ids",
+                    "preferred_target_client_ids",
+                    "preferred_target_client_types",
                     "preferred_source_profiles",
-                    "agent_routing_policy",
+                    "tool_target_routing_policy",
                     "memory_ranking_policy",
-                    "capability_routing_overrides",
+                    "tool_routing_overrides",
                 }
             },
-            "capability_policy": capability_policy,
-            "allowed_capability_ids": allowed_capability_ids,
-            "preferred_agent_ids": preferred_agent_ids,
-            "preferred_agent_types": preferred_agent_types,
+            "tool_policy": tool_policy,
+            "allowed_tool_ids": allowed_tool_ids,
+            "preferred_target_client_ids": preferred_target_client_ids,
+            "preferred_target_client_types": preferred_target_client_types,
             "preferred_source_profiles": preferred_source_profiles,
-            "agent_routing_policy": agent_routing_policy,
+            "tool_target_routing_policy": tool_target_routing_policy,
             "memory_ranking_policy": memory_ranking_policy,
-            "capability_routing_overrides": capability_routing_overrides,
+            "tool_routing_overrides": tool_routing_overrides,
         }
 
     @classmethod
-    def _normalize_capability_routing_overrides(cls, value: Any) -> dict[str, dict[str, Any]]:
+    def _normalize_tool_routing_overrides(cls, value: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(value, dict):
             return {}
         result: dict[str, dict[str, Any]] = {}
         for raw_key, raw_override in value.items():
-            capability_key = str(raw_key or "").strip()
-            if not capability_key or not isinstance(raw_override, dict):
+            tool_key = str(raw_key or "").strip()
+            if not tool_key or not isinstance(raw_override, dict):
                 continue
-            result[capability_key] = {
-                "preferred_agent_ids": cls._normalize_string_list(raw_override.get("preferred_agent_ids")),
-                "preferred_agent_types": cls._normalize_string_list(raw_override.get("preferred_agent_types")),
-                "agent_routing_policy": cls._normalize_routing_policy(raw_override.get("agent_routing_policy")),
+            result[tool_key] = {
+                "preferred_target_client_ids": cls._normalize_string_list(raw_override.get("preferred_target_client_ids")),
+                "preferred_target_client_types": cls._normalize_string_list(raw_override.get("preferred_target_client_types")),
+                "tool_target_routing_policy": cls._normalize_routing_policy(raw_override.get("tool_target_routing_policy")),
             }
         return result
 
@@ -100,55 +100,59 @@ class WorkspaceService(ServiceBase):
             "default_execution_target": normalize_execution_target(
                 getattr(workspace, "default_execution_target", "core_only"),
             ),
-            "capability_policy": str(normalized_meta.get("capability_policy") or "allow_all"),
-            "allowed_capability_ids": list(normalized_meta.get("allowed_capability_ids") or []),
-            "preferred_agent_ids": list(normalized_meta.get("preferred_agent_ids") or []),
-            "preferred_agent_types": list(normalized_meta.get("preferred_agent_types") or []),
+            "tool_policy": str(normalized_meta.get("tool_policy") or "allow_all"),
+            "allowed_tool_ids": list(normalized_meta.get("allowed_tool_ids") or []),
+            "preferred_target_client_ids": list(normalized_meta.get("preferred_target_client_ids") or []),
+            "preferred_target_client_types": list(normalized_meta.get("preferred_target_client_types") or []),
             "preferred_source_profiles": list(normalized_meta.get("preferred_source_profiles") or []),
-            "agent_routing_policy": str(normalized_meta.get("agent_routing_policy") or "balanced"),
+            "tool_target_routing_policy": str(normalized_meta.get("tool_target_routing_policy") or "balanced"),
             "memory_ranking_policy": str(normalized_meta.get("memory_ranking_policy") or "workspace_first"),
-            "capability_routing_overrides": dict(normalized_meta.get("capability_routing_overrides") or {}),
+            "tool_routing_overrides": dict(normalized_meta.get("tool_routing_overrides") or {}),
         }
 
     @classmethod
-    def get_effective_agent_routing_preferences(
+    def get_effective_tool_target_preferences(
         cls,
         workspace,
         *,
-        capability_ref: str = "",
-        abstract_capability_key: str = "",
-        concrete_capability_id: str = "",
+        tool_key: str = "",
+        abstract_tool_key: str = "",
+        concrete_tool_id: str = "",
     ) -> dict[str, Any]:
         governance = cls.get_governance_view(workspace)
-        overrides = dict(governance.get("capability_routing_overrides") or {})
-        for key in [str(capability_ref or "").strip(), str(abstract_capability_key or "").strip(), str(concrete_capability_id or "").strip()]:
+        overrides = dict(governance.get("tool_routing_overrides") or {})
+        for key in [
+            str(tool_key or "").strip(),
+            str(abstract_tool_key or "").strip(),
+            str(concrete_tool_id or "").strip(),
+        ]:
             if not key:
                 continue
             override = overrides.get(key)
             if not isinstance(override, dict):
                 continue
             return {
-                "preferred_agent_ids": list(override.get("preferred_agent_ids") or governance.get("preferred_agent_ids") or []),
-                "preferred_agent_types": list(override.get("preferred_agent_types") or governance.get("preferred_agent_types") or []),
-                "agent_routing_policy": str(override.get("agent_routing_policy") or governance.get("agent_routing_policy") or "balanced"),
+                "preferred_target_client_ids": list(override.get("preferred_target_client_ids") or governance.get("preferred_target_client_ids") or []),
+                "preferred_target_client_types": list(override.get("preferred_target_client_types") or governance.get("preferred_target_client_types") or []),
+                "tool_target_routing_policy": str(override.get("tool_target_routing_policy") or governance.get("tool_target_routing_policy") or "balanced"),
                 "source": key,
             }
         return {
-            "preferred_agent_ids": list(governance.get("preferred_agent_ids") or []),
-            "preferred_agent_types": list(governance.get("preferred_agent_types") or []),
-            "agent_routing_policy": str(governance.get("agent_routing_policy") or "balanced"),
+            "preferred_target_client_ids": list(governance.get("preferred_target_client_ids") or []),
+            "preferred_target_client_types": list(governance.get("preferred_target_client_types") or []),
+            "tool_target_routing_policy": str(governance.get("tool_target_routing_policy") or "balanced"),
             "source": "workspace_default",
         }
 
     @classmethod
-    def capability_allowed(cls, workspace, capability_id: str) -> bool:
-        normalized_capability_id = str(capability_id or "").strip()
-        if not normalized_capability_id:
+    def tool_allowed(cls, workspace, tool_id: str) -> bool:
+        normalized_tool_id = str(tool_id or "").strip()
+        if not normalized_tool_id:
             return True
         governance = cls.get_governance_view(workspace)
-        if governance["capability_policy"] != "allowlist":
+        if governance["tool_policy"] != "allowlist":
             return True
-        return normalized_capability_id in set(governance["allowed_capability_ids"])
+        return normalized_tool_id in set(governance["allowed_tool_ids"])
 
     def ensure_workspace(
         self,

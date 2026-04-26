@@ -14,7 +14,7 @@ class OperationRepository(RepositoryBase):
         operation_type: str,
         execution_target: str,
         title: str = "",
-        target_agent_id=None,
+        target_client_id=None,
         requested_by_client_id=None,
         requested_by_session_id=None,
         status: str = "queued",
@@ -30,7 +30,7 @@ class OperationRepository(RepositoryBase):
             execution_target=execution_target,
             status=status,
             title=title,
-            target_agent_id=target_agent_id,
+            target_client_id=target_client_id,
             meta=dict(metadata or {}),
         )
         self.session.add(operation)

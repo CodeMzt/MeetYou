@@ -26,7 +26,7 @@ interface WorkspacePanelProps {
   workspace: ClientWorkspace | null
   procedureContext: ClientThreadProcedureContext | null
   connectionState: ConnectionState
-  desktopAgentConnected: boolean
+  desktopToolsAvailable: boolean
   operations: OperationView[]
   approvalDisplay: ApprovalDisplayModel | null
   pendingHumanInput: HumanInputRequestPayload | null
@@ -50,7 +50,7 @@ export default function WorkspacePanel({
   workspace,
   procedureContext,
   connectionState,
-  desktopAgentConnected,
+  desktopToolsAvailable,
   operations,
   approvalDisplay,
   pendingHumanInput,
@@ -88,8 +88,8 @@ export default function WorkspacePanel({
           <span className={styles.statusValue}>{getConnectionText(connectionState)}</span>
         </div>
         <div className={styles.statusCard}>
-          <span className={styles.statusLabel}>本地代理</span>
-          <span className={styles.statusValue}>{desktopAgentConnected ? '在线' : '离线'}</span>
+          <span className={styles.statusLabel}>本地工具</span>
+          <span className={styles.statusValue}>{desktopToolsAvailable ? '在线' : '离线'}</span>
         </div>
         <div className={styles.statusCard}>
           <span className={styles.statusLabel}>工作区</span>
@@ -100,8 +100,8 @@ export default function WorkspacePanel({
       <div className={styles.chipRow}>
         <span className={styles.infoChip}><Sparkles size={12} /> {formatAssistantModeLabel(workspace.base_mode)}</span>
         <span className={styles.infoChip}><Bot size={12} /> {formatExecutionTargetLabel(workspace.default_execution_target)}</span>
-        <span className={styles.infoChip}><ShieldCheck size={12} /> {formatCapabilityPolicyLabel(workspace.capability_policy)}</span>
-        <span className={styles.infoChip}><LayoutTemplate size={12} /> {formatRoutingPolicyLabel(workspace.agent_routing_policy)}</span>
+        <span className={styles.infoChip}><ShieldCheck size={12} /> {formatCapabilityPolicyLabel(workspace.tool_policy)}</span>
+        <span className={styles.infoChip}><LayoutTemplate size={12} /> {formatRoutingPolicyLabel(workspace.tool_target_routing_policy)}</span>
       </div>
 
       <div className={styles.activityRow}>
@@ -122,11 +122,11 @@ export default function WorkspacePanel({
       <div className={styles.metaList}>
         <div className={styles.metaItem}>
           <Wrench size={12} />
-          <span>允许能力：{workspace.allowed_capability_ids.length || '全部'}</span>
+          <span>允许工具：{workspace.allowed_tool_ids.length || '全部'}</span>
         </div>
         <div className={styles.metaItem}>
           <Activity size={12} />
-          <span>偏好代理数：{workspace.preferred_agent_ids.length || 0}</span>
+          <span>偏好 Client 数：{workspace.preferred_target_client_ids.length || 0}</span>
         </div>
         <div className={styles.metaItem}>
           <Sparkles size={12} />
@@ -207,11 +207,11 @@ export default function WorkspacePanel({
             <div className={styles.procedureMetaRow}>
               <span className={styles.infoChip}><Sparkles size={12} /> {formatRiskProfileLabel(effectiveProcedure.risk_profile)}</span>
               <span className={styles.infoChip}><Bot size={12} /> {formatExecutionTargetLabel(effectiveProcedure.default_execution_target)}</span>
-              <span className={styles.infoChip}><LayoutTemplate size={12} /> {formatRoutingPolicyLabel(effectiveProcedure.agent_routing_policy)}</span>
+              <span className={styles.infoChip}><LayoutTemplate size={12} /> {formatRoutingPolicyLabel(effectiveProcedure.tool_target_routing_policy)}</span>
             </div>
-            {effectiveProcedure.recommended_capabilities.length > 0 ? (
+            {effectiveProcedure.recommended_tools.length > 0 ? (
               <div className={styles.procedureTags}>
-                {effectiveProcedure.recommended_capabilities.map((item) => (
+                {effectiveProcedure.recommended_tools.map((item) => (
                   <span key={item} className={styles.procedureTag}>{item}</span>
                 ))}
               </div>

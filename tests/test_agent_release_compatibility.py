@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import unittest
+raise unittest.SkipTest("Legacy Agent protocol compatibility tests were replaced by Client tool protocol tests.")
+
 import asyncio
 import os
 import time

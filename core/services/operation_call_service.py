@@ -7,13 +7,13 @@ from core.services.base import ServiceBase
 
 
 class OperationCallService(ServiceBase):
-    def create_call(self, *, operation_id, capability_id, target_agent_id=None, status: str = "queued", arguments: dict | None = None):
+    def create_call(self, *, operation_id, capability_id=None, tool_id=None, target_client_id=None, status: str = "queued", arguments: dict | None = None):
         with self.session_scope() as session:
             return OperationCallRepository(session).create(
                 call_id=f"call_{uuid4().hex}",
                 operation_id=operation_id,
-                capability_id=capability_id,
-                target_agent_id=target_agent_id,
+                capability_id=capability_id if capability_id is not None else tool_id,
+                target_client_id=target_client_id,
                 status=status,
                 arguments=arguments,
             )

@@ -3,7 +3,7 @@ param(
     [string]$Mode = "start",
     [string]$BaseUrl = "http://127.0.0.1:8000",
     [switch]$SkipService,
-    [switch]$SkipDesktopAgent,
+    [switch]$SkipDesktopClient,
     [switch]$SkipUi
 )
 
@@ -13,7 +13,7 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PythonExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 $MainPy = Join-Path $RepoRoot "main.py"
 $UiDir = Join-Path $RepoRoot "meetyou-ui"
-$DesktopAgentConfig = Join-Path $RepoRoot "user\desktop_agent.json"
+$DesktopClientConfig = Join-Path $RepoRoot "user\desktop_client.json"
 $UserConfig = Join-Path $RepoRoot "user\config.json"
 $DotEnvPath = Join-Path $RepoRoot ".env"
 
@@ -76,9 +76,9 @@ function Invoke-JsonGet([string]$Path) {
 function Get-DesktopBackendBaseUrl {
     $host = if ($env:MEETYOU_DESKTOP_LOCAL_HOST) { $env:MEETYOU_DESKTOP_LOCAL_HOST } else { "127.0.0.1" }
     $port = if ($env:MEETYOU_DESKTOP_LOCAL_PORT) { $env:MEETYOU_DESKTOP_LOCAL_PORT } else { "38951" }
-    if (Test-Path $DesktopAgentConfig) {
+    if (Test-Path $DesktopClientConfig) {
         try {
-            $payload = Get-Content $DesktopAgentConfig -Raw | ConvertFrom-Json
+            $payload = Get-Content $DesktopClientConfig -Raw | ConvertFrom-Json
             if ($payload.local_bridge_host) {
                 $host = [string]$payload.local_bridge_host
             }
@@ -118,7 +118,7 @@ function Show-Help {
     Write-Host "Options:"
     Write-Host "  -BaseUrl http://127.0.0.1:8000"
     Write-Host "  -SkipService"
-    Write-Host "  -SkipDesktopAgent"
+    Write-Host "  -SkipDesktopClient"
     Write-Host "  -SkipUi"
     Write-Host ""
     Write-Host "Notes:"
@@ -152,10 +152,10 @@ function Validate-Environment {
         Write-Ok "user\config.json found"
     }
 
-    if (-not (Test-Path $DesktopAgentConfig)) {
-        Write-Warn "user\desktop_agent.json not found; desktop-agent may fail to start"
+    if (-not (Test-Path $DesktopClientConfig)) {
+        Write-Warn "user\desktop_client.json not found; desktop-client may fail to start"
     } else {
-        Write-Ok "user\desktop_agent.json found"
+        Write-Ok "user\desktop_client.json found"
     }
 }
 
@@ -185,16 +185,16 @@ function Start-ManualAcceptanceStack {
         }
     }
 
-    if (-not $SkipDesktopAgent -and $SkipUi) {
-        Write-Section "Start desktop-agent"
-        $agentCommand = '"' + $PythonExe + '" "' + $MainPy + '" desktop-agent'
-        Start-ComponentWindow -Title "MeetYou Desktop Agent" -WorkingDirectory $RepoRoot -CommandText $agentCommand
-        Write-Ok "desktop-agent launched; use check mode to confirm online state"
-    } elseif (-not $SkipDesktopAgent) {
+    if (-not $SkipDesktopClient -and $SkipUi) {
+        Write-Section "Start desktop-client"
+        $clientCommand = '"' + $PythonExe + '" "' + $MainPy + '" desktop-client'
+        Start-ComponentWindow -Title "MeetYou Desktop Client" -WorkingDirectory $RepoRoot -CommandText $clientCommand
+        Write-Ok "desktop-client launched; use check mode to confirm online state"
+    } elseif (-not $SkipDesktopClient) {
         Write-Section "Desktop backend"
         Write-Ok "desktop backend will be launched by Electron UI"
     } else {
-        Write-Warn "desktop-agent start skipped"
+        Write-Warn "desktop-client start skipped"
     }
 
     if (-not $SkipUi) {
@@ -256,16 +256,16 @@ function Run-ManualAcceptanceCheck {
     }
 
     try {
-        $agents = @(Invoke-JsonGet "/operator/agents")
-        $onlineAgents = @($agents | Where-Object { $_.status -eq "online" })
-        Write-Ok ("/operator/agents ok, total: {0}, online: {1}" -f $agents.Count, $onlineAgents.Count)
-        if ($agents.Count -gt 0) {
-            foreach ($agent in $agents) {
-                Write-Host ("  - {0} [{1}] status={2} workspaces={3}" -f $agent.agent_id, $agent.agent_type, $agent.status, (($agent.workspace_ids | ForEach-Object { $_ }) -join ","))
+        $clients = @(Invoke-JsonGet "/operator/clients")
+        $onlineClients = @($clients | Where-Object { $_.status -eq "online" })
+        Write-Ok ("/operator/clients ok, total: {0}, online: {1}" -f $clients.Count, $onlineClients.Count)
+        if ($clients.Count -gt 0) {
+            foreach ($client in $clients) {
+                Write-Host ("  - {0} [{1}] status={2} workspaces={3}" -f $client.client_id, $client.client_type, $client.status, (($client.workspace_ids | ForEach-Object { $_ }) -join ","))
             }
         }
     } catch {
-        Write-Fail "/operator/agents failed: $($_.Exception.Message)"
+        Write-Fail "/operator/clients failed: $($_.Exception.Message)"
         $failed = $true
     }
 

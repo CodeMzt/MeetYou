@@ -320,7 +320,7 @@ describe('protocolClient', () => {
       event: {
         type: 'message.delta',
         thread_id: 'thr_1',
-        session_id: 'system:agent:desktop-main-agent',
+        session_id: 'system:client:desktop-main',
         stream_id: 'stream_1',
         turn_id: 'turn_1',
         content: 'partial-from-content',
@@ -336,7 +336,7 @@ describe('protocolClient', () => {
         message: {
           message_id: 'msg_transient_1',
           thread_id: 'thr_1',
-          session_id: 'system:agent:desktop-main-agent',
+          session_id: 'system:client:desktop-main',
           workspace_id: 'desktop-main',
           client_id: 'desktop-app',
           role: 'assistant',
@@ -352,7 +352,7 @@ describe('protocolClient', () => {
     expect(delta.kind === 'message_delta' ? delta.delta : '').toBe('partial-from-content')
     expect(completed.kind).toBe('message_completed')
     expect(completed.kind === 'message_completed' ? completed.threadId : '').toBe('thr_1')
-    expect(completed.kind === 'message_completed' ? completed.sessionId : '').toBe('system:agent:desktop-main-agent')
+    expect(completed.kind === 'message_completed' ? completed.sessionId : '').toBe('system:client:desktop-main')
   })
 
   it('parses client websocket interactive events', () => {

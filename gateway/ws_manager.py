@@ -181,17 +181,17 @@ class WebSocketOutputAdapter:
         await self._ws_manager.send_event(event.session_id, event)
 
 
-class AgentOutputAdapter:
-    def __init__(self, agent_ws_manager, envelope_builder):
-        self._agent_ws_manager = agent_ws_manager
+class ClientOutputAdapter:
+    def __init__(self, client_ws_manager, envelope_builder):
+        self._client_ws_manager = client_ws_manager
         self._envelope_builder = envelope_builder
 
     async def send(self, event):
-        agent_id = str(getattr(event.target, "id", "") or "").strip()
-        if not agent_id:
+        client_id = str(getattr(event.target, "id", "") or "").strip()
+        if not client_id:
             return
         payload = self._envelope_builder(
-            agent_id=agent_id,
+            client_id=client_id,
             session_id=event.session_id,
             content=event.content,
             role=event.role,
@@ -199,4 +199,4 @@ class AgentOutputAdapter:
             stream_id=getattr(event, "stream_id", "") or "",
             metadata=dict(getattr(event, "metadata", {}) or {}),
         )
-        await self._agent_ws_manager.send_to_agent(agent_id, payload)
+        await self._client_ws_manager.send_to_client(client_id, payload)

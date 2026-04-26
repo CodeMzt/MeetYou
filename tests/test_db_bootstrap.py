@@ -11,8 +11,8 @@ from core.db.bootstrap import bootstrap_core_domain
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_DATABASE_NAME = "meetyou_bootstrap_test"
-ADMIN_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
-TEST_DATABASE_URL = f"postgresql+psycopg://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}"
+ADMIN_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/postgres?connect_timeout=5"
+TEST_DATABASE_URL = f"postgresql+psycopg://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}?connect_timeout=5"
 
 
 class DatabaseBootstrapTests(unittest.TestCase):
@@ -50,15 +50,17 @@ class DatabaseBootstrapTests(unittest.TestCase):
         try:
             self.assertEqual(context.principal.principal_key, "self")
             self.assertEqual(set(context.workspaces), {"personal", "desktop-main", "study", "home-lab"})
-            self.assertEqual(context.workspaces["desktop-main"].default_execution_target, "specific_agent")
+            self.assertEqual(context.workspaces["desktop-main"].default_execution_target, "specific_client")
             self.assertTrue(context.workspaces["desktop-main"].prompt_overlay)
-            self.assertEqual(context.workspaces["home-lab"].default_execution_target, "workspace_any_agent")
+            self.assertEqual(context.workspaces["home-lab"].default_execution_target, "workspace_any_client")
             inspector = inspect(context.engine)
             tables = set(inspector.get_table_names())
             self.assertIn("config_entries", tables)
             self.assertIn("memory_records", tables)
             self.assertIn("procedures", tables)
             self.assertIn("tasks", tables)
+            self.assertNotIn("agents", tables)
+            self.assertNotIn("workspace_agent_memberships", tables)
             procedure = context.services.procedure.get_by_procedure_id("code_review")
             self.assertIsNotNone(procedure)
         finally:
@@ -88,7 +90,7 @@ class DatabaseBootstrapTests(unittest.TestCase):
                 thread_id=thread.id,
                 workspace_id=context.workspaces["personal"].id,
                 operation_type="capture_screenshot",
-                execution_target="specific_agent",
+                execution_target="specific_client",
                 title="Capture screenshot",
             )
             approval = context.services.approval.create_approval(

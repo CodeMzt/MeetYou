@@ -396,7 +396,7 @@ class SkillRegistryManager:
         recommended_tools: list[str] | None = None,
         applicable_modes: list[str] | None = None,
         scenarios: list[str] | None = None,
-        source: str = "agent",
+        source: str = "client",
     ) -> dict[str, Any]:
         del source
         normalized_id = _normalize_identifier(skill_id or title)

@@ -5,8 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 VENV_DIR="${MEETYOU_CODEX_VENV_DIR:-${REPO_ROOT}/.venv-codex}"
 INSTALL_FRONTEND="${MEETYOU_CODEX_INSTALL_FRONTEND:-1}"
-INSTALL_DESKTOP="${MEETYOU_CODEX_INSTALL_DESKTOP_AGENT:-1}"
-INSTALL_EDGE="${MEETYOU_CODEX_INSTALL_EDGE_AGENT:-0}"
+INSTALL_DESKTOP="${MEETYOU_CODEX_INSTALL_DESKTOP_CLIENT:-1}"
+INSTALL_EDGE="${MEETYOU_CODEX_INSTALL_EDGE_CLIENT:-0}"
 UPGRADE_BOOTSTRAP="${MEETYOU_CODEX_UPGRADE_BOOTSTRAP:-1}"
 
 pick_python() {
@@ -47,11 +47,11 @@ fi
 python -m pip install -r "${REPO_ROOT}/requirements-core.txt"
 
 if [ "${INSTALL_DESKTOP}" = "1" ]; then
-  python -m pip install -r "${REPO_ROOT}/requirements-desktop-agent.txt"
+  python -m pip install -r "${REPO_ROOT}/requirements-desktop-client.txt"
 fi
 
 if [ "${INSTALL_EDGE}" = "1" ]; then
-  python -m pip install -r "${REPO_ROOT}/requirements-edge-agent.txt"
+  python -m pip install -r "${REPO_ROOT}/requirements-edge-client.txt"
 fi
 
 if [ "${INSTALL_FRONTEND}" = "1" ]; then

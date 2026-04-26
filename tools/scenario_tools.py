@@ -9,7 +9,7 @@ import re
 from typing import Any, Awaitable, Callable
 
 from core.tool_runtime.models import ToolCallResult, ToolErrorCategory, ToolSourceType
-from tools.agent_memory import AgentMemoryTools
+from tools.memory_tools import MemoryTools
 from tools.authoritative_sources import AuthoritativeSourceRegistry
 from tools.task_manager import TaskManager
 from tools.web_search import WebSearchTools
@@ -255,7 +255,7 @@ class ScenarioTools:
         self._context_manager = context_manager
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
-        self._memory_tools = AgentMemoryTools(memory)
+        self._memory_tools = MemoryTools(memory)
         self._task_manager = task_manager or TaskManager(memory)
         self._web_tools = WebSearchTools(mcp_manager)
         self._authoritative_sources = AuthoritativeSourceRegistry(mode_manager, self._web_tools)

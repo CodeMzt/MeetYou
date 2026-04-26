@@ -18,7 +18,7 @@ if (-not $Python) {
 }
 
 if (-not $SkipInstall) {
-    & $Python -m pip install -r requirements-desktop-agent.txt
+    & $Python -m pip install -r requirements-desktop-client.txt
     & $Python -m pip install -r requirements-build-desktop.txt
 }
 
@@ -26,8 +26,8 @@ if (-not $SkipInstall) {
 
 $ResolvedOutput = Join-Path $RepoRoot $OutputDir
 $RuntimeTemplateDir = Join-Path $RepoRoot "meetyou-ui\resources\runtime-template"
-$WorkPath = Join-Path $RepoRoot "build\pyinstaller-desktop-agent"
-$SpecPath = Join-Path $RepoRoot "packaging\desktop-agent\desktop_agent.spec"
+$WorkPath = Join-Path $RepoRoot "build\pyinstaller-desktop-client"
+$SpecPath = Join-Path $RepoRoot "packaging\desktop-client\desktop_client.spec"
 
 if (Test-Path $ResolvedOutput) {
     Remove-Item -LiteralPath $ResolvedOutput -Recurse -Force
@@ -36,8 +36,8 @@ New-Item -ItemType Directory -Force -Path $ResolvedOutput | Out-Null
 
 & $Python -m PyInstaller --noconfirm --clean --distpath $ResolvedOutput --workpath $WorkPath $SpecPath
 
-$ExeName = if ($IsWindows -or $env:OS -eq "Windows_NT") { "desktop_agent.exe" } else { "desktop_agent" }
-$ExePath = Join-Path $ResolvedOutput "desktop_agent\$ExeName"
+$ExeName = if ($IsWindows -or $env:OS -eq "Windows_NT") { "desktop_client.exe" } else { "desktop_client" }
+$ExePath = Join-Path $ResolvedOutput "desktop_client\$ExeName"
 if (-not (Test-Path $ExePath)) {
     throw "Desktop backend executable was not produced: $ExePath"
 }
@@ -71,12 +71,12 @@ function Write-Utf8NoBomFile {
     [System.IO.File]::WriteAllText($Path, $Content, $Encoding)
 }
 
-$DesktopConfigSource = Join-Path $RepoRoot "user\desktop_agent.json"
+$DesktopConfigSource = Join-Path $RepoRoot "user\desktop_client.json"
 if (-not (Test-Path $DesktopConfigSource)) {
-    $DesktopConfigSource = Join-Path $RepoRoot "user\desktop_agent.example.json"
+    $DesktopConfigSource = Join-Path $RepoRoot "user\desktop_client.example.json"
 }
 $DesktopConfig = Get-Content $DesktopConfigSource -Raw | ConvertFrom-Json
-Set-JsonProperty -Object $DesktopConfig -Name "agent_access_token" -Value ""
+Set-JsonProperty -Object $DesktopConfig -Name "core_access_token" -Value ""
 Set-JsonProperty -Object $DesktopConfig -Name "gateway_access_token" -Value ""
 Set-JsonProperty -Object $DesktopConfig -Name "local_bridge_access_token" -Value ""
 if (-not $DesktopConfig.local_bridge_host) {
@@ -86,7 +86,7 @@ if (-not $DesktopConfig.local_bridge_port) {
     Set-JsonProperty -Object $DesktopConfig -Name "local_bridge_port" -Value 38951
 }
 Write-Utf8NoBomFile `
-    -Path (Join-Path $RuntimeUserDir "desktop_agent.json") `
+    -Path (Join-Path $RuntimeUserDir "desktop_client.json") `
     -Content (($DesktopConfig | ConvertTo-Json -Depth 12) + "`n")
 
 $CmdPolicySource = Join-Path $RepoRoot "user\cmd_policy.example.json"
@@ -100,10 +100,8 @@ if (Test-Path $McpServersSource) {
 
 $RuntimeEnvKeys = @(
     "MEETYOU_GATEWAY_ACCESS_TOKEN",
-    "MEETYOU_AGENT_WS_ACCESS_TOKEN",
-    "MEETYOU_AGENT_ACCESS_TOKEN",
+    "MEETYOU_CLIENT_ACCESS_TOKEN",
     "MEETYOU_CREDENTIAL_SECRET",
-    "MEETYOU_AGENT_BASE_URL",
     "MEETYOU_CORE_BASE_URL"
 )
 $RuntimeEnvSource = Join-Path $RepoRoot ".env"

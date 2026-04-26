@@ -33,14 +33,14 @@ export interface ClientWorkspace {
   description: string
   prompt_overlay: string
   default_execution_target: string
-  capability_policy: string
-  allowed_capability_ids: string[]
-  preferred_agent_ids: string[]
-  preferred_agent_types: string[]
+  tool_policy: string
+  allowed_tool_ids: string[]
+  preferred_target_client_ids: string[]
+  preferred_target_client_types: string[]
   preferred_source_profiles: string[]
-  agent_routing_policy: string
+  tool_target_routing_policy: string
   memory_ranking_policy: string
-  capability_routing_overrides: Record<string, unknown>
+  tool_routing_overrides: Record<string, unknown>
 }
 
 export interface ClientProcedure {
@@ -48,11 +48,11 @@ export interface ClientProcedure {
   title: string
   description: string
   applicable_modes: string[]
-  recommended_capabilities: string[]
-  preferred_capability_ref: string
-  preferred_agent_ids: string[]
-  preferred_agent_types: string[]
-  agent_routing_policy: string
+  recommended_tools: string[]
+  preferred_tool_key: string
+  preferred_target_client_ids: string[]
+  preferred_target_client_types: string[]
+  tool_target_routing_policy: string
   default_execution_target: string
   risk_profile: string
   status: string
@@ -100,8 +100,9 @@ export interface ClientOperation {
   title: string
   operation_type: string
   execution_target: string
-  target_agent_id: string
-  capability_id: string
+  target_client_id: string
+  tool_key: string
+  tool_id: string
   status: string
   approval_id?: string
   approval_status?: string
@@ -123,24 +124,13 @@ export interface OperationView extends ClientOperation {
   isBlocking: boolean
 }
 
-export interface OperatorAgent {
-  agent_id: string
-  agent_type: string
+export interface OperatorClient {
+  client_id: string
+  client_type: string
   display_name: string
   transport_profile: string
   status: string
   last_seen_at: string
-  owner_client_id?: string
-  workspace_ids: string[]
-}
-
-export interface ClientAvailableAgent {
-  agent_id: string
-  agent_type: string
-  display_name: string
-  transport_profile: string
-  status: string
-  owner_client_id: string
   workspace_ids: string[]
 }
 
@@ -148,8 +138,11 @@ export interface ClientAvailableClient {
   client_id: string
   client_type: string
   display_name: string
+  transport_profile: string
   status: string
   workspace_ids: string[]
+  available_tools: string[]
+  executable_tools: string[]
   membership_role: string
   enabled: boolean
 }
@@ -283,8 +276,9 @@ export type ClientWsEvent =
       title: string
       operationType: string
       executionTarget: string
-      targetAgentId: string
-      capabilityId: string
+      targetClientId: string
+      toolKey: string
+      toolId: string
       callId: string
       status: string
       phase: string

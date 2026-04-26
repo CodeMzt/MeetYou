@@ -1,4 +1,4 @@
 # Full development install: keep a single command for local unified startup.
 -r requirements-core.txt
--r requirements-desktop-agent.txt
--r requirements-edge-agent.txt
+-r requirements-desktop-client.txt
+-r requirements-edge-client.txt

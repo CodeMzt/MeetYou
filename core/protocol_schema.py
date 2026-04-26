@@ -149,9 +149,9 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "input": "password",
         "advanced": True,
     },
-    "agent_access_token": {
-        "title": "Agent 访问令牌",
-        "description": "Desktop Agent 与 Edge Agent 连接 Core `/agent/ws` 时使用的令牌；正式主来源优先取环境变量。",
+    "client_access_token": {
+        "title": "Client 访问令牌",
+        "description": "Desktop Client 与 Edge Client 连接 Core `/client/ws` 时使用的令牌；正式主来源优先取环境变量。",
         "group": "secrets",
         "input": "password",
         "advanced": True,

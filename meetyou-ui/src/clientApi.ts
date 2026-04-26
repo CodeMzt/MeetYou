@@ -3,7 +3,6 @@ import { parseRuntimeUsageEnvelope } from './protocolClient'
 import type {
   AssistantMode,
   ClientAttachmentRecord,
-  ClientAvailableAgent,
   ClientAvailableClient,
   ContextPoolQueryResponse,
   DanxiActionResponse,
@@ -446,8 +445,9 @@ export async function createClientOperation(
     title: string
     operation_type: string
     execution_target?: string
-    target_agent_id?: string
-    capability_id?: string
+    target_client_id?: string
+    tool_key?: string
+    tool_id?: string
     arguments?: Record<string, unknown>
   },
 ): Promise<ClientOperation> {
@@ -459,14 +459,9 @@ export async function createClientOperation(
   return readJsonOrThrow<ClientOperation>(response, '创建操作失败')
 }
 
-export async function listClientAvailableAgents(baseUrl: string, workspaceId: string): Promise<ClientAvailableAgent[]> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/agents`))
-  return readJsonOrThrow<ClientAvailableAgent[]>(response, '加载可用 Agent 失败')
-}
-
 export async function listClientAvailableClients(baseUrl: string, workspaceId: string): Promise<ClientAvailableClient[]> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/clients`))
-  return readJsonOrThrow<ClientAvailableClient[]>(response, '加载工作区客户端失败')
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/clients?include_tools=true`))
+  return readJsonOrThrow<ClientAvailableClient[]>(response, '加载可用 Client 失败')
 }
 
 export async function queryContextPool(

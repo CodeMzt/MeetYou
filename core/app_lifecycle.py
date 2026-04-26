@@ -162,14 +162,14 @@ async def setup_app_runtime(app) -> None:
         ),
         migrate_current=True,
     )
-    capability_dispatcher = app.core_domain.agent_dispatch
+    capability_dispatcher = app.core_domain.client_tool_dispatch
     system_tools.set_capability_dispatcher(capability_dispatcher)
     app.tools_manager.set_core_domain(app.core_domain)
     tools_manager_dispatch_setter = getattr(app.tools_manager, "set_capability_dispatcher", None)
     if callable(tools_manager_dispatch_setter):
         tools_manager_dispatch_setter(capability_dispatcher)
     else:
-        app.tools_manager.set_agent_dispatcher(capability_dispatcher)
+        app.tools_manager.set_client_tool_dispatcher(capability_dispatcher)
     await sync_config_state_to_db(app)
     await sync_memory_state_to_db(app)
     logger.info(
@@ -194,7 +194,6 @@ async def setup_app_runtime(app) -> None:
     host = app.config.get("gateway_host") or "127.0.0.1"
     port = int(app.config.get("gateway_port") or 8000)
     gateway_access_token = str(app.config.get("gateway_access_token") or "").strip()
-    agent_access_token = str(app.config.get("agent_access_token") or "").strip()
     if host not in {"127.0.0.1", "localhost", "::1"} and not gateway_access_token:
         raise ConfigError("非本地 gateway_host 必须配置 gateway_access_token")
     app.gateway = FastAPIGateway(
@@ -218,18 +217,17 @@ async def setup_app_runtime(app) -> None:
             else None
         ),
         core_domain=app.core_domain,
-        agent_connection_prompt_getter=app.build_agent_connection_prompt,
-        agent_connection_event_handler=app.inject_agent_connection_event,
-        agent_access_token=agent_access_token,
+        client_connection_prompt_getter=app.build_client_connection_prompt,
+        client_connection_event_handler=app.inject_client_connection_event,
         access_token=gateway_access_token,
         cors_origins=app.config.get("gateway_cors_origins") or [],
     )
-    app.core_domain.agent_dispatch.set_transport(app.gateway.dispatch_agent_call)
+    app.core_domain.client_tool_dispatch.set_transport(app.gateway.dispatch_client_tool_call)
     runtime_bridge_setter = getattr(app.tools_manager, "set_runtime_bridge", None)
     if callable(runtime_bridge_setter):
         runtime_bridge_setter(session_manager=app.session_manager, gateway_getter=lambda: app.gateway)
     app.speaker.register_adapter("web", app.gateway.output_adapter)
-    app.speaker.register_adapter("internal", app.gateway.agent_output_adapter)
+    app.speaker.register_adapter("internal", app.gateway.client_output_adapter)
     await app.gateway.start(host=host, port=port)
 
     if app.config.get_bool("enable_feishu_bot"):

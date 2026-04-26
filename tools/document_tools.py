@@ -247,39 +247,39 @@ def build_workspace_analysis_payload(root: Path, *, depth: int = 3, include_hidd
 
 
 class DocumentTools:
-    def __init__(self, mode_manager, agent_dispatcher=None, allow_local_fallback: bool = True):
+    def __init__(self, mode_manager, client_tool_dispatcher=None, allow_local_fallback: bool = True):
         self._mode_manager = mode_manager
-        self._agent_dispatcher = agent_dispatcher
+        self._client_tool_dispatcher = client_tool_dispatcher
         self._allow_local_fallback = bool(allow_local_fallback)
 
-    def set_agent_dispatcher(self, dispatcher) -> None:
-        self._agent_dispatcher = dispatcher
+    def set_client_tool_dispatcher(self, dispatcher) -> None:
+        self._client_tool_dispatcher = dispatcher
 
     def set_capability_dispatcher(self, dispatcher) -> None:
-        self.set_agent_dispatcher(dispatcher)
+        self.set_client_tool_dispatcher(dispatcher)
 
     def set_local_fallback_enabled(self, enabled: bool) -> None:
         self._allow_local_fallback = bool(enabled)
 
-    async def _dispatch_capability(
+    async def _dispatch_tool(
         self,
         *,
-        capability_suffix: str,
+        tool_key: str,
         arguments: dict[str, Any],
         session_id: str,
         title: str,
         operation_type: str,
     ) -> dict[str, Any]:
-        dispatcher = self._agent_dispatcher
+        dispatcher = self._client_tool_dispatcher
         if dispatcher is None:
-            raise RuntimeError("Capability dispatcher is not configured")
-        dispatch = getattr(dispatcher, "dispatch_agent_capability", None)
+            raise RuntimeError("Client tool dispatcher is not configured")
+        dispatch = getattr(dispatcher, "dispatch_directed_tool", None)
         if not callable(dispatch):
-            dispatch = getattr(dispatcher, "dispatch_local_capability", None)
+            dispatch = getattr(dispatcher, "dispatch_workspace_tool", None)
         if not callable(dispatch):
-            raise RuntimeError("Capability dispatcher does not support capability dispatch")
+            raise RuntimeError("Client tool dispatcher does not support directed tool dispatch")
         return await dispatch(
-            capability_suffix=capability_suffix,
+            tool_key=tool_key,
             arguments=arguments,
             session_id=session_id,
             title=title,
@@ -289,17 +289,17 @@ class DocumentTools:
     def _ensure_local_capability_available(
         self,
         *,
-        capability_suffix: str,
+        tool_key: str,
         session_id: str = "",
         path: str = "",
     ) -> None:
-        if self._agent_dispatcher is not None or self._allow_local_fallback:
+        if self._client_tool_dispatcher is not None or self._allow_local_fallback:
             return
         error = RuntimeError("Core local fallback is disabled")
-        error.tool_error_code = "local_agent_required"
-        error.tool_error_message = "当前 Core 不再直接执行本地文档能力，请连接 Desktop Agent 后重试。"
+        error.tool_error_code = "local_client_required"
+        error.tool_error_message = "当前 Core 不再直接执行本地文档能力，请连接具备本地文件工具的 Desktop Client 后重试。"
         error.tool_error_details = {
-            "capability_suffix": capability_suffix,
+            "tool_key": tool_key,
             "session_id": str(session_id or ""),
             "path": str(path or ""),
         }
@@ -555,7 +555,7 @@ class DocumentTools:
             "chunks": chunks,
         }
 
-    async def _collect_document_via_agent(
+    async def _collect_document_via_client(
         self,
         path: str,
         *,
@@ -567,8 +567,8 @@ class DocumentTools:
         max_total_chars = int(config.get("max_total_chars", 24_000) or 24_000)
         max_chunks = int(config.get("max_chunks_per_document", 12) or 12)
         try:
-            result = await self._dispatch_capability(
-                capability_suffix="file.read",
+            result = await self._dispatch_tool(
+                tool_key="file.read",
                 arguments={"path": path, "max_chars": max_total_chars},
                 session_id=session_id,
                 title=f"Read Local File: {_local_path_name(path)}",
@@ -612,10 +612,10 @@ class DocumentTools:
         activity_callback=None,
     ) -> str:
         del source, route_context, activity_callback
-        if self._agent_dispatcher is None:
+        if self._client_tool_dispatcher is None:
             root = self._resolve_path(path)
             self._ensure_local_capability_available(
-                capability_suffix="workspace.analyze",
+                tool_key="workspace.analyze",
                 session_id=session_id,
                 path=str(root),
             )
@@ -623,12 +623,12 @@ class DocumentTools:
         else:
             raw_path = _normalize_local_path_value(path)
             self._ensure_local_capability_available(
-                capability_suffix="workspace.analyze",
+                tool_key="workspace.analyze",
                 session_id=session_id,
                 path=raw_path,
             )
-            payload = await self._dispatch_capability(
-                capability_suffix="workspace.analyze",
+            payload = await self._dispatch_tool(
+                tool_key="workspace.analyze",
                 arguments={
                     "path": raw_path,
                     "depth": depth,
@@ -653,9 +653,9 @@ class DocumentTools:
     ) -> str:
         del source, route_context, activity_callback
         normalized_paths = [paths] if isinstance(paths, str) else list(paths or [])
-        if self._agent_dispatcher is None:
+        if self._client_tool_dispatcher is None:
             self._ensure_local_capability_available(
-                capability_suffix="file.read",
+                tool_key="file.read",
                 session_id=session_id,
                 path=",".join(str(self._resolve_path(item)) for item in normalized_paths[:5]),
             )
@@ -663,12 +663,12 @@ class DocumentTools:
         else:
             local_paths = [_normalize_local_path_value(item) for item in normalized_paths]
             self._ensure_local_capability_available(
-                capability_suffix="file.read",
+                tool_key="file.read",
                 session_id=session_id,
                 path=",".join(local_paths[:5]),
             )
             documents = [
-                await self._collect_document_via_agent(
+                await self._collect_document_via_client(
                     item,
                     goal=goal,
                     chunking=chunking,
@@ -701,19 +701,19 @@ class DocumentTools:
         activity_callback=None,
     ) -> str:
         del source, route_context, activity_callback, confirmed
-        agent_managed = self._agent_dispatcher is not None
+        client_managed = self._client_tool_dispatcher is not None
         raw_path = _normalize_local_path_value(path)
-        target = None if agent_managed else self._resolve_path(raw_path)
-        target_path = raw_path if agent_managed else str(target)
-        target_name = _local_path_name(raw_path) if agent_managed else target.name
+        target = None if client_managed else self._resolve_path(raw_path)
+        target_path = raw_path if client_managed else str(target)
+        target_name = _local_path_name(raw_path) if client_managed else target.name
         normalized_mode = str(mode or "overwrite").strip().lower() or "overwrite"
-        trusted = None if agent_managed else self._mode_manager.is_trusted_write_path(str(target))
+        trusted = None if client_managed else self._mode_manager.is_trusted_write_path(str(target))
         payload = {
             "tool": "write_local_document",
             "path": target_path,
             "mode": normalized_mode,
             "trusted_root": trusted,
-            "execution_target": "desktop_agent" if agent_managed else "core_local_fallback",
+            "execution_target": "desktop_client_tool" if client_managed else "core_local_fallback",
             "action_risk": "local_write",
             "preview": bool(preview),
             "content_preview": _trim_text(content, 600),
@@ -726,18 +726,18 @@ class DocumentTools:
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         self._ensure_local_capability_available(
-            capability_suffix="file.write",
+            tool_key="file.write",
             session_id=session_id,
             path=target_path,
         )
-        if not agent_managed and not trusted:
+        if not client_managed and not trusted:
             payload["status"] = "blocked_untrusted_path"
             payload["trusted_write_roots"] = self._mode_manager.get_trusted_write_roots()
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
-        if agent_managed:
-            result = await self._dispatch_capability(
-                capability_suffix="file.write",
+        if client_managed:
+            result = await self._dispatch_tool(
+                tool_key="file.write",
                 arguments={"path": raw_path, "content": str(content or ""), "mode": normalized_mode},
                 session_id=session_id,
                 title=f"Write Local File: {target_name}",
@@ -809,17 +809,17 @@ class DocumentTools:
         activity_callback=None,
     ) -> str:
         del source, route_context, activity_callback, confirmed
-        agent_managed = self._agent_dispatcher is not None
+        client_managed = self._client_tool_dispatcher is not None
         raw_path = _normalize_local_path_value(path)
-        target = None if agent_managed else self._resolve_path(raw_path)
-        target_path = raw_path if agent_managed else str(target)
-        target_name = _local_path_name(raw_path) if agent_managed else target.name
+        target = None if client_managed else self._resolve_path(raw_path)
+        target_path = raw_path if client_managed else str(target)
+        target_name = _local_path_name(raw_path) if client_managed else target.name
         self._ensure_local_capability_available(
-            capability_suffix="file.read",
+            tool_key="file.read",
             session_id=session_id,
             path=target_path,
         )
-        if not agent_managed and (not target.exists() or target.is_dir()):
+        if not client_managed and (not target.exists() or target.is_dir()):
             return json.dumps(
                 {
                     "tool": "rewrite_local_document",
@@ -831,12 +831,12 @@ class DocumentTools:
                 indent=2,
             )
 
-        if not agent_managed:
+        if not client_managed:
             original = self._read_text_file(target)
         else:
             try:
-                read_result = await self._dispatch_capability(
-                    capability_suffix="file.read",
+                read_result = await self._dispatch_tool(
+                    tool_key="file.read",
                     arguments={"path": raw_path, "max_chars": 200000},
                     session_id=session_id,
                     title=f"Read For Rewrite: {target_name}",
@@ -859,8 +859,8 @@ class DocumentTools:
             "path": target_path,
             "section_selector": _normalize_text(section_selector),
             "instructions": _normalize_text(instructions),
-            "trusted_root": None if agent_managed else self._mode_manager.is_trusted_write_path(str(target)),
-            "execution_target": "desktop_agent" if agent_managed else "core_local_fallback",
+            "trusted_root": None if client_managed else self._mode_manager.is_trusted_write_path(str(target)),
+            "execution_target": "desktop_client_tool" if client_managed else "core_local_fallback",
         }
 
         if not replacement_content:
@@ -892,18 +892,18 @@ class DocumentTools:
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         self._ensure_local_capability_available(
-            capability_suffix="file.write",
+            tool_key="file.write",
             session_id=session_id,
             path=target_path,
         )
-        if not agent_managed and not self._mode_manager.is_trusted_write_path(str(target)):
+        if not client_managed and not self._mode_manager.is_trusted_write_path(str(target)):
             payload["status"] = "blocked_untrusted_path"
             payload["trusted_write_roots"] = self._mode_manager.get_trusted_write_roots()
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
-        if agent_managed:
-            await self._dispatch_capability(
-                capability_suffix="file.write",
+        if client_managed:
+            await self._dispatch_tool(
+                tool_key="file.write",
                 arguments={"path": raw_path, "content": rewritten, "mode": "overwrite"},
                 session_id=session_id,
                 title=f"Rewrite Local File: {target_name}",
@@ -941,8 +941,8 @@ class DocumentTools:
                 continue
 
             maybe_path = Path(text).expanduser()
-            if self._agent_dispatcher is not None and _looks_like_local_path_input(text):
-                collected = await self._collect_document_via_agent(
+            if self._client_tool_dispatcher is not None and _looks_like_local_path_input(text):
+                collected = await self._collect_document_via_client(
                     _normalize_local_path_value(text),
                     goal="",
                     chunking="none",
@@ -953,7 +953,7 @@ class DocumentTools:
             elif maybe_path.exists() and maybe_path.is_file():
                 resolved_path = maybe_path.resolve()
                 self._ensure_local_capability_available(
-                    capability_suffix="file.read",
+                    tool_key="file.read",
                     session_id=session_id,
                     path=str(resolved_path),
                 )

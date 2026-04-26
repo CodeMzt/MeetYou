@@ -25,6 +25,10 @@ class Capability(TimestampMixin, Base):
     output_schema: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
+    @property
+    def tool_id(self) -> str:
+        return self.capability_id
+
 
 class CapabilityWorkspaceBinding(TimestampMixin, Base):
     __tablename__ = "capability_workspace_bindings"
