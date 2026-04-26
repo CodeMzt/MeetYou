@@ -65,7 +65,7 @@ flowchart LR
 
 ## 4. Basic Tools
 
-MeetWeChat Client 默认开放共享基础工具，不开放本地文件、Shell、Desktop Agent 或边缘 Agent 能力。入站 metadata 带有：
+MeetWeChat Client 默认开放共享基础工具，不开放本地文件、Shell、Desktop Client 或 Edge Client directed tools。入站 metadata 带有：
 
 - `tool_scope=basic`
 - `allowed_tool_bundle=[...]`

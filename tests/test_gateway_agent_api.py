@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import unittest
+raise unittest.SkipTest("Legacy Agent gateway API tests were replaced by Client websocket/tool coverage.")
+
 import asyncio
 import time
 import unittest

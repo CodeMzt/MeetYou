@@ -6,7 +6,8 @@ import sys
 
 from core.logger import setup_logger
 from service_runtime.models import RuntimeCommand, RuntimeError
-from service_runtime.service import ServiceRuntime
+
+ServiceRuntime = None
 
 
 def _print_usage() -> None:
@@ -38,6 +39,12 @@ def run_runtime_entry(mode: str) -> None:
     setup_logger(enable_console=enable_console, component=component)
     logger = logging.getLogger("meetyou.main")
     try:
+        global ServiceRuntime
+        if ServiceRuntime is None:
+            from service_runtime.service import ServiceRuntime as _ServiceRuntime
+
+            ServiceRuntime = _ServiceRuntime
+
         asyncio.run(ServiceRuntime(_build_runtime_command(mode)).run())
     except KeyboardInterrupt:
         pass

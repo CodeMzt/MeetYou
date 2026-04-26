@@ -61,14 +61,14 @@ function getDesktopRuntimeRoot() {
 }
 
 function getDesktopConfigPath() {
-  const explicit = String(process.env.MEETYOU_DESKTOP_AGENT_CONFIG || '').trim()
+  const explicit = String(process.env.MEETYOU_DESKTOP_CLIENT_CONFIG || '').trim()
   if (explicit) {
     return explicit
   }
-  return path.join(getDesktopRuntimeRoot(), 'user', 'desktop_agent.json')
+  return path.join(getDesktopRuntimeRoot(), 'user', 'desktop_client.json')
 }
 
-function readDesktopAgentConfigValue<T = unknown>(key: string): T | null {
+function readDesktopClientConfigValue<T = unknown>(key: string): T | null {
   const configPath = getDesktopConfigPath()
   try {
     const payload = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>
@@ -80,10 +80,9 @@ function readDesktopAgentConfigValue<T = unknown>(key: string): T | null {
 
 function resolveCoreBaseUrl() {
   return String(
-    process.env.MEETYOU_AGENT_BASE_URL ||
     process.env.MEETYOU_CORE_BASE_URL ||
-    readWorkspaceEnvValue(['MEETYOU_AGENT_BASE_URL', 'MEETYOU_CORE_BASE_URL']) ||
-    readDesktopAgentConfigValue<string>('core_base_url') ||
+    readWorkspaceEnvValue(['MEETYOU_CORE_BASE_URL']) ||
+    readDesktopClientConfigValue<string>('core_base_url') ||
     'http://127.0.0.1:8000',
   ).trim() || 'http://127.0.0.1:8000'
 }
@@ -92,14 +91,14 @@ function resolveDesktopBridgeBaseUrl() {
   const host = String(
     process.env.MEETYOU_DESKTOP_LOCAL_HOST ||
     readWorkspaceEnvValue(['MEETYOU_DESKTOP_LOCAL_HOST']) ||
-    readDesktopAgentConfigValue<string>('local_bridge_host') ||
+    readDesktopClientConfigValue<string>('local_bridge_host') ||
     DEFAULT_DESKTOP_BRIDGE_HOST,
   ).trim() || DEFAULT_DESKTOP_BRIDGE_HOST
 
   const portText = String(
     process.env.MEETYOU_DESKTOP_LOCAL_PORT ||
     readWorkspaceEnvValue(['MEETYOU_DESKTOP_LOCAL_PORT']) ||
-    readDesktopAgentConfigValue<number>('local_bridge_port') ||
+    readDesktopClientConfigValue<number>('local_bridge_port') ||
     DEFAULT_DESKTOP_BRIDGE_PORT,
   ).trim()
   const numericPort = Number.parseInt(portText, 10)
@@ -128,8 +127,8 @@ function resolveWorkspaceMainPy() {
 }
 
 function resolvePackagedBackendExecutable() {
-  const binaryName = process.platform === 'win32' ? 'desktop_agent.exe' : 'desktop_agent'
-  return path.join(process.resourcesPath, 'desktop-backend', 'desktop_agent', binaryName)
+  const binaryName = process.platform === 'win32' ? 'desktop_client.exe' : 'desktop_client'
+  return path.join(process.resourcesPath, 'desktop-backend', 'desktop_client', binaryName)
 }
 
 function ensureJsonFile(filePath: string, payload: Record<string, unknown>) {
@@ -196,7 +195,7 @@ function ensurePackagedRuntimeFiles() {
   copyFileIfMissing(path.join(templateRoot, '.env'), path.join(runtimeRoot, '.env'))
   copyFileIfMissing(path.join(templateUserDir, 'cmd_policy.json'), path.join(userDir, 'cmd_policy.json'))
   copyFileIfMissing(path.join(templateUserDir, 'mcp_servers.json'), path.join(userDir, 'mcp_servers.json'))
-  copyFileIfMissing(path.join(templateUserDir, 'desktop_agent.json'), getDesktopConfigPath())
+  copyFileIfMissing(path.join(templateUserDir, 'desktop_client.json'), getDesktopConfigPath())
   ensureJsonFile(path.join(userDir, 'cmd_policy.json'), {
     mode: 'blacklist',
     blacklist_patterns: [],
@@ -204,9 +203,9 @@ function ensurePackagedRuntimeFiles() {
   ensureJsonFile(path.join(userDir, 'mcp_servers.json'), {})
   ensureJsonFile(getDesktopConfigPath(), {
     core_base_url: resolveCoreBaseUrl(),
-    owner_client_id: 'desktop-app',
-    owner_client_type: 'electron',
-    owner_client_display_name: 'Desktop App',
+    client_id: 'desktop-app',
+    client_type: 'desktop',
+    display_name: 'Desktop App',
     workspace_ids: ['personal', 'desktop-main', 'study'],
     read_roots: [runtimeRoot],
     trusted_write_roots: [runtimeRoot],
@@ -216,7 +215,7 @@ function ensurePackagedRuntimeFiles() {
     local_bridge_host: DEFAULT_DESKTOP_BRIDGE_HOST,
     local_bridge_port: DEFAULT_DESKTOP_BRIDGE_PORT,
   })
-  maybeMigrateDefaultCoreUrlFromTemplate(getDesktopConfigPath(), path.join(templateUserDir, 'desktop_agent.json'))
+  maybeMigrateDefaultCoreUrlFromTemplate(getDesktopConfigPath(), path.join(templateUserDir, 'desktop_client.json'))
 }
 
 async function waitForDesktopBackend(timeoutMs = DESKTOP_BACKEND_READY_TIMEOUT_MS) {
@@ -261,7 +260,7 @@ async function ensureDesktopBackendStarted() {
       env: {
         ...process.env,
         MEETYOU_DESKTOP_LOCAL_TOKEN: desktopBridgeAccessToken,
-        MEETYOU_DESKTOP_AGENT_CONFIG: getDesktopConfigPath(),
+        MEETYOU_DESKTOP_CLIENT_CONFIG: getDesktopConfigPath(),
       },
       stdio: 'ignore',
       windowsHide: true,
@@ -288,7 +287,7 @@ async function ensureDesktopBackendStarted() {
     return
   }
   desktopBridgeAccessToken = crypto.randomBytes(24).toString('hex')
-  desktopBackendProcess = spawn(resolveWorkspacePython(), [mainPy, 'desktop-agent'], {
+  desktopBackendProcess = spawn(resolveWorkspacePython(), [mainPy, 'desktop-client'], {
     cwd: getWorkspaceRoot(),
     env: {
       ...process.env,
@@ -347,7 +346,7 @@ function resolveCredentialSecret(): string {
   return readWorkspaceEnvValue([
     'MEETYOU_CREDENTIAL_SECRET',
     'MEETYOU_GATEWAY_ACCESS_TOKEN',
-    'MEETYOU_AGENT_ACCESS_TOKEN',
+    'MEETYOU_CLIENT_ACCESS_TOKEN',
   ])
 }
 

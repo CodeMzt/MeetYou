@@ -12,8 +12,7 @@ class ConfigManagerTests(unittest.TestCase):
     def setUp(self):
         self._old_cwd = os.getcwd()
         self._old_env = {
-            "MEETYOU_AGENT_WS_ACCESS_TOKEN": os.environ.get("MEETYOU_AGENT_WS_ACCESS_TOKEN"),
-            "MEETYOU_AGENT_ACCESS_TOKEN": os.environ.get("MEETYOU_AGENT_ACCESS_TOKEN"),
+            "MEETYOU_CLIENT_ACCESS_TOKEN": os.environ.get("MEETYOU_CLIENT_ACCESS_TOKEN"),
             "MEETYOU_API_KEY": os.environ.get("MEETYOU_API_KEY"),
             "MEETYOU_HEARTBEAT_API_KEY": os.environ.get("MEETYOU_HEARTBEAT_API_KEY"),
             "MEETYOU_EMBEDDING_API_KEY": os.environ.get("MEETYOU_EMBEDDING_API_KEY"),
@@ -76,21 +75,21 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertNotEqual(snapshot["api_key"]["value"], "test-secret")
         self.assertEqual(config.get("api_key"), "test-secret")
 
-    def test_agent_ws_access_token_prefers_new_env_over_legacy_env_and_config(self):
+    def test_client_access_token_prefers_client_env_over_gateway_and_config(self):
         (self.temp_root / "user" / "config.json").write_text(
             json.dumps(
                 {
                     "api_provider": "openai",
                     "model": "gpt-4o",
-                    "agent_access_token": "agent-from-config",
+                    "client_access_token": "client-from-config",
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
         (self.temp_root / ".env").write_text(
-            "MEETYOU_AGENT_WS_ACCESS_TOKEN=agent-from-new-env\n"
-            "MEETYOU_AGENT_ACCESS_TOKEN=agent-from-legacy-env\n",
+            "MEETYOU_CLIENT_ACCESS_TOKEN=client-from-env\n"
+            "MEETYOU_GATEWAY_ACCESS_TOKEN=gateway-from-env\n",
             encoding="utf-8",
         )
 
@@ -99,10 +98,10 @@ class ConfigManagerTests(unittest.TestCase):
             env_file_path=str(self.temp_root / ".env"),
         )
 
-        self.assertEqual(config.get("agent_access_token"), "agent-from-new-env")
-        entry = config.describe_key("agent_access_token")
+        self.assertEqual(config.get("client_access_token"), "client-from-env")
+        entry = config.describe_key("client_access_token")
         self.assertEqual(entry["source"], "env")
-        self.assertEqual(entry["env_key"], "MEETYOU_AGENT_WS_ACCESS_TOKEN")
+        self.assertEqual(entry["env_key"], "MEETYOU_CLIENT_ACCESS_TOKEN")
         self.assertTrue(entry["has_value"])
 
     def test_process_env_overrides_dotenv_file(self):
@@ -130,13 +129,13 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(config.get_mcp_servers(), {})
         self.assertEqual(diagnostic["status"], "missing")
         self.assertIn("core_mcp_servers.json", diagnostic["path"])
-        self.assertIn("Desktop Agent", diagnostic["message"])
+        self.assertIn("Desktop Client", diagnostic["message"])
         self.assertTrue(
             any("Core MCP 配置文件不存在" in message for message in captured.output),
             captured.output,
         )
 
-    def test_core_mcp_config_is_loaded_separately_from_desktop_agent_mcp(self):
+    def test_core_mcp_config_is_loaded_separately_from_desktop_client_mcp(self):
         (self.temp_root / "user" / "core_mcp_servers.json").write_text(
             json.dumps(
                 {

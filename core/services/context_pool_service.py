@@ -6,7 +6,6 @@ from uuid import uuid4
 from typing import Any
 
 from core.db.repositories import (
-    AgentRepository,
     ClientRepository,
     ContextPoolRepository,
     SessionRepository,
@@ -94,7 +93,6 @@ class ContextPoolService(ServiceBase):
         session_id=None,
         message_id=None,
         source_client_id=None,
-        source_agent_id=None,
         home_workspace_id=None,
         active_workspace_id=None,
         item_type: str = "turn",
@@ -116,7 +114,6 @@ class ContextPoolService(ServiceBase):
                 session_id=session_id,
                 message_id=message_id,
                 source_client_id=source_client_id,
-                source_agent_id=source_agent_id,
                 home_workspace_id=home_workspace_id,
                 active_workspace_id=active_workspace_id,
                 item_type=str(item_type or "turn").strip() or "turn",
@@ -186,25 +183,21 @@ class ContextPoolService(ServiceBase):
         public_session_id = str(context.get("session_id") or "").strip()
         public_workspace_id = str(context.get("active_workspace_id") or context.get("workspace_id") or "").strip()
         public_client_id = str(context.get("client_id") or source_metadata.get("client_id") or "").strip()
-        public_agent_id = str(context.get("agent_id") or source_metadata.get("agent_id") or "").strip()
         with self.session_scope() as session:
             thread_row = ThreadRepository(session).get_by_thread_id(public_thread_id) if public_thread_id else None
             session_row = SessionRepository(session).get_by_session_id(public_session_id) if public_session_id else None
             workspace_row = WorkspaceRepository(session).get_by_workspace_id(public_workspace_id) if public_workspace_id else None
             client_row = ClientRepository(session).get_by_client_id(public_client_id) if public_client_id else None
-            agent_row = AgentRepository(session).get_by_agent_id(public_agent_id) if public_agent_id else None
             return {
                 "thread_id": getattr(thread_row, "id", None),
                 "session_id": getattr(session_row, "id", None),
                 "active_workspace_id": getattr(workspace_row, "id", None),
                 "home_workspace_id": getattr(thread_row, "home_workspace_id", None),
                 "source_client_id": getattr(client_row, "id", None),
-                "source_agent_id": getattr(agent_row, "id", None),
                 "public_thread_id": public_thread_id,
                 "public_session_id": public_session_id,
                 "public_workspace_id": public_workspace_id,
                 "public_client_id": public_client_id,
-                "public_agent_id": public_agent_id,
             }
 
     def record_tool_result_by_context(
@@ -235,7 +228,6 @@ class ContextPoolService(ServiceBase):
             thread_id=rows["thread_id"],
             session_id=rows["session_id"],
             source_client_id=rows["source_client_id"],
-            source_agent_id=rows["source_agent_id"],
             home_workspace_id=rows["home_workspace_id"],
             active_workspace_id=rows["active_workspace_id"],
             item_type="tool_result",
@@ -252,16 +244,15 @@ class ContextPoolService(ServiceBase):
                 "thread_id": rows["public_thread_id"],
                 "session_id": rows["public_session_id"],
                 "client_id": rows["public_client_id"],
-                "agent_id": rows["public_agent_id"],
                 "active_workspace_id": rows["public_workspace_id"],
             },
         )
 
-    def record_agent_operation_result(
+    def record_client_tool_operation_result(
         self,
         *,
         principal_id,
-        agent,
+        client,
         call,
         operation,
         result: dict[str, Any],
@@ -278,17 +269,17 @@ class ContextPoolService(ServiceBase):
             principal_id=principal_id,
             thread_id=getattr(thread, "id", None),
             session_id=getattr(operation, "requested_by_session_id", None),
-            source_agent_id=getattr(agent, "id", None) or getattr(call, "target_agent_id", None),
+            source_client_id=getattr(client, "id", None) or getattr(call, "target_client_id", None),
             home_workspace_id=getattr(thread, "home_workspace_id", None),
             active_workspace_id=getattr(operation, "workspace_id", None),
-            item_type="agent_result",
+            item_type="client_tool_result",
             role="tool",
-            content=f"Agent {getattr(agent, 'agent_id', '')} operation result:\n{content}",
+            content=f"Client {getattr(client, 'client_id', '')} tool operation result:\n{content}",
             importance=0.58,
             workspace_tags=self._workspace_tags(public_workspace_id),
             metadata={
                 **dict(metadata or {}),
-                "agent_id": str(getattr(agent, "agent_id", "") or ""),
+                "client_id": str(getattr(client, "client_id", "") or ""),
                 "call_id": str(getattr(call, "call_id", "") or ""),
                 "operation_id": str(getattr(operation, "operation_id", "") or ""),
                 "operation_type": str(getattr(operation, "operation_type", "") or ""),

@@ -1,0 +1,23 @@
+{
+  "core_base_url": "http://127.0.0.1:8000",
+  "core_access_token": "",
+  "gateway_access_token": "",
+  "client_id": "desktop-main-client",
+  "display_name": "Desktop Main Client",
+  "workspace_ids": ["personal", "desktop-main", "study"],
+  "available_tools": ["short_reply", "file.read", "file.write", "shell.exec", "workspace.analyze"],
+  "executable_tools": ["short_reply", "file.read", "file.write", "shell.exec", "workspace.analyze"],
+  "read_roots": ["."],
+  "trusted_write_roots": ["."],
+  "cmd_policy_path": "user/cmd_policy.json",
+  "mcp_servers_path": "user/mcp_servers.json",
+  "command_timeout_seconds": 120,
+  "max_parallel_calls": 2,
+  "heartbeat_interval_seconds": 20,
+  "reconnect_delay_seconds": 3,
+  "supports_offline_cache": true,
+  "transport_profile": "desktop_wss",
+  "local_bridge_enabled": true,
+  "local_bridge_host": "127.0.0.1",
+  "local_bridge_port": 38951
+}

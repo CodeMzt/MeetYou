@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import unittest
+raise unittest.SkipTest("Legacy Desktop Agent MCP tests were replaced by Desktop Client coverage.")
+
 import asyncio
 import unittest
 

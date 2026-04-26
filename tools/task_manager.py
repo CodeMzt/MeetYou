@@ -1545,10 +1545,17 @@ class TaskManager(TaskRepository):
         record["active_claim_token"] = _normalize_text(record.get("active_claim_token")) or None
         record["run_history"] = copy.deepcopy(record.get("run_history")) if isinstance(record.get("run_history"), list) else []
         record["pending_delivery"] = copy.deepcopy(record.get("pending_delivery")) if isinstance(record.get("pending_delivery"), dict) else None
-        record["preferred_capability_ref"] = _normalize_text(record.get("preferred_capability_ref"))
-        record["preferred_agent_ids"] = _normalize_string_list(record.get("preferred_agent_ids"))
-        record["preferred_agent_types"] = _normalize_string_list(record.get("preferred_agent_types"))
-        record["agent_routing_policy"] = _normalize_routing_policy(record.get("agent_routing_policy"), default="balanced")
+        record["preferred_tool_key"] = _normalize_text(record.get("preferred_tool_key"))
+        record["preferred_target_client_ids"] = _normalize_string_list(
+            record.get("preferred_target_client_ids")
+        )
+        record["preferred_target_client_types"] = _normalize_string_list(
+            record.get("preferred_target_client_types")
+        )
+        record["tool_target_routing_policy"] = _normalize_routing_policy(
+            record.get("tool_target_routing_policy"),
+            default="balanced",
+        )
         record["last_operation_id"] = _normalize_text(record.get("last_operation_id")) or None
         record["last_operation_status"] = _normalize_text(record.get("last_operation_status")) or None
         record["job"] = normalize_job_record(
@@ -1644,10 +1651,10 @@ class TaskManager(TaskRepository):
             "state": copy.deepcopy(orchestration),
             "auto_run": bool(record.get("auto_run", False)),
             "job_prompt": _normalize_text(record.get("job_prompt")),
-            "preferred_capability_ref": _normalize_text(record.get("preferred_capability_ref")),
-            "preferred_agent_ids": copy.deepcopy(record.get("preferred_agent_ids")) if isinstance(record.get("preferred_agent_ids"), list) else [],
-            "preferred_agent_types": copy.deepcopy(record.get("preferred_agent_types")) if isinstance(record.get("preferred_agent_types"), list) else [],
-            "agent_routing_policy": _normalize_text(record.get("agent_routing_policy")) or "balanced",
+            "preferred_tool_key": _normalize_text(record.get("preferred_tool_key")),
+            "preferred_target_client_ids": copy.deepcopy(record.get("preferred_target_client_ids")) if isinstance(record.get("preferred_target_client_ids"), list) else [],
+            "preferred_target_client_types": copy.deepcopy(record.get("preferred_target_client_types")) if isinstance(record.get("preferred_target_client_types"), list) else [],
+            "tool_target_routing_policy": _normalize_text(record.get("tool_target_routing_policy")) or "balanced",
             "last_operation_id": _normalize_text(record.get("last_operation_id")) or None,
             "last_operation_status": _normalize_text(record.get("last_operation_status")) or None,
             "notify_policy": _normalize_text(record.get("notify_policy")),
@@ -1820,10 +1827,10 @@ class TaskManager(TaskRepository):
         auto_run: Any = None,
         job_prompt: str | None = None,
         notify_policy: str | None = None,
-        preferred_capability_ref: str | None = None,
-        preferred_agent_ids: list[str] | None = None,
-        preferred_agent_types: list[str] | None = None,
-        agent_routing_policy: str | None = None,
+        preferred_tool_key: str | None = None,
+        preferred_target_client_ids: list[str] | None = None,
+        preferred_target_client_types: list[str] | None = None,
+        tool_target_routing_policy: str | None = None,
         session_id: str = "",
         source=None,
     ) -> dict[str, Any]:
@@ -1883,10 +1890,10 @@ class TaskManager(TaskRepository):
             "last_run_at": None,
             "last_run_status": "",
             "last_run_summary": "",
-            "preferred_capability_ref": _normalize_text(preferred_capability_ref),
-            "preferred_agent_ids": _normalize_string_list(preferred_agent_ids),
-            "preferred_agent_types": _normalize_string_list(preferred_agent_types),
-            "agent_routing_policy": _normalize_routing_policy(agent_routing_policy, default="balanced"),
+            "preferred_tool_key": _normalize_text(preferred_tool_key),
+            "preferred_target_client_ids": _normalize_string_list(preferred_target_client_ids),
+            "preferred_target_client_types": _normalize_string_list(preferred_target_client_types),
+            "tool_target_routing_policy": _normalize_routing_policy(tool_target_routing_policy, default="balanced"),
             "delivery_target": _delivery_target_payload(session_id, source, self._context_target()),
             "origin_session_id": _normalize_text(session_id),
             "run_lock_until": None,
@@ -1925,10 +1932,10 @@ class TaskManager(TaskRepository):
         auto_run: Any = None,
         job_prompt: str | None = None,
         notify_policy: str | None = None,
-        preferred_capability_ref: str | None = None,
-        preferred_agent_ids: list[str] | None = None,
-        preferred_agent_types: list[str] | None = None,
-        agent_routing_policy: str | None = None,
+        preferred_tool_key: str | None = None,
+        preferred_target_client_ids: list[str] | None = None,
+        preferred_target_client_types: list[str] | None = None,
+        tool_target_routing_policy: str | None = None,
         completion_summary: str = "",
         session_id: str = "",
         source=None,
@@ -2014,17 +2021,17 @@ class TaskManager(TaskRepository):
                     record["pending_delivery"] = None
                     record["orchestration"] = {}
 
-        if preferred_capability_ref is not None:
-            record["preferred_capability_ref"] = _normalize_text(preferred_capability_ref)
+        if preferred_tool_key is not None:
+            record["preferred_tool_key"] = _normalize_text(preferred_tool_key)
             changed = True
-        if preferred_agent_ids is not None:
-            record["preferred_agent_ids"] = _normalize_string_list(preferred_agent_ids)
+        if preferred_target_client_ids is not None:
+            record["preferred_target_client_ids"] = _normalize_string_list(preferred_target_client_ids)
             changed = True
-        if preferred_agent_types is not None:
-            record["preferred_agent_types"] = _normalize_string_list(preferred_agent_types)
+        if preferred_target_client_types is not None:
+            record["preferred_target_client_types"] = _normalize_string_list(preferred_target_client_types)
             changed = True
-        if agent_routing_policy is not None:
-            record["agent_routing_policy"] = _normalize_routing_policy(agent_routing_policy, default="balanced")
+        if tool_target_routing_policy is not None:
+            record["tool_target_routing_policy"] = _normalize_routing_policy(tool_target_routing_policy, default="balanced")
             changed = True
 
         if not changed:
@@ -2631,10 +2638,10 @@ class TaskManager(TaskRepository):
         return {
             "task_key": _normalize_text(record.get("task_key")),
             "summary": _normalize_text(record.get("content")),
-            "preferred_capability_ref": _normalize_text(record.get("preferred_capability_ref")),
-            "preferred_agent_ids": copy.deepcopy(record.get("preferred_agent_ids")) if isinstance(record.get("preferred_agent_ids"), list) else [],
-            "preferred_agent_types": copy.deepcopy(record.get("preferred_agent_types")) if isinstance(record.get("preferred_agent_types"), list) else [],
-            "agent_routing_policy": _normalize_text(record.get("agent_routing_policy")) or "balanced",
+            "preferred_tool_key": _normalize_text(record.get("preferred_tool_key")),
+            "preferred_target_client_ids": copy.deepcopy(record.get("preferred_target_client_ids")) if isinstance(record.get("preferred_target_client_ids"), list) else [],
+            "preferred_target_client_types": copy.deepcopy(record.get("preferred_target_client_types")) if isinstance(record.get("preferred_target_client_types"), list) else [],
+            "tool_target_routing_policy": _normalize_text(record.get("tool_target_routing_policy")) or "balanced",
             "last_operation_id": _normalize_text(record.get("last_operation_id")) or None,
             "last_operation_status": _normalize_text(record.get("last_operation_status")) or None,
             "schedule_kind": _normalize_text(record.get("schedule_kind")),
@@ -3277,10 +3284,10 @@ class TaskManager(TaskRepository):
         auto_run: Any = None,
         job_prompt: str | None = None,
         notify_policy: str | None = None,
-        preferred_capability_ref: str | None = None,
-        preferred_agent_ids: list[str] | None = None,
-        preferred_agent_types: list[str] | None = None,
-        agent_routing_policy: str | None = None,
+        preferred_tool_key: str | None = None,
+        preferred_target_client_ids: list[str] | None = None,
+        preferred_target_client_types: list[str] | None = None,
+        tool_target_routing_policy: str | None = None,
         session_id: str = "",
         source=None,
     ) -> str | ToolCallResult:
@@ -3327,10 +3334,10 @@ class TaskManager(TaskRepository):
                     auto_run=auto_run,
                     job_prompt=job_prompt or "",
                     notify_policy=notify_policy,
-                    preferred_capability_ref=preferred_capability_ref,
-                    preferred_agent_ids=preferred_agent_ids,
-                    preferred_agent_types=preferred_agent_types,
-                    agent_routing_policy=agent_routing_policy,
+                    preferred_tool_key=preferred_tool_key,
+                    preferred_target_client_ids=preferred_target_client_ids,
+                    preferred_target_client_types=preferred_target_client_types,
+                    tool_target_routing_policy=tool_target_routing_policy,
                     session_id=current_session_id,
                     source=source,
                 )
@@ -3475,10 +3482,10 @@ class TaskManager(TaskRepository):
                     auto_run=auto_run,
                     job_prompt=job_prompt,
                     notify_policy=notify_policy,
-                    preferred_capability_ref=preferred_capability_ref,
-                    preferred_agent_ids=preferred_agent_ids,
-                    preferred_agent_types=preferred_agent_types,
-                    agent_routing_policy=agent_routing_policy,
+                    preferred_tool_key=preferred_tool_key,
+                    preferred_target_client_ids=preferred_target_client_ids,
+                    preferred_target_client_types=preferred_target_client_types,
+                    tool_target_routing_policy=tool_target_routing_policy,
                     completion_summary=completion_summary,
                     session_id=current_session_id,
                     source=source,

@@ -23,7 +23,7 @@ type WorkspaceWindowPayload = {
   workspace: ClientWorkspace | null
   procedureContext: ClientThreadProcedureContext | null
   connectionState: ConnectionState
-  desktopAgentConnected: boolean
+  desktopToolsAvailable: boolean
   operations: OperationView[]
   approvalDisplay: ApprovalDisplayModel | null
   pendingHumanInput: HumanInputRequestPayload | null
@@ -35,7 +35,7 @@ const EMPTY_PAYLOAD: WorkspaceWindowPayload = {
   workspace: null,
   procedureContext: null,
   connectionState: 'connecting',
-  desktopAgentConnected: false,
+  desktopToolsAvailable: false,
   operations: [],
   approvalDisplay: null,
   pendingHumanInput: null,
@@ -94,7 +94,7 @@ export default function WorkspaceWindow() {
               workspace={payload.workspace}
               procedureContext={procedureContext}
               connectionState={payload.connectionState}
-              desktopAgentConnected={payload.desktopAgentConnected}
+              desktopToolsAvailable={payload.desktopToolsAvailable}
               operations={payload.operations}
               approvalDisplay={payload.approvalDisplay}
               pendingHumanInput={payload.pendingHumanInput}

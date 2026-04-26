@@ -26,7 +26,7 @@ class _WorkspaceService:
             title="Study",
             base_mode="study",
             description="Study zone",
-            default_execution_target="specific_agent",
+            default_execution_target="specific_client",
             meta={"memory_ranking_policy": "workspace_first"},
         )
 
@@ -91,13 +91,8 @@ class _ClientService:
     def list_clients_for_workspace(self, workspace_id):
         if workspace_id == "workspace-row-personal":
             return [(SimpleNamespace(client_id="desktop-app", client_type="electron", display_name="Desktop"), SimpleNamespace())]
-        return []
-
-
-class _AgentService:
-    def list_agents_for_workspace(self, workspace_id):
         if workspace_id == "workspace-row-study":
-            return [SimpleNamespace(agent_id="study-agent", agent_type="desktop", display_name="Study Agent", status="ready")]
+            return [(SimpleNamespace(client_id="study-client", client_type="desktop", display_name="Study Client"), SimpleNamespace())]
         return []
 
 
@@ -125,7 +120,6 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
                     session=session_service,
                     thread=_ThreadService(),
                     client=client_service,
-                    agent=_AgentService(),
                 )
             )
         )
@@ -158,14 +152,13 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
                     session=_SessionService(),
                     thread=_ThreadService(),
                     client=_ClientService(),
-                    agent=_AgentService(),
                 )
             )
         )
 
         token = bind_event_context(session_id="sess_1", active_workspace_id="study")
         try:
-            result = await tools.list_workspaces(include_agents=True, include_clients=True)
+            result = await tools.list_workspaces(include_clients=True)
         finally:
             reset_event_context(token)
 
@@ -174,7 +167,7 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
         rows = {item["workspace_id"]: item for item in result["workspaces"]}
         self.assertTrue(rows["study"]["active"])
         self.assertFalse(rows["personal"]["active"])
-        self.assertEqual(rows["study"]["agents"][0]["agent_id"], "study-agent")
+        self.assertEqual(rows["study"]["clients"][0]["client_id"], "study-client")
         self.assertEqual(rows["personal"]["clients"][0]["client_id"], "desktop-app")
 
 

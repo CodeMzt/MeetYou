@@ -12,12 +12,12 @@ def _print_usage() -> None:
         "  python main.py launcher\n"
         "  python main.py service\n"
         "  python main.py cil\n"
-        "  python main.py desktop-agent\n"
-        "  python main.py edge-agent\n"
+        "  python main.py desktop-client\n"
+        "  python main.py edge-client\n"
         "\n生产可分离入口:\n"
         "  python -m service_runtime\n"
-        "  python -m desktop_agent\n"
-        "  python -m edge_agent\n"
+        "  python -m desktop_client\n"
+        "  python -m edge_client\n"
     )
 
 
@@ -27,16 +27,16 @@ def _run_service_mode(mode: str) -> None:
     service_runtime_main([mode])
 
 
-def _run_desktop_agent_mode() -> None:
-    from desktop_agent.main import main as desktop_agent_main
+def _run_desktop_client_mode() -> None:
+    from desktop_client.main import main as desktop_client_main
 
-    desktop_agent_main([])
+    desktop_client_main([])
 
 
-def _run_edge_agent_mode() -> None:
-    from edge_agent.main import main as edge_agent_main
+def _run_edge_client_mode() -> None:
+    from edge_client.main import main as edge_client_main
 
-    edge_agent_main([])
+    edge_client_main([])
 
 
 def main() -> None:
@@ -54,12 +54,12 @@ def main() -> None:
         _run_service_mode("cil")
         return
 
-    if mode == "desktop-agent":
-        _run_desktop_agent_mode()
+    if mode == "desktop-client":
+        _run_desktop_client_mode()
         return
 
-    if mode == "edge-agent":
-        _run_edge_agent_mode()
+    if mode == "edge-client":
+        _run_edge_client_mode()
         return
 
     _print_usage()

@@ -45,21 +45,21 @@ _INTERNAL_ASSISTANT_MODES = {
 }
 
 EXECUTION_TARGET_CORE_ONLY = "core_only"
-EXECUTION_TARGET_SPECIFIC_AGENT = "specific_agent"
-EXECUTION_TARGET_WORKSPACE_ANY_AGENT = "workspace_any_agent"
-EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE = "prefer_agent_fallback_core"
+EXECUTION_TARGET_SPECIFIC_CLIENT = "specific_client"
+EXECUTION_TARGET_WORKSPACE_ANY_CLIENT = "workspace_any_client"
+EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE = "prefer_client_fallback_core"
 
 EXECUTION_TARGETS = (
     EXECUTION_TARGET_CORE_ONLY,
-    EXECUTION_TARGET_SPECIFIC_AGENT,
-    EXECUTION_TARGET_WORKSPACE_ANY_AGENT,
-    EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE,
+    EXECUTION_TARGET_SPECIFIC_CLIENT,
+    EXECUTION_TARGET_WORKSPACE_ANY_CLIENT,
+    EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE,
 )
 
 _EXECUTION_TARGET_ALIASES = {
     "assistant": EXECUTION_TARGET_CORE_ONLY,
     "core": EXECUTION_TARGET_CORE_ONLY,
-    "desktop": EXECUTION_TARGET_SPECIFIC_AGENT,
+    "desktop": EXECUTION_TARGET_SPECIFIC_CLIENT,
 }
 
 
@@ -98,5 +98,5 @@ def normalize_execution_target(value: Any, *, fallback: str = EXECUTION_TARGET_C
     return fallback
 
 
-def requires_specific_agent(value: Any) -> bool:
-    return normalize_execution_target(value) == EXECUTION_TARGET_SPECIFIC_AGENT
+def requires_specific_client(value: Any) -> bool:
+    return normalize_execution_target(value) == EXECUTION_TARGET_SPECIFIC_CLIENT

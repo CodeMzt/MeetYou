@@ -133,7 +133,7 @@ def _check_platform_constraints() -> Iterable[CheckResult]:
         yield CheckResult(
             "desktop_windows_capabilities",
             "warn",
-            "desktop_agent Windows-only capabilities (pywin32, uiautomation, screen capture, local desktop UX acceptance) are not available in a Linux cloud container",
+            "desktop_client Windows-only capabilities (pywin32, uiautomation, screen capture, local desktop UX acceptance) are not available in a Linux cloud container",
         )
         yield CheckResult(
             "electron_windows_build",
@@ -163,7 +163,7 @@ def run_checks(profile: str) -> list[CheckResult]:
     checks.append(_check_command_version("node", "node", ["--version"], minimum=(18, 0, 0)))
     checks.append(_check_command_version("npm_version", "npm", ["--version"]))
     checks.append(_check_file(REPO_ROOT / "requirements-core.txt", "requirements_core"))
-    checks.append(_check_file(REPO_ROOT / "requirements-desktop-agent.txt", "requirements_desktop"))
+    checks.append(_check_file(REPO_ROOT / "requirements-desktop-client.txt", "requirements_desktop"))
     checks.append(_check_file(REPO_ROOT / "meetyou-ui" / "package.json", "frontend_package_json"))
     checks.append(_check_file(REPO_ROOT / "scripts" / "manual-acceptance.cmd", "windows_manual_acceptance"))
     checks.extend(_check_platform_constraints())
@@ -192,16 +192,9 @@ def run_checks(profile: str) -> list[CheckResult]:
     )
     checks.append(
         _check_env_presence(
-            "MEETYOU_AGENT_WS_ACCESS_TOKEN",
+            "MEETYOU_CLIENT_ACCESS_TOKEN",
             required=False,
-            reason="recommended only if cloud verification will exercise /agent/ws with a real agent token",
-        )
-    )
-    checks.append(
-        _check_env_presence(
-            "MEETYOU_AGENT_ACCESS_TOKEN",
-            required=False,
-            reason="legacy-compatible fallback for agent/ws tests when a dedicated WS token is not provided",
+            reason="recommended only if cloud verification will exercise /client/ws with a real client token",
         )
     )
     if profile == "desktop-local-acceptance" and platform.system() != "Windows":

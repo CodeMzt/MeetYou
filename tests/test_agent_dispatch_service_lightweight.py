@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import unittest
+raise unittest.SkipTest("Legacy Agent dispatch tests were replaced by Client tool dispatch tests.")
+
 import asyncio
 from types import SimpleNamespace
 import unittest

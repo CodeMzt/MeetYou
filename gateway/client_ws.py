@@ -28,6 +28,10 @@ class ClientWebSocketManager:
                 "workspace_id": "",
                 "client_type": "",
                 "display_name": "",
+                "transport_profile": "",
+                "available_tools": [],
+                "executable_tools": [],
+                "host": {},
                 "connected_at": now,
                 "updated_at": now,
             }
@@ -56,6 +60,10 @@ class ClientWebSocketManager:
         workspace_id: str = "",
         client_type: str = "",
         display_name: str = "",
+        transport_profile: str = "",
+        available_tools: list | None = None,
+        executable_tools: list | None = None,
+        host: dict | None = None,
     ) -> None:
         normalized_client_id = str(client_id or "").strip()
         normalized_session_id = str(session_id or "").strip()
@@ -85,6 +93,10 @@ class ClientWebSocketManager:
                 "workspace_id": normalized_workspace_id or str(previous.get("workspace_id") or "").strip(),
                 "client_type": str(client_type or previous.get("client_type") or "").strip(),
                 "display_name": str(display_name or previous.get("display_name") or "").strip(),
+                "transport_profile": str(transport_profile or previous.get("transport_profile") or "").strip(),
+                "available_tools": list(available_tools if available_tools is not None else previous.get("available_tools") or []),
+                "executable_tools": list(executable_tools if executable_tools is not None else previous.get("executable_tools") or []),
+                "host": dict(host if isinstance(host, dict) else previous.get("host") or {}),
                 "connected_at": str(previous.get("connected_at") or now),
                 "updated_at": now,
             }
@@ -132,6 +144,14 @@ class ClientWebSocketManager:
 
     def has_connections(self, thread_id: str) -> bool:
         return bool(self._connections.get(thread_id, set()))
+
+    async def connected_client_ids(self) -> set[str]:
+        async with self._lock:
+            return {
+                str(client_id or "").strip()
+                for client_id, connections in self._client_connections.items()
+                if str(client_id or "").strip() and connections
+            }
 
     async def snapshot(self, *, thread_id: str = "", client_id: str = "", session_id: str = "", workspace_id: str = "") -> list[dict]:
         normalized_thread_id = str(thread_id or "").strip()
@@ -243,6 +263,9 @@ class ClientWebSocketManager:
             session_id=session_id,
             workspace_id=workspace_id,
         )
+
+    async def send_client_tool_call(self, client_id: str, payload: dict) -> bool:
+        return bool(await self.send_to_client(client_id, dict(payload or {})))
 
     @staticmethod
     def connection_payload(thread_id: str) -> dict:

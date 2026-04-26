@@ -17,7 +17,7 @@ export default function App() {
     sendMessage,
     connectionState,
     connected,
-    desktopAgentConnected,
+    desktopToolsAvailable,
     runtimeSnapshot,
     usageSnapshot,
     approvalDisplay,
@@ -115,7 +115,7 @@ export default function App() {
       <Titlebar
         connectionState={connectionState}
         workspace={workspace}
-        desktopAgentConnected={desktopAgentConnected}
+        desktopToolsAvailable={desktopToolsAvailable}
         isPinned={isPinned}
         onTogglePin={togglePin}
       />

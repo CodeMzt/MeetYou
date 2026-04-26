@@ -25,7 +25,7 @@ _heartbeat_settings_provider = None
 _heartbeat_settings_updater = None
 _temporary_reply_emitter = None
 _core_restart_handler = None
-_agent_dispatcher = None
+_client_tool_dispatcher = None
 _allow_local_fallback = True
 
 _DEFAULT_BLACKLIST_PATTERNS = [
@@ -103,13 +103,13 @@ def set_core_restart_handler(handler):
     _core_restart_handler = handler
 
 
-def set_agent_dispatcher(dispatcher):
-    global _agent_dispatcher
-    _agent_dispatcher = dispatcher
+def set_client_tool_dispatcher(dispatcher):
+    global _client_tool_dispatcher
+    _client_tool_dispatcher = dispatcher
 
 
 def set_capability_dispatcher(dispatcher):
-    set_agent_dispatcher(dispatcher)
+    set_client_tool_dispatcher(dispatcher)
 
 
 def set_local_fallback_enabled(enabled: bool):
@@ -220,14 +220,14 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: b
             return f"[用户已拒绝] 命令未执行: {cmd}"
         logger.info(f"用户确认执行危险命令: {cmd}")
 
-    if _agent_dispatcher is not None:
-        dispatch = getattr(_agent_dispatcher, "dispatch_agent_capability", None)
+    if _client_tool_dispatcher is not None:
+        dispatch = getattr(_client_tool_dispatcher, "dispatch_directed_tool", None)
         if not callable(dispatch):
-            dispatch = getattr(_agent_dispatcher, "dispatch_local_capability", None)
+            dispatch = getattr(_client_tool_dispatcher, "dispatch_workspace_tool", None)
         if not callable(dispatch):
-            raise RuntimeError("Capability dispatcher does not support capability dispatch")
+            raise RuntimeError("Client tool dispatcher does not support directed tool dispatch")
         result = await dispatch(
-            capability_suffix="shell.exec",
+            tool_key="shell.exec",
             arguments={"command": cmd},
             session_id=session_id,
             title=f"Shell Command: {cmd[:48]}",
@@ -237,10 +237,10 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: b
 
     if not _allow_local_fallback:
         error = RuntimeError("Core local fallback is disabled")
-        error.tool_error_code = "local_agent_required"
-        error.tool_error_message = "当前 Core 不再直接执行本地命令，请连接 Desktop Agent 后重试。"
+        error.tool_error_code = "local_client_required"
+        error.tool_error_message = "当前 Core 不再直接执行本地命令，请连接具备 shell.exec 的 Desktop Client 后重试。"
         error.tool_error_details = {
-            "capability_suffix": "shell.exec",
+            "tool_key": "shell.exec",
             "session_id": str(session_id or ""),
             "command": str(cmd or ""),
         }

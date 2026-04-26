@@ -13,7 +13,6 @@ from sqlalchemy import inspect, text
 from core.db.base import utcnow
 from core.db.engine import create_db_engine, create_session_factory
 from core.db.repositories import (
-    AgentRepository,
     ApprovalRepository,
     AttachmentRepository,
     ContextPoolRepository,
@@ -29,8 +28,8 @@ from core.db.repositories import (
 ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = ROOT / "alembic.ini"
 TEST_DATABASE_NAME = "meetyou_phase1_test"
-ADMIN_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
-TEST_DATABASE_URL = f"postgresql+psycopg://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}"
+ADMIN_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/postgres?connect_timeout=5"
+TEST_DATABASE_URL = f"postgresql+psycopg://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}?connect_timeout=5"
 
 
 class DatabasePhase1Tests(unittest.TestCase):
@@ -88,8 +87,6 @@ class DatabasePhase1Tests(unittest.TestCase):
                 "principals",
                 "clients",
                 "workspaces",
-                "agents",
-                "workspace_agent_memberships",
                 "threads",
                 "sessions",
                 "operations",
@@ -99,13 +96,15 @@ class DatabasePhase1Tests(unittest.TestCase):
                 "context_pool_items",
             }.issubset(tables)
         )
+        self.assertNotIn("agents", tables)
+        self.assertNotIn("workspace_agent_memberships", tables)
+        self.assertNotIn("agent_capability_snapshots", tables)
 
     def test_repositories_can_create_phase1_resource_chain(self):
         with self.session_factory() as session:
             principal_repo = PrincipalRepository(session)
             client_repo = ClientRepository(session)
             workspace_repo = WorkspaceRepository(session)
-            agent_repo = AgentRepository(session)
             context_pool_repo = ContextPoolRepository(session)
             thread_repo = ThreadRepository(session)
             session_repo = SessionRepository(session)
@@ -119,20 +118,16 @@ class DatabasePhase1Tests(unittest.TestCase):
                 principal_id=principal.id,
                 client_type="electron",
                 display_name="Desktop Main",
+                status="online",
+                available_tools=["file.read", "shell.exec"],
+                executable_tools=["file.read", "shell.exec"],
+                transport_profile="desktop_wss",
             )
             workspace = workspace_repo.create(
                 workspace_id="personal",
                 principal_id=principal.id,
                 title="Personal",
             )
-            agent = agent_repo.create(
-                agent_id="desktop-main-agent",
-                principal_id=principal.id,
-                agent_type="desktop",
-                display_name="Desktop Agent",
-                transport_profile="desktop_wss",
-            )
-            agent_repo.bind_workspace(workspace_id=workspace.id, agent_id=agent.id)
             client_repo.bind_workspace(workspace_id=workspace.id, client_id=client.id)
             thread = thread_repo.create(
                 thread_id=f"thr_{uuid.uuid4().hex}",
@@ -163,7 +158,8 @@ class DatabasePhase1Tests(unittest.TestCase):
                 thread_id=thread.id,
                 workspace_id=workspace.id,
                 operation_type="capture_screenshot",
-                execution_target="specific_agent",
+                execution_target="specific_client",
+                target_client_id=client.id,
                 title="Capture screenshot",
             )
             approval = approval_repo.create(
@@ -186,7 +182,6 @@ class DatabasePhase1Tests(unittest.TestCase):
             self.assertIsNotNone(principal_repo.get_by_principal_key("self"))
             self.assertIsNotNone(client_repo.get_by_client_id("desktop-main"))
             self.assertIsNotNone(workspace_repo.get_by_workspace_id("personal"))
-            self.assertIsNotNone(agent_repo.get_by_agent_id("desktop-main-agent"))
             self.assertTrue(client_repo.is_bound_to_workspace(client_id="desktop-main", workspace_id=workspace.id))
             self.assertIsNotNone(thread_repo.get_by_thread_id(thread.thread_id))
             self.assertIsNotNone(session_repo.get_by_session_id(conversation.session_id))

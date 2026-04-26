@@ -7,7 +7,7 @@ import type { ClientProcedure } from '../../types'
 export function useProcedures(
   baseUrl: string,
   clientContext: ClientContext | null,
-  desktopAgentId: string,
+  desktopToolClientId: string,
   dispatchTransport: any,
   dispatchChat: any
 ) {
@@ -45,10 +45,10 @@ export function useProcedures(
       }
 
       try {
-        const preferredCapabilityRef = procedure.preferred_capability_ref || procedure.recommended_capabilities[0] || ''
-        const targetAgentId = procedure.default_execution_target === 'specific_agent' ? desktopAgentId : ''
-        if (procedure.default_execution_target === 'specific_agent' && !targetAgentId) {
-          throw new Error(`规程 ${procedure.title} 需要明确的 Agent，但当前 workspace 没有可用桌面 Agent`)
+        const preferredToolKey = procedure.preferred_tool_key || procedure.recommended_tools[0] || ''
+        const targetClientId = procedure.default_execution_target === 'specific_client' ? desktopToolClientId : ''
+        if (procedure.default_execution_target === 'specific_client' && !targetClientId) {
+          throw new Error(`规程 ${procedure.title} 需要明确的 Client，但当前 workspace 没有可用桌面工具 Client`)
         }
         
         await createClientOperation(baseUrl, {
@@ -59,15 +59,15 @@ export function useProcedures(
           title: customTitle || `执行规程: ${procedure.title}`,
           operation_type: 'procedure_call',
           execution_target: procedure.default_execution_target,
-          target_agent_id: targetAgentId || undefined,
-          capability_id: preferredCapabilityRef || undefined,
+          target_client_id: targetClientId || undefined,
+          tool_key: preferredToolKey || undefined,
           arguments: {
             procedure_id: procedure.procedure_id,
             procedure_title: procedure.title,
-            preferred_capability_ref: procedure.preferred_capability_ref || undefined,
-            preferred_agent_ids: procedure.preferred_agent_ids,
-            preferred_agent_types: procedure.preferred_agent_types,
-            agent_routing_policy: procedure.agent_routing_policy,
+            preferred_tool_key: procedure.preferred_tool_key || undefined,
+            preferred_target_client_ids: procedure.preferred_target_client_ids,
+            preferred_target_client_types: procedure.preferred_target_client_types,
+            tool_target_routing_policy: procedure.tool_target_routing_policy,
           },
         })
 
@@ -92,7 +92,7 @@ export function useProcedures(
         })
       }
     },
-    [baseUrl, clientContext, desktopAgentId, procedures, dispatchTransport, dispatchChat]
+    [baseUrl, clientContext, desktopToolClientId, procedures, dispatchTransport, dispatchChat]
   )
 
   return {

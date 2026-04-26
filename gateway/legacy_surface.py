@@ -1,5 +1,5 @@
 """
-Legacy gateway migration surfaces isolated from the formal client/agent routes.
+Legacy gateway migration surfaces isolated from the formal Client routes.
 """
 
 from __future__ import annotations

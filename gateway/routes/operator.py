@@ -19,7 +19,7 @@ from gateway.models import (
     MemoryRecordMutationResponse,
     MemoryRecordPatchRequest,
     MemorySnapshotResponse,
-    OperatorAgentResponse,
+    OperatorClientResponse,
     OperatorSourceProfileResponse,
     OperatorWorkspaceCreateRequest,
     OperatorWorkspaceUpdateRequest,
@@ -40,14 +40,14 @@ def _workspace_response(workspace) -> OperatorWorkspaceResponse:
         description=governance["description"],
         prompt_overlay=governance["prompt_overlay"],
         default_execution_target=governance["default_execution_target"],
-        capability_policy=governance["capability_policy"],
-        allowed_capability_ids=governance["allowed_capability_ids"],
-        preferred_agent_ids=governance["preferred_agent_ids"],
-        preferred_agent_types=governance["preferred_agent_types"],
+        tool_policy=governance["tool_policy"],
+        allowed_tool_ids=governance["allowed_tool_ids"],
+        preferred_target_client_ids=governance["preferred_target_client_ids"],
+        preferred_target_client_types=governance["preferred_target_client_types"],
         preferred_source_profiles=governance["preferred_source_profiles"],
-        agent_routing_policy=governance["agent_routing_policy"],
+        tool_target_routing_policy=governance["tool_target_routing_policy"],
         memory_ranking_policy=governance["memory_ranking_policy"],
-        capability_routing_overrides=governance["capability_routing_overrides"],
+        tool_routing_overrides=governance["tool_routing_overrides"],
     )
 
 
@@ -277,24 +277,22 @@ def build_operator_router(gateway) -> APIRouter:
             health_payload = HealthResponse(**payload)
         return HealthEnvelopeResponse(schema_name="meetyou.http.v1", health=health_payload)
 
-    @router.get("/agents", response_model=list[OperatorAgentResponse])
-    async def list_agents(request: Request):
+    @router.get("/clients", response_model=list[OperatorClientResponse])
+    async def list_clients(request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         rows = []
-        for agent in domain.services.agent.list_agents():
-            workspaces = domain.services.agent.list_workspaces(agent.agent_id)
-            owner_client = domain.services.client.get_by_id(agent.owner_client_id) if getattr(agent, "owner_client_id", None) else None
+        for client in domain.services.client.list_clients():
+            bindings = domain.services.client.list_workspace_bindings(client.client_id)
             rows.append(
-                OperatorAgentResponse(
-                    agent_id=agent.agent_id,
-                    agent_type=agent.agent_type,
-                    display_name=agent.display_name,
-                    transport_profile=agent.transport_profile,
-                    status=agent.status,
-                    last_seen_at=agent.last_seen_at.isoformat() if agent.last_seen_at is not None else "",
-                    owner_client_id=getattr(owner_client, "client_id", ""),
-                    workspace_ids=[workspace.workspace_id for workspace in workspaces],
+                OperatorClientResponse(
+                    client_id=client.client_id,
+                    client_type=client.client_type,
+                    display_name=client.display_name,
+                    transport_profile=client.transport_profile,
+                    status=client.status,
+                    last_seen_at=client.last_seen_at.isoformat() if client.last_seen_at is not None else "",
+                    workspace_ids=[workspace.workspace_id for workspace, _membership in bindings],
                 )
             )
         return rows
@@ -342,14 +340,14 @@ def build_operator_router(gateway) -> APIRouter:
             prompt_overlay=str(payload.prompt_overlay or "").strip(),
             default_execution_target=str(payload.default_execution_target or "core_only").strip() or "core_only",
             metadata={
-                "capability_policy": str(payload.capability_policy or "").strip(),
-                "allowed_capability_ids": list(payload.allowed_capability_ids or []),
-                "preferred_agent_ids": list(payload.preferred_agent_ids or []),
-                "preferred_agent_types": list(payload.preferred_agent_types or []),
+                "tool_policy": str(payload.tool_policy or "").strip(),
+                "allowed_tool_ids": list(payload.allowed_tool_ids or []),
+                "preferred_target_client_ids": list(payload.preferred_target_client_ids or []),
+                "preferred_target_client_types": list(payload.preferred_target_client_types or []),
                 "preferred_source_profiles": _validate_source_profiles(gateway, payload.preferred_source_profiles),
-                "agent_routing_policy": str(payload.agent_routing_policy or "").strip(),
+                "tool_target_routing_policy": str(payload.tool_target_routing_policy or "").strip(),
                 "memory_ranking_policy": _validate_memory_ranking_policy(gateway, payload.memory_ranking_policy),
-                "capability_routing_overrides": dict(payload.capability_routing_overrides or {}),
+                "tool_routing_overrides": dict(payload.tool_routing_overrides or {}),
             },
         )
         return _workspace_response(workspace)
