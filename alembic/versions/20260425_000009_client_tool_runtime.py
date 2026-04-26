@@ -18,21 +18,16 @@ branch_labels = None
 depends_on = None
 
 
+def _quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
 def _drop_constraint_if_exists(table: str, constraint: str) -> None:
     op.execute(
         sa.text(
-            """
-            DO $$
-            BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.table_constraints
-                    WHERE table_name = :table_name AND constraint_name = :constraint_name
-                ) THEN
-                    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', :table_name, :constraint_name);
-                END IF;
-            END $$;
-            """
-        ).bindparams(table_name=table, constraint_name=constraint)
+            "ALTER TABLE IF EXISTS "
+            f"{_quote_identifier(table)} DROP CONSTRAINT IF EXISTS {_quote_identifier(constraint)}"
+        )
     )
 
 
