@@ -9,9 +9,8 @@ from alembic.config import Config as AlembicConfig
 from core.config import ConfigManager
 from core.db.engine import create_db_engine, create_session_factory, get_database_url
 from core.storage.object_store import build_object_store
-from core.services.agent_dispatch_service import AgentDispatchService
+from core.services.client_tool_dispatch_service import ClientToolDispatchService
 from core.services import (
-    AgentService,
     ApprovalService,
     AttachmentService,
     CapabilityService,
@@ -44,14 +43,14 @@ DEFAULT_WORKSPACES = (
         "prompt_overlay": "把这里视为默认个人工作空间；除非用户明确要求专门流程，否则优先给出简洁、通用、可直接执行的帮助。",
         "default_execution_target": "core_only",
         "metadata": {
-            "capability_policy": "allow_all",
-            "allowed_capability_ids": [],
-            "preferred_agent_ids": [],
-            "preferred_agent_types": [],
+            "tool_policy": "allow_all",
+            "allowed_tool_ids": [],
+            "preferred_target_client_ids": [],
+            "preferred_target_client_types": [],
             "preferred_source_profiles": ["workspace_local"],
-            "agent_routing_policy": "balanced",
+            "tool_target_routing_policy": "balanced",
             "memory_ranking_policy": "workspace_first",
-            "capability_routing_overrides": {},
+            "tool_routing_overrides": {},
         },
     },
     {
@@ -60,16 +59,16 @@ DEFAULT_WORKSPACES = (
         "description": "主桌面开发与本地自动化工作空间。",
         "base_mode": "automation",
         "prompt_overlay": "该工作区绑定到主桌面环境；优先采用本地开发工作流、可复现诊断步骤，并在写入操作前明确提醒人工确认。",
-        "default_execution_target": "specific_agent",
+        "default_execution_target": "specific_client",
         "metadata": {
-            "capability_policy": "allow_all",
-            "allowed_capability_ids": [],
-            "preferred_agent_ids": [],
-            "preferred_agent_types": ["desktop"],
+            "tool_policy": "allow_all",
+            "allowed_tool_ids": [],
+            "preferred_target_client_ids": [],
+            "preferred_target_client_types": ["desktop"],
             "preferred_source_profiles": ["workspace_local"],
-            "agent_routing_policy": "balanced",
+            "tool_target_routing_policy": "balanced",
             "memory_ranking_policy": "workspace_first",
-            "capability_routing_overrides": {},
+            "tool_routing_overrides": {},
         },
     },
     {
@@ -80,14 +79,14 @@ DEFAULT_WORKSPACES = (
         "prompt_overlay": "当任务符合学习场景时，优先采用教学式解释、结构化笔记和复习题。",
         "default_execution_target": "core_only",
         "metadata": {
-            "capability_policy": "allow_all",
-            "allowed_capability_ids": [],
-            "preferred_agent_ids": [],
-            "preferred_agent_types": [],
+            "tool_policy": "allow_all",
+            "allowed_tool_ids": [],
+            "preferred_target_client_ids": [],
+            "preferred_target_client_types": [],
             "preferred_source_profiles": ["study_materials"],
-            "agent_routing_policy": "balanced",
+            "tool_target_routing_policy": "balanced",
             "memory_ranking_policy": "workspace_first",
-            "capability_routing_overrides": {},
+            "tool_routing_overrides": {},
         },
     },
     {
@@ -96,16 +95,16 @@ DEFAULT_WORKSPACES = (
         "description": "家庭实验室、边缘节点与设备编排工作空间。",
         "base_mode": "automation",
         "prompt_overlay": "假设该工作区负责共享实验室设备；当执行离开 Core 时，优先采用感知设备环境的自动化方案并路由到可用工作区代理。",
-        "default_execution_target": "workspace_any_agent",
+        "default_execution_target": "workspace_any_client",
         "metadata": {
-            "capability_policy": "allow_all",
-            "allowed_capability_ids": [],
-            "preferred_agent_ids": [],
-            "preferred_agent_types": ["raspi", "desktop"],
+            "tool_policy": "allow_all",
+            "allowed_tool_ids": [],
+            "preferred_target_client_ids": [],
+            "preferred_target_client_types": ["raspi", "desktop"],
             "preferred_source_profiles": ["workspace_local"],
-            "agent_routing_policy": "balanced",
+            "tool_target_routing_policy": "balanced",
             "memory_ranking_policy": "workspace_first",
-            "capability_routing_overrides": {},
+            "tool_routing_overrides": {},
         },
     },
 )
@@ -121,10 +120,10 @@ DEFAULT_PROCEDURES = (
         "default_execution_target": "core_only",
         "risk_profile": "read",
         "meta": {
-            "preferred_capability_ref": "search_web",
-            "preferred_agent_ids": [],
-            "preferred_agent_types": [],
-            "agent_routing_policy": "balanced",
+            "preferred_tool_key": "search_web",
+            "preferred_target_client_ids": [],
+            "preferred_target_client_types": [],
+            "tool_target_routing_policy": "balanced",
             "infer_keywords": ["research", "digest", "latest", "news", "updates", "monitor"],
         },
     },
@@ -139,10 +138,10 @@ DEFAULT_PROCEDURES = (
         "default_execution_target": "core_only",
         "risk_profile": "read",
         "meta": {
-            "preferred_capability_ref": "search_memory",
-            "preferred_agent_ids": [],
-            "preferred_agent_types": [],
-            "agent_routing_policy": "balanced",
+            "preferred_tool_key": "search_memory",
+            "preferred_target_client_ids": [],
+            "preferred_target_client_types": [],
+            "tool_target_routing_policy": "balanced",
             "infer_keywords": ["code review", "review", "patch", "diff", "regression", "bug", "代码审查"],
         },
     },
@@ -154,14 +153,14 @@ DEFAULT_PROCEDURES = (
         "applicable_modes": ["automation", "general"],
         "recommended_capabilities": ["search_memory", "manage_tasks"],
         "recommended_source_profiles": ["workspace_local"],
-        "default_execution_target": "specific_agent",
+        "default_execution_target": "specific_client",
         "risk_profile": "write",
         "meta": {
-            "preferred_capability_ref": "manage_tasks",
-            "preferred_agent_ids": [],
-            "preferred_agent_types": ["desktop"],
-            "agent_routing_policy": "balanced",
-            "infer_keywords": ["desktop", "agent", "fix", "repair", "shell", "command", "桌面", "修复"],
+            "preferred_tool_key": "manage_tasks",
+            "preferred_target_client_ids": [],
+            "preferred_target_client_types": ["desktop"],
+            "tool_target_routing_policy": "balanced",
+            "infer_keywords": ["desktop", "client", "fix", "repair", "shell", "command", "桌面", "修复"],
         },
     },
     {
@@ -175,10 +174,10 @@ DEFAULT_PROCEDURES = (
         "default_execution_target": "core_only",
         "risk_profile": "read",
         "meta": {
-            "preferred_capability_ref": "summarize_text",
-            "preferred_agent_ids": [],
-            "preferred_agent_types": [],
-            "agent_routing_policy": "balanced",
+            "preferred_tool_key": "summarize_text",
+            "preferred_target_client_ids": [],
+            "preferred_target_client_types": [],
+            "tool_target_routing_policy": "balanced",
             "infer_keywords": ["study", "note", "notes", "synthesis", "review question", "学习", "笔记", "复习"],
         },
     },
@@ -191,7 +190,7 @@ class CoreDomainContext:
     engine: object
     session_factory: object
     services: CoreServices
-    agent_dispatch: AgentDispatchService
+    client_tool_dispatch: ClientToolDispatchService
     principal: object
     workspaces: dict[str, object]
 
@@ -213,8 +212,8 @@ def build_core_services(session_factory) -> CoreServices:
         principal=PrincipalService(session_factory),
         workspace=WorkspaceService(session_factory),
         client=ClientService(session_factory),
-        agent=AgentService(session_factory),
         capability=CapabilityService(session_factory),
+        tool=CapabilityService(session_factory),
         procedure=ProcedureService(session_factory),
         thread=ThreadService(session_factory),
         session=SessionService(session_factory),
@@ -250,8 +249,8 @@ def bootstrap_core_domain(
         principal=PrincipalService(session_factory),
         workspace=WorkspaceService(session_factory),
         client=ClientService(session_factory),
-        agent=AgentService(session_factory),
         capability=CapabilityService(session_factory),
+        tool=CapabilityService(session_factory),
         procedure=ProcedureService(session_factory),
         thread=ThreadService(session_factory),
         session=SessionService(session_factory),
@@ -266,8 +265,8 @@ def bootstrap_core_domain(
         memory_state=MemoryStateService(session_factory),
         task_state=TaskStateService(session_factory),
     )
-    agent_dispatch = AgentDispatchService(
-        agent_service=services.agent,
+    client_tool_dispatch = ClientToolDispatchService(
+        client_service=services.client,
         capability_service=services.capability,
         session_service=services.session,
         thread_service=services.thread,
@@ -313,7 +312,7 @@ def bootstrap_core_domain(
         engine=engine,
         session_factory=session_factory,
         services=services,
-        agent_dispatch=agent_dispatch,
+        client_tool_dispatch=client_tool_dispatch,
         principal=principal,
         workspaces=workspaces,
     )

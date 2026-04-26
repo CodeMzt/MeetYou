@@ -354,11 +354,11 @@ class ClientProcedureResponse(BaseModel):
     title: str = ""
     description: str = ""
     applicable_modes: list[str] = Field(default_factory=list)
-    recommended_capabilities: list[str] = Field(default_factory=list)
-    preferred_capability_ref: str = ""
-    preferred_agent_ids: list[str] = Field(default_factory=list)
-    preferred_agent_types: list[str] = Field(default_factory=list)
-    agent_routing_policy: str = "balanced"
+    recommended_tools: list[str] = Field(default_factory=list)
+    preferred_tool_key: str = ""
+    preferred_target_client_ids: list[str] = Field(default_factory=list)
+    preferred_target_client_types: list[str] = Field(default_factory=list)
+    tool_target_routing_policy: str = "balanced"
     default_execution_target: str = ""
     risk_profile: str = ""
     status: str = "active"
@@ -609,7 +609,9 @@ class ClientOperationCreateRequest(BaseModel):
     title: str = ""
     operation_type: str
     execution_target: str = ""
-    target_agent_id: str | None = None
+    target_client_id: str | None = None
+    tool_key: str | None = None
+    tool_id: str | None = None
     capability_id: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
 
@@ -628,7 +630,9 @@ class ClientOperationResponse(BaseModel):
     title: str = ""
     operation_type: str
     execution_target: str
-    target_agent_id: str = ""
+    target_client_id: str = ""
+    tool_key: str = ""
+    tool_id: str = ""
     capability_id: str = ""
     status: str = "queued"
     approval_id: str = ""
@@ -667,14 +671,14 @@ class ClientWorkspaceResponse(BaseModel):
     description: str = ""
     prompt_overlay: str = ""
     default_execution_target: str = "core_only"
-    capability_policy: str = "allow_all"
-    allowed_capability_ids: list[str] = Field(default_factory=list)
-    preferred_agent_ids: list[str] = Field(default_factory=list)
-    preferred_agent_types: list[str] = Field(default_factory=list)
+    tool_policy: str = "allow_all"
+    allowed_tool_ids: list[str] = Field(default_factory=list)
+    preferred_target_client_ids: list[str] = Field(default_factory=list)
+    preferred_target_client_types: list[str] = Field(default_factory=list)
     preferred_source_profiles: list[str] = Field(default_factory=list)
-    agent_routing_policy: str = "balanced"
+    tool_target_routing_policy: str = "balanced"
     memory_ranking_policy: str = "workspace_first"
-    capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
+    tool_routing_overrides: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("base_mode", mode="before")
     @classmethod
@@ -778,22 +782,15 @@ class ClientDanxiSummaryResponse(BaseModel):
     generated_at: str = ""
 
 
-class ClientAvailableAgentResponse(BaseModel):
-    agent_id: str
-    display_name: str
-    agent_type: str
-    status: str
-    transport_profile: str
-    owner_client_id: str = ""
-    workspace_ids: list[str] = Field(default_factory=list)
-
-
 class ClientAvailableClientResponse(BaseModel):
     client_id: str
     display_name: str
     client_type: str
     status: str
     workspace_ids: list[str] = Field(default_factory=list)
+    transport_profile: str = ""
+    available_tools: list[str] = Field(default_factory=list)
+    executable_tools: list[str] = Field(default_factory=list)
     membership_role: str = "member"
     enabled: bool = True
 
@@ -825,14 +822,14 @@ class OperatorWorkspaceCreateRequest(BaseModel):
     base_mode: str = "general"
     prompt_overlay: str = ""
     default_execution_target: str = "core_only"
-    capability_policy: str = ""
-    allowed_capability_ids: list[str] = Field(default_factory=list)
-    preferred_agent_ids: list[str] = Field(default_factory=list)
-    preferred_agent_types: list[str] = Field(default_factory=list)
+    tool_policy: str = ""
+    allowed_tool_ids: list[str] = Field(default_factory=list)
+    preferred_target_client_ids: list[str] = Field(default_factory=list)
+    preferred_target_client_types: list[str] = Field(default_factory=list)
     preferred_source_profiles: list[str] = Field(default_factory=list)
-    agent_routing_policy: str = ""
+    tool_target_routing_policy: str = ""
     memory_ranking_policy: str = "workspace_first"
-    capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
+    tool_routing_overrides: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("base_mode", mode="before")
     @classmethod
@@ -874,14 +871,14 @@ class OperatorWorkspaceResponse(BaseModel):
     description: str = ""
     prompt_overlay: str = ""
     default_execution_target: str = "core_only"
-    capability_policy: str = "allow_all"
-    allowed_capability_ids: list[str] = Field(default_factory=list)
-    preferred_agent_ids: list[str] = Field(default_factory=list)
-    preferred_agent_types: list[str] = Field(default_factory=list)
+    tool_policy: str = "allow_all"
+    allowed_tool_ids: list[str] = Field(default_factory=list)
+    preferred_target_client_ids: list[str] = Field(default_factory=list)
+    preferred_target_client_types: list[str] = Field(default_factory=list)
     preferred_source_profiles: list[str] = Field(default_factory=list)
-    agent_routing_policy: str = "balanced"
+    tool_target_routing_policy: str = "balanced"
     memory_ranking_policy: str = "workspace_first"
-    capability_routing_overrides: dict[str, Any] = Field(default_factory=dict)
+    tool_routing_overrides: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("base_mode", mode="before")
     @classmethod
@@ -894,9 +891,9 @@ class OperatorWorkspaceResponse(BaseModel):
         return normalize_execution_target(value)
 
 
-class OperatorAgentResponse(BaseModel):
-    agent_id: str
-    agent_type: str
+class OperatorClientResponse(BaseModel):
+    client_id: str
+    client_type: str
     display_name: str
     transport_profile: str
     status: str

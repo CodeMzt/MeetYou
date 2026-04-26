@@ -11,14 +11,14 @@ const workspace: ClientWorkspace = {
   description: '学习资料、笔记与复盘工作空间。',
   prompt_overlay: '',
   default_execution_target: 'core_only',
-  capability_policy: 'allow_all',
-  allowed_capability_ids: [],
-  preferred_agent_ids: [],
-  preferred_agent_types: [],
+  tool_policy: 'allow_all',
+  allowed_tool_ids: [],
+  preferred_target_client_ids: [],
+  preferred_target_client_types: [],
   preferred_source_profiles: ['study_materials', 'workspace_local'],
-  agent_routing_policy: 'balanced',
+  tool_target_routing_policy: 'balanced',
   memory_ranking_policy: 'workspace_first',
-  capability_routing_overrides: {},
+  tool_routing_overrides: {},
 }
 
 describe('WorkspaceGovernanceEditor', () => {

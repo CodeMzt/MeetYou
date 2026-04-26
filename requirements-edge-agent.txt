@@ -1,4 +1,0 @@
-# Edge Agent production dependencies.
-aiohttp
-pydantic
-python-dotenv

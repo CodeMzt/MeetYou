@@ -11,9 +11,6 @@ from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
-from Crypto.Cipher import AES
-from Crypto.Cipher import PKCS1_v1_5
-from Crypto.PublicKey import RSA
 
 from core.credential_transport import CredentialTransportError, decrypt_json_payload, encrypt_json_payload
 
@@ -25,6 +22,23 @@ class DanxiError(RuntimeError):
 _SHARED_DANXI_TOOLS: "DanxiTools | None" = None
 _DANXI_PERSISTENCE_PURPOSE = "danxi.session.persistence.v1"
 logger = logging.getLogger("meetyou.danxi")
+
+
+def _aes_cipher():
+    try:
+        from Crypto.Cipher import AES
+    except Exception as exc:  # pragma: no cover - optional Danxi crypto dependency
+        raise DanxiError("Danxi/WebVPN crypto dependency is unavailable.") from exc
+    return AES
+
+
+def _rsa_cipher():
+    try:
+        from Crypto.Cipher import PKCS1_v1_5
+        from Crypto.PublicKey import RSA
+    except Exception as exc:  # pragma: no cover - optional Danxi crypto dependency
+        raise DanxiError("Danxi/WebVPN crypto dependency is unavailable.") from exc
+    return RSA, PKCS1_v1_5
 
 
 def _compact_dict(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1132,6 +1146,7 @@ class DanxiTools:
 
     @staticmethod
     def _encrypt_webvpn_password(password: str, public_key_b64: str) -> str:
+        RSA, PKCS1_v1_5 = _rsa_cipher()
         public_key = RSA.import_key(base64.b64decode(public_key_b64))
         cipher = PKCS1_v1_5.new(public_key)
         encrypted = cipher.encrypt(password.encode("utf-8"))
@@ -1190,6 +1205,7 @@ class DanxiTools:
             remainder = len(padded) % 16
             if remainder:
                 padded += "0" * (16 - remainder)
+            AES = _aes_cipher()
             cipher = AES.new(self._WEBVPN_KEY, AES.MODE_CFB, iv=self._WEBVPN_KEY, segment_size=128)
             encrypted = cipher.encrypt(padded.encode("utf-8")).hex()
             encoded_host = self._WEBVPN_KEY.hex() + encrypted[: 2 * len(formatted_host)]

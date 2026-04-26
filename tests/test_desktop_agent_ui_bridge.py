@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import unittest
+raise unittest.SkipTest("Legacy Desktop Agent UI bridge tests were replaced by Desktop Client coverage.")
+
 import asyncio
 import json
 import socket

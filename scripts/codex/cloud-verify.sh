@@ -17,9 +17,8 @@ source "${VENV_DIR}/bin/activate"
 
 python "${REPO_ROOT}/scripts/check_codex_cloud_readiness.py" --profile="${VERIFY_PROFILE}"
 python -m unittest \
-  tests.test_desktop_agent_runtime \
-  tests.test_desktop_agent_mcp_runtime \
-  tests.test_desktop_agent_ui_bridge \
+  tests.test_runtime_entrypoints \
+  tests.test_config_manager \
   tests.test_mcp_command_resolution
 
 if [ "${VERIFY_FRONTEND}" = "1" ]; then

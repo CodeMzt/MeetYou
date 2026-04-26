@@ -13,12 +13,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from agent_protocol import build_agent_message
+from client_tool_protocol import build_client_message
 from core.exceptions import ConfigError
 from core.interaction_response_service import InteractionResponseService
 from core.protocol_schema import build_ui_protocol_schema
 from gateway.client_ws import ClientWebSocketManager
-from gateway.agent_ws_manager import AgentConnectionManager
 from gateway.dependencies import GatewayDependencies
 from gateway.legacy_surface import register_legacy_gateway_surface
 from gateway.models import (
@@ -42,9 +41,9 @@ from gateway.models import (
     UiProtocolSchemaResponse,
 )
 from gateway.serialization import make_json_safe
-from gateway.routes import build_agent_router, build_client_router, build_developer_router, build_operator_router
+from gateway.routes import build_client_router, build_developer_router, build_operator_router
 from service_runtime.models import RuntimeError, RuntimeErrorCategory
-from gateway.ws_manager import AgentOutputAdapter, WebSocketManager, WebSocketOutputAdapter
+from gateway.ws_manager import ClientOutputAdapter, WebSocketManager, WebSocketOutputAdapter
 
 
 _HTTP_SCHEMA = "meetyou.http.v1"
@@ -76,9 +75,8 @@ class FastAPIGateway:
         health_getter=None,
         ws_delivery_observer=None,
         core_domain=None,
-        agent_connection_prompt_getter=None,
-        agent_connection_event_handler=None,
-        agent_access_token: str = "",
+        client_connection_prompt_getter=None,
+        client_connection_event_handler=None,
         access_token: str = "",
         cors_origins: list[str] | tuple[str, ...] | None = None,
     ):
@@ -115,9 +113,8 @@ class FastAPIGateway:
         self._runtime_usage_getter = runtime_usage_getter
         self._runtime_debug_getter = runtime_debug_getter
         self._health_getter = health_getter
-        self._agent_connection_prompt_getter = agent_connection_prompt_getter
-        self._agent_connection_event_handler = agent_connection_event_handler
-        self._agent_access_token = str(agent_access_token or "").strip()
+        self._client_connection_prompt_getter = client_connection_prompt_getter
+        self._client_connection_event_handler = client_connection_event_handler
         self._access_token = str(access_token or "").strip()
         self._cors_origins = tuple(
             origin
@@ -129,9 +126,8 @@ class FastAPIGateway:
         )
         self.ws_manager = WebSocketManager(delivery_observer=ws_delivery_observer)
         self.client_ws_manager = ClientWebSocketManager()
-        self.agent_ws_manager = AgentConnectionManager()
         self.output_adapter = WebSocketOutputAdapter(self.ws_manager)
-        self.agent_output_adapter = AgentOutputAdapter(self.agent_ws_manager, build_agent_message)
+        self.client_output_adapter = ClientOutputAdapter(self.client_ws_manager, build_client_message)
         self.app = FastAPI(title="MeetYou Gateway")
         self.app.add_middleware(
             CORSMiddleware,
@@ -277,48 +273,51 @@ class FastAPIGateway:
     async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict) -> None:
         await self.client_ws_manager.publish_event(thread_id, event_type=event_type, payload=payload)
 
-    async def dispatch_agent_call(self, *, agent_id: str, payload: dict) -> bool:
-        return await self.agent_ws_manager.send_to_agent(agent_id, payload)
+    async def dispatch_client_tool_call(self, *, client_id: str, payload: dict) -> bool:
+        return bool(await self.client_ws_manager.send_client_tool_call(client_id, payload))
 
-    async def build_agent_connection_prompt(
+    async def dispatch_client_call(self, *, client_id: str, payload: dict) -> bool:
+        return await self.dispatch_client_tool_call(client_id=client_id, payload=payload)
+
+    async def build_client_connection_prompt(
         self,
         *,
-        agent_id: str,
-        agent_type: str,
+        client_id: str,
+        client_type: str,
         display_name: str,
         transport_profile: str,
         workspace_ids: list[str] | tuple[str, ...] | None = None,
     ) -> dict | None:
-        getter = self._agent_connection_prompt_getter
+        getter = self._client_connection_prompt_getter
         if getter is None:
             return None
         payload = await self._resolve(
             getter,
-            agent_id=agent_id,
-            agent_type=agent_type,
+            client_id=client_id,
+            client_type=client_type,
             display_name=display_name,
             transport_profile=transport_profile,
             workspace_ids=list(workspace_ids or []),
         )
         return dict(payload or {}) if isinstance(payload, dict) else None
 
-    async def notify_agent_connected(
+    async def notify_client_connected(
         self,
         *,
-        agent_id: str,
-        agent_type: str,
+        client_id: str,
+        client_type: str,
         display_name: str,
         transport_profile: str,
         workspace_ids: list[str] | tuple[str, ...] | None = None,
         connection_prompt: dict | None = None,
     ) -> None:
-        handler = self._agent_connection_event_handler
+        handler = self._client_connection_event_handler
         if handler is None:
             return
         await self._resolve(
             handler,
-            agent_id=agent_id,
-            agent_type=agent_type,
+            client_id=client_id,
+            client_type=client_type,
             display_name=display_name,
             transport_profile=transport_profile,
             workspace_ids=list(workspace_ids or []),
@@ -365,20 +364,6 @@ class FastAPIGateway:
             code="unauthorized",
             category=RuntimeErrorCategory.RUNTIME.value,
             message="缺少有效访问令牌",
-            details={"auth_type": "bearer_or_api_key"},
-        )
-
-    def _require_agent_http_auth(self, request: Request) -> None:
-        if not self._agent_access_token:
-            return
-        access_token = self._resolve_http_access_token(request)
-        if access_token == self._agent_access_token:
-            return
-        self._raise_http_error(
-            status_code=401,
-            code="unauthorized",
-            category=RuntimeErrorCategory.RUNTIME.value,
-            message="缺少有效 agent 访问令牌",
             details={"auth_type": "bearer_or_api_key"},
         )
 
@@ -435,33 +420,6 @@ class FastAPIGateway:
         )
         return False
 
-    async def _authorize_agent_websocket(self, websocket: WebSocket) -> bool:
-        origin = websocket.headers.get("origin", "")
-        if origin and not self._is_origin_allowed(origin):
-            await self._send_ws_error_and_close(
-                websocket,
-                code="origin_not_allowed",
-                category=RuntimeErrorCategory.RUNTIME.value,
-                message="当前 Origin 不在允许列表内",
-                details={"origin": origin},
-                close_code=status.WS_1008_POLICY_VIOLATION,
-            )
-            return False
-        if not self._agent_access_token:
-            return True
-        access_token = self._resolve_ws_access_token(websocket)
-        if access_token == self._agent_access_token:
-            return True
-        await self._send_ws_error_and_close(
-            websocket,
-            code="unauthorized",
-            category=RuntimeErrorCategory.RUNTIME.value,
-            message="缺少有效 agent 访问令牌",
-            details={"auth_type": "bearer_or_api_key_or_query"},
-            close_code=4401,
-        )
-        return False
-
     async def _safe_send_json(self, websocket: WebSocket, payload: dict) -> bool:
         try:
             await websocket.send_json(payload)
@@ -472,7 +430,6 @@ class FastAPIGateway:
             return False
 
     def _setup_routes(self):
-        self.app.include_router(build_agent_router(self))
         self.app.include_router(build_client_router(self))
         self.app.include_router(build_operator_router(self))
         self.app.include_router(build_developer_router(self))

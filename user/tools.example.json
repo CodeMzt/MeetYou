@@ -4,7 +4,7 @@
       "type": "function",
       "function": {
         "name": "exec_sys_cmd",
-        "description": "Execute a shell command on the user's local machine through Desktop Agent. Dangerous commands may be blocked by the local agent policy.",
+        "description": "Execute a shell command on the user's local machine through a Desktop Client directed tool. Dangerous commands may be blocked by the local client policy.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -27,10 +27,6 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "include_agents": {
-              "type": "boolean",
-              "description": "Include agents registered in each workspace."
-            },
             "include_clients": {
               "type": "boolean",
               "description": "Include clients registered in each workspace."
@@ -182,8 +178,8 @@
     {
       "type": "function",
       "function": {
-        "name": "list_active_agents",
-        "description": "List currently online Agent connections, optionally scoped to a workspace.",
+        "name": "list_client_tool_targets",
+        "description": "List online Client connections that can execute directed tools, optionally scoped to a workspace and tool key.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -191,10 +187,14 @@
               "type": "string",
               "description": "Optional workspace id."
             },
-            "include_capabilities": {
+            "tool_key": {
+              "type": "string",
+              "description": "Optional directed tool key, such as file.read or shell.exec."
+            },
+            "include_tools": {
               "type": "boolean",
-              "description": "Include available capabilities for each agent.",
-              "default": false
+              "description": "Include each client's available/executable tool lists.",
+              "default": true
             }
           },
           "required": []
@@ -217,10 +217,10 @@
               "type": "string",
               "description": "Optional thread id."
             },
-            "include_owned_agents": {
+            "include_tools": {
               "type": "boolean",
-              "description": "Include online agents owned by each client.",
-              "default": false
+              "description": "Include each client's available/executable tool lists.",
+              "default": true
             }
           },
           "required": []
@@ -231,14 +231,13 @@
       "type": "function",
       "function": {
         "name": "send_endpoint_message",
-        "description": "Send a realtime notice or dispatch a capability call to a target Agent or Client.",
+        "description": "Send a realtime notice or dispatch a directed tool call to a target Client.",
         "parameters": {
           "type": "object",
           "properties": {
             "target_type": {
               "type": "string",
               "enum": [
-                "agent",
                 "client"
               ]
             },
@@ -249,14 +248,14 @@
               "type": "string",
               "enum": [
                 "notice",
-                "capability_call"
+                "tool_call"
               ],
               "default": "notice"
             },
             "content": {
               "type": "string"
             },
-            "capability_ref": {
+            "tool_key": {
               "type": "string"
             },
             "arguments": {
@@ -290,7 +289,7 @@
       "type": "function",
       "function": {
         "name": "emit_short_reply",
-        "description": "Send a brief standalone assistant reply to the current session while the current turn is still thinking or tool-calling. You must call this before any potentially time-consuming operation, including web/page reading, research, local file or workspace work, shell/agent capability calls, endpoint messaging, or other slow I/O. May be called multiple times.",
+        "description": "Send a brief standalone assistant reply to the current session while the current turn is still thinking or tool-calling. You must call this before any potentially time-consuming operation, including web/page reading, research, local file or workspace work, directed Client tool calls, endpoint messaging, or other slow I/O. May be called multiple times.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -981,7 +980,7 @@
       "type": "function",
       "function": {
         "name": "read_local_documents",
-        "description": "Read files from the user's local machine through Desktop Agent and extract normalized content chunks.",
+        "description": "Read files from the user's local machine through a Desktop Client directed tool and extract normalized content chunks.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -1012,7 +1011,7 @@
       "type": "function",
       "function": {
         "name": "write_local_document",
-        "description": "Write a document on the user's local machine through Desktop Agent, usually in preview mode first. The local agent enforces trusted write roots.",
+        "description": "Write a document on the user's local machine through a Desktop Client directed tool, usually in preview mode first. The local client enforces trusted write roots.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -1040,7 +1039,7 @@
       "type": "function",
       "function": {
         "name": "rewrite_local_document",
-        "description": "Rewrite an existing document on the user's local machine through Desktop Agent. The local agent enforces trusted write roots.",
+        "description": "Rewrite an existing document on the user's local machine through a Desktop Client directed tool. The local client enforces trusted write roots.",
         "parameters": {
           "type": "object",
           "properties": {

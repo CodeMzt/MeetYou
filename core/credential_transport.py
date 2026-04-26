@@ -1,1 +1,1 @@
-from agent_sdk.security import *  # noqa: F403
+from client_tool_sdk.security import *  # noqa: F403

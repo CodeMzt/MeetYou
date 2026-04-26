@@ -62,10 +62,10 @@ class ProcedureService(ServiceBase):
     @classmethod
     def normalize_meta(cls, meta: dict | None = None) -> dict:
         raw = dict(meta or {})
-        preferred_capability_ref = str(raw.get("preferred_capability_ref") or "").strip()
-        preferred_agent_ids = cls._normalize_string_list(raw.get("preferred_agent_ids"))
-        preferred_agent_types = cls._normalize_string_list(raw.get("preferred_agent_types"))
-        agent_routing_policy = cls._normalize_routing_policy(raw.get("agent_routing_policy"))
+        preferred_tool_key = str(raw.get("preferred_tool_key") or "").strip()
+        preferred_target_client_ids = cls._normalize_string_list(raw.get("preferred_target_client_ids"))
+        preferred_target_client_types = cls._normalize_string_list(raw.get("preferred_target_client_types"))
+        tool_target_routing_policy = cls._normalize_routing_policy(raw.get("tool_target_routing_policy"))
         infer_keywords = cls._normalize_infer_keywords(raw.get("infer_keywords"))
         return {
             **{
@@ -73,31 +73,31 @@ class ProcedureService(ServiceBase):
                 for key, value in raw.items()
                 if key
                 not in {
-                    "preferred_capability_ref",
-                    "preferred_agent_ids",
-                    "preferred_agent_types",
-                    "agent_routing_policy",
+                    "preferred_tool_key",
+                    "preferred_target_client_ids",
+                    "preferred_target_client_types",
+                    "tool_target_routing_policy",
                     "infer_keywords",
                 }
             },
-            "preferred_capability_ref": preferred_capability_ref,
-            "preferred_agent_ids": preferred_agent_ids,
-            "preferred_agent_types": preferred_agent_types,
-            "agent_routing_policy": agent_routing_policy,
+            "preferred_tool_key": preferred_tool_key,
+            "preferred_target_client_ids": preferred_target_client_ids,
+            "preferred_target_client_types": preferred_target_client_types,
+            "tool_target_routing_policy": tool_target_routing_policy,
             "infer_keywords": infer_keywords,
         }
 
     @classmethod
     def get_routing_view(cls, procedure) -> dict[str, Any]:
         meta = cls.normalize_meta(getattr(procedure, "meta", {}) or {})
-        recommended_capabilities = cls._normalize_string_list(getattr(procedure, "recommended_capabilities", []) or [])
-        preferred_capability_ref = str(meta.get("preferred_capability_ref") or "").strip() or (recommended_capabilities[0] if recommended_capabilities else "")
+        recommended_tools = cls._normalize_string_list(getattr(procedure, "recommended_capabilities", []) or [])
+        preferred_tool_key = str(meta.get("preferred_tool_key") or "").strip() or (recommended_tools[0] if recommended_tools else "")
         return {
-            "recommended_capabilities": recommended_capabilities,
-            "preferred_capability_ref": preferred_capability_ref,
-            "preferred_agent_ids": list(meta.get("preferred_agent_ids") or []),
-            "preferred_agent_types": list(meta.get("preferred_agent_types") or []),
-            "agent_routing_policy": str(meta.get("agent_routing_policy") or "balanced"),
+            "recommended_tools": recommended_tools,
+            "preferred_tool_key": preferred_tool_key,
+            "preferred_target_client_ids": list(meta.get("preferred_target_client_ids") or []),
+            "preferred_target_client_types": list(meta.get("preferred_target_client_types") or []),
+            "tool_target_routing_policy": str(meta.get("tool_target_routing_policy") or "balanced"),
         }
 
     @classmethod
@@ -110,14 +110,14 @@ class ProcedureService(ServiceBase):
             "description": str(getattr(procedure, "description", "") or ""),
             "prompt_overlay": str(getattr(procedure, "prompt_overlay", "") or ""),
             "applicable_modes": cls._normalize_string_list(getattr(procedure, "applicable_modes", []) or []),
-            "recommended_capabilities": routing["recommended_capabilities"],
+            "recommended_tools": routing["recommended_tools"],
             "recommended_source_profiles": cls._normalize_string_list(
                 getattr(procedure, "recommended_source_profiles", []) or []
             ),
-            "preferred_capability_ref": routing["preferred_capability_ref"],
-            "preferred_agent_ids": routing["preferred_agent_ids"],
-            "preferred_agent_types": routing["preferred_agent_types"],
-            "agent_routing_policy": routing["agent_routing_policy"],
+            "preferred_tool_key": routing["preferred_tool_key"],
+            "preferred_target_client_ids": routing["preferred_target_client_ids"],
+            "preferred_target_client_types": routing["preferred_target_client_types"],
+            "tool_target_routing_policy": routing["tool_target_routing_policy"],
             "default_execution_target": str(getattr(procedure, "default_execution_target", "") or ""),
             "risk_profile": str(getattr(procedure, "risk_profile", "") or ""),
             "status": cls._normalize_status(getattr(procedure, "status", "active")),
@@ -158,15 +158,15 @@ class ProcedureService(ServiceBase):
         if normalized_mode and normalized_mode in applicable_modes:
             score += 5
             reasons.append(f"mode:{normalized_mode}")
-        if normalized_workspace_id.startswith("desktop") and "desktop" in cls.normalize_meta(getattr(procedure, "meta", {}) or {}).get("preferred_agent_types", []):
+        if normalized_workspace_id.startswith("desktop") and "desktop" in cls.normalize_meta(getattr(procedure, "meta", {}) or {}).get("preferred_target_client_types", []):
             score += 2
             reasons.append("workspace:desktop")
         if normalized_workspace_id.startswith("study") and "study" in applicable_modes:
             score += 2
             reasons.append("workspace:study")
-        if normalized_workspace_id.startswith("home") and str(getattr(procedure, "default_execution_target", "") or "") == "workspace_any_agent":
+        if normalized_workspace_id.startswith("home") and str(getattr(procedure, "default_execution_target", "") or "") == "workspace_any_client":
             score += 1
-            reasons.append("workspace:agent_scope")
+            reasons.append("workspace:client_scope")
         matched_keywords = []
         for keyword in cls._inference_keywords_for_procedure(procedure):
             if keyword and keyword in normalized_content:

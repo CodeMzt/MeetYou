@@ -70,11 +70,11 @@ class _FakeModeManager:
         return False
 
 
-class _FakeAgentDispatcher:
-    async def dispatch_local_capability(
+class _FakeClientToolDispatcher:
+    async def dispatch_directed_tool(
         self,
         *,
-        capability_suffix: str,
+        tool_key: str,
         arguments: dict,
         session_id: str = "",
         title: str = "",
@@ -82,7 +82,7 @@ class _FakeAgentDispatcher:
         timeout_seconds: int = 120,
     ):
         del session_id, title, operation_type, timeout_seconds
-        if capability_suffix == "file.write":
+        if tool_key == "file.write":
             path = Path(arguments["path"])
             path.parent.mkdir(parents=True, exist_ok=True)
             mode = str(arguments.get("mode") or "overwrite")
@@ -92,22 +92,19 @@ class _FakeAgentDispatcher:
             else:
                 path.write_text(content, encoding="utf-8")
             return {"bytes_written": len(content.encode("utf-8"))}
-        raise AssertionError(f"Unexpected capability: {capability_suffix}")
+        raise AssertionError(f"Unexpected tool: {tool_key}")
 
 
-class _RecordingAgentDispatcher:
+class _RecordingClientToolDispatcher:
     def __init__(self):
         self.calls = []
 
-    async def dispatch_agent_capability(self, **kwargs):
-        return await self.dispatch_local_capability(**kwargs)
-
-    async def dispatch_local_capability(self, **kwargs):
+    async def dispatch_directed_tool(self, **kwargs):
         self.calls.append(dict(kwargs))
-        if kwargs["capability_suffix"] == "file.write":
+        if kwargs["tool_key"] == "file.write":
             content = str(kwargs.get("arguments", {}).get("content") or "")
             return {"bytes_written": len(content.encode("utf-8"))}
-        raise AssertionError(f"Unexpected capability: {kwargs['capability_suffix']}")
+        raise AssertionError(f"Unexpected tool: {kwargs['tool_key']}")
 
 
 class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -240,7 +237,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_authorization_gateway_enforces_document_confirmation_and_write_boundary(self):
         with tempfile.TemporaryDirectory() as trusted_dir, tempfile.TemporaryDirectory() as other_dir:
             manager = self._build_manager(mode_manager=_FakeModeManager([trusted_dir]))
-            manager.set_capability_dispatcher(_FakeAgentDispatcher())
+            manager.set_capability_dispatcher(_FakeClientToolDispatcher())
             trusted_path = str(Path(trusted_dir) / "report.md")
             outside_path = str(Path(other_dir) / "report.md")
             route_context = {
@@ -275,12 +272,12 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(Path(trusted_path).read_text(encoding="utf-8"), "# Final\n")
             self.assertEqual(
                 written.metadata["authorization"]["write_boundary"],
-                "agent_managed",
+                "client_tool_managed",
             )
 
-    async def test_agent_managed_document_write_preserves_windows_path_on_core(self):
+    async def test_client_tool_document_write_preserves_windows_path_on_core(self):
         manager = self._build_manager(mode_manager=_FakeModeManager([]))
-        dispatcher = _RecordingAgentDispatcher()
+        dispatcher = _RecordingClientToolDispatcher()
         manager.set_capability_dispatcher(dispatcher)
         windows_path = r"E:\Documents\test_write_confirm.md"
 
@@ -292,10 +289,10 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.content.data["path"], windows_path)
-        self.assertEqual(result.content.data["execution_target"], "desktop_agent")
+        self.assertEqual(result.content.data["execution_target"], "desktop_client_tool")
         self.assertEqual(dispatcher.calls[0]["arguments"]["path"], windows_path)
         self.assertEqual(result.metadata["authorization"]["write_path"], windows_path)
-        self.assertEqual(result.metadata["authorization"]["write_boundary"], "agent_managed")
+        self.assertEqual(result.metadata["authorization"]["write_boundary"], "client_tool_managed")
         self.assertIsNone(result.metadata["authorization"]["trusted_root"])
 
     async def test_readonly_authorization_hides_write_tools_and_blocks_write_calls(self):
@@ -344,12 +341,12 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("time-consuming", description)
         self.assertIn("May be called multiple times", description)
 
-    async def test_core_local_tools_fail_without_agent_dispatcher(self):
+    async def test_core_local_tools_fail_without_client_tool_dispatcher(self):
         with tempfile.TemporaryDirectory() as trusted_dir:
             manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([trusted_dir]))
             real_system_tools.init_system_tools(None, None, "missing.json", allow_local_fallback=False)
-            real_system_tools.set_agent_dispatcher(None)
-            self.addCleanup(real_system_tools.set_agent_dispatcher, None)
+            real_system_tools.set_client_tool_dispatcher(None)
+            self.addCleanup(real_system_tools.set_client_tool_dispatcher, None)
             self.addCleanup(real_system_tools.set_local_fallback_enabled, True)
 
             command_result = await manager.call_tool(
@@ -364,11 +361,11 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertFalse(command_result.ok)
-            self.assertEqual(command_result.error.code, "local_agent_required")
-            self.assertEqual(command_result.error.details["capability_suffix"], "shell.exec")
+            self.assertEqual(command_result.error.code, "local_client_required")
+            self.assertEqual(command_result.error.details["tool_key"], "shell.exec")
             self.assertFalse(read_result.ok)
-            self.assertEqual(read_result.error.code, "local_agent_required")
-            self.assertEqual(read_result.error.details["capability_suffix"], "file.read")
+            self.assertEqual(read_result.error.code, "local_client_required")
+            self.assertEqual(read_result.error.details["tool_key"], "file.read")
 
     async def test_brain_route_call_normalizes_structured_result(self):
         brain = Brain(

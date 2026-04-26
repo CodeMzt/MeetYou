@@ -485,8 +485,8 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "manage_procedures",
     "list_workspaces",
     "switch_workspace",
-    "list_active_agents",
     "list_active_clients",
+    "list_client_tool_targets",
     "send_endpoint_message",
     "emit_short_reply",
     "restart_core",
@@ -570,7 +570,7 @@ _MODE_PROMPT_FALLBACKS = {
         "- study: study plans, learning points, quizzes, flashcards, mastery tracking, and the study_coaching skill combined with the shared basic tools\n"
         "- danxi: FDU campus-forum browsing, thread search, favorites or subscriptions, messages, and normal-user post or reply actions through the Danxi tool suite\n"
         "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_short_reply, and get_current_system_time.\n"
-        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, shell/agent capability calls, or endpoint messaging, call emit_short_reply first with a short status update.\n"
+        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, directed Client tool calls, or endpoint messaging, call emit_short_reply first with a short status update.\n"
         "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled work.\n"
         "If signals are mixed, prefer the smallest mode that directly matches the user's next job."
     ),
@@ -579,7 +579,7 @@ _MODE_PROMPT_FALLBACKS = {
         "You are operating as a general daily assistant.\n"
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
         "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_short_reply, and get_current_system_time.\n"
-        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, shell/agent capability calls, or endpoint messaging, call emit_short_reply first with a short status update.\n"
+        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, directed Client tool calls, or endpoint messaging, call emit_short_reply first with a short status update.\n"
         "When the user's message clearly contains user TODO or scheduled-task work, the task_recognition skill can activate manage_tasks or manage_scheduled_tasks.\n"
         "Stay in normal mode unless the next immediate step clearly requires file tools, deep research constraints, office coordination tools, or study-specific tools."
     ),
@@ -587,7 +587,7 @@ _MODE_PROMPT_FALLBACKS = {
         "[Documents Mode]\n"
         "You are operating as a document and workspace specialist.\n"
         "Prefer local files, directory analysis, structured document reading, and safe draft-first writing.\n"
-        "Start with the shared basic tools for knowledge lookup, memory lookup, and web/page reading when they help ground the document task, then move to document-specific tools for repository or file operations. Call emit_short_reply before web/page reads, repository or file inspection, shell/agent capability calls, endpoint messaging, or other slow I/O.\n"
+        "Start with the shared basic tools for knowledge lookup, memory lookup, and web/page reading when they help ground the document task, then move to document-specific tools for repository or file operations. Call emit_short_reply before web/page reads, repository or file inspection, directed Client tool calls, endpoint messaging, or other slow I/O.\n"
         "If the user also mixes in user TODO or scheduled-task work, task_recognition can activate the matching task tool without leaving this mode.\n"
         "When editing documents, inspect first, summarize the current structure, and keep writes inside trusted roots unless the user explicitly confirms a broader target."
     ),
@@ -602,7 +602,7 @@ _MODE_PROMPT_FALLBACKS = {
         "[Office Mode]\n"
         "You are operating as an office and coordination specialist.\n"
         "Favor schedules, drafts, task state, meeting notes, and note synchronization.\n"
-        "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted. Call emit_short_reply before page reads, endpoint messaging, agent capability calls, or other slow I/O, then use office-specific tools when coordination artifacts must be produced.\n"
+        "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted. Call emit_short_reply before page reads, endpoint messaging, directed Client tool calls, or other slow I/O, then use office-specific tools when coordination artifacts must be produced.\n"
         "Task-style requests can also activate the task_recognition skill so user TODO and scheduled-task tools stay available inside office workflows.\n"
         "External side effects stay draft-first. Do not pretend that a message or calendar entry has been sent unless the tool confirms it."
     ),
@@ -887,9 +887,9 @@ _DEFAULT_MCP_CATALOG = {
         "auth_env": [],
         "fallback_tools": ["analyze_workspace", "read_local_documents"],
         "enabled_by_default": True,
-        "boundary": "agent_mcp",
-        "managed_by": "desktop_or_edge_agent",
-        "classification_reason": "本地文件、工作区与终端邻接能力仍由 Desktop Agent / Edge Agent 托管，不收口到 Core MCP。",
+        "boundary": "client_local_mcp",
+        "managed_by": "desktop_or_edge_client",
+        "classification_reason": "本地文件、工作区与终端邻接能力由 Desktop Client / Edge Client 作为 tool 托管，不收口到 Core MCP。",
     },
     "tavily_web": {
         "title": "Tavily Web Search",
@@ -938,12 +938,12 @@ _DEFAULT_CORE_MCP_CLASSIFICATION_STANDARD = {
         ],
         "decision": "正式收口到 Core MCP。",
     },
-    "agent_mcp": {
+    "client_local_mcp": {
         "criteria": [
             "能力直接触达本地文件系统、终端或工作区运行时。",
             "能力需要随端侧会话、权限与本地 MCP 生命周期一起托管。",
         ],
-        "decision": "继续留在 Desktop Agent / Edge Agent，不纳入 Core MCP。",
+        "decision": "继续留在 Desktop Client / Edge Client，不纳入 Core MCP。",
     },
     "runtime_native_exception": {
         "criteria": [
@@ -1413,11 +1413,11 @@ class AssistantModeManager:
         )
         configured_set = set(_unique_strings(configured_mcp_servers))
         core_mcp_servers: list[dict[str, Any]] = []
-        agent_managed_mcp_servers: list[dict[str, Any]] = []
+        client_managed_mcp_servers: list[dict[str, Any]] = []
         for item in diagnostics.get("mcp_servers", []):
             payload = dict(item or {})
-            if str(payload.get("boundary") or "core_mcp").strip() == "agent_mcp":
-                agent_managed_mcp_servers.append(payload)
+            if str(payload.get("boundary") or "core_mcp").strip() in {"client_local_mcp"}:
+                client_managed_mcp_servers.append(payload)
             else:
                 core_mcp_servers.append(payload)
 
@@ -1436,7 +1436,7 @@ class AssistantModeManager:
         return {
             "classification_standard": json.loads(json.dumps(_DEFAULT_CORE_MCP_CLASSIFICATION_STANDARD, ensure_ascii=False)),
             "core_mcp_servers": core_mcp_servers,
-            "agent_managed_mcp_servers": agent_managed_mcp_servers,
+            "client_managed_mcp_servers": client_managed_mcp_servers,
             "runtime_native_tools": json.loads(json.dumps(_DEFAULT_RUNTIME_NATIVE_TOOL_EXCEPTIONS, ensure_ascii=False)),
             "summary": {
                 "configured_server_count": len(configured_core_servers),
@@ -1447,7 +1447,7 @@ class AssistantModeManager:
                     for item in partial_failure_servers
                     if str(item.get("server_name") or "").strip()
                 ],
-                "agent_managed_server_count": len(agent_managed_mcp_servers),
+                "client_managed_server_count": len(client_managed_mcp_servers),
                 "runtime_native_exception_count": len(_DEFAULT_RUNTIME_NATIVE_TOOL_EXCEPTIONS),
             },
         }
@@ -1462,7 +1462,7 @@ class AssistantModeManager:
         recommended_tools: list[str] | None = None,
         applicable_modes: list[str] | None = None,
         scenarios: list[str] | None = None,
-        source: str = "agent",
+        source: str = "client",
     ) -> dict[str, Any]:
         return self._skill_registry.create_skill(
             skill_id=skill_id,

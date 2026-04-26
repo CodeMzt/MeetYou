@@ -109,9 +109,9 @@ export function formatAssistantModeLabel(mode: string): string {
 export function formatExecutionTargetLabel(target: string): string {
   const normalized = String(target || '').trim().toLowerCase()
   if (normalized === 'core_only') return '仅核心服务'
-  if (normalized === 'specific_agent') return '指定代理'
-  if (normalized === 'workspace_any_agent') return '工作区任意代理'
-  if (normalized === 'prefer_agent_fallback_core') return '优先代理，失败回落核心服务'
+  if (normalized === 'specific_client') return '指定 Client'
+  if (normalized === 'workspace_any_client') return '工作区任意 Client'
+  if (normalized === 'prefer_client_fallback_core') return '优先 Client，失败回落核心服务'
   return target || '未设置'
 }
 

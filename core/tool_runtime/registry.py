@@ -15,11 +15,6 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "include_agents": {
-                        "type": "boolean",
-                        "description": "Include agents registered in each workspace.",
-                        "default": False,
-                    },
                     "include_clients": {
                         "type": "boolean",
                         "description": "Include clients registered in each workspace.",
@@ -34,21 +29,22 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "required": [],
             },
             "metadata": {
-                "capability_ref": "workspace.list",
+                "tool_key": "workspace.list",
                 "action_risk": "read",
             },
         },
     },
-    "list_active_agents": {
+    "list_client_tool_targets": {
         "type": "function",
         "function": {
-            "name": "list_active_agents",
-            "description": "List currently online Agent connections, optionally scoped to a workspace.",
+            "name": "list_client_tool_targets",
+            "description": "List online Client connections that can execute directed tools, optionally scoped to a workspace and tool key.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
-                    "include_capabilities": {"type": "boolean", "description": "Include available capabilities for each agent.", "default": False},
+                    "tool_key": {"type": "string", "description": "Optional directed tool key, such as file.read or shell.exec.", "default": ""},
+                    "include_tools": {"type": "boolean", "description": "Include each client's available/executable tool lists.", "default": True},
                 },
                 "required": [],
             },
@@ -65,7 +61,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "properties": {
                     "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
                     "thread_id": {"type": "string", "description": "Optional thread id.", "default": ""},
-                    "include_owned_agents": {"type": "boolean", "description": "Include online agents owned by each client.", "default": False},
+                    "include_tools": {"type": "boolean", "description": "Include each client's available/executable tool lists.", "default": True},
                 },
                 "required": [],
             },
@@ -76,20 +72,20 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "send_endpoint_message",
-            "description": "Send a realtime notice or dispatch a capability call to a target Agent or Client. Client capability calls are routed through the client's owned Agent.",
+            "description": "Send a realtime notice or dispatch a directed tool call to a target Client.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_type": {"type": "string", "enum": ["agent", "client"], "description": "Target endpoint type."},
-                    "target_id": {"type": "string", "description": "Target agent_id or client_id."},
-                    "delivery_kind": {"type": "string", "enum": ["notice", "capability_call"], "default": "notice"},
+                    "target_type": {"type": "string", "enum": ["client"], "description": "Target endpoint type."},
+                    "target_id": {"type": "string", "description": "Target client_id."},
+                    "delivery_kind": {"type": "string", "enum": ["notice", "tool_call"], "default": "notice"},
                     "content": {"type": "string", "description": "Notice text when delivery_kind is notice.", "default": ""},
-                    "capability_ref": {"type": "string", "description": "Capability id, suffix, or abstract ref for capability_call.", "default": ""},
-                    "arguments": {"type": "object", "description": "Capability call arguments.", "default": {}},
-                    "workspace_id": {"type": "string", "description": "Workspace id for capability lookup.", "default": ""},
+                    "tool_key": {"type": "string", "description": "Directed tool key for tool_call.", "default": ""},
+                    "arguments": {"type": "object", "description": "Tool call arguments.", "default": {}},
+                    "workspace_id": {"type": "string", "description": "Workspace id for tool target lookup.", "default": ""},
                     "session_id": {"type": "string", "description": "Session id for operation tracking.", "default": ""},
                     "timeout_seconds": {"type": "integer", "default": 120},
-                    "confirmed": {"type": "boolean", "description": "Set true after explicit confirmation for risky capability calls.", "default": False},
+                    "confirmed": {"type": "boolean", "description": "Set true after explicit confirmation for risky tool calls.", "default": False},
                 },
                 "required": ["target_type", "target_id", "delivery_kind"],
             },
@@ -103,7 +99,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "description": (
                 "Send a brief standalone assistant reply to the current session while the current turn is still "
                 "thinking or tool-calling. You must call this before any potentially time-consuming operation, "
-                "including web/page reading, research, local file or workspace work, shell/agent capability calls, "
+                "including web/page reading, research, local file or workspace work, directed Client tool calls, "
                 "endpoint messaging, or other slow I/O. May be called multiple times."
             ),
             "parameters": {

@@ -177,7 +177,7 @@ _MODE_IMMEDIATE_KEYS = {
     "office_integrations",
 }
 _RESTART_REQUIRED_KEYS = {
-    "agent_access_token",
+    "client_access_token",
     "cmd_policy_path",
     "database_url",
     "enable_feishu_bot",
@@ -793,10 +793,10 @@ class App:
             "route_reason": "Scheduler claimed an assistant-owned background task.",
             "source_profile": "scheduled_tasks",
             "task_routing": {
-                "preferred_capability_ref": str(task_record.get("preferred_capability_ref") or "").strip(),
-                "preferred_agent_ids": list(task_record.get("preferred_agent_ids") or []),
-                "preferred_agent_types": list(task_record.get("preferred_agent_types") or []),
-                "agent_routing_policy": str(task_record.get("agent_routing_policy") or "balanced").strip() or "balanced",
+                "preferred_tool_key": str(task_record.get("preferred_tool_key") or "").strip(),
+                "preferred_target_client_ids": list(task_record.get("preferred_target_client_ids") or task_record.get("preferred_client_ids") or []),
+                "preferred_target_client_types": list(task_record.get("preferred_target_client_types") or task_record.get("preferred_client_types") or []),
+                "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
             },
             "tool_bundle": [
                 str(tool.get("function", {}).get("name", "")).strip()
@@ -918,10 +918,10 @@ class App:
                 "workspace_id": getattr(workspace_row, "workspace_id", ""),
                 "task_key": str(task_record.get("task_key") or ""),
                 "task_summary": _normalize_task_summary(task_record),
-                "preferred_capability_ref": str(task_record.get("preferred_capability_ref") or ""),
-                "preferred_agent_ids": list(task_record.get("preferred_agent_ids") or []),
-                "preferred_agent_types": list(task_record.get("preferred_agent_types") or []),
-                "agent_routing_policy": str(task_record.get("agent_routing_policy") or "balanced") or "balanced",
+                "preferred_tool_key": str(task_record.get("preferred_tool_key") or ""),
+                "preferred_target_client_ids": list(task_record.get("preferred_target_client_ids") or task_record.get("preferred_client_ids") or []),
+                "preferred_target_client_types": list(task_record.get("preferred_target_client_types") or task_record.get("preferred_client_types") or []),
+                "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced") or "balanced",
                 "source": "scheduled_task",
             },
         )
@@ -1313,10 +1313,10 @@ class App:
             "time_context": _task_time_context(task_record),
             "orchestration": task_record.get("orchestration") if isinstance(task_record.get("orchestration"), dict) else {},
             "routing": {
-                "preferred_capability_ref": str(task_record.get("preferred_capability_ref") or "").strip(),
-                "preferred_agent_ids": list(task_record.get("preferred_agent_ids") or []),
-                "preferred_agent_types": list(task_record.get("preferred_agent_types") or []),
-                "agent_routing_policy": str(task_record.get("agent_routing_policy") or "balanced").strip() or "balanced",
+                "preferred_tool_key": str(task_record.get("preferred_tool_key") or "").strip(),
+                "preferred_target_client_ids": list(task_record.get("preferred_target_client_ids") or task_record.get("preferred_client_ids") or []),
+                "preferred_target_client_types": list(task_record.get("preferred_target_client_types") or task_record.get("preferred_client_types") or []),
+                "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
             },
         }
         task_source = self._task_source(task_record)
@@ -1524,14 +1524,14 @@ class App:
             boundary = {
                 "classification_standard": {},
                 "core_mcp_servers": [],
-                "agent_managed_mcp_servers": [],
+                "client_managed_mcp_servers": [],
                 "runtime_native_tools": [],
                 "summary": {
                     "configured_server_count": len(configured_servers),
                     "enabled_count": len(available_servers),
                     "partial_failure_count": 0,
                     "partial_failure_servers": [],
-                    "agent_managed_server_count": 0,
+                    "client_managed_server_count": 0,
                     "runtime_native_exception_count": 0,
                 },
             }
@@ -2146,28 +2146,28 @@ class App:
             reloaded_components.add("mode_manager")
         return sorted(reloaded_components)
 
-    def build_agent_connection_prompt(
+    def build_client_connection_prompt(
         self,
         *,
-        agent_id: str,
-        agent_type: str,
+        client_id: str,
+        client_type: str,
         display_name: str,
         transport_profile: str,
         workspace_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         try:
             base_prompt = str(
-                self.config.get_prompt("agent_connected")
-                or self.config.get_prompt("agent_connection")
+                self.config.get_prompt("client_connected")
+                or self.config.get_prompt("client_connection")
                 or ""
             ).strip()
         except Exception:
             base_prompt = ""
         workspace_list = [str(item).strip() for item in (workspace_ids or []) if str(item).strip()]
         context = {
-            "trigger": "agent_connected",
-            "agent_id": str(agent_id or "").strip(),
-            "agent_type": str(agent_type or "").strip(),
+            "trigger": "client_connected",
+            "client_id": str(client_id or "").strip(),
+            "client_type": str(client_type or "").strip(),
             "display_name": str(display_name or "").strip(),
             "transport_profile": str(transport_profile or "").strip(),
             "workspace_ids": workspace_list,
@@ -2177,26 +2177,26 @@ class App:
         if base_prompt:
             prompt_parts.append(base_prompt)
         prompt_parts.append(
-            "现在有一个新的 Agent 刚刚接入系统。\n"
+            "现在有一个新的 Client 刚刚接入系统。\n"
             "请你像真实协作中的助手一样，主动发出第一条简短、自然、不生硬的连接消息，语气友好、专业，像在和一个刚上线的同事说话。\n"
             "这条消息需要做到三件事：1）表明你已经感知到它已连接；2）结合它的身份和工作区给出贴合上下文的欢迎或协作提示；3）说明你会等待它的能力快照或后续任务。\n"
             "不要输出 JSON、字段名清单、程序化枚举或过度模板化措辞。\n\n"
-            f"本次接入的是 {context['display_name'] or context['agent_id'] or '未知 Agent'}"
-            f"（agent_id={context['agent_id'] or 'unknown'}，类型={context['agent_type'] or 'unknown'}，"
+            f"本次接入的是 {context['display_name'] or context['client_id'] or '未知 Client'}"
+            f"（client_id={context['client_id'] or 'unknown'}，类型={context['client_type'] or 'unknown'}，"
             f"传输={context['transport_profile'] or 'unknown'}），当前声明的工作区有：{workspace_text}。"
         )
         prompt = "\n\n".join(prompt_parts).strip()
         return {
-            "prompt_name": "agent_connected",
+            "prompt_name": "client_connected",
             "prompt": prompt,
             "context": context,
         }
 
-    async def inject_agent_connection_event(
+    async def inject_client_connection_event(
         self,
         *,
-        agent_id: str,
-        agent_type: str,
+        client_id: str,
+        client_type: str,
         display_name: str,
         transport_profile: str,
         workspace_ids: list[str] | None = None,
@@ -2205,9 +2205,9 @@ class App:
         payload = (
             dict(connection_prompt)
             if isinstance(connection_prompt, dict) and connection_prompt
-            else self.build_agent_connection_prompt(
-                agent_id=agent_id,
-                agent_type=agent_type,
+            else self.build_client_connection_prompt(
+                client_id=client_id,
+                client_type=client_type,
                 display_name=display_name,
                 transport_profile=transport_profile,
                 workspace_ids=workspace_ids,
@@ -2216,31 +2216,31 @@ class App:
         prompt_text = str(payload.get("prompt") or "").strip()
         if not prompt_text:
             return payload
-        agent_key = str(agent_id or "").strip() or "unknown"
-        agent_session_id = f"system:agent:{agent_key}"
-        agent_target = make_target(
+        client_key = str(client_id or "").strip() or "unknown"
+        client_session_id = f"system:client:{client_key}"
+        client_target = make_target(
             TargetKind.INTERNAL.value,
-            target_id=agent_key,
-            trigger="agent_connected",
+            target_id=client_key,
+            trigger="client_connected",
         )
         bridge_metadata = self._recent_client_thread_bridge_metadata(workspace_ids=workspace_ids)
         event = InboundEvent(
-            session_id=agent_session_id,
+            session_id=client_session_id,
             type=EventType.MESSAGE.value,
             role="user",
             content=prompt_text,
             source=make_source(
                 SourceKind.SYSTEM.value,
-                "agent_connection",
-                display_name="Agent Connection",
-                agent_id=agent_key,
+                "client_connection",
+                display_name="Client Connection",
+                client_id=client_key,
             ),
-            target=agent_target,
+            target=client_target,
             metadata={
-                "prompt_name": str(payload.get("prompt_name") or "agent_connected"),
-                "trigger": "agent_connected",
-                "agent_id": agent_key,
-                "agent_type": str(agent_type or "").strip(),
+                "prompt_name": str(payload.get("prompt_name") or "client_connected"),
+                "trigger": "client_connected",
+                "client_id": client_key,
+                "client_type": str(client_type or "").strip(),
                 "display_name": str(display_name or "").strip(),
                 "transport_profile": str(transport_profile or "").strip(),
                 "workspace_ids": [str(item).strip() for item in (workspace_ids or []) if str(item).strip()],
@@ -2255,28 +2255,28 @@ class App:
         bind_runtime_session = getattr(self.session_manager, "bind_runtime_session", None)
         if callable(bind_runtime_session):
             bind_runtime_session(
-                make_source(SourceKind.SYSTEM.value, f"agent:{agent_key}", agent_id=agent_key),
-                session_id=agent_session_id,
-                default_target=agent_target,
+                make_source(SourceKind.SYSTEM.value, f"client:{client_key}", client_id=client_key),
+                session_id=client_session_id,
+                default_target=client_target,
                 metadata={
                     "transient": True,
-                    "trigger": "agent_connected",
-                    "agent_id": agent_key,
+                    "trigger": "client_connected",
+                    "client_id": client_key,
                     "thread_id": str(bridge_metadata.get("thread_id") or ""),
                     "workspace_id": str(bridge_metadata.get("workspace_id") or ""),
-                    "client_id": str(bridge_metadata.get("client_id") or ""),
+                    "bridge_client_id": str(bridge_metadata.get("client_id") or ""),
                     "bridged_session_id": str(bridge_metadata.get("bridged_session_id") or ""),
                 },
             )
         await self.event_bus.inbound_queue.put(event)
         logger.info(
-            "Injected agent connection event into Core",
+            "Injected client connection event into Core",
             extra={
                 "context": {
-                    "agent_id": agent_key,
-                    "agent_type": str(agent_type or "").strip(),
+                    "client_id": client_key,
+                    "client_type": str(client_type or "").strip(),
                     "workspace_ids": [str(item).strip() for item in (workspace_ids or []) if str(item).strip()],
-                    "trigger": "agent_connected",
+                    "trigger": "client_connected",
                     "bridge_thread_id": str(bridge_metadata.get("thread_id") or ""),
                 }
             },
@@ -2285,7 +2285,7 @@ class App:
 
     def _resolve_session_execution_request(self, event: InboundEvent) -> SessionExecutionRequest | None:
         effective_session_id = event.session_id
-        is_agent_connection_reply = False
+        is_client_connection_reply = False
         is_proactive_idle_poke = False
         if event.type == EventType.SIGNAL.value:
             if self._is_heartbeat_signal(event):
@@ -2301,9 +2301,9 @@ class App:
             input_info = self._build_signal_input(event)
         else:
             event_metadata = dict(getattr(event, "metadata", {}) or {})
-            is_agent_connection_reply = bool(
-                event_metadata.get("trigger") == "agent_connected"
-                and str(effective_session_id or "").strip().startswith("system:agent:")
+            is_client_connection_reply = bool(
+                event_metadata.get("trigger") == "client_connected"
+                and str(effective_session_id or "").strip().startswith("system:client:")
             )
             input_info = {
                 "role": event.role,
@@ -2313,8 +2313,8 @@ class App:
             target = (
                 EventTarget(kind=TargetKind.BROADCAST.value)
                 if effective_session_id == "system:boot"
-                else EventTarget(kind=TargetKind.INTERNAL.value, id=event_metadata.get("agent_id"))
-                if is_agent_connection_reply
+                else EventTarget(kind=TargetKind.INTERNAL.value, id=event_metadata.get("client_id"))
+                if is_client_connection_reply
                 else EventTarget(kind=TargetKind.CURRENT_SESSION.value)
             )
         return SessionExecutionRequest(
@@ -2322,7 +2322,7 @@ class App:
             event=event,
             input_info=input_info,
             target=target,
-            is_boot=effective_session_id == "system:boot" or is_agent_connection_reply,
+            is_boot=effective_session_id == "system:boot" or is_client_connection_reply,
             is_proactive_idle_poke=is_proactive_idle_poke,
         )
 
@@ -2446,7 +2446,7 @@ class App:
         client_id = str(metadata.get("client_id") or source_metadata.get("client_id") or "").strip()
         if not client_id and source_kind in {"web", "feishu", "wechat", "cli"}:
             client_id = source_id
-        agent_id = str(metadata.get("agent_id") or source_metadata.get("agent_id") or "").strip()
+        client_id = str(metadata.get("client_id") or source_metadata.get("client_id") or "").strip()
         active_workspace_id = str(metadata.get("active_workspace_id") or metadata.get("workspace_id") or "").strip()
         token = bind_event_context(
             trace_id=getattr(request.event, "event_id", ""),
@@ -2457,7 +2457,6 @@ class App:
             source_kind=source_kind,
             source_id=source_id,
             client_id=client_id,
-            agent_id=agent_id,
             active_workspace_id=active_workspace_id,
             workspace_id=active_workspace_id,
             thread_id=str(metadata.get("thread_id") or ""),

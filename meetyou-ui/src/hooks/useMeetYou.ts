@@ -3,7 +3,7 @@ import { triggerAttachmentDownload } from '../attachmentTransfers'
 import type { ClientThreadProcedureContext, StatusFeedback } from '../types'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
 import {
-  DESKTOP_AGENT_REFRESH_INTERVAL_MS,
+  DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS,
   useClientContext,
   useMeetYouSocket,
   useChatSession,
@@ -29,11 +29,11 @@ function procedureDetailSignature(procedure: ClientThreadProcedureContext['effec
     title: procedure.title,
     description: procedure.description,
     applicable_modes: procedure.applicable_modes,
-    recommended_capabilities: procedure.recommended_capabilities,
-    preferred_capability_ref: procedure.preferred_capability_ref,
-    preferred_agent_ids: procedure.preferred_agent_ids,
-    preferred_agent_types: procedure.preferred_agent_types,
-    agent_routing_policy: procedure.agent_routing_policy,
+    recommended_tools: procedure.recommended_tools,
+    preferred_tool_key: procedure.preferred_tool_key,
+    preferred_target_client_ids: procedure.preferred_target_client_ids,
+    preferred_target_client_types: procedure.preferred_target_client_types,
+    tool_target_routing_policy: procedure.tool_target_routing_policy,
     default_execution_target: procedure.default_execution_target,
     risk_profile: procedure.risk_profile,
     status: procedure.status,
@@ -72,13 +72,13 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
 
   const {
     clientContext,
-    desktopAgentId,
+    desktopToolClientId,
     transportState,
     dispatchTransport,
     sessionId,
     clientId,
     initializeClientContext,
-    refreshAvailableAgents,
+    refreshDesktopToolClient,
     refreshWorkspace,
   } = useClientContext(baseUrl, (threadId) => {
     void loadThreadHistory(threadId)
@@ -137,7 +137,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   } = useProcedures(
     baseUrl,
     clientContext,
-    desktopAgentId,
+    desktopToolClientId,
     dispatchTransport,
     dispatchChat
   )
@@ -203,7 +203,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
 
     if (update.kind === 'workspace_changed') {
       void refreshWorkspace(update.workspaceId || update.activeWorkspaceId)
-      void refreshAvailableAgents()
+      void refreshDesktopToolClient()
     }
 
     if (
@@ -213,7 +213,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     ) {
       void reloadProcedureContext()
     }
-  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, refreshAvailableAgents, refreshWorkspace, reloadProcedureContext])
+  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, refreshDesktopToolClient, refreshWorkspace, reloadProcedureContext])
 
   useEffect(() => {
     if (autoInitializeAttemptedRef.current) {
@@ -234,13 +234,13 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     if (!clientContext) {
       return
     }
-    void refreshAvailableAgents(clientContext)
+    void refreshDesktopToolClient(clientContext)
     void reloadProcedureContext(clientContext.threadId)
     const timer = window.setInterval(() => {
-      void refreshAvailableAgents(clientContext)
-    }, DESKTOP_AGENT_REFRESH_INTERVAL_MS)
+      void refreshDesktopToolClient(clientContext)
+    }, DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [clientContext, refreshAvailableAgents, reloadProcedureContext])
+  }, [clientContext, refreshDesktopToolClient, reloadProcedureContext])
 
   const effectiveConnectionState = useMemo(() => {
     if (!clientContext || clientConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
@@ -307,7 +307,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       workspace: clientContext?.workspace || null,
       procedureContext,
       connectionState: effectiveConnectionState,
-      desktopAgentConnected: Boolean(desktopAgentId),
+      desktopToolsAvailable: Boolean(desktopToolClientId),
       operations,
       approvalDisplay,
       pendingHumanInput,
@@ -317,7 +317,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     baseUrl,
     clientContext?.threadId,
     clientContext?.workspace,
-    desktopAgentId,
+    desktopToolClientId,
     effectiveConnectionState,
     operations,
     pendingHumanInput,
@@ -343,7 +343,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     threadId: clientContext?.threadId || '',
     sessionId,
     workspaceId: clientContext?.workspace.workspace_id || '',
-    desktopAgentConnected: Boolean(desktopAgentId),
+    desktopToolsAvailable: Boolean(desktopToolClientId),
     connectionState: effectiveConnectionState,
     connected: effectiveConnectionState === 'connected',
     runtimeSnapshot: chatState.runtimeSnapshot,

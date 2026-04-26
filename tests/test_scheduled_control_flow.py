@@ -374,10 +374,10 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
             "schedule_kind": "recurring",
             "next_run_at": "2026-04-02T01:00:00Z",
             "auto_run": True,
-            "preferred_capability_ref": "manage_tasks",
-            "preferred_agent_ids": ["desktop-main-agent"],
-            "preferred_agent_types": ["desktop"],
-            "agent_routing_policy": "strict_preferred",
+            "preferred_tool_key": "manage_tasks",
+            "preferred_target_client_ids": ["desktop-main-client"],
+            "preferred_target_client_types": ["desktop"],
+            "tool_target_routing_policy": "strict_preferred",
             "notify_policy": "on_completion",
             "delivery_target": {
                 "kind": "current_session",
@@ -425,9 +425,9 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["session_id"], "web:session-1")
         self.assertEqual(call["route_context"]["current_mode"], "scheduled_task")
         self.assertEqual(call["route_context"]["tool_bundle"], ["manage_scheduled_tasks", "get_current_system_time", "compile_report"])
-        self.assertEqual(call["route_context"]["task_routing"]["preferred_capability_ref"], "manage_tasks")
-        self.assertEqual(call["route_context"]["task_routing"]["preferred_agent_ids"], ["desktop-main-agent"])
-        self.assertEqual(call["route_context"]["task_routing"]["agent_routing_policy"], "strict_preferred")
+        self.assertEqual(call["route_context"]["task_routing"]["preferred_tool_key"], "manage_tasks")
+        self.assertEqual(call["route_context"]["task_routing"]["preferred_target_client_ids"], ["desktop-main-client"])
+        self.assertEqual(call["route_context"]["task_routing"]["tool_target_routing_policy"], "strict_preferred")
         self.assertEqual(
             [tool["function"]["name"] for tool in call["tools"]],
             ["manage_scheduled_tasks", "get_current_system_time", "compile_report"],
