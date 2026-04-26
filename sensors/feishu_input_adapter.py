@@ -260,6 +260,9 @@ class FeishuInputAdapter:
                 metadata={
                     "source": "feishu",
                     "transport": "feishu",
+                    "response_transport": "non_streaming_external_client",
+                    "supports_streaming_reply": False,
+                    "short_reply_policy": "prefer_before_nontrivial_final",
                     "tool_scope": "basic",
                     "allowed_tool_bundle": list(EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE),
                     "allowed_mcp_servers": [],

@@ -1967,6 +1967,70 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
+    async def test_non_streaming_external_client_gets_short_reply_policy_prompt(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 4,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ]
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-non-stream-client",
+                {
+                    "role": "user",
+                    "content": "Please prepare a multi-step research answer.",
+                    "metadata": {
+                        "transport": "meetwechat",
+                        "response_transport": "non_streaming_external_client",
+                        "supports_streaming_reply": False,
+                        "short_reply_policy": "prefer_before_nontrivial_final",
+                        "tool_scope": "basic",
+                        "allowed_tool_bundle": ["research_topic", "emit_short_reply"],
+                        "allowed_mcp_servers": [],
+                    },
+                },
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-non-stream-client")
+            self.assertEqual(
+                session.metadata["current_route"]["client_response"]["response_transport"],
+                "non_streaming_external_client",
+            )
+            system_text = "\n".join(
+                str(message.get("content") or "")
+                for message in adapter.stream_calls[0]["messages"]
+                if message.get("role") == "system"
+            )
+            self.assertIn("[Client Response Delivery]", system_text)
+            self.assertIn("call emit_short_reply first", system_text)
+        finally:
+            await brain.close_brain()
+
     async def test_transient_signal_turn_does_not_persist_context_or_history(self):
         context_manager = FakeContextManager()
         brain = Brain(

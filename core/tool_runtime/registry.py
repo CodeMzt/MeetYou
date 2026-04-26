@@ -100,7 +100,9 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "Send a brief standalone assistant reply to the current session while the current turn is still "
                 "thinking or tool-calling. You must call this before any potentially time-consuming operation, "
                 "including web/page reading, research, local file or workspace work, directed Client tool calls, "
-                "endpoint messaging, or other slow I/O. May be called multiple times."
+                "endpoint messaging, or other slow I/O. For non-streaming external clients such as Feishu or "
+                "WeChat/MeetWeChat, call this before a nontrivial or multi-sentence final answer unless the answer "
+                "is immediate and very short. May be called multiple times."
             ),
             "parameters": {
                 "type": "object",

@@ -1110,6 +1110,9 @@ class MeetWeChatInputAdapter:
         return {
             "source": "wechat",
             "transport": "meetwechat",
+            "response_transport": "non_streaming_external_client",
+            "supports_streaming_reply": False,
+            "short_reply_policy": "prefer_before_nontrivial_final",
             "tool_scope": "basic",
             "allowed_tool_bundle": list(MEETWECHAT_BASIC_TOOL_BUNDLE),
             "allowed_mcp_servers": [],

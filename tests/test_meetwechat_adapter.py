@@ -181,6 +181,9 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(gateway_clients), 1)
         self.assertEqual(gateway_clients[0].messages[0]["content"], "hello")
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["transport"], "meetwechat")
+        self.assertEqual(gateway_clients[0].messages[0]["metadata"]["response_transport"], "non_streaming_external_client")
+        self.assertFalse(gateway_clients[0].messages[0]["metadata"]["supports_streaming_reply"])
+        self.assertEqual(gateway_clients[0].messages[0]["metadata"]["short_reply_policy"], "prefer_before_nontrivial_final")
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["tool_scope"], "basic")
         self.assertIn("search_web", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
         self.assertEqual(
