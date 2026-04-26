@@ -1299,6 +1299,37 @@ class Brain:
                     if existing_reason
                     else scope_reason
                 )
+        if any(
+            key in metadata
+            for key in {
+                "transport",
+                "response_transport",
+                "supports_streaming_reply",
+                "short_reply_policy",
+            }
+        ):
+            client_response = dict(route_dict.get("client_response") or {})
+            transport = str(metadata.get("transport") or client_response.get("transport") or "").strip()
+            response_transport = str(
+                metadata.get("response_transport")
+                or client_response.get("response_transport")
+                or ""
+            ).strip()
+            if transport:
+                client_response["transport"] = transport
+            if response_transport:
+                client_response["response_transport"] = response_transport
+            if "supports_streaming_reply" in metadata:
+                client_response["supports_streaming_reply"] = bool(metadata.get("supports_streaming_reply"))
+            short_reply_policy = str(
+                metadata.get("short_reply_policy")
+                or client_response.get("short_reply_policy")
+                or ""
+            ).strip()
+            if short_reply_policy:
+                client_response["short_reply_policy"] = short_reply_policy
+            if client_response:
+                route_dict["client_response"] = client_response
         route_dict["disable_tools"] = bool(metadata.get("disable_tools"))
         if metadata.get("disable_tools"):
             route_dict["tool_bundle"] = []
@@ -1651,6 +1682,40 @@ class Brain:
             applied=True,
         )
 
+    @staticmethod
+    def _build_client_response_policy_messages(route_context: dict[str, Any]) -> list[dict]:
+        client_response = route_context.get("client_response")
+        if not isinstance(client_response, dict):
+            return []
+        if bool(client_response.get("supports_streaming_reply", True)):
+            return []
+        short_reply_policy = str(client_response.get("short_reply_policy") or "").strip()
+        if short_reply_policy not in {"prefer_before_nontrivial_final", "required_before_nontrivial_final"}:
+            return []
+        tool_bundle = [
+            str(item or "").strip()
+            for item in route_context.get("tool_bundle", [])
+            if str(item or "").strip()
+        ]
+        if tool_bundle and "emit_short_reply" not in tool_bundle:
+            return []
+        transport = str(client_response.get("transport") or "external").strip()
+        response_transport = str(client_response.get("response_transport") or "non_streaming_external_client").strip()
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "[Client Response Delivery]\n"
+                    f"Origin transport: {transport}\n"
+                    f"Response delivery: {response_transport}\n"
+                    "This client does not stream partial assistant text. If this turn will require tool calls, "
+                    "slow I/O, nontrivial reasoning, or a final answer longer than two short sentences, call "
+                    "emit_short_reply first with a brief natural status update. Do not call it for an immediate "
+                    "one-sentence answer."
+                ),
+            }
+        ]
+
     def _build_mode_policy_messages(self, route_context: dict[str, Any], *, requested_mode: str) -> list[dict]:
         mode = str(route_context.get("current_mode") or "").strip()
         if not mode:
@@ -1673,6 +1738,7 @@ class Brain:
                 prompt_text = self._mode_manager.get_prompt_for_mode(mode)
             if prompt_text:
                 messages.append({"role": "system", "content": prompt_text})
+        messages.extend(self._build_client_response_policy_messages(route_context))
         messages.extend(self._build_mode_switch_policy_messages(requested_mode))
         return messages
 

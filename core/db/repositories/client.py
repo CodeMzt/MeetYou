@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from core.db.models.client import Client, ClientWorkspaceMembership
+from core.db.models.workspace import Workspace
 from core.db.repositories.base import RepositoryBase
 
 
@@ -127,13 +128,14 @@ class ClientRepository(RepositoryBase):
         self.session.flush()
         return row
 
-    def list_workspace_bindings(self, client_id: str) -> list[ClientWorkspaceMembership]:
+    def list_workspace_bindings(self, client_id: str) -> list[tuple[Workspace, ClientWorkspaceMembership]]:
         client = self.get_by_client_id(client_id)
         if client is None:
             return []
         return list(
-            self.session.query(ClientWorkspaceMembership)
-            .filter_by(client_id=client.id)
+            self.session.query(Workspace, ClientWorkspaceMembership)
+            .join(Workspace, Workspace.id == ClientWorkspaceMembership.workspace_id)
+            .filter(ClientWorkspaceMembership.client_id == client.id)
             .order_by(ClientWorkspaceMembership.created_at.asc())
             .all()
         )
