@@ -1,4 +1,3 @@
-from core.db.models.agent import Agent, AgentCapabilitySnapshot, WorkspaceAgentMembership
 from core.db.models.approval import Approval
 from core.db.models.attachment import Attachment, AttachmentUploadTicket
 from core.db.models.capability import Capability, CapabilityWorkspaceBinding
@@ -17,8 +16,6 @@ from core.db.models.thread import Thread
 from core.db.models.workspace import Workspace
 
 __all__ = [
-    "Agent",
-    "AgentCapabilitySnapshot",
     "Approval",
     "Attachment",
     "AttachmentUploadTicket",
@@ -40,5 +37,4 @@ __all__ = [
     "TaskState",
     "Thread",
     "Workspace",
-    "WorkspaceAgentMembership",
 ]

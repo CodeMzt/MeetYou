@@ -30,7 +30,7 @@ def main() -> None:
         {
             "component": "desktop_backend",
             "package_version": package_version_from_env("MEETYOU_DESKTOP_BACKEND_PACKAGE_VERSION", ui_package_version),
-            "path": repo_root / "desktop_agent" / "build_info.json",
+            "path": repo_root / "desktop_client" / "build_info.json",
         },
         {
             "component": "ui",

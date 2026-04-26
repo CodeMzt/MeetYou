@@ -20,12 +20,12 @@ class WorkspaceTools:
 
     async def list_workspaces(
         self,
-        include_agents: bool = False,
         include_clients: bool = False,
         session_id: str = "",
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         del route_context
+        include_clients = bool(include_clients)
         domain = self._core_domain
         if domain is None:
             return {"ok": False, "code": "core_domain_unavailable", "message": "Core domain is not available."}
@@ -56,21 +56,6 @@ class WorkspaceTools:
                 "memory_ranking_policy": str(governance.get("memory_ranking_policy") or "workspace_first"),
                 "active": bool(active_workspace_id and workspace_id == active_workspace_id),
             }
-            if include_agents:
-                agents = []
-                agent_service = getattr(domain.services, "agent", None)
-                lister = getattr(agent_service, "list_agents_for_workspace", None)
-                if callable(lister):
-                    for agent in lister(getattr(workspace, "id", None)):
-                        agents.append(
-                            {
-                                "agent_id": str(getattr(agent, "agent_id", "") or ""),
-                                "agent_type": str(getattr(agent, "agent_type", "") or ""),
-                                "display_name": str(getattr(agent, "display_name", "") or ""),
-                                "status": str(getattr(agent, "status", "") or ""),
-                            }
-                        )
-                item["agents"] = agents
             if include_clients:
                 clients = []
                 client_service = getattr(domain.services, "client", None)

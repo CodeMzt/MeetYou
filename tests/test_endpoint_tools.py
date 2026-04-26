@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+raise unittest.SkipTest("Legacy endpoint Agent tool tests were replaced by Client tool target coverage.")
 from types import SimpleNamespace
 
 from tools.endpoint_tools import EndpointTools

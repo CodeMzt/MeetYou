@@ -16,7 +16,6 @@ class Attachment(TimestampMixin, Base):
     attachment_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     owner_type: Mapped[str] = mapped_column(String(32), nullable=False)
     owner_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    origin_agent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=True)
     origin_client_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=True)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(128), nullable=False)

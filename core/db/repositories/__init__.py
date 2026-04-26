@@ -1,5 +1,3 @@
-from core.db.repositories.agent import AgentRepository
-from core.db.repositories.agent_capability_snapshot import AgentCapabilitySnapshotRepository
 from core.db.repositories.approval import ApprovalRepository
 from core.db.repositories.attachment import AttachmentRepository
 from core.db.repositories.attachment_upload_ticket import AttachmentUploadTicketRepository
@@ -20,8 +18,6 @@ from core.db.repositories.thread import ThreadRepository
 from core.db.repositories.workspace import WorkspaceRepository
 
 __all__ = [
-    "AgentRepository",
-    "AgentCapabilitySnapshotRepository",
     "ApprovalRepository",
     "AttachmentRepository",
     "AttachmentUploadTicketRepository",

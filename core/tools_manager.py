@@ -17,7 +17,7 @@ from core.tool_runtime import (
     should_expose_mcp_tool,
 )
 from tools.attachment_tools import AttachmentTools
-from tools.agent_memory import AgentMemoryTools
+from tools.memory_tools import MemoryTools
 from tools.danxi_tools import get_shared_danxi_tools
 from tools.document_tools import DocumentTools
 from tools.endpoint_tools import EndpointTools
@@ -60,13 +60,13 @@ _ORDER_REQUIRED_TOOLS = {
     "danxi_mark_message_read",
 }
 
-_AGENT_LOCAL_FILE_TOOLS = {
+_CLIENT_LOCAL_FILE_TOOLS = {
     "analyze_workspace",
     "read_local_documents",
     "write_local_document",
     "rewrite_local_document",
 }
-_AGENT_DISPATCH_LOCAL_TOOLS = {"exec_sys_cmd", *_AGENT_LOCAL_FILE_TOOLS}
+_CLIENT_DIRECTED_LOCAL_TOOLS = {"exec_sys_cmd", *_CLIENT_LOCAL_FILE_TOOLS}
 
 _WEB_READ_TOOLS = {"search_web", "read_web_page"}
 _WEB_MCP_READ_PREFIXES = ("tavily",)
@@ -100,7 +100,7 @@ class ToolsManager:
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
         self._attachment_tools = AttachmentTools()
-        self._agent_memory_tools = AgentMemoryTools(memory)
+        self._memory_tools = MemoryTools(memory)
         self._web_search_tools = WebSearchTools(mcp_manager, config=config)
         self._danxi_tools = get_shared_danxi_tools()
         self._document_tools = (
@@ -124,9 +124,9 @@ class ToolsManager:
             "exec_sys_cmd": system_tools_module.exec_sys_cmd,
             "ask_human": getattr(system_tools_module, "ask_human", None),
             "save_memory": memory.save_memory,
-            "remember_knowledge": self._agent_memory_tools.remember_knowledge,
-            "search_memory": self._agent_memory_tools.search_memory,
-            "manage_memories": self._agent_memory_tools.manage_memories,
+            "remember_knowledge": self._memory_tools.remember_knowledge,
+            "search_memory": self._memory_tools.search_memory,
+            "manage_memories": self._memory_tools.manage_memories,
             "recall_memory": memory.recall_memory,
             "recall_memory_structured": memory.recall_memory_structured,
             "get_current_system_time": system_tools_module.get_current_system_time,
@@ -137,8 +137,8 @@ class ToolsManager:
             "restart_core": getattr(system_tools_module, "restart_core", None),
             "emit_short_reply": getattr(system_tools_module, "emit_short_reply", None),
             "emit_temporary_reply": getattr(system_tools_module, "emit_temporary_reply", None),
-            "list_active_agents": self._endpoint_tools.list_active_agents,
             "list_active_clients": self._endpoint_tools.list_active_clients,
+            "list_client_tool_targets": self._endpoint_tools.list_client_tool_targets,
             "send_endpoint_message": self._endpoint_tools.send_endpoint_message,
             "search_web": self._web_search_tools.search_web,
             "read_web_page": self._web_search_tools.read_web_page,
@@ -228,16 +228,16 @@ class ToolsManager:
             mcp_manager,
             authorization_gateway=self._authorization_gateway,
         )
-        self._agent_dispatcher_available = False
+        self._client_tool_dispatcher_available = False
 
-    def set_agent_dispatcher(self, dispatcher) -> None:
+    def set_client_tool_dispatcher(self, dispatcher) -> None:
         if self._document_tools is not None:
-            self._document_tools.set_agent_dispatcher(dispatcher)
-        self._agent_dispatcher_available = dispatcher is not None
+            self._document_tools.set_client_tool_dispatcher(dispatcher)
+        self._client_tool_dispatcher_available = dispatcher is not None
         self._authorization_gateway.set_local_capability_dispatcher_available(dispatcher is not None)
 
     def set_capability_dispatcher(self, dispatcher) -> None:
-        self.set_agent_dispatcher(dispatcher)
+        self.set_client_tool_dispatcher(dispatcher)
 
     def set_core_domain(self, core_domain) -> None:
         self._attachment_tools.set_core_domain(core_domain)
@@ -395,7 +395,7 @@ class ToolsManager:
         if not resource_key and normalized_tool_name.startswith(_WEB_MCP_READ_PREFIXES):
             serialized = repr(sorted(normalized_tool_args.items()))
             resource_key = f"mcp-web:{normalized_tool_name}:{_stable_short_hash(serialized)}"
-        if not resource_key and normalized_tool_name in _AGENT_LOCAL_FILE_TOOLS:
+        if not resource_key and normalized_tool_name in _CLIENT_LOCAL_FILE_TOOLS:
             path_candidate = normalized_tool_args.get("path") or normalized_tool_args.get("workspace_path")
             normalized_path = self._normalize_path(str(path_candidate or ""))
             if normalized_path:
@@ -449,8 +449,8 @@ class ToolsManager:
             is_builtin = self._registry.has_builtin(normalized)
             if is_builtin:
                 source_type = "builtin"
-                if normalized in _AGENT_DISPATCH_LOCAL_TOOLS:
-                    executor_owner = "agent_dispatch" if self._agent_dispatcher_available else "agent_required"
+                if normalized in _CLIENT_DIRECTED_LOCAL_TOOLS:
+                    executor_owner = "client_tool_dispatch" if self._client_tool_dispatcher_available else "client_tool_required"
                 else:
                     executor_owner = "core"
             elif self._registry.has_mcp(normalized):

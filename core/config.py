@@ -135,7 +135,7 @@ _THINKING_EFFORT_VALUES = set(THINKING_EFFORT_VALUES)
 _SUPPORTED_PROVIDERS = set(SUPPORTED_PROVIDER_VALUES)
 
 _ENV_KEY_MAP = {
-    "agent_access_token": "MEETYOU_AGENT_WS_ACCESS_TOKEN",
+    "client_access_token": "MEETYOU_CLIENT_ACCESS_TOKEN",
     "api_key": "MEETYOU_API_KEY",
     "heartbeat_api_key": "MEETYOU_HEARTBEAT_API_KEY",
     "embedding_api_key": "MEETYOU_EMBEDDING_API_KEY",
@@ -166,9 +166,9 @@ _ENV_OVERRIDE_KEY_MAP = {
 }
 
 _KNOWN_CONFIG_KEYS = set(CONFIG_FIELD_KEYS)
-_AGENT_ACCESS_TOKEN_ENV_KEYS = (
-    "MEETYOU_AGENT_WS_ACCESS_TOKEN",
-    "MEETYOU_AGENT_ACCESS_TOKEN",
+_CLIENT_ACCESS_TOKEN_ENV_KEYS = (
+    "MEETYOU_CLIENT_ACCESS_TOKEN",
+    "MEETYOU_GATEWAY_ACCESS_TOKEN",
 )
 
 
@@ -297,7 +297,7 @@ class ConfigManager(ConfigRepository):
                 status="missing",
                 message=(
                     f"Core MCP 配置文件不存在: {self._mcp_server_config_path}。"
-                    "这只表示服务端 Core 级 MCP 未配置；客户端本地 MCP 仍由 Desktop Agent 的 user/mcp_servers.json 托管。"
+                    "这只表示服务端 Core 级 MCP 未配置；客户端本地 MCP 仍由 Desktop Client 的 user/mcp_servers.json 托管。"
                 ),
             )
             logger.info(self._mcp_server_config_diagnostic["message"])
@@ -414,8 +414,8 @@ class ConfigManager(ConfigRepository):
         self._config_metadata = deepcopy(snapshot.metadata)
 
     def get(self, key: str, default=None):
-        if key == "agent_access_token":
-            for env_key in _AGENT_ACCESS_TOKEN_ENV_KEYS:
+        if key == "client_access_token":
+            for env_key in _CLIENT_ACCESS_TOKEN_ENV_KEYS:
                 env_val = os.environ.get(env_key)
                 if env_val:
                     return env_val
@@ -627,9 +627,9 @@ class ConfigManager(ConfigRepository):
         secret = self.is_secret_key(key)
         if secret:
             env_key = _ENV_KEY_MAP[key]
-            if key == "agent_access_token":
+            if key == "client_access_token":
                 value = ""
-                for candidate_env_key in _AGENT_ACCESS_TOKEN_ENV_KEYS:
+                for candidate_env_key in _CLIENT_ACCESS_TOKEN_ENV_KEYS:
                     value = os.environ.get(candidate_env_key, "")
                     if value:
                         env_key = candidate_env_key

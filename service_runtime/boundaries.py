@@ -67,12 +67,12 @@ class RuntimePlatformDependencyBoundary:
 @dataclass(slots=True)
 class RuntimePlatformBoundarySet:
     retained_in_core: tuple[RuntimePlatformDependencyBoundary, ...]
-    delegated_to_local_agents: tuple[RuntimePlatformDependencyBoundary, ...]
+    delegated_to_local_clients: tuple[RuntimePlatformDependencyBoundary, ...]
 
     def to_dict(self) -> dict[str, list[dict[str, object]]]:
         return {
             "retained_in_core": [item.to_dict() for item in self.retained_in_core],
-            "delegated_to_local_agents": [item.to_dict() for item in self.delegated_to_local_agents],
+            "delegated_to_local_clients": [item.to_dict() for item in self.delegated_to_local_clients],
         }
 
 
@@ -147,34 +147,34 @@ def build_runtime_platform_boundaries() -> RuntimePlatformBoundarySet:
                 ),
             ),
         ),
-        delegated_to_local_agents=(
+        delegated_to_local_clients=(
             RuntimePlatformDependencyBoundary(
                 name="terminal_shell_execution",
-                owner="desktop_agent/local_backend",
+                owner="desktop_client/local_backend",
                 reason="Shell 属于终端专属能力，Core 只做审计与 capability dispatch，不再直接持有平台 shell 抽象。",
                 surfaces=(
                     "tools/system_tools.py::exec_sys_cmd",
-                    "desktop_agent/execution.py::build_shell_exec_handler",
+                    "desktop_client/execution.py::build_shell_exec_handler",
                 ),
             ),
             RuntimePlatformDependencyBoundary(
                 name="terminal_file_and_workspace_io",
-                owner="desktop_agent/local_backend",
+                owner="desktop_client/local_backend",
                 reason="本地文件读写与工作区分析依赖终端文件系统，必须下沉到客户端本地后端。",
                 surfaces=(
                     "tools/document_tools.py::DocumentTools",
-                    "desktop_agent/execution.py::build_file_read_handler",
-                    "desktop_agent/execution.py::build_file_write_handler",
-                    "desktop_agent/execution.py::build_workspace_analyze_handler",
+                    "desktop_client/execution.py::build_file_read_handler",
+                    "desktop_client/execution.py::build_file_write_handler",
+                    "desktop_client/execution.py::build_workspace_analyze_handler",
                 ),
             ),
             RuntimePlatformDependencyBoundary(
                 name="terminal_local_mcp_runtime",
-                owner="desktop_agent/local_backend",
+                owner="desktop_client/local_backend",
                 reason="本地 MCP 生命周期依赖终端环境与本地进程，必须由客户端本地后端托管。",
                 surfaces=(
-                    "desktop_agent/mcp_runtime.py::DesktopAgentMCPRuntime",
-                    "desktop_agent/runtime.py::DesktopAgentRuntime",
+                    "desktop_client/mcp_runtime.py::DesktopClientMCPRuntime",
+                    "desktop_client/runtime.py::DesktopClientRuntime",
                 ),
             ),
         ),

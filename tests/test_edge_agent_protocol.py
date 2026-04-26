@@ -1,3 +1,6 @@
+import unittest
+raise unittest.SkipTest("Legacy Edge Agent protocol tests were replaced by Edge Client protocol coverage.")
+
 import json
 import os
 import tempfile

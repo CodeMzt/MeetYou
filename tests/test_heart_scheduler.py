@@ -45,10 +45,10 @@ class _FakeTaskManager:
                     "session_id": "web:session-1",
                 },
                 "origin_session_id": "web:session-1",
-                "preferred_capability_ref": "manage_tasks",
-                "preferred_agent_ids": ["desktop-main-agent"],
-                "preferred_agent_types": ["desktop"],
-                "agent_routing_policy": "balanced",
+                "preferred_tool_key": "manage_tasks",
+                "preferred_target_client_ids": ["desktop-main-client"],
+                "preferred_target_client_types": ["desktop"],
+                "tool_target_routing_policy": "balanced",
             }
         ]
 

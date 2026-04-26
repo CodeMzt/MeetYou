@@ -302,7 +302,7 @@ class ContextManager:
             "role": "system",
             "content": (
                 "[ContextPool]\n"
-                "下面是跨 Client/Agent 会话池召回的短中期上下文。它不是长期事实；若与当前用户输入冲突，以当前输入为准。\n"
+                "下面是跨 Client 会话池召回的短中期上下文。它不是长期事实；若与当前用户输入冲突，以当前输入为准。\n"
                 + json.dumps({"items": rows}, ensure_ascii=False)
             ),
             "metadata": {"context_layer": "context_pool", "transient": True},

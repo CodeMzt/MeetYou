@@ -8,17 +8,17 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import ValidationError
 
-from agent_protocol import AGENT_ARGUMENTS_PURPOSE, build_capability_call_request
+from client_tool_protocol import CLIENT_TOOL_ARGUMENTS_PURPOSE, build_tool_call_request
 from core.client_tool_bundles import ensure_client_always_available_tools
 from core.credential_transport import CredentialTransportError, decrypt_json_payload, protect_sensitive_arguments
 from core.http_headers import build_attachment_content_disposition
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import (
-    EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE,
-    EXECUTION_TARGET_SPECIFIC_AGENT,
-    EXECUTION_TARGET_WORKSPACE_ANY_AGENT,
+    EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE,
+    EXECUTION_TARGET_SPECIFIC_CLIENT,
+    EXECUTION_TARGET_WORKSPACE_ANY_CLIENT,
     normalize_execution_target,
-    requires_specific_agent,
+    requires_specific_client,
 )
 
 from gateway.models import (
@@ -48,8 +48,7 @@ from gateway.models import (
     ClientConfirmResponseResult,
     ClientHumanInputResponseRequest,
     ClientHumanInputResponseResult,
-    ClientAvailableAgentResponse,
-    ClientAvailableClientResponse,
+        ClientAvailableClientResponse,
     ClientOperationCreateRequest,
     ClientOperationResponse,
     ClientMessageCreateRequest,
@@ -82,7 +81,7 @@ def _ensure_client_always_available_tools(metadata: dict[str, Any] | None) -> di
     return ensure_client_always_available_tools(metadata)
 
 
-def _is_agent_available_status(status: str) -> bool:
+def _is_client_available_status(status: str) -> bool:
     return str(status or "").strip().lower() in {"online", "ready"}
 
 
@@ -193,11 +192,11 @@ def _procedure_response(procedure) -> ClientProcedureResponse:
         title=procedure.title,
         description=procedure.description,
         applicable_modes=list(getattr(procedure, "applicable_modes", []) or []),
-        recommended_capabilities=routing["recommended_capabilities"],
-        preferred_capability_ref=routing["preferred_capability_ref"],
-        preferred_agent_ids=routing["preferred_agent_ids"],
-        preferred_agent_types=routing["preferred_agent_types"],
-        agent_routing_policy=routing["agent_routing_policy"],
+        recommended_tools=routing["recommended_tools"],
+        preferred_tool_key=routing["preferred_tool_key"],
+        preferred_target_client_ids=routing["preferred_target_client_ids"],
+        preferred_target_client_types=routing["preferred_target_client_types"],
+        tool_target_routing_policy=routing["tool_target_routing_policy"],
         default_execution_target=procedure.default_execution_target,
         risk_profile=procedure.risk_profile,
         status=procedure.status,
@@ -250,8 +249,9 @@ def _operation_response(operation, *, workspace_id: str, thread_id: str) -> Clie
         title=operation.title,
         operation_type=operation.operation_type,
         execution_target=normalize_execution_target(operation.execution_target),
-        target_agent_id=str(metadata.get("target_agent_key") or ""),
-        capability_id=str(metadata.get("capability_id") or ""),
+        target_client_id=str(metadata.get("target_client_id") or ""),
+        tool_key=str(metadata.get("tool_key") or ""),
+        tool_id=str(metadata.get("tool_id") or ""),
         status=operation.status,
         approval_id=str(metadata.get("approval_id") or ""),
         approval_status=str(metadata.get("approval_status") or ""),
@@ -412,14 +412,14 @@ def _workspace_response(workspace) -> ClientWorkspaceResponse:
         description=governance["description"],
         prompt_overlay=governance["prompt_overlay"],
         default_execution_target=governance["default_execution_target"],
-        capability_policy=governance["capability_policy"],
-        allowed_capability_ids=governance["allowed_capability_ids"],
-        preferred_agent_ids=governance["preferred_agent_ids"],
-        preferred_agent_types=governance["preferred_agent_types"],
+        tool_policy=governance["tool_policy"],
+        allowed_tool_ids=governance["allowed_tool_ids"],
+        preferred_target_client_ids=governance["preferred_target_client_ids"],
+        preferred_target_client_types=governance["preferred_target_client_types"],
         preferred_source_profiles=governance["preferred_source_profiles"],
-        agent_routing_policy=governance["agent_routing_policy"],
+        tool_target_routing_policy=governance["tool_target_routing_policy"],
         memory_ranking_policy=governance["memory_ranking_policy"],
-        capability_routing_overrides=governance["capability_routing_overrides"],
+        tool_routing_overrides=governance["tool_routing_overrides"],
     )
 
 
@@ -427,7 +427,7 @@ def _resolve_procedure_execution_profile(domain, *, payload) -> tuple[object | N
     arguments = dict(payload.arguments or {}) if isinstance(payload.arguments, dict) else {}
     procedure_id = str(arguments.get("procedure_id") or "").strip()
     if not procedure_id and str(payload.operation_type or "") == "procedure_call":
-        candidate = str(payload.capability_id or "").strip()
+        candidate = str(payload.tool_id or "").strip()
         if candidate:
             procedure = domain.services.procedure.get_by_procedure_id(candidate)
             if procedure is not None:
@@ -441,92 +441,92 @@ def _resolve_procedure_execution_profile(domain, *, payload) -> tuple[object | N
     return procedure, {
         "procedure_id": procedure.procedure_id,
         "procedure_snapshot": _procedure_snapshot(procedure),
-        "preferred_capability_ref": routing["preferred_capability_ref"],
-        "preferred_agent_ids": routing["preferred_agent_ids"],
-        "preferred_agent_types": routing["preferred_agent_types"],
-        "agent_routing_policy": routing["agent_routing_policy"],
+        "preferred_tool_key": routing["preferred_tool_key"],
+        "preferred_target_client_ids": routing["preferred_target_client_ids"],
+        "preferred_target_client_types": routing["preferred_target_client_types"],
+        "tool_target_routing_policy": routing["tool_target_routing_policy"],
     }
 
 
-def _resolve_workspace_target_agent(domain, *, workspace, capability, capability_ref: str = "", execution_target: str, requesting_client, explicit_target_agent=None, routing_preferences: dict[str, Any] | None = None) -> tuple[object | None, str]:
-    if explicit_target_agent is not None:
-        return explicit_target_agent, "Explicit agent target provided by client."
+def _resolve_workspace_target_client(domain, *, workspace, tool, tool_key: str = "", execution_target: str, requesting_client, explicit_target_client=None, routing_preferences: dict[str, Any] | None = None) -> tuple[object | None, str]:
+    if explicit_target_client is not None:
+        return explicit_target_client, "Explicit client target provided by client."
 
     normalized_execution_target = normalize_execution_target(execution_target)
     governance = domain.services.workspace.get_governance_view(workspace)
-    abstract_key = domain.services.capability.get_abstract_capability_key(capability) if capability is not None else ""
-    concrete_capability_id = str(getattr(capability, "capability_id", "") or "") if capability is not None else ""
-    effective_preferences = domain.services.workspace.get_effective_agent_routing_preferences(
+    abstract_key = domain.services.tool.get_abstract_tool_key(tool) if tool is not None else ""
+    concrete_tool_id = str(getattr(tool, "tool_id", "") or "") if tool is not None else ""
+    effective_preferences = domain.services.workspace.get_effective_tool_target_preferences(
         workspace,
-        capability_ref=capability_ref,
-        abstract_capability_key=abstract_key,
-        concrete_capability_id=concrete_capability_id,
+        tool_key=tool_key,
+        abstract_tool_key=abstract_key,
+        concrete_tool_id=concrete_tool_id,
     )
     merged_preferences = _merge_routing_preferences(effective_preferences, routing_preferences or {})
-    preferred_agent_ids = list(merged_preferences.get("preferred_agent_ids") or [])
-    preferred_agent_types = list(merged_preferences.get("preferred_agent_types") or [])
-    agent_routing_policy = str(merged_preferences.get("agent_routing_policy") or governance.get("agent_routing_policy") or "balanced")
+    preferred_target_client_ids = list(merged_preferences.get("preferred_target_client_ids") or [])
+    preferred_target_client_types = list(merged_preferences.get("preferred_target_client_types") or [])
+    tool_target_routing_policy = str(merged_preferences.get("tool_target_routing_policy") or governance.get("tool_target_routing_policy") or "balanced")
     preference_source = str(merged_preferences.get("source") or "workspace_default")
     requesting_client_id = getattr(requesting_client, "id", None)
 
-    if capability is not None and str(getattr(capability, "provider_type", "") or "") == "agent":
-        is_exact_capability_id = str(getattr(capability, "capability_id", "") or "") == str(capability_ref or "").strip()
-        provider_agent = domain.services.agent.get_by_agent_id(str(getattr(capability, "provider_ref", "") or ""))
-        if is_exact_capability_id and provider_agent is not None and domain.services.agent.is_bound_to_workspace(agent_id=provider_agent.agent_id, workspace_id=workspace.workspace_id):
-            if getattr(provider_agent, "status", "") == "online":
-                return provider_agent, "Resolved from capability provider within workspace scope."
-            if normalized_execution_target == EXECUTION_TARGET_SPECIFIC_AGENT:
-                return None, f"Capability provider agent is offline: {provider_agent.agent_id}"
-            if normalized_execution_target == EXECUTION_TARGET_WORKSPACE_ANY_AGENT:
-                return None, f"Capability provider agent is offline: {provider_agent.agent_id}"
-            if normalized_execution_target == EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE:
-                return None, f"Capability provider agent is offline and no core fallback is available: {provider_agent.agent_id}"
+    if tool is not None and str(getattr(tool, "provider_type", "") or "") == "client":
+        is_exact_tool_id = str(getattr(tool, "tool_id", "") or "") == str(tool_key or "").strip()
+        provider_client = domain.services.client.get_by_client_id(str(getattr(tool, "provider_ref", "") or ""))
+        if is_exact_tool_id and provider_client is not None and domain.services.client.is_bound_to_workspace(client_id=provider_client.client_id, workspace_id=workspace.workspace_id):
+            if getattr(provider_client, "status", "") == "online":
+                return provider_client, "Resolved from tool provider within workspace scope."
+            if normalized_execution_target == EXECUTION_TARGET_SPECIFIC_CLIENT:
+                return None, f"Capability provider client is offline: {provider_client.client_id}"
+            if normalized_execution_target == EXECUTION_TARGET_WORKSPACE_ANY_CLIENT:
+                return None, f"Capability provider client is offline: {provider_client.client_id}"
+            if normalized_execution_target == EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE:
+                return None, f"Capability provider client is offline and no core fallback is available: {provider_client.client_id}"
 
     if normalized_execution_target not in {
-        EXECUTION_TARGET_SPECIFIC_AGENT,
-        EXECUTION_TARGET_WORKSPACE_ANY_AGENT,
-        EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE,
+        EXECUTION_TARGET_SPECIFIC_CLIENT,
+        EXECUTION_TARGET_WORKSPACE_ANY_CLIENT,
+        EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE,
     }:
         return None, ""
 
-    allowed_agent_ids = []
-    if capability is not None:
-        allowed_agent_ids = domain.services.capability.list_agents_for_capability_reference(
-            capability_ref=abstract_key or capability_ref,
+    allowed_client_ids = []
+    if tool is not None:
+        allowed_client_ids = domain.services.tool.list_clients_for_tool_reference(
+            tool_key=abstract_key or tool_key,
             workspace_id=workspace.id,
         )
 
-    selected = domain.services.agent.select_workspace_agent(
+    selected = domain.services.client.select_workspace_client(
         workspace_id=workspace.id,
         requesting_client_id=requesting_client_id,
-        preferred_agent_ids=preferred_agent_ids,
-        preferred_agent_types=preferred_agent_types,
-        routing_policy=agent_routing_policy,
-        allowed_agent_ids=allowed_agent_ids,
+        preferred_target_client_ids=preferred_target_client_ids,
+        preferred_target_client_types=preferred_target_client_types,
+        routing_policy=tool_target_routing_policy,
+        allowed_client_ids=allowed_client_ids,
     )
     if selected is not None:
-        return selected, f"Resolved by workspace agent routing policy ({agent_routing_policy}) via {preference_source}."
-    if normalized_execution_target == EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE:
-        return None, "No workspace agent available; fallback to core_only."
-    return None, f"No online agent is available for workspace: {workspace.workspace_id}"
+        return selected, f"Resolved by workspace client routing policy ({tool_target_routing_policy}) via {preference_source}."
+    if normalized_execution_target == EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE:
+        return None, "No workspace client available; fallback to core_only."
+    return None, f"No online client is available for workspace: {workspace.workspace_id}"
 
 
 def _merge_routing_preferences(*preferences: dict[str, Any]) -> dict[str, Any]:
     merged = {
-        "preferred_agent_ids": [],
-        "preferred_agent_types": [],
-        "agent_routing_policy": "balanced",
+        "preferred_target_client_ids": [],
+        "preferred_target_client_types": [],
+        "tool_target_routing_policy": "balanced",
         "source": "workspace_default",
     }
     for item in preferences:
         if not isinstance(item, dict):
             continue
-        if item.get("preferred_agent_ids"):
-            merged["preferred_agent_ids"] = list(item.get("preferred_agent_ids") or [])
-        if item.get("preferred_agent_types"):
-            merged["preferred_agent_types"] = list(item.get("preferred_agent_types") or [])
-        if item.get("agent_routing_policy"):
-            merged["agent_routing_policy"] = str(item.get("agent_routing_policy") or "balanced")
+        if item.get("preferred_target_client_ids"):
+            merged["preferred_target_client_ids"] = list(item.get("preferred_target_client_ids") or [])
+        if item.get("preferred_target_client_types"):
+            merged["preferred_target_client_types"] = list(item.get("preferred_target_client_types") or [])
+        if item.get("tool_target_routing_policy"):
+            merged["tool_target_routing_policy"] = str(item.get("tool_target_routing_policy") or "balanced")
         if item.get("source"):
             merged["source"] = str(item.get("source") or merged["source"])
     return merged
@@ -574,12 +574,12 @@ def _bind_runtime_session(gateway, *, session_id: str, source, metadata: dict | 
     )
 
 
-def _capability_requires_approval(capability) -> bool:
-    if capability is None:
+def _tool_requires_approval(tool) -> bool:
+    if tool is None:
         return False
-    if bool(getattr(capability, "requires_confirmation", False)):
+    if bool(getattr(tool, "requires_confirmation", False)):
         return True
-    return str(getattr(capability, "risk_level", "") or "").strip().lower() in _APPROVAL_RISK_LEVELS
+    return str(getattr(tool, "risk_level", "") or "").strip().lower() in _APPROVAL_RISK_LEVELS
 
 
 def _operation_event_payload(operation, *, thread_id: str, detail: str = "", phase: str = "", call_id: str = "", result: dict | None = None, error: dict | None = None) -> dict:
@@ -590,8 +590,8 @@ def _operation_event_payload(operation, *, thread_id: str, detail: str = "", pha
         "title": operation.title,
         "operation_type": operation.operation_type,
         "execution_target": normalize_execution_target(operation.execution_target),
-        "target_agent_id": str(metadata.get("target_agent_key") or ""),
-        "capability_id": str(metadata.get("capability_id") or ""),
+        "target_client_id": str(metadata.get("target_client_id") or ""),
+        "tool_id": str(metadata.get("tool_id") or ""),
         "status": operation.status,
         "approval_id": str(metadata.get("approval_id") or ""),
         "approval_status": str(metadata.get("approval_status") or ""),
@@ -744,16 +744,17 @@ async def _resolve_chat_confirmation_from_approval(gateway, domain, *, approval,
     return updated_approval, updated_operation
 
 
-async def _dispatch_specific_agent_operation(gateway, domain, *, operation, thread, workspace, requesting_client) -> tuple[object, str]:
+async def _dispatch_specific_client_operation(gateway, domain, *, operation, thread, workspace, requesting_client) -> tuple[object, str]:
     metadata = dict(getattr(operation, "meta", {}) or {})
-    target_agent_key = str(metadata.get("target_agent_key") or "")
-    capability_key = str(metadata.get("capability_id") or "")
-    if not target_agent_key or not capability_key:
+    target_client_id = str(metadata.get("target_client_id") or "")
+    tool_id = str(metadata.get("tool_id") or "")
+    tool_key = str(metadata.get("tool_key") or tool_id)
+    if not target_client_id or not tool_id:
         return operation, ""
 
-    target_agent = domain.services.agent.get_by_agent_id(target_agent_key)
-    if target_agent is None:
-        error = {"code": "agent_not_found", "message": f"未知 agent: {target_agent_key}"}
+    target_client = domain.services.client.get_by_client_id(target_client_id)
+    if target_client is None:
+        error = {"code": "client_not_found", "message": f"未知 client: {target_client_id}"}
         operation = domain.services.operation.update_status(
             operation_id=operation.id,
             status="failed",
@@ -763,9 +764,9 @@ async def _dispatch_specific_agent_operation(gateway, domain, *, operation, thre
         await _publish_operation_update(gateway, operation=operation, thread_id=thread.thread_id, detail=error["message"], error=error)
         return operation, ""
 
-    capability = domain.services.capability.get_by_capability_id(capability_key)
-    if capability is None:
-        error = {"code": "capability_not_found", "message": f"未知 capability: {capability_key}"}
+    tool = domain.services.tool.get_by_tool_id(tool_id)
+    if tool is None:
+        error = {"code": "tool_not_found", "message": f"未知 tool: {tool_key}"}
         operation = domain.services.operation.update_status(
             operation_id=operation.id,
             status="failed",
@@ -780,20 +781,21 @@ async def _dispatch_specific_agent_operation(gateway, domain, *, operation, thre
 
     call = domain.services.operation_call.create_call(
         operation_id=operation.id,
-        capability_id=capability.id,
-        target_agent_id=target_agent.id,
+        tool_id=tool.id,
+        target_client_id=target_client.id,
         status="queued",
         arguments=public_arguments,
     )
-    dispatched = await gateway.dispatch_agent_call(
-        agent_id=target_agent.agent_id,
-        payload=build_capability_call_request(
-            agent_id=target_agent.agent_id,
+    dispatched = await gateway.dispatch_client_call(
+        client_id=target_client.client_id,
+        payload=build_tool_call_request(
+            client_id=target_client.client_id,
             message_id=f"dispatch-{call.call_id}",
             operation_id=operation.operation_id,
             call_id=call.call_id,
             workspace_id=workspace.workspace_id,
-            capability_id=capability_key,
+            tool_id=tool_id,
+            tool_key=tool_key,
             arguments=dict(public_arguments or {}),
             encrypted_arguments=encrypted_arguments,
             timeout_seconds=60,
@@ -805,7 +807,7 @@ async def _dispatch_specific_agent_operation(gateway, domain, *, operation, thre
         ),
     )
     if not dispatched:
-        error = {"code": "agent_offline", "message": f"Agent is offline: {target_agent.agent_id}"}
+        error = {"code": "client_offline", "message": f"Client is offline: {target_client.client_id}"}
         domain.services.operation_call.mark_failed(call_id=call.call_id, error=error)
         operation = domain.services.operation.get_by_id(operation.id) or operation
         await _publish_operation_update(gateway, operation=operation, thread_id=thread.thread_id, call_id=call.call_id, detail=error["message"], error=error)
@@ -823,9 +825,147 @@ async def _dispatch_specific_agent_operation(gateway, domain, *, operation, thre
         thread_id=thread.thread_id,
         call_id=call.call_id,
         phase="dispatching",
-        detail="已通过 Agent 下发执行请求",
+        detail="已通过 Client 下发执行请求",
     )
     return operation, call.call_id
+
+
+async def _handle_client_tool_frame(gateway, websocket: WebSocket, frame: dict[str, Any], *, thread_id: str) -> bool:
+    if str(frame.get("schema") or "") != "meetyou.client.ws.v1":
+        return False
+    message_type = str(frame.get("type") or "").strip()
+    if not message_type:
+        return False
+    domain = gateway._require_core_domain()
+    payload = frame.get("payload") if isinstance(frame.get("payload"), dict) else {}
+    client_id = str(frame.get("client_id") or payload.get("client_id") or "").strip()
+    if message_type == "client.hello":
+        if not client_id:
+            await gateway._safe_send_json(
+                websocket,
+                {
+                    "schema": "meetyou.client.ws.v1",
+                    "type": "client.hello.ack",
+                    "client_id": "",
+                    "payload": {"accepted": False, "reject_reason": {"code": "client_id_required", "message": "client_id is required"}},
+                },
+            )
+            return True
+        workspace_ids = [str(item).strip() for item in payload.get("workspace_ids", []) if str(item).strip()]
+        available_tools = [str(item).strip() for item in payload.get("available_tools", []) if str(item).strip()]
+        executable_tools = [str(item).strip() for item in payload.get("executable_tools", []) if str(item).strip()]
+        client = domain.services.client.register_client(
+            client_id=client_id,
+            principal_id=domain.principal.id,
+            client_type=str(payload.get("client_type") or "client"),
+            display_name=str(payload.get("display_name") or client_id),
+            status="online",
+            available_tools=available_tools,
+            executable_tools=executable_tools,
+            transport_profile=str(payload.get("transport_profile") or ""),
+            host=payload.get("host") if isinstance(payload.get("host"), dict) else {},
+            metadata={"last_hello": payload},
+        )
+        domain.services.client.replace_workspace_bindings(client_id=client_id, workspace_ids=workspace_ids)
+        await gateway.client_ws_manager.bind_connection(
+            websocket,
+            thread_id=thread_id,
+            client_id=client_id,
+            workspace_id=workspace_ids[0] if workspace_ids else "",
+            client_type=getattr(client, "client_type", ""),
+            display_name=getattr(client, "display_name", ""),
+            transport_profile=str(payload.get("transport_profile") or ""),
+            available_tools=available_tools,
+            executable_tools=executable_tools,
+            host=payload.get("host") if isinstance(payload.get("host"), dict) else {},
+        )
+        connection_prompt = await gateway.build_client_connection_prompt(
+            client_id=client_id,
+            client_type=getattr(client, "client_type", ""),
+            display_name=getattr(client, "display_name", ""),
+            transport_profile=str(payload.get("transport_profile") or ""),
+            workspace_ids=workspace_ids,
+        )
+        await gateway._safe_send_json(
+            websocket,
+            {
+                "schema": "meetyou.client.ws.v1",
+                "type": "client.hello.ack",
+                "client_id": client_id,
+                "payload": {
+                    "accepted": True,
+                    "requires_tools_snapshot": True,
+                    "heartbeat_interval_seconds": 20,
+                    "connection_prompt": dict(connection_prompt or {}),
+                },
+            },
+        )
+        await gateway.notify_client_connected(
+            client_id=client_id,
+            client_type=getattr(client, "client_type", ""),
+            display_name=getattr(client, "display_name", ""),
+            transport_profile=str(payload.get("transport_profile") or ""),
+            workspace_ids=workspace_ids,
+            connection_prompt=connection_prompt,
+        )
+        return True
+    if not client_id:
+        return False
+    if message_type == "client.tools.snapshot":
+        client = domain.services.client.get_by_client_id(client_id)
+        if client is None:
+            return True
+        tools = payload.get("tools") if isinstance(payload.get("tools"), list) else []
+        workspace_keys = {
+            str(workspace_id).strip()
+            for item in tools
+            if isinstance(item, dict)
+            for workspace_id in item.get("workspace_ids", [])
+            if str(workspace_id).strip()
+        }
+        workspace_rows = [domain.services.workspace.get_by_workspace_id(workspace_id) for workspace_id in sorted(workspace_keys)]
+        workspace_rows = [workspace for workspace in workspace_rows if workspace is not None]
+        count = domain.services.capability.replace_client_tools(
+            client=client,
+            tools=[dict(item) for item in tools if isinstance(item, dict)],
+            workspace_rows=workspace_rows,
+            revision=int(payload.get("revision") or 1),
+        )
+        await gateway._safe_send_json(
+            websocket,
+            {
+                "schema": "meetyou.client.ws.v1",
+                "type": "client.ready",
+                "client_id": client_id,
+                "payload": {"registered_tool_count": count},
+            },
+        )
+        return True
+    if message_type == "client.heartbeat":
+        domain.services.client.record_heartbeat(client_id=client_id, status=str(payload.get("status") or "online"), metadata={"heartbeat": payload})
+        return True
+    if message_type == "tool.call.accepted":
+        call_id = str(payload.get("call_id") or "")
+        if call_id:
+            domain.services.operation_call.mark_accepted(call_id=call_id)
+        return True
+    if message_type == "tool.call.progress":
+        call_id = str(payload.get("call_id") or "")
+        if call_id:
+            domain.services.operation_call.mark_progress(call_id=call_id, detail=str(payload.get("detail") or ""), metadata=payload)
+        return True
+    if message_type == "tool.call.result":
+        call_id = str(payload.get("call_id") or "")
+        if call_id:
+            await domain.client_tool_dispatch.notify_call_result(call_id, payload.get("result") if isinstance(payload.get("result"), dict) else {})
+        return True
+    if message_type == "tool.call.error":
+        call_id = str(payload.get("call_id") or "")
+        if call_id:
+            error = payload.get("error") if isinstance(payload.get("error"), dict) else {"code": "client_tool_failed", "message": "Client tool call failed"}
+            await domain.client_tool_dispatch.notify_call_error(call_id, error)
+        return True
+    return False
 
 
 def build_client_router(gateway) -> APIRouter:
@@ -836,35 +976,6 @@ def build_client_router(gateway) -> APIRouter:
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         return [_workspace_response(workspace) for workspace in domain.services.workspace.list_workspaces()]
-
-    @router.get("/workspaces/{workspace_id}/agents", response_model=list[ClientAvailableAgentResponse])
-    async def list_workspace_agents(workspace_id: str, request: Request):
-        gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        workspace = domain.services.workspace.get_by_workspace_id(workspace_id)
-        if workspace is None:
-            gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"未知 workspace: {workspace_id}")
-        connected_agent_ids = await gateway.agent_ws_manager.connected_agent_ids()
-        rows = []
-        for agent in domain.services.agent.list_agents():
-            bindings = domain.services.agent.list_workspace_bindings(agent.agent_id)
-            if not any(binding.enabled and binding.workspace_id == workspace.id for binding in bindings):
-                continue
-            owner_client = domain.services.client.get_by_id(agent.owner_client_id) if getattr(agent, "owner_client_id", None) else None
-            status = "online" if agent.agent_id in connected_agent_ids and _is_agent_available_status(agent.status) else agent.status
-            rows.append(
-                ClientAvailableAgentResponse(
-                    agent_id=agent.agent_id,
-                    display_name=agent.display_name,
-                    agent_type=agent.agent_type,
-                    status=status,
-                    transport_profile=agent.transport_profile,
-                    owner_client_id=getattr(owner_client, "client_id", ""),
-                    workspace_ids=[workspace_id],
-                )
-            )
-        rows.sort(key=lambda item: (0 if item.owner_client_id else 1, item.display_name.lower(), item.agent_id))
-        return rows
 
     @router.get("/workspaces/{workspace_id}/clients", response_model=list[ClientAvailableClientResponse])
     async def list_workspace_clients(workspace_id: str, request: Request):
@@ -890,6 +1001,9 @@ def build_client_router(gateway) -> APIRouter:
                     client_type=client.client_type,
                     status="online" if client.client_id in live_client_ids else client.status,
                     workspace_ids=[workspace_id],
+                    transport_profile=str(getattr(client, "transport_profile", "") or ""),
+                    available_tools=list(getattr(client, "available_tools", []) or []),
+                    executable_tools=list(getattr(client, "executable_tools", []) or []),
                     membership_role=str(getattr(binding, "membership_role", "member") or "member"),
                     enabled=bool(getattr(binding, "enabled", True)),
                 )
@@ -1850,7 +1964,7 @@ def build_client_router(gateway) -> APIRouter:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"未知 thread: {payload.thread_id}")
         workspace = _require_workspace(gateway, domain, workspace_id=payload.workspace_id)
         procedure, procedure_profile = _resolve_procedure_execution_profile(domain, payload=payload)
-        preferred_capability_ref = str(procedure_profile.get("preferred_capability_ref") or "").strip()
+        preferred_tool_key = str(procedure_profile.get("preferred_tool_key") or "").strip()
         requested_execution_target = str(payload.execution_target or "").strip()
         execution_target_from_workspace_default = not requested_execution_target
         execution_target = normalize_execution_target(
@@ -1859,85 +1973,85 @@ def build_client_router(gateway) -> APIRouter:
             or workspace.default_execution_target,
             fallback=normalize_execution_target(workspace.default_execution_target),
         )
-        implicit_specific_agent_ok = execution_target_from_workspace_default or procedure is not None
-        if requires_specific_agent(execution_target) and not payload.target_agent_id and not implicit_specific_agent_ok:
+        implicit_specific_client_ok = execution_target_from_workspace_default or procedure is not None
+        if requires_specific_client(execution_target) and not payload.target_client_id and not implicit_specific_client_ok:
             gateway._raise_http_error(
                 status_code=400,
-                code="target_agent_required",
-                message="execution_target=specific_agent 时 target_agent_id 为必填字段",
+                code="target_client_required",
+                message="execution_target=specific_client 时 target_client_id 为必填字段",
             )
-        if payload.target_agent_id and execution_target != EXECUTION_TARGET_SPECIFIC_AGENT:
+        if payload.target_client_id and execution_target != EXECUTION_TARGET_SPECIFIC_CLIENT:
             gateway._raise_http_error(
                 status_code=400,
                 code="ambiguous_execution_target",
-                message="仅当 execution_target=specific_agent 时才允许传入 target_agent_id",
+                message="仅当 execution_target=specific_client 时才允许传入 target_client_id",
             )
-        target_agent = None
-        capability = None
-        if payload.target_agent_id:
-            target_agent = domain.services.agent.get_by_agent_id(payload.target_agent_id)
-            if target_agent is None:
+        target_client = None
+        tool = None
+        if payload.target_client_id:
+            target_client = domain.services.client.get_by_client_id(payload.target_client_id)
+            if target_client is None:
                 gateway._raise_http_error(
                     status_code=404,
-                    code="agent_not_found",
-                    message=f"未知 agent: {payload.target_agent_id}",
+                    code="client_not_found",
+                    message=f"未知 client: {payload.target_client_id}",
                 )
-            if not domain.services.agent.is_bound_to_workspace(
-                agent_id=payload.target_agent_id,
+            if not domain.services.client.is_bound_to_workspace(
+                client_id=payload.target_client_id,
                 workspace_id=payload.workspace_id,
             ):
                 gateway._raise_http_error(
                     status_code=400,
-                    code="agent_workspace_mismatch",
-                    message=f"agent {payload.target_agent_id} 不属于 workspace: {payload.workspace_id}",
+                    code="client_workspace_mismatch",
+                    message=f"client {payload.target_client_id} 不属于 workspace: {payload.workspace_id}",
                 )
-        capability_ref = str(payload.capability_id or "").strip() or preferred_capability_ref
-        if capability_ref:
-            capability = domain.services.capability.resolve_capability_reference(
-                capability_ref=capability_ref,
+        tool_key = str(payload.tool_key or payload.tool_id or "").strip() or preferred_tool_key
+        if tool_key:
+            tool = domain.services.tool.resolve_tool_reference(
+                tool_key=tool_key,
                 workspace_id=workspace.id,
-                target_agent_id=payload.target_agent_id,
+                target_client_id=payload.target_client_id,
             )
-            if capability is None:
+            if tool is None:
                 gateway._raise_http_error(
                     status_code=404,
-                    code="capability_not_found",
-                    message=f"未知 capability 或抽象能力名: {capability_ref}",
+                    code="tool_not_found",
+                    message=f"未知 tool 或抽象能力名: {tool_key}",
                 )
-            if target_agent is not None and capability.provider_ref != target_agent.agent_id:
+            if target_client is not None and tool.provider_ref != target_client.client_id:
                 gateway._raise_http_error(
                     status_code=400,
-                    code="capability_agent_mismatch",
-                    message=f"capability {capability_ref} 不属于 agent: {payload.target_agent_id}",
+                    code="tool_client_mismatch",
+                    message=f"tool {tool_key} 不属于 client: {payload.target_client_id}",
                 )
-            if not domain.services.capability.is_available_in_workspace(
-                capability_id=capability.capability_id,
+            if not domain.services.tool.is_available_in_workspace(
+                tool_id=tool.tool_id,
                 workspace_id=workspace.id,
             ):
                 gateway._raise_http_error(
                     status_code=400,
-                    code="capability_workspace_mismatch",
-                    message=f"capability {capability_ref} 不属于 workspace: {payload.workspace_id}",
+                    code="tool_workspace_mismatch",
+                    message=f"tool {tool_key} 不属于 workspace: {payload.workspace_id}",
                 )
-            if not domain.services.workspace.capability_allowed(workspace, capability_ref) and not domain.services.workspace.capability_allowed(
+            if not domain.services.workspace.tool_allowed(workspace, tool_key) and not domain.services.workspace.tool_allowed(
                 workspace,
-                domain.services.capability.get_abstract_capability_key(capability),
+                domain.services.tool.get_abstract_tool_key(tool),
             ):
                 gateway._raise_http_error(
                     status_code=403,
-                    code="capability_not_allowed_in_workspace",
-                    message=f"capability {capability_ref} 不在 workspace {payload.workspace_id} 的允许列表内",
+                    code="tool_not_allowed_in_workspace",
+                    message=f"tool {tool_key} 不在 workspace {payload.workspace_id} 的允许列表内",
                 )
         governance = domain.services.workspace.get_governance_view(workspace)
         if (
-            str(payload.operation_type or "").strip() == "capability_call"
-            and governance["capability_policy"] == "allowlist"
-            and not payload.capability_id
+            str(payload.operation_type or "").strip() == "tool_call"
+            and governance["tool_policy"] == "allowlist"
+            and not payload.tool_id
         ):
             gateway._raise_http_error(
                 status_code=400,
-                code="capability_required_by_workspace_policy",
-                message=f"workspace {payload.workspace_id} 启用了 capability allowlist，capability_call 必须显式提供 capability_id",
+                code="tool_required_by_workspace_policy",
+                message=f"workspace {payload.workspace_id} 启用了 tool allowlist，tool_call 必须显式提供 tool_id",
             )
         requesting_client = _resolve_requesting_client(
             domain,
@@ -1946,66 +2060,66 @@ def build_client_router(gateway) -> APIRouter:
         )
         routing_reason = ""
         resolved_execution_target = execution_target
-        if target_agent is None and execution_target in {
-            EXECUTION_TARGET_SPECIFIC_AGENT,
-            EXECUTION_TARGET_WORKSPACE_ANY_AGENT,
-            EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE,
+        if target_client is None and execution_target in {
+            EXECUTION_TARGET_SPECIFIC_CLIENT,
+            EXECUTION_TARGET_WORKSPACE_ANY_CLIENT,
+            EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE,
         }:
-            target_agent, routing_reason = _resolve_workspace_target_agent(
+            target_client, routing_reason = _resolve_workspace_target_client(
                 domain,
                 workspace=workspace,
-                capability=capability,
-                capability_ref=capability_ref,
+                tool=tool,
+                tool_key=tool_key,
                 execution_target=execution_target,
                 requesting_client=requesting_client,
                 routing_preferences=(
                     {
-                        "preferred_agent_ids": procedure_profile.get("preferred_agent_ids") or [],
-                        "preferred_agent_types": procedure_profile.get("preferred_agent_types") or [],
-                        "agent_routing_policy": procedure_profile.get("agent_routing_policy") or "balanced",
+                        "preferred_target_client_ids": procedure_profile.get("preferred_target_client_ids") or [],
+                        "preferred_target_client_types": procedure_profile.get("preferred_target_client_types") or [],
+                        "tool_target_routing_policy": procedure_profile.get("tool_target_routing_policy") or "balanced",
                         "source": f"procedure:{procedure_profile.get('procedure_id') or 'unknown'}",
                     }
                     if procedure is not None
                     else None
                 ),
             )
-            if target_agent is None:
-                if execution_target == EXECUTION_TARGET_PREFER_AGENT_FALLBACK_CORE:
-                    if capability is not None and str(getattr(capability, "provider_type", "") or "") == "agent":
+            if target_client is None:
+                if execution_target == EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE:
+                    if tool is not None and str(getattr(tool, "provider_type", "") or "") == "client":
                         gateway._raise_http_error(
                             status_code=409,
                             code="core_fallback_unavailable",
-                            message=routing_reason or "Agent capability 当前无可用核心降级路径",
+                            message=routing_reason or "Client tool 当前无可用核心降级路径",
                         )
                     resolved_execution_target = "core_only"
-                elif execution_target == EXECUTION_TARGET_WORKSPACE_ANY_AGENT or execution_target_from_workspace_default:
+                elif execution_target == EXECUTION_TARGET_WORKSPACE_ANY_CLIENT or execution_target_from_workspace_default:
                     gateway._raise_http_error(
                         status_code=409,
-                        code="workspace_agent_unavailable",
-                        message=routing_reason or f"No online agent is available for workspace: {workspace.workspace_id}",
+                        code="workspace_client_unavailable",
+                        message=routing_reason or f"No online client is available for workspace: {workspace.workspace_id}",
                     )
-        if capability is not None and target_agent is not None and capability.provider_ref != target_agent.agent_id:
-            capability = domain.services.capability.resolve_capability_reference(
-                capability_ref=capability_ref,
+        if tool is not None and target_client is not None and tool.provider_ref != target_client.client_id:
+            tool = domain.services.tool.resolve_tool_reference(
+                tool_key=tool_key,
                 workspace_id=workspace.id,
-                target_agent_id=target_agent.agent_id,
+                target_client_id=target_client.client_id,
             )
-            if capability is None:
+            if tool is None:
                 gateway._raise_http_error(
                     status_code=409,
-                    code="capability_resolution_failed",
-                    message=f"无法将 capability {capability_ref} 解析到 agent: {target_agent.agent_id}",
+                    code="tool_resolution_failed",
+                    message=f"无法将 tool {tool_key} 解析到 client: {target_client.client_id}",
                 )
 
-        approval_required = bool(target_agent is not None and capability is not None and _capability_requires_approval(capability))
+        approval_required = bool(target_client is not None and tool is not None and _tool_requires_approval(tool))
         operation_arguments = dict(payload.arguments or {})
         operation_encrypted_arguments = None
         operation_arguments_encrypted = False
-        if target_agent is not None and capability is not None:
+        if target_client is not None and tool is not None:
             try:
                 protected_arguments = protect_sensitive_arguments(
                     operation_arguments,
-                    purpose=AGENT_ARGUMENTS_PURPOSE,
+                    purpose=CLIENT_TOOL_ARGUMENTS_PURPOSE,
                 )
             except CredentialTransportError as exc:
                 gateway._raise_http_error(
@@ -2023,14 +2137,14 @@ def build_client_router(gateway) -> APIRouter:
             operation_type=payload.operation_type,
             execution_target=resolved_execution_target,
             title=payload.title,
-            target_agent_id=getattr(target_agent, "id", None),
+            target_client_id=getattr(target_client, "id", None),
             requested_by_client_id=requesting_client.id,
             status="waiting_approval" if approval_required else "queued",
             metadata={
-                "target_agent_key": getattr(target_agent, "agent_id", "") or payload.target_agent_id or "",
-                "capability_id": getattr(capability, "capability_id", "") or capability_ref,
-                "capability_ref": capability_ref,
-                "abstract_capability_key": domain.services.capability.get_abstract_capability_key(capability) if capability is not None else "",
+                "target_client_id": getattr(target_client, "client_id", "") or payload.target_client_id or "",
+                "tool_id": getattr(tool, "tool_id", "") or tool_key,
+                "tool_key": tool_key,
+                "abstract_tool_key": domain.services.tool.get_abstract_tool_key(tool) if tool is not None else "",
                 "arguments": operation_arguments,
                 "arguments_encrypted": operation_arguments_encrypted,
                 "approval_required": approval_required,
@@ -2044,7 +2158,7 @@ def build_client_router(gateway) -> APIRouter:
             approval = domain.services.approval.create_approval(
                 operation_id=operation.id,
                 approval_type="operation_execution",
-                risk_level=str(getattr(capability, "risk_level", "write") or "write"),
+                risk_level=str(getattr(tool, "risk_level", "write") or "write"),
             )
             operation = domain.services.operation.update_status(
                 operation_id=operation.id,
@@ -2073,8 +2187,8 @@ def build_client_router(gateway) -> APIRouter:
             phase="queued",
             detail="操作已创建，等待调度",
         )
-        if target_agent is not None and capability is not None:
-            operation, _ = await _dispatch_specific_agent_operation(
+        if target_client is not None and tool is not None:
+            operation, _ = await _dispatch_specific_client_operation(
                 gateway,
                 domain,
                 operation=operation,
@@ -2178,7 +2292,7 @@ def build_client_router(gateway) -> APIRouter:
                         detail="审批已通过，准备调度",
                     )
                 if thread is not None and workspace is not None:
-                    operation, _ = await _dispatch_specific_agent_operation(
+                    operation, _ = await _dispatch_specific_client_operation(
                         gateway,
                         domain,
                         operation=operation,
@@ -2225,15 +2339,7 @@ def build_client_router(gateway) -> APIRouter:
     async def client_websocket_endpoint(websocket: WebSocket):
         if not await gateway._authorize_websocket(websocket):
             return
-        thread_id = str(websocket.query_params.get("thread_id") or "").strip()
-        if not thread_id:
-            await gateway._send_ws_error_and_close(
-                websocket,
-                code="thread_id_required",
-                message="thread_id 为必填字段",
-                close_code=4400,
-            )
-            return
+        thread_id = str(websocket.query_params.get("thread_id") or "").strip() or "client-tool-runtime"
         await websocket.accept()
         await gateway.client_ws_manager.connect(thread_id, websocket)
         dependencies = getattr(gateway, "_dependencies", None)
@@ -2316,7 +2422,10 @@ def build_client_router(gateway) -> APIRouter:
         try:
             while True:
                 try:
-                    command = ClientWsCommand.model_validate(await websocket.receive_json())
+                    raw_frame = await websocket.receive_json()
+                    if isinstance(raw_frame, dict) and await _handle_client_tool_frame(gateway, websocket, raw_frame, thread_id=thread_id):
+                        continue
+                    command = ClientWsCommand.model_validate(raw_frame)
                 except WebSocketDisconnect:
                     break
                 except ValidationError as exc:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +19,13 @@ class Client(TimestampMixin, Base):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     capabilities: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    available_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    executable_tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    transport_profile: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    host_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    host_os: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    host_arch: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    last_seen_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
 

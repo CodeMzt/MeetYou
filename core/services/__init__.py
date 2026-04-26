@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.services.agent_service import AgentService
 from core.services.approval_service import ApprovalService
 from core.services.attachment_service import AttachmentService
 from core.services.capability_service import CapabilityService
@@ -27,8 +26,8 @@ class CoreServices:
     principal: PrincipalService
     workspace: WorkspaceService
     client: ClientService
-    agent: AgentService
     capability: CapabilityService
+    tool: CapabilityService
     procedure: ProcedureService
     thread: ThreadService
     session: SessionService
@@ -45,7 +44,6 @@ class CoreServices:
 
 
 __all__ = [
-    "AgentService",
     "ApprovalService",
     "AttachmentService",
     "CapabilityService",

@@ -63,7 +63,7 @@ export default function OperationPanel({ operations, onApprove, onReject, onDown
               <div className={styles.titleWrap}>
                 <div className={styles.title}>{operation.title || operation.operation_id}</div>
                 <div className={styles.meta}>
-                  {operation.target_agent_id || '核心服务'} · {formatOperationStatusLabel(operation.status)}
+                  {operation.target_client_id || '核心服务'} · {formatOperationStatusLabel(operation.status)}
                   {operation.phase && ` · ${formatPhaseLabel(operation.phase)}`}
                 </div>
               </div>
