@@ -72,7 +72,13 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "send_endpoint_message",
-            "description": "Send a realtime notice or dispatch a directed tool call to a target Client.",
+            "description": (
+                "Send a realtime notice or dispatch a directed tool call to a target Client other than the "
+                "normal current-session reply path. Do not use this to answer the originating user or to send "
+                "progress updates to the same client; use emit_short_reply for progress and the final assistant "
+                "answer for the actual reply. Use only when the user explicitly asks to notify or call a "
+                "specific target Client."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -2028,6 +2028,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIn("[Client Response Delivery]", system_text)
             self.assertIn("call emit_short_reply first", system_text)
+            self.assertIn("Do not use send_endpoint_message", system_text)
         finally:
             await brain.close_brain()
 

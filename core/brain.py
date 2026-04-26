@@ -1711,7 +1711,10 @@ class Brain:
                     "This client does not stream partial assistant text. If this turn will require tool calls, "
                     "slow I/O, nontrivial reasoning, or a final answer longer than two short sentences, call "
                     "emit_short_reply first with a brief natural status update. Do not call it for an immediate "
-                    "one-sentence answer."
+                    "one-sentence answer. Do not use send_endpoint_message for progress updates or for replying "
+                    "to this same originating client; use emit_short_reply for progress and the final assistant "
+                    "answer for the actual reply. Use send_endpoint_message only when the user explicitly asks "
+                    "to notify a different target Client."
                 ),
             }
         ]
