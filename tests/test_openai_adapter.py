@@ -230,6 +230,33 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1].text, "answer")
         self.assertEqual(events[2].usage["reasoning_tokens"], 3)
 
+    async def test_official_openai_stream_does_not_duplicate_done_text_after_delta(self):
+        adapter = OpenAIAdapter()
+        session = FakeSession(
+            [
+                FakeResponse(
+                    lines=[
+                        'data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"ok"}',
+                        'data: {"type":"response.output_text.done","item_id":"msg_1","output_index":0,"content_index":0,"text":"ok"}',
+                        'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[]}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        events = []
+        async for event in adapter.stream_chat(
+            session,
+            "https://api.openai.com/v1/chat/completions",
+            "key",
+            "gpt-5.4-mini",
+            [{"role": "user", "content": "Say ok"}],
+        ):
+            events.append(event)
+
+        self.assertEqual([event.text for event in events if event.type == "text"], ["ok"])
+
     async def test_official_openai_stream_emits_provider_items_and_tool_calls(self):
         adapter = OpenAIAdapter()
         session = FakeSession(

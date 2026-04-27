@@ -73,17 +73,17 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "function": {
             "name": "send_endpoint_message",
             "description": (
-                "Send a realtime notice or dispatch a directed tool call to a target Client other than the "
+                "Send a realtime notice or dispatch a directed tool call to a target Endpoint other than the "
                 "normal current-session reply path. Do not use this to answer the originating user or to send "
-                "progress updates to the same client; use emit_progress_notice for progress and the final assistant "
+                "progress updates to the same endpoint; use emit_progress_notice for progress and the final assistant "
                 "answer for the actual reply. Use only when the user explicitly asks to notify or call a "
-                "specific target Client."
+                "specific target Endpoint."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_type": {"type": "string", "enum": ["client"], "description": "Target endpoint type."},
-                    "target_id": {"type": "string", "description": "Target client_id."},
+                    "target_type": {"type": "string", "enum": ["endpoint"], "description": "Target endpoint type."},
+                    "target_id": {"type": "string", "description": "Target endpoint_id."},
                     "delivery_kind": {"type": "string", "enum": ["notice", "tool_call"], "default": "notice"},
                     "content": {"type": "string", "description": "Notice text when delivery_kind is notice.", "default": ""},
                     "tool_key": {"type": "string", "description": "Directed tool key for tool_call.", "default": ""},

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
+from core.runtime_context import bind_event_context, reset_event_context
 from tools.endpoint_tools import EndpointTools
 
 
@@ -82,6 +83,25 @@ class EndpointToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(notice["content"], "desktop notice")
         self.assertEqual(notice["metadata"]["runtime_action"], "delivery.notice")
         self.assertEqual(notice["metadata"]["target_type"], "endpoint")
+
+    async def test_endpoint_notice_rejects_same_origin_reply_path(self):
+        tools, _, manager = self._tools()
+        token = bind_event_context(source_id="desktop.main.executor")
+        try:
+            with self.assertRaises(RuntimeError) as raised:
+                await tools.send_endpoint_message(
+                    target_type="endpoint",
+                    target_id="desktop.main.executor",
+                    delivery_kind="notice",
+                    content="duplicate reply",
+                    session_id="sess-1",
+                    workspace_id="desktop-main",
+                )
+        finally:
+            reset_event_context(token)
+
+        self.assertEqual(raised.exception.tool_error_code, "same_origin_endpoint_notice_forbidden")
+        self.assertEqual(manager.notices, [])
 
     async def test_endpoint_tool_call_routes_through_tool_router(self):
         tools, router, _ = self._tools()

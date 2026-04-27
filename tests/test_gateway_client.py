@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from urllib.parse import parse_qs, urlsplit
 
+import aiohttp
+
 from clients.gateway_client import GatewayConversationClient
 
 
@@ -29,6 +31,103 @@ class GatewayConversationClientTests(unittest.TestCase):
         self.assertEqual(query["provider_type"], ["feishu"])
         self.assertEqual(query["display_name"], ["Feishu OC Test"])
         self.assertEqual(query["workspace_id"], ["personal"])
+
+
+class _FakeWs:
+    def __init__(self):
+        self.sent = []
+
+    async def send_json(self, payload):
+        self.sent.append(dict(payload))
+
+
+class _FakeHttpSession:
+    def __init__(self, ws):
+        self.ws = ws
+
+    async def ws_connect(self, *args, **kwargs):
+        del args, kwargs
+        return self.ws
+
+
+class _FakeWsMessage:
+    def __init__(self, payload):
+        self.type = aiohttp.WSMsgType.TEXT
+        self._payload = payload
+
+    def json(self, loads=None):
+        del loads
+        return dict(self._payload)
+
+
+class _FakeIncomingWs:
+    def __init__(self, payloads):
+        self._messages = [_FakeWsMessage(payload) for payload in payloads]
+
+    def __aiter__(self):
+        self._iter = iter(self._messages)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_endpoint_subscription_disables_replay_for_external_side_effect_clients(self):
+        client = GatewayConversationClient(
+            base_url="http://127.0.0.1:8000",
+            client_id="feishu-oc-test",
+            client_type="feishu",
+            display_name="Feishu OC Test",
+            workspace_id="personal",
+            thread_id="thr-1",
+        )
+        client.session_id = "sess-1"
+        ws = _FakeWs()
+        client._http_session = _FakeHttpSession(ws)  # noqa: SLF001
+
+        async def _noop():
+            return None
+
+        client.ensure_context = _noop  # type: ignore[method-assign]
+        client._ensure_http_session = _noop  # type: ignore[method-assign]  # noqa: SLF001
+
+        await client._connect_ws()  # noqa: SLF001
+
+        self.assertEqual(ws.sent[1]["type"], "subscription.start")
+        self.assertFalse(ws.sent[1]["payload"]["replay"])
+
+    async def test_start_readiness_waits_for_subscription_ack_not_hello_ack(self):
+        observed = []
+        client = GatewayConversationClient(
+            base_url="http://127.0.0.1:8000",
+            client_id="feishu-oc-test",
+            client_type="feishu",
+            display_name="Feishu OC Test",
+            workspace_id="personal",
+            thread_id="thr-1",
+            event_handler=lambda payload: observed.append(
+                (
+                    payload.get("type"),
+                    client._ws_connected.is_set(),  # noqa: SLF001
+                    client._subscription_acknowledged.is_set(),  # noqa: SLF001
+                )
+            ),
+        )
+        client._ws = _FakeIncomingWs(  # noqa: SLF001
+            [
+                {"type": "endpoint.hello.ack"},
+                {"type": "subscription.ack"},
+            ]
+        )
+
+        await client._read_ws()  # noqa: SLF001
+
+        self.assertEqual(observed[0], ("endpoint.hello.ack", False, False))
+        self.assertEqual(observed[1], ("subscription.ack", True, True))
 
 
 if __name__ == "__main__":

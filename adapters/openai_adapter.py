@@ -933,6 +933,8 @@ class OpenAIAdapter(LLMAdapter):
         tool_calls_acc: dict[str, ToolCallInfo] = {}
         provider_items: dict[str, dict[str, Any]] = {}
         output_text_delta_keys: set[tuple[str, ...]] = set()
+        output_text_buffers: dict[tuple[str, ...], str] = {}
+        output_text_buffer = ""
         reasoning_summary_delta_keys: set[tuple[str, ...]] = set()
         reasoning_requested = bool(payload.get("reasoning"))
         saw_reasoning_summary = False
@@ -943,16 +945,23 @@ class OpenAIAdapter(LLMAdapter):
             async for data in self._iter_sse_payloads(resp):
                 event_type = data.get("type", "")
                 if event_type == "response.output_text.delta":
-                    output_text_delta_keys.add(self._stream_event_key(data))
+                    key = self._stream_event_key(data)
+                    output_text_delta_keys.add(key)
                     text = data.get("delta") or data.get("text") or ""
                     if text:
+                        output_text_buffers[key] = f"{output_text_buffers.get(key, '')}{text}"
+                        output_text_buffer += str(text)
                         yield StreamEvent(type="text", text=text)
                     continue
 
                 if event_type == "response.output_text.done":
                     key = self._stream_event_key(data)
                     text = data.get("text") or ""
-                    if key not in output_text_delta_keys and text:
+                    already_streamed = bool(text) and (
+                        output_text_buffers.get(key) == text
+                        or output_text_buffer == text
+                    )
+                    if key not in output_text_delta_keys and text and not already_streamed:
                         yield StreamEvent(type="text", text=text)
                     continue
 

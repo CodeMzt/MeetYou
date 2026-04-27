@@ -3,7 +3,7 @@
 from typing import Any
 
 
-CLIENT_ALWAYS_AVAILABLE_TOOLS = ("emit_progress_notice", "send_endpoint_message")
+CLIENT_ALWAYS_AVAILABLE_TOOLS = ("emit_progress_notice",)
 
 EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE = [
     "ask_human",
@@ -16,7 +16,6 @@ EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE = [
     "switch_workspace",
     "list_active_clients",
     "list_client_tool_targets",
-    "send_endpoint_message",
     "emit_progress_notice",
     "restart_core",
     "search_knowledge",

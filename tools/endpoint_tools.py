@@ -36,6 +36,22 @@ def _string_list(values) -> list[str]:
     return result
 
 
+def _origin_endpoint_id_from_context() -> str:
+    context = get_event_context()
+    for key in ("origin_endpoint_id", "endpoint_id", "source_id", "client_id"):
+        value = str(context.get(key) or "").strip()
+        if value:
+            return value
+    source = context.get("source")
+    metadata = getattr(source, "metadata", {}) if source is not None else {}
+    if isinstance(metadata, dict):
+        for key in ("endpoint_id", "origin_endpoint_id", "client_id"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
 class EndpointTools:
     def __init__(self):
         self._core_domain = None
@@ -224,6 +240,14 @@ class EndpointTools:
             raise _tool_error("target_endpoint_id_required", "target_id is required for endpoint delivery.")
         if not text:
             raise _tool_error("content_required", "content is required for notice delivery.")
+        origin_endpoint_id = _origin_endpoint_id_from_context()
+        if origin_endpoint_id and normalized_target_id == origin_endpoint_id:
+            raise _tool_error(
+                "same_origin_endpoint_notice_forbidden",
+                "Do not use send_endpoint_message to reply to the originating endpoint. "
+                "Return the final assistant answer normally, or use emit_progress_notice for progress.",
+                details={"target_endpoint_id": normalized_target_id},
+            )
         endpoint = self._domain().services.endpoint.get_by_endpoint_id(normalized_target_id)
         if endpoint is None:
             raise _tool_error("endpoint_not_found", f"Unknown endpoint: {normalized_target_id}")

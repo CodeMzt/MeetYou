@@ -47,6 +47,7 @@ class GatewayConversationClient:
         self._closed = False
         self._context_lock = asyncio.Lock()
         self._ws_connected = asyncio.Event()
+        self._subscription_acknowledged = asyncio.Event()
 
         self.thread_id = str(thread_id or "").strip()
         self.session_id = ""
@@ -137,12 +138,12 @@ class GatewayConversationClient:
 
     async def start(self) -> None:
         await self.ensure_context()
-        if self._ws_task is not None and not self._ws_task.done() and self._ws_connected.is_set():
+        if self._ws_task is not None and not self._ws_task.done() and self._subscription_acknowledged.is_set():
             return
         if self._ws_task is None or self._ws_task.done():
             self._closed = False
             self._ws_task = asyncio.create_task(self._maintain_ws())
-        await asyncio.wait_for(self._ws_connected.wait(), timeout=15)
+        await asyncio.wait_for(self._subscription_acknowledged.wait(), timeout=15)
 
     async def _maintain_ws(self) -> None:
         while not self._closed:
@@ -166,6 +167,7 @@ class GatewayConversationClient:
             headers=self._auth_headers(),
         )
         self._ws_connected.clear()
+        self._subscription_acknowledged.clear()
         await self._ws.send_json(
             {
                 "schema": "meetyou.endpoint.ws.v4",
@@ -199,6 +201,7 @@ class GatewayConversationClient:
                     "target_type": "thread",
                     "target_id": self.thread_id,
                     "last_seen_event_seq": 0,
+                    "replay": False,
                 },
             }
         )
@@ -209,7 +212,8 @@ class GatewayConversationClient:
         async for message in self._ws:
             if message.type == aiohttp.WSMsgType.TEXT:
                 payload = message.json(loads=json.loads)
-                if payload.get("type") in {"endpoint.hello.ack", "subscription.ack"}:
+                if payload.get("type") == "subscription.ack":
+                    self._subscription_acknowledged.set()
                     self._ws_connected.set()
                 await self._dispatch_event(payload)
             elif message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
