@@ -254,6 +254,29 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
         await output.close()
 
+    async def test_non_streaming_external_does_not_duplicate_delta_and_completed_answer(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        future = output.begin_event(self._event(), allow_send=True)
+
+        await output.send_client_event(
+            "chat-1",
+            _run_event({"type": "message.delta", "stream_id": "stream-1", "channel": "answer", "delta": "你好"}),
+        )
+        await output.send_client_event(
+            "chat-1",
+            _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "你好"}}),
+        )
+
+        result = await asyncio.wait_for(future, timeout=1)
+        await asyncio.wait_for(output._outbound_queue.join(), timeout=1)  # noqa: SLF001
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["你好"])
+        await output.close()
+
     async def test_progress_notice_run_event_sends_without_completing_pending_reply(self):
         meetwechat_client = _FakeMeetWeChatClient()
         config = _Config(

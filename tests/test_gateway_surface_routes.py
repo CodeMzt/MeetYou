@@ -73,12 +73,106 @@ class _EndpointCapabilityService:
         return []
 
 
+class _WorkspaceService:
+    def get_by_id(self, row_id):
+        if not row_id:
+            return None
+        return SimpleNamespace(id=row_id, workspace_id="desktop-main")
+
+    def get_by_workspace_id(self, workspace_id: str):
+        if workspace_id == "desktop-main":
+            return SimpleNamespace(id="workspace-row", workspace_id="desktop-main")
+        return None
+
+
+class _SchedulerService:
+    def __init__(self):
+        self.jobs = {
+            "system.heartbeat": SimpleNamespace(
+                id="heartbeat-row",
+                job_id="system.heartbeat",
+                kind="system_heartbeat",
+                name="System heartbeat",
+                workspace_id=None,
+                singleton_key="core.system.heartbeat",
+                enabled=True,
+                deletable=False,
+                editable_fields=["enabled", "trigger_config.interval_seconds"],
+                trigger_type="interval",
+                trigger_config={"type": "interval", "interval_seconds": 600},
+                timezone="UTC",
+                action_ref="core.workflow.heartbeat",
+                run_template={},
+                execution_policy={},
+                delivery_policy={},
+                concurrency_policy={},
+                misfire_policy={},
+                meta={},
+                created_at=None,
+                updated_at=None,
+            )
+        }
+
+    def list_jobs(self):
+        return list(self.jobs.values())
+
+    def create_job(self, **kwargs):
+        job_id = kwargs.get("job_id") or "job-created"
+        job = SimpleNamespace(
+            id=f"{job_id}-row",
+            job_id=job_id,
+            kind=kwargs.get("kind") or "scheduled_task",
+            name=kwargs.get("name") or "",
+            workspace_id=kwargs.get("workspace_id"),
+            singleton_key=kwargs.get("singleton_key"),
+            enabled=kwargs.get("enabled", True),
+            deletable=True,
+            editable_fields=["enabled", "trigger_config"],
+            trigger_type=kwargs.get("trigger_type") or "interval",
+            trigger_config=kwargs.get("trigger_config") or {},
+            timezone=kwargs.get("timezone") or "UTC",
+            action_ref=kwargs.get("action_ref") or "",
+            run_template=kwargs.get("run_template") or {},
+            execution_policy=kwargs.get("execution_policy") or {},
+            delivery_policy=kwargs.get("delivery_policy") or {},
+            concurrency_policy=kwargs.get("concurrency_policy") or {},
+            misfire_policy=kwargs.get("misfire_policy") or {},
+            meta=kwargs.get("metadata") or {},
+            created_at=None,
+            updated_at=None,
+        )
+        self.jobs[job_id] = job
+        return job
+
+    def update_job(self, *, job_id: str, **updates):
+        job = self.jobs.get(job_id)
+        if job is None:
+            return None
+        for key, value in updates.items():
+            if key == "metadata":
+                setattr(job, "meta", value)
+            else:
+                setattr(job, key, value)
+        return job
+
+    def delete_job(self, *, job_id: str):
+        job = self.jobs.get(job_id)
+        if job is None:
+            return False
+        if not job.deletable:
+            raise ValueError(f"scheduled job is not deletable: {job_id}")
+        self.jobs.pop(job_id, None)
+        return True
+
+
 class _FakeDomain:
     def __init__(self):
         self.services = SimpleNamespace(
             endpoint=_EndpointService(),
             endpoint_connection=_EndpointConnectionService(),
             endpoint_capability=_EndpointCapabilityService(),
+            workspace=_WorkspaceService(),
+            scheduler=_SchedulerService(),
             thread=SimpleNamespace(get_by_thread_id=lambda thread_id: None),
             run_event=SimpleNamespace(list_for_thread_after=lambda **kwargs: []),
             operation_call=SimpleNamespace(
@@ -185,6 +279,47 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
         self.assertIn("desktop.main.executor", domain.services.endpoint.rows)
         self.assertEqual(domain.services.endpoint_connection.connections[0]["connection_id"], "conn-1")
         self.assertEqual(domain.services.endpoint_capability.snapshots[0]["endpoint_public_id"], "desktop.main.executor")
+
+    def test_operator_scheduled_jobs_crud_and_system_heartbeat_guard(self):
+        domain = _FakeDomain()
+        gateway = FastAPIGateway(EventBus(), SessionManager(), core_domain=domain, access_token="surface-token")
+
+        with TestClient(gateway.app) as client:
+            headers = {"Authorization": "Bearer surface-token"}
+            create_resp = client.post(
+                "/operator/scheduled-jobs",
+                headers=headers,
+                json={
+                    "job_id": "acceptance.job",
+                    "kind": "acceptance",
+                    "name": "Acceptance job",
+                    "workspace_id": "desktop-main",
+                    "interval_seconds": 90,
+                },
+            )
+            self.assertEqual(create_resp.status_code, 200)
+            self.assertEqual(create_resp.json()["trigger_config"]["interval_seconds"], 90)
+
+            list_resp = client.get("/operator/scheduled-jobs", headers=headers)
+            self.assertEqual(list_resp.status_code, 200)
+            self.assertIn("system.heartbeat", {item["job_id"] for item in list_resp.json()})
+
+            patch_resp = client.patch(
+                "/operator/scheduled-jobs/system.heartbeat",
+                headers=headers,
+                json={"enabled": False, "interval_seconds": 137},
+            )
+            self.assertEqual(patch_resp.status_code, 200)
+            self.assertFalse(patch_resp.json()["enabled"])
+            self.assertEqual(patch_resp.json()["trigger_config"]["interval_seconds"], 137)
+
+            delete_system_resp = client.delete("/operator/scheduled-jobs/system.heartbeat", headers=headers)
+            self.assertEqual(delete_system_resp.status_code, 400)
+            self.assertEqual(delete_system_resp.json()["error"]["code"], "scheduled_job_not_deletable")
+
+            delete_resp = client.delete("/operator/scheduled-jobs/acceptance.job", headers=headers)
+            self.assertEqual(delete_resp.status_code, 200)
+            self.assertTrue(delete_resp.json()["deleted"])
 
 
 if __name__ == "__main__":

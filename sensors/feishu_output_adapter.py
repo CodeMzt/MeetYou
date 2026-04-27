@@ -69,6 +69,12 @@ class FeishuOutputAdapter:
         if text:
             await self._send_text(chat_id, text)
 
+    async def _flush_run_event_message(self, chat_id: str, stream_key: str, final_content: str = ""):
+        buffered = "".join(self._stream_buffers.pop(stream_key, [])) if stream_key else ""
+        text = str(final_content or "").strip() or buffered
+        if text:
+            await self._send_text(chat_id, text)
+
     def get_pending_confirm_request(self, chat_id: str) -> str | None:
         return self._pending_confirm_requests.get(chat_id)
 
@@ -170,7 +176,7 @@ class FeishuOutputAdapter:
 
         if event_type == "message.completed":
             message = body.get("message", {}) if isinstance(body.get("message"), dict) else body
-            await self._flush_stream_buffer(chat_id, stream_key, str(message.get("content") or ""))
+            await self._flush_run_event_message(chat_id, stream_key, str(message.get("content") or ""))
             return
 
         if event_type == "operation.updated":
