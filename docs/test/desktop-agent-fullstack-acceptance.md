@@ -174,7 +174,7 @@
   - `message.delta`
   - `message.completed`
 - 关键结论：
-  - 本地 `/desktop/ws -> 云端 Core /client/ws` 实时主链正常可用。
+  - V4 主链应为本地 Desktop Provider `/desktop/ws` 管理本地桥，并连接云端 Core `/endpoint/ws`。
 - 结果：通过。
 
 ### 5.5 交互、主页面与非 Danxi 子页面检查
@@ -246,7 +246,7 @@
 - fresh session 下 `GET /desktop/runtime/debug?session_id=...` 现在返回 `200`，且为 bootstrap debug，不再是 `500`。
 - 缺失 session 的 runtime debug 现在返回结构化 `404`，不再是裸 `500`。
 - fresh session 下再次触发 `agent.desktop-agent-2.utility.echo`，`/desktop/ws` 收到 `queued -> dispatching -> accepted -> running -> succeeded` 全链路。
-- 云端 Core 部署滚动窗口内曾短暂出现 `/agent/ws` `502` 握手失败，但 Desktop Agent 自动重连后恢复；steady state 复测未再复现。
+- 历史 V3 验收中记录过旧 Agent WebSocket 握手失败；V4 不再使用旧 Agent WebSocket 路径。
 - 本地最新日志未再看到此前那条 `provider_bad_request` 作为稳定复现问题。
 - 结果：通过。
 

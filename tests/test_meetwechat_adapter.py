@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import tempfile
 import unittest
@@ -12,6 +12,27 @@ from sensors.meetwechat_adapter import (
     MeetWeChatStateStore,
     split_text_naturally,
 )
+
+
+def _run_event(event: dict) -> dict:
+    return {
+        "schema": "meetyou.endpoint.ws.v4",
+        "type": "delivery.run_event",
+        "payload": {
+            "type": event.get("type"),
+            "stream_id": event.get("stream_id", ""),
+            "turn_id": event.get("turn_id", ""),
+            "payload": dict(event),
+        },
+    }
+
+
+def _notice(content: str) -> dict:
+    return {
+        "schema": "meetyou.endpoint.ws.v4",
+        "type": "delivery.notice",
+        "payload": {"content": content},
+    }
 
 
 class _Config:
@@ -69,15 +90,13 @@ class _FakeGatewayClient:
         self.confirm_responses = []
         self.human_input_responses = []
         self.commands = []
-        self.reply_payload = kwargs.get("reply_payload") or {
-            "schema": "meetyou.client.ws.v1",
-            "kind": "event",
-            "event": {
+        self.reply_payload = kwargs.get("reply_payload") or _run_event(
+            {
                 "type": "message.completed",
                 "stream_id": "stream-1",
                 "message": {"content": "assistant reply"},
-            },
-        }
+            }
+        )
 
     async def start(self):
         return None
@@ -184,14 +203,14 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["transport"], "meetwechat")
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["response_transport"], "non_streaming_external_client")
         self.assertFalse(gateway_clients[0].messages[0]["metadata"]["supports_streaming_reply"])
-        self.assertEqual(gateway_clients[0].messages[0]["metadata"]["short_reply_policy"], "prefer_before_nontrivial_final")
+        self.assertEqual(gateway_clients[0].messages[0]["metadata"]["progress_notice_policy"], "prefer_before_nontrivial_final")
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["tool_scope"], "basic")
         self.assertIn("search_web", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
         self.assertEqual(
             gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"],
             MEETWECHAT_BASIC_TOOL_BUNDLE,
         )
-        self.assertIn("emit_short_reply", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("emit_progress_notice", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
         self.assertIn("send_endpoint_message", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
         self.assertEqual(meetwechat_client.sent[0]["chat_id"], "chat-1")
         self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
@@ -222,15 +241,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await output.send_client_event(
             "chat-1",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "message.completed",
-                    "stream_id": "stream-1",
-                    "message": {"content": "assistant reply"},
-                },
-            },
+            _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "assistant reply"}}),
         )
 
         await asyncio.wait_for(meetwechat_client.send_started.wait(), timeout=1)
@@ -243,7 +254,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
         await output.close()
 
-    async def test_short_reply_created_event_sends_without_completing_pending_reply(self):
+    async def test_progress_notice_run_event_sends_without_completing_pending_reply(self):
         meetwechat_client = _FakeMeetWeChatClient()
         config = _Config(
             meetwechat_state_file=self.state_path,
@@ -264,18 +275,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await output.send_client_event(
             "chat-1",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "message.created",
-                    "message": {
-                        "role": "assistant",
-                        "channel": "short_reply",
-                        "content": "I will check.",
-                    },
-                },
-            },
+            _run_event({"type": "assistant.progress_notice", "content": "I will check.", "text": "I will check."}),
         )
 
         for _ in range(20):
@@ -288,15 +288,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await output.send_client_event(
             "chat-1",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "message.completed",
-                    "stream_id": "stream-1",
-                    "message": {"content": "assistant reply"},
-                },
-            },
+            _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "assistant reply"}}),
         )
 
         result = await asyncio.wait_for(future, timeout=1)
@@ -310,7 +302,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
         await output.close()
 
-    async def test_notice_created_event_sends_without_pending_reply(self):
+    async def test_delivery_notice_sends_without_pending_reply(self):
         meetwechat_client = _FakeMeetWeChatClient()
         config = _Config(
             meetwechat_state_file=self.state_path,
@@ -321,18 +313,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await output.send_client_event(
             "chat-1",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "message.created",
-                    "message": {
-                        "role": "assistant",
-                        "channel": "notice",
-                        "content": "direct notice",
-                    },
-                },
-            },
+            _notice("direct notice"),
         )
 
         self.assertEqual(meetwechat_client.sent[0]["chat_id"], "chat-1")
@@ -443,15 +424,13 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(started_contents), {"first", "second"})
 
     async def test_confirm_response_is_bound_to_group_sender(self):
-        confirm_payload = {
-            "schema": "meetyou.client.ws.v1",
-            "kind": "event",
-            "event": {
+        confirm_payload = _run_event(
+            {
                 "type": "confirm.requested",
                 "request_id": "confirm-1",
                 "content": "Approve action?",
-            },
-        }
+            }
+        )
         adapter, _, meetwechat_client, gateway_clients, _ = self._build_adapter(reply_payload=confirm_payload)
 
         await adapter.handle_events(
@@ -502,16 +481,14 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("evt-confirm", meetwechat_client.acked)
 
     async def test_human_input_response_is_bound_to_group_sender(self):
-        human_input_payload = {
-            "schema": "meetyou.client.ws.v1",
-            "kind": "event",
-            "event": {
+        human_input_payload = _run_event(
+            {
                 "type": "human_input.requested",
                 "request_id": "input-1",
                 "question": "Pick one",
                 "options": ["alpha", "beta"],
-            },
-        }
+            }
+        )
         adapter, _, _, gateway_clients, _ = self._build_adapter(reply_payload=human_input_payload)
 
         await adapter.handle_events(
@@ -640,11 +617,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
         adapter, output, meetwechat_client, gateway_clients, state = self._build_adapter(
             config=config,
-            reply_payload={
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {"type": "activity.status", "content": "thinking"},
-            },
+            reply_payload=_run_event({"type": "activity.status", "content": "thinking"}),
         )
 
         await adapter.handle_events([self._event()])
@@ -700,3 +673,4 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

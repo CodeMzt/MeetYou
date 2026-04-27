@@ -1,4 +1,4 @@
-"""
+﻿"""
 High-level local document and workspace tools.
 """
 
@@ -247,16 +247,16 @@ def build_workspace_analysis_payload(root: Path, *, depth: int = 3, include_hidd
 
 
 class DocumentTools:
-    def __init__(self, mode_manager, client_tool_dispatcher=None, allow_local_fallback: bool = True):
+    def __init__(self, mode_manager, tool_router=None, allow_local_fallback: bool = True):
         self._mode_manager = mode_manager
-        self._client_tool_dispatcher = client_tool_dispatcher
+        self._tool_router = tool_router
         self._allow_local_fallback = bool(allow_local_fallback)
 
-    def set_client_tool_dispatcher(self, dispatcher) -> None:
-        self._client_tool_dispatcher = dispatcher
+    def set_tool_router(self, dispatcher) -> None:
+        self._tool_router = dispatcher
 
     def set_capability_dispatcher(self, dispatcher) -> None:
-        self.set_client_tool_dispatcher(dispatcher)
+        self.set_tool_router(dispatcher)
 
     def set_local_fallback_enabled(self, enabled: bool) -> None:
         self._allow_local_fallback = bool(enabled)
@@ -270,7 +270,7 @@ class DocumentTools:
         title: str,
         operation_type: str,
     ) -> dict[str, Any]:
-        dispatcher = self._client_tool_dispatcher
+        dispatcher = self._tool_router
         if dispatcher is None:
             raise RuntimeError("Client tool dispatcher is not configured")
         dispatch = getattr(dispatcher, "dispatch_directed_tool", None)
@@ -293,7 +293,7 @@ class DocumentTools:
         session_id: str = "",
         path: str = "",
     ) -> None:
-        if self._client_tool_dispatcher is not None or self._allow_local_fallback:
+        if self._tool_router is not None or self._allow_local_fallback:
             return
         error = RuntimeError("Core local fallback is disabled")
         error.tool_error_code = "local_client_required"
@@ -612,7 +612,7 @@ class DocumentTools:
         activity_callback=None,
     ) -> str:
         del source, route_context, activity_callback
-        if self._client_tool_dispatcher is None:
+        if self._tool_router is None:
             root = self._resolve_path(path)
             self._ensure_local_capability_available(
                 tool_key="workspace.analyze",
@@ -653,7 +653,7 @@ class DocumentTools:
     ) -> str:
         del source, route_context, activity_callback
         normalized_paths = [paths] if isinstance(paths, str) else list(paths or [])
-        if self._client_tool_dispatcher is None:
+        if self._tool_router is None:
             self._ensure_local_capability_available(
                 tool_key="file.read",
                 session_id=session_id,
@@ -701,7 +701,7 @@ class DocumentTools:
         activity_callback=None,
     ) -> str:
         del source, route_context, activity_callback, confirmed
-        client_managed = self._client_tool_dispatcher is not None
+        client_managed = self._tool_router is not None
         raw_path = _normalize_local_path_value(path)
         target = None if client_managed else self._resolve_path(raw_path)
         target_path = raw_path if client_managed else str(target)
@@ -809,7 +809,7 @@ class DocumentTools:
         activity_callback=None,
     ) -> str:
         del source, route_context, activity_callback, confirmed
-        client_managed = self._client_tool_dispatcher is not None
+        client_managed = self._tool_router is not None
         raw_path = _normalize_local_path_value(path)
         target = None if client_managed else self._resolve_path(raw_path)
         target_path = raw_path if client_managed else str(target)
@@ -941,7 +941,7 @@ class DocumentTools:
                 continue
 
             maybe_path = Path(text).expanduser()
-            if self._client_tool_dispatcher is not None and _looks_like_local_path_input(text):
+            if self._tool_router is not None and _looks_like_local_path_input(text):
                 collected = await self._collect_document_via_client(
                     _normalize_local_path_value(text),
                     goal="",
@@ -1006,3 +1006,4 @@ class DocumentTools:
             "answer_style": "Use the compiled report directly or write it with write_local_document if the user wants a saved file.",
         }
         return json.dumps(payload, ensure_ascii=False, indent=2)
+

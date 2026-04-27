@@ -51,7 +51,10 @@ jobs:
             tests.test_runtime_entrypoints \
             tests.test_config_manager \
             tests.test_client_tool_protocol \
-            tests.test_client_tool_dispatch_service_lightweight \
+            tests.test_endpoint_protocol_v4 \
+            tests.test_tool_router_v4 \
+            tests.test_delivery_v4 \
+            tests.test_scheduler_v4 \
             tests.test_db_bootstrap \
             tests.test_gateway_config_api
       - name: Install frontend dependencies

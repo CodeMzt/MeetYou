@@ -185,19 +185,19 @@ class _FakeWsManager:
         return False
 
 
-class _FakeClientWsManager:
+class _FakeEndpointWsManager:
     def __init__(self, threads=None):
         self._threads = set(threads or [])
 
-    def has_connections(self, thread_id: str):
-        return thread_id in self._threads
+    def has_subscription(self, *, target_type: str, target_id: str):
+        return target_type == "thread" and target_id in self._threads
 
 
 class _FakeGateway:
     def __init__(self, *, threads=None):
         self.events = []
         self.ws_manager = _FakeWsManager()
-        self.client_ws_manager = _FakeClientWsManager(threads=threads)
+        self.endpoint_ws_manager = _FakeEndpointWsManager(threads=threads)
 
     async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict):
         self.events.append({"thread_id": thread_id, "event_type": event_type, "payload": dict(payload)})
@@ -375,8 +375,8 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
             "next_run_at": "2026-04-02T01:00:00Z",
             "auto_run": True,
             "preferred_tool_key": "manage_tasks",
-            "preferred_target_client_ids": ["desktop-main-client"],
-            "preferred_target_client_types": ["desktop"],
+            "preferred_target_endpoint_ids": ["desktop-main-client"],
+            "preferred_endpoint_provider_types": ["desktop"],
             "tool_target_routing_policy": "strict_preferred",
             "notify_policy": "on_completion",
             "delivery_target": {
@@ -426,7 +426,7 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["route_context"]["current_mode"], "scheduled_task")
         self.assertEqual(call["route_context"]["tool_bundle"], ["manage_scheduled_tasks", "get_current_system_time", "compile_report"])
         self.assertEqual(call["route_context"]["task_routing"]["preferred_tool_key"], "manage_tasks")
-        self.assertEqual(call["route_context"]["task_routing"]["preferred_target_client_ids"], ["desktop-main-client"])
+        self.assertEqual(call["route_context"]["task_routing"]["preferred_target_endpoint_ids"], ["desktop-main-client"])
         self.assertEqual(call["route_context"]["task_routing"]["tool_target_routing_policy"], "strict_preferred")
         self.assertEqual(
             [tool["function"]["name"] for tool in call["tools"]],

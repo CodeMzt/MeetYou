@@ -613,7 +613,7 @@ export function parseWsPayload(payload: unknown, now: number = Date.now()): Prot
     const error = toRuntimeErrorPayload(rawEvent.content) ?? {
       code: 'runtime_event_error',
       category: 'runtime',
-      message: content || '发生错误',
+      message: content || '鍙戠敓閿欒',
       retryable: false,
       details: metadata,
       occurred_at: '',
@@ -626,6 +626,38 @@ export function parseWsPayload(payload: unknown, now: number = Date.now()): Prot
 
 export function parseClientWsPayload(payload: unknown): ClientWsEvent {
   const record = toRecord(payload)
+  if (toString(record.schema) === 'meetyou.endpoint.ws.v4') {
+    const frameType = toString(record.type)
+    if (frameType === 'endpoint.hello.ack' || frameType === 'subscription.ack') {
+      const body = toRecord(record.payload)
+      return {
+        kind: 'connection',
+        threadId: toString(body.target_id),
+        status: 'connected',
+      }
+    }
+    if (frameType === 'endpoint.error') {
+      const error = toRuntimeErrorPayload(record.payload)
+      return error ? { kind: 'error', error } : { kind: 'ignore' }
+    }
+    if (frameType !== 'delivery.run_event') {
+      return { kind: 'ignore' }
+    }
+    const outer = toRecord(record.payload)
+    const body = toRecord(outer.payload)
+    return parseClientWsPayload({
+      kind: 'event',
+      event: {
+        ...body,
+        type: toString(outer.type),
+        thread_id: toString(outer.thread_id) || toString(body.thread_id),
+        session_id: toString(body.session_id) || toString(outer.session_id),
+        stream_id: toString(body.stream_id) || toString(outer.stream_id),
+        turn_id: toString(body.turn_id) || toString(outer.turn_id),
+        event_id: toString(outer.event_id),
+      },
+    })
+  }
   const kind = toString(record.kind)
 
   if (kind === 'connection') {
@@ -735,7 +767,7 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
       title: toString(event.title),
       operationType: toString(event.operation_type),
       executionTarget: toString(event.execution_target),
-      targetClientId: toString(event.target_client_id),
+      targetEndpointId: toString(event.target_endpoint_id),
       toolKey: toString(event.tool_key),
       toolId: toString(event.tool_id),
       callId: toString(event.call_id),

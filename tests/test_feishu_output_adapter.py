@@ -17,6 +17,27 @@ from core.io_protocol import EventTarget, EventType, StreamEventType, make_sourc
 from sensors.feishu_output_adapter import FeishuOutputAdapter
 
 
+def _run_event(event: dict) -> dict:
+    return {
+        "schema": "meetyou.endpoint.ws.v4",
+        "type": "delivery.run_event",
+        "payload": {
+            "type": event.get("type"),
+            "stream_id": event.get("stream_id", ""),
+            "turn_id": event.get("turn_id", ""),
+            "payload": dict(event),
+        },
+    }
+
+
+def _notice(content: str) -> dict:
+    return {
+        "schema": "meetyou.endpoint.ws.v4",
+        "type": "delivery.notice",
+        "payload": {"content": content},
+    }
+
+
 class FakeConfig:
     def __init__(self, values):
         self._values = values
@@ -229,7 +250,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(message_calls), 1)
 
-    async def test_message_created_notice_is_sent_as_independent_message(self):
+    async def test_delivery_notice_is_sent_as_independent_message(self):
         adapter = self._build_adapter(
             [
                 FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
@@ -239,18 +260,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await adapter.send_client_event(
             "oc_test",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "message.created",
-                    "message": {
-                        "role": "assistant",
-                        "channel": "notice",
-                        "content": "desktop notice",
-                    },
-                },
-            },
+            _notice("desktop notice"),
         )
 
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
@@ -298,15 +308,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await adapter.send_client_event(
             "oc_test",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "confirm.requested",
-                    "request_id": "req-1",
-                    "content": "需要确认执行。",
-                },
-            },
+            _run_event({"type": "confirm.requested", "request_id": "req-1", "content": "需要确认执行。"}),
         )
 
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
@@ -321,16 +323,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await adapter.send_client_event(
             "oc_test",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "operation.updated",
-                    "operation_id": "op-1",
-                    "status": "running",
-                    "detail": "desktop agent accepted",
-                },
-            },
+            _run_event({"type": "operation.updated", "operation_id": "op-1", "status": "running", "detail": "desktop endpoint accepted"}),
         )
 
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
@@ -341,14 +334,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await adapter.send_client_event(
             "oc_test",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "activity.status",
-                    "content": "正在路由到桌面端",
-                },
-            },
+            _run_event({"type": "activity.status", "content": "正在路由到桌面端"}),
         )
 
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
@@ -364,28 +350,11 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await adapter.send_client_event(
             "oc_test",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "message.delta",
-                    "stream_id": "stream-1",
-                    "channel": "answer",
-                    "delta": "hello",
-                },
-            },
+            _run_event({"type": "message.delta", "stream_id": "stream-1", "channel": "answer", "delta": "hello"}),
         )
         await adapter.send_client_event(
             "oc_test",
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "message.completed",
-                    "stream_id": "stream-1",
-                    "message": {"content": "hello"},
-                },
-            },
+            _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "hello"}}),
         )
 
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]

@@ -151,7 +151,7 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "client_access_token": {
         "title": "Client 访问令牌",
-        "description": "Desktop Client 与 Edge Client 连接 Core `/client/ws` 时使用的令牌；正式主来源优先取环境变量。",
+        "description": "Desktop Provider 与 Edge Provider 连接 Core `/endpoint/ws` 时使用的令牌；正式主来源优先取环境变量。",
         "group": "secrets",
         "input": "password",
         "advanced": True,
@@ -406,7 +406,7 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "enable_meetwechat_client": {
         "title": "启用 MeetWeChat Client",
-        "description": "启用 MeetWeChat 本地服务代理真实微信账号，并通过正式 Client API 与 /client/ws 接入 Core。",
+        "description": "启用 MeetWeChat 本地服务代理真实微信账号，并通过正式 Endpoint API 与 /endpoint/ws 接入 Core。",
         "group": "advanced",
         "input": "boolean",
         "advanced": True,

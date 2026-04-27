@@ -1,24 +1,30 @@
 # MeetYou
 
-MeetYou 是一个以 LLM 为核心的个人智能体系统。当前架构已经收束为：
+MeetYou 是一个以 LLM 为核心的个人智能体系统。V4 当前架构目标是 **Core-owned Runtime + Endpoint Routing**：
 
 ```text
 Electron UI -> desktop_client backend ----\
-CIL / HTTP / Web clients -----------------> Core Service -> memory / tools / MCP / Heart
-edge_client runtimes ---------------------/        |
-                                                   v
-                                           workspaces / operations / approvals
+CIL / HTTP / Web endpoints ----------------> Core Service -> Thread / Message / Run
+edge endpoint providers ------------------/        |        Scheduler / Heartbeat
+external endpoints -----------------------/        v        Memory / Operation / Delivery
+                                           ToolRouter -> ExecutionTarget
 ```
 
 核心原则：
 
-- `Core Service` 是唯一编排中心，负责会话、记忆、权限、持久化、Gateway、operation、approval 与 tool 调度。
-- 周围统一都是 `Client`，包括桌面端、边缘节点、CIL、WebSocket 会话和未来的其他入口。
-- `tool` 是一等概念。Core 负责编排调用；Client 只作为身份、workspace、权限、连接和 directed tool 目标边界。
-- 本地文件、Shell、本地 MCP、workspace local、短回复等本地执行能力都按 directed tool 处理。
-- 不再保留正式 `/agent/ws` 运行时兼容；正式实时入口统一为 `GET /client/ws`。
+- `Core Service` owns Thread / Message / Run / Scheduler / Heartbeat / Memory / Operation / Delivery。
+- `Client` 不再是调度主体，只是 Endpoint Provider；Desktop、Edge、Feishu、WeChatBot 等都通过 Endpoint 暴露输入、输出或执行能力。
+- Core is not Client；`core.local` 是 in-process `ExecutionTarget`，不是 Client。
+- Scheduler 是唯一系统级调度时钟；`system.heartbeat` 是 Scheduler 内不可删除、可启停、可修改间隔的系统预设 Job。
+- `endpoint.heartbeat` 只是连接保活，不触发 `system.heartbeat`。
+- `short_reply` 不再作为 directed tool；由 `assistant.progress_notice` RunEvent / Runtime Action 替代。
+- Delivery 只负责投递 `message` / `run_event` / `notice` / `operation_update`，不负责生成回复。
+- Final assistant reply 必须是 MessageService 持久化的 assistant message。
+- Streaming 必须走 RunEventLog + Delivery fan-out。
+- Tool 调度必须走 ToolRouter + ExecutionTarget；权限挂在 Actor / Workspace / RunPolicy，执行能力挂在 EndpointCapability。
+- V4 不保留 `/client/ws`、`source_client_id`、`target_client_id`、`ClientToolDispatchService` 兼容路径。
 
-当前生效的设计与计划文档在 `docs/v3/`；历史 V2 资料在 `docs/archive/v2/`。
+当前生效的设计与计划文档在 `docs/v4/`；`docs/v3/` 和 `docs/archive/v2/` 是历史参考。
 
 ## 架构边界
 
@@ -27,11 +33,11 @@ edge_client runtimes ---------------------/        |
 Core 是服务端主链：
 
 - FastAPI HTTP / WebSocket Gateway
-- thread / message / session runtime
-- memory、tools、MCP、Heart
-- workspace、procedure、operation、approval
+- Thread / Message / Run runtime
+- Scheduler / Heartbeat / Memory / Operation / Delivery
+- workspace、procedure、approval、RunPolicy
 - PostgreSQL 持久化与 Alembic migration
-- Client tool 调度与权限判断
+- ToolRouter / ExecutionTarget 调度与权限判断
 
 生产入口：
 
@@ -50,9 +56,9 @@ python main.py service
 `desktop_client/` 是桌面本地后端，与 Electron UI 一起构成统一桌面端：
 
 - 承载 UI 使用的本地 `/desktop/*` HTTP / WS API
-- 通过 `GET /client/ws` 连接 Core
-- 声明 `available_tools` 与 `executable_tools`
-- 执行本地文件、Shell、本地 MCP、workspace local 等 directed tools
+- 通过 `GET /endpoint/ws` 连接 Core
+- 声明 endpoint capabilities
+- 执行本地文件、Shell、本地 MCP、workspace local 等 endpoint execution capabilities
 - 由本地配置限制 `read_roots`、`trusted_write_roots`、`cmd_policy_path`、`mcp_servers_path`
 
 生产入口：
@@ -71,9 +77,9 @@ python main.py desktop-client
 
 `edge_client/` 是按 workspace 接入的边缘运行时：
 
-- 通过 `GET /client/ws` 接入 Core
-- 以 `workspace_ids`、`client_type`、`transport_profile`、tool 声明描述边缘能力
-- 执行被 Core 调度到该 Client 的 directed tools
+- 通过 `GET /endpoint/ws` 接入 Core
+- 以 `workspace_ids`、`client_type`、`transport_profile`、endpoint capabilities 描述边缘能力
+- 执行被 Core 调度到该 Endpoint 的 execution target tools
 
 生产入口：
 
@@ -109,62 +115,67 @@ npm run dev
 唯一正式实时入口：
 
 ```text
-GET /client/ws
+GET /endpoint/ws
 ```
 
 协议 schema：
 
 ```text
-meetyou.client.ws.v1
+meetyou.endpoint.ws.v4
 ```
 
 核心帧：
 
-- `client.hello`
-- `client.tools.snapshot`
-- `client.ready`
-- `client.heartbeat`
+- `endpoint.hello`
+- `endpoint.capabilities.snapshot`
+- `endpoint.ready`
+- `endpoint.heartbeat`
+- `endpoint.goodbye`
+- `subscription.start`
+- `subscription.update`
+- `subscription.stop`
+- `delivery.message`
+- `delivery.run_event`
+- `delivery.notice`
+- `delivery.operation_update`
 - `tool.call.request`
 - `tool.call.result`
 - `tool.call.error`
+- `tool.call.cancel`
 
-同一 `client_id` 可以有多条 `/client/ws` 连接。每条连接可以分别声明：
+同一 endpoint provider 可以有多条 `/endpoint/ws` 连接。每条连接可以分别声明：
 
 - 订阅
-- 当前会话上下文
-- `available_tools`
-- `executable_tools`
+- endpoint capabilities
 - host / transport metadata
 
 ## Tool 模型
 
-工具分为两类：
+所有工具调用都先经 ToolRouter 解析 ExecutionTarget，再由对应 executor 执行：
 
-- 无向 tools：不需要 `target_client_id`，例如 web/search、memory、skill、summarize。
-- directed tools：需要解析 `target_client_id`，例如 `file.*`、`shell.*`、`workspace.*`、`short_reply`。
+- `CoreToolExecutor`：`core.local` in-process execution target。
+- `EndpointToolExecutor`：Desktop / Edge execution endpoint。
+- `ExternalToolExecutor`：Feishu / WeChatBot / webhook / email 等 external endpoint 或 adapter。
 
-Client 有两张过滤清单：
+权限与能力拆分：
 
-- `available_tools`：该 Client 作为调用起点时允许调用的 tool key。
-- `executable_tools`：该 Client 作为目标时可承接的 directed tool key。
-
-默认目标策略：
-
-- `short_reply` / endpoint notice：默认 `self`。
-- `file.*`、`shell.*`、`workspace.*`：默认 workspace 内可执行该 tool 的 desktop Client，优先 source/self，再按 workspace 偏好排序。
-- 目标不可用时直接失败为 `target_client_unavailable`，不自动 fallback。
+- Actor / Workspace / RunPolicy 决定允许调用哪些抽象 tool key。
+- EndpointCapability 描述哪个 endpoint 能执行哪些 tool key。
+- `assistant.progress_notice` 是 Runtime Action / RunEvent，不是 tool，不创建 Operation。
 
 Operation 公共字段：
 
-- `target_client_id`
 - `tool_key`
 - `tool_id`
-- `execution_target`: `core_only`、`specific_client`、`workspace_any_client`、`prefer_client_fallback_core`
+- `execution_target_id`
+- `target_endpoint_id`
+- `requested_by_actor_id`
+- `requested_by_run_id`
 
 Workspace / procedure governance 公共字段：
 
-- `preferred_target_client_ids`
-- `preferred_target_client_types`
+- `preferred_execution_target_ids`
+- `preferred_endpoint_types`
 - `tool_target_routing_policy`
 
 ## 目录结构
@@ -173,7 +184,7 @@ Workspace / procedure governance 公共字段：
 core/                 Core 编排、会话、状态、模式路由、应用生命周期
 gateway/              FastAPI HTTP / WebSocket Gateway
 service_runtime/      Core 生产运行入口
-client_tool_sdk/      Client tool 协议 SDK
+client_tool_sdk/      待重命名的 Endpoint protocol SDK 兼容目录
 desktop_client/       桌面本地后端与 directed tool runtime
 edge_client/          边缘 Client runtime
 meetyou-ui/           Electron + React 桌面端
@@ -182,7 +193,7 @@ adapters/             LLM 与外部服务适配器
 sensors/              输入/输出适配层与系统感知
 platform_layer/       Core 宿主机感知抽象
 prompt/               系统、模式与技能提示词
-docs/                 文档入口；当前真源在 docs/v3/
+docs/                 文档入口；当前真源在 docs/v4/
 tests/                自动化回归测试
 user/                 本地配置模板与运行态数据目录
 ```
@@ -286,7 +297,7 @@ python -m edge_client
 桌面主链默认顺序：
 
 ```text
-service -> UI -> desktop backend(由 UI 托管) -> desktop session -> /client/ws runtime
+service -> UI -> desktop backend(由 UI 托管) -> desktop provider session -> /endpoint/ws runtime
 ```
 
 ## 验证

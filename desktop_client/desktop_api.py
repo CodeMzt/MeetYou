@@ -45,7 +45,7 @@ _LOCAL_CONFIG_FIELDS = [
     {
         "key": "core_access_token",
         "title": "Desktop Client Access Token",
-        "description": "Bearer token used by the packaged desktop client when it connects to Core /client/ws.",
+        "description": "Bearer token used by the packaged desktop provider when it connects to Core /endpoint/ws.",
         "group": "secrets",
         "input": "password",
         "advanced": True,

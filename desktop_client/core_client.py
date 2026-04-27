@@ -125,7 +125,7 @@ class DesktopCoreClient:
             if not (key == "access_token" and value == str(local_access_token or "").strip())
         ]
         query_string = urlencode(query_items)
-        return f"{scheme}://{base.split('://', 1)[1]}/client/ws{('?' + query_string) if query_string else ''}"
+        return f"{scheme}://{base.split('://', 1)[1]}/endpoint/ws{('?' + query_string) if query_string else ''}"
 
     def _build_core_request_headers(self, request) -> dict[str, str]:
         headers = filter_request_headers(request.headers)

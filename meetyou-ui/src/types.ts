@@ -35,8 +35,8 @@ export interface ClientWorkspace {
   default_execution_target: string
   tool_policy: string
   allowed_tool_ids: string[]
-  preferred_target_client_ids: string[]
-  preferred_target_client_types: string[]
+  preferred_target_endpoint_ids: string[]
+  preferred_endpoint_provider_types: string[]
   preferred_source_profiles: string[]
   tool_target_routing_policy: string
   memory_ranking_policy: string
@@ -50,8 +50,8 @@ export interface ClientProcedure {
   applicable_modes: string[]
   recommended_tools: string[]
   preferred_tool_key: string
-  preferred_target_client_ids: string[]
-  preferred_target_client_types: string[]
+  preferred_target_endpoint_ids: string[]
+  preferred_endpoint_provider_types: string[]
   tool_target_routing_policy: string
   default_execution_target: string
   risk_profile: string
@@ -100,7 +100,7 @@ export interface ClientOperation {
   title: string
   operation_type: string
   execution_target: string
-  target_client_id: string
+  target_endpoint_id: string
   tool_key: string
   tool_id: string
   status: string
@@ -276,7 +276,7 @@ export type ClientWsEvent =
       title: string
       operationType: string
       executionTarget: string
-      targetClientId: string
+      targetEndpointId: string
       toolKey: string
       toolId: string
       callId: string

@@ -43,8 +43,7 @@ _ORDER_REQUIRED_TOOLS = {
     "manage_tasks",
     "manage_scheduled_tasks",
     "send_endpoint_message",
-    "emit_short_reply",
-    "emit_temporary_reply",
+    "emit_progress_notice",
     "restart_core",
     "danxi_login",
     "danxi_logout",
@@ -135,8 +134,7 @@ class ToolsManager:
             "get_background_status": getattr(system_tools_module, "get_background_status", None),
             "manage_heartbeat_settings": getattr(system_tools_module, "manage_heartbeat_settings", None),
             "restart_core": getattr(system_tools_module, "restart_core", None),
-            "emit_short_reply": getattr(system_tools_module, "emit_short_reply", None),
-            "emit_temporary_reply": getattr(system_tools_module, "emit_temporary_reply", None),
+            "emit_progress_notice": getattr(system_tools_module, "emit_progress_notice", None),
             "list_active_clients": self._endpoint_tools.list_active_clients,
             "list_client_tool_targets": self._endpoint_tools.list_client_tool_targets,
             "send_endpoint_message": self._endpoint_tools.send_endpoint_message,
@@ -228,16 +226,16 @@ class ToolsManager:
             mcp_manager,
             authorization_gateway=self._authorization_gateway,
         )
-        self._client_tool_dispatcher_available = False
+        self._tool_router_available = False
 
-    def set_client_tool_dispatcher(self, dispatcher) -> None:
+    def set_tool_router(self, dispatcher) -> None:
         if self._document_tools is not None:
-            self._document_tools.set_client_tool_dispatcher(dispatcher)
-        self._client_tool_dispatcher_available = dispatcher is not None
+            self._document_tools.set_tool_router(dispatcher)
+        self._tool_router_available = dispatcher is not None
         self._authorization_gateway.set_local_capability_dispatcher_available(dispatcher is not None)
 
     def set_capability_dispatcher(self, dispatcher) -> None:
-        self.set_client_tool_dispatcher(dispatcher)
+        self.set_tool_router(dispatcher)
 
     def set_core_domain(self, core_domain) -> None:
         self._attachment_tools.set_core_domain(core_domain)
@@ -450,7 +448,7 @@ class ToolsManager:
             if is_builtin:
                 source_type = "builtin"
                 if normalized in _CLIENT_DIRECTED_LOCAL_TOOLS:
-                    executor_owner = "client_tool_dispatch" if self._client_tool_dispatcher_available else "client_tool_required"
+                    executor_owner = "tool_router" if self._tool_router_available else "endpoint_required"
                 else:
                     executor_owner = "core"
             elif self._registry.has_mcp(normalized):

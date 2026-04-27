@@ -198,12 +198,12 @@ class ClientToolRuntimeBase(ABC):
                     ws,
                     session,
                 )
-                if str(payload.get("type") or "") == "client.hello.ack":
+                if str(payload.get("type") or "") == "endpoint.hello.ack":
                     return ready_received
                 continue
             if message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
                 raise RuntimeError(
-                    f"{self.runtime_label} websocket closed before client.hello.ack "
+                    f"{self.runtime_label} websocket closed before endpoint.hello.ack "
                     f"(ws_type={message.type}, close_code={getattr(ws, 'close_code', None)})"
                 )
 
@@ -245,7 +245,7 @@ class ClientToolRuntimeBase(ABC):
         if schema != self.protocol_schema:
             return ready_received
         message_type = str(payload.get("type") or "")
-        if message_type == "client.hello.ack":
+        if message_type == "endpoint.hello.ack":
             ack_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
             if ack_payload.get("accepted") is False:
                 reject_reason = ack_payload.get("reject_reason") if isinstance(ack_payload.get("reject_reason"), dict) else {}
@@ -272,10 +272,10 @@ class ClientToolRuntimeBase(ABC):
                 self._logger.info("%s downgraded handshake features: %s", self.runtime_label, disabled_features)
             self._logger.info("%s hello acknowledged: %s", self.runtime_label, ack_payload)
             return ready_received
-        if message_type == "client.message":
+        if message_type in {"delivery.message", "delivery.run_event", "delivery.notice", "delivery.operation_update"}:
             await self.handle_client_message(payload=payload, ws=ws, session=session)
             return ready_received
-        if message_type == "client.ready":
+        if message_type == "endpoint.ready":
             self._logger.info("%s ready: %s", self.runtime_label, payload.get("payload", {}))
             return True
         if message_type == "tool.call.request":

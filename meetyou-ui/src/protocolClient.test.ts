@@ -10,6 +10,22 @@ import {
   parseWsPayload,
 } from './protocolClient'
 
+function endpointRunEvent(event: Record<string, unknown>) {
+  return {
+    schema: 'meetyou.endpoint.ws.v4',
+    type: 'delivery.run_event',
+    payload: {
+      type: typeof event.type === 'string' ? event.type : '',
+      thread_id: typeof event.thread_id === 'string' ? event.thread_id : '',
+      session_id: typeof event.session_id === 'string' ? event.session_id : '',
+      stream_id: typeof event.stream_id === 'string' ? event.stream_id : '',
+      turn_id: typeof event.turn_id === 'string' ? event.turn_id : '',
+      event_id: typeof event.event_id === 'string' ? event.event_id : '',
+      payload: event,
+    },
+  }
+}
+
 describe('protocolClient', () => {
   it('parses runtime state envelope from HTTP response', () => {
     const snapshot = parseRuntimeStateEnvelope({
@@ -245,11 +261,8 @@ describe('protocolClient', () => {
     expect(error?.details.key).toBe('mode_router')
   })
 
-  it('parses client websocket message events', () => {
-    const created = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+  it('parses endpoint websocket message events', () => {
+    const created = parseClientWsPayload(endpointRunEvent({
         type: 'message.created',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -265,24 +278,16 @@ describe('protocolClient', () => {
           channel: 'message',
           created_at: '2026-04-08T00:00:00Z',
         },
-      },
-    })
-    const delta = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+      }))
+    const delta = parseClientWsPayload(endpointRunEvent({
         type: 'message.delta',
         thread_id: 'thr_1',
         session_id: 'sess_1',
         stream_id: 'stream_1',
         turn_id: 'turn_1',
         delta: 'partial',
-      },
-    })
-    const completed = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+      }))
+    const completed = parseClientWsPayload(endpointRunEvent({
         type: 'message.completed',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -301,8 +306,7 @@ describe('protocolClient', () => {
           created_at: '2026-04-08T00:00:02Z',
           temporary: true,
         },
-      },
-    })
+      }))
 
     expect(created.kind).toBe('message_created')
     expect(created.kind === 'message_created' ? created.message.message_id : '').toBe('msg_1')
@@ -313,23 +317,16 @@ describe('protocolClient', () => {
     expect(completed.kind === 'message_completed' ? completed.message.temporary : false).toBe(true)
   })
 
-  it('parses bridged client websocket message events with nested message fallback', () => {
-    const delta = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+  it('parses bridged endpoint websocket message events with nested message fallback', () => {
+    const delta = parseClientWsPayload(endpointRunEvent({
         type: 'message.delta',
         thread_id: 'thr_1',
         session_id: 'system:client:desktop-main',
         stream_id: 'stream_1',
         turn_id: 'turn_1',
         content: 'partial-from-content',
-      },
-    })
-    const completed = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+      }))
+    const completed = parseClientWsPayload(endpointRunEvent({
         type: 'message.completed',
         stream_id: 'stream_1',
         turn_id: 'turn_1',
@@ -345,8 +342,7 @@ describe('protocolClient', () => {
           channel: 'message',
           created_at: '2026-04-08T00:00:03Z',
         },
-      },
-    })
+      }))
 
     expect(delta.kind).toBe('message_delta')
     expect(delta.kind === 'message_delta' ? delta.delta : '').toBe('partial-from-content')
@@ -355,11 +351,8 @@ describe('protocolClient', () => {
     expect(completed.kind === 'message_completed' ? completed.sessionId : '').toBe('system:client:desktop-main')
   })
 
-  it('parses client websocket interactive events', () => {
-    const confirm = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+  it('parses endpoint websocket interactive events', () => {
+    const confirm = parseClientWsPayload(endpointRunEvent({
         type: 'confirm.requested',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -372,12 +365,8 @@ describe('protocolClient', () => {
         approval_type: 'chat_confirmation',
         risk_level: 'system',
         operation_id: 'op_confirm_1',
-      },
-    })
-    const humanInput = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+      }))
+    const humanInput = parseClientWsPayload(endpointRunEvent({
         type: 'human_input.requested',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -386,8 +375,7 @@ describe('protocolClient', () => {
         options: ['A', 'B'],
         placeholder: '输入',
         timeout: 60,
-      },
-    })
+      }))
 
     expect(confirm.kind).toBe('confirm_requested')
     expect(confirm.kind === 'confirm_requested' ? confirm.payload.requestId : '').toBe('req_1')
@@ -397,10 +385,7 @@ describe('protocolClient', () => {
   })
 
   it('parses operation updated events', () => {
-    const event = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+    const event = parseClientWsPayload(endpointRunEvent({
         type: 'operation.updated',
         thread_id: 'thr_1',
         operation_id: 'op_1',
@@ -408,19 +393,15 @@ describe('protocolClient', () => {
         status: 'running',
         phase: 'accepted',
         detail: 'Dispatching',
-      },
-    })
+      }))
 
     expect(event.kind).toBe('operation_updated')
     expect(event.kind === 'operation_updated' ? event.operationId : '').toBe('op_1')
     expect(event.kind === 'operation_updated' ? event.status : '').toBe('running')
   })
 
-  it('parses runtime and activity events from client websocket', () => {
-    const runtimeState = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+  it('parses runtime and activity events from endpoint websocket', () => {
+    const runtimeState = parseClientWsPayload(endpointRunEvent({
         type: 'runtime.state',
         snapshot: {
           session_id: 'sess_1',
@@ -435,12 +416,8 @@ describe('protocolClient', () => {
           turn_id: 'turn_1',
           updated_at: '2026-04-08T00:00:00Z',
         },
-      },
-    })
-    const runtimeUsage = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+      }))
+    const runtimeUsage = parseClientWsPayload(endpointRunEvent({
         type: 'runtime.usage',
         snapshot: {
           session_id: 'sess_1',
@@ -465,12 +442,8 @@ describe('protocolClient', () => {
           usage_source: 'estimated',
           updated_at: '2026-04-08T00:00:01Z',
         },
-      },
-    })
-    const activity = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+      }))
+    const activity = parseClientWsPayload(endpointRunEvent({
         type: 'activity.status',
         turn_id: 'turn_1',
         stream_id: 'stream_1',
@@ -479,12 +452,8 @@ describe('protocolClient', () => {
         activity_kind: 'tool_chain',
         tool_names: ['search_web'],
         event_id: 'evt_1',
-      },
-    })
-    const reasoning = parseClientWsPayload({
-      schema: 'meetyou.client.ws.v1',
-      kind: 'event',
-      event: {
+      }))
+    const reasoning = parseClientWsPayload(endpointRunEvent({
         type: 'reasoning.delta',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -492,8 +461,7 @@ describe('protocolClient', () => {
         turn_id: 'turn_1',
         phase: 'chunk',
         delta: 'thinking...',
-      },
-    })
+      }))
 
     expect(runtimeState.kind).toBe('runtime_state')
     expect(runtimeUsage.kind).toBe('runtime_usage')

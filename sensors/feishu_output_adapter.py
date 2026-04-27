@@ -1,4 +1,4 @@
-"""
+﻿"""
 Feishu output adapter.
 """
 
@@ -92,27 +92,36 @@ class FeishuOutputAdapter:
         }
 
     async def send_client_event(self, chat_id: str, payload: dict):
-        if payload.get("schema") != "meetyou.client.ws.v1":
+        if payload.get("schema") != "meetyou.endpoint.ws.v4":
             return
-        kind = payload.get("kind")
-        if kind == "error":
-            error = payload.get("error", {}) or {}
+        frame_type = str(payload.get("type") or "")
+        if frame_type == "endpoint.error":
+            error = payload.get("payload", {}) or {}
             await self._send_text(chat_id, f"[系统错误] {error.get('message', '')}")
             return
-        if kind != "event":
+        if frame_type == "delivery.notice":
+            notice = payload.get("payload", {}) or {}
+            content = str(notice.get("content") or notice.get("text") or "").strip()
+            if not content and isinstance(notice.get("message"), dict):
+                content = str(notice["message"].get("content") or "").strip()
+            if content:
+                await self._send_text(chat_id, content)
+            return
+        if frame_type != "delivery.run_event":
             return
 
-        event = payload.get("event", {}) or {}
+        event = payload.get("payload", {}) or {}
         event_type = str(event.get("type") or "")
+        body = event.get("payload") if isinstance(event.get("payload"), dict) else event
         stream_id = str(event.get("stream_id") or "")
         stream_key = f"{chat_id}:{stream_id}" if stream_id else ""
 
         if event_type == "confirm.requested":
-            request_id = str(event.get("request_id") or "")
+            request_id = str(body.get("request_id") or "")
             self._pending_confirm_requests[chat_id] = request_id
             await self._send_text(
                 chat_id,
-                f"{event.get('content', '')}\n确认编号: {request_id}\n请回复 y/yes/确认 或 n/no/拒绝。",
+                f"{body.get('content', '')}\n确认编号: {request_id}\n请回复 y/yes/确认 或 n/no/拒绝。",
             )
             return
 
@@ -121,8 +130,8 @@ class FeishuOutputAdapter:
             return
 
         if event_type == "human_input.requested":
-            request_id = str(event.get("request_id") or "")
-            options = [str(item).strip() for item in event.get("options", []) if str(item).strip()]
+            request_id = str(body.get("request_id") or "")
+            options = [str(item).strip() for item in body.get("options", []) if str(item).strip()]
             self._pending_human_input_requests[chat_id] = {
                 "request_id": request_id,
                 "options": options,
@@ -131,7 +140,7 @@ class FeishuOutputAdapter:
             suffix = f"\n{option_lines}" if option_lines else ""
             await self._send_text(
                 chat_id,
-                f"{event.get('question', '')}{suffix}\n输入编号或直接回复内容。\n请求编号: {request_id}",
+                f"{body.get('question', '')}{suffix}\n输入编号或直接回复内容。\n请求编号: {request_id}",
             )
             return
 
@@ -139,12 +148,9 @@ class FeishuOutputAdapter:
             self._pending_human_input_requests.pop(chat_id, None)
             return
 
-        if event_type == "message.created":
-            message = event.get("message", {}) or {}
-            channel = str(message.get("channel") or "")
-            role = str(message.get("role") or "")
-            content = str(message.get("content") or "").strip()
-            if channel in {"short_reply", "notice"} and role == "assistant" and content:
+        if event_type == "assistant.progress_notice":
+            content = str(body.get("content") or body.get("text") or "").strip()
+            if content:
                 await self._send_text(chat_id, content)
             return
 
@@ -157,13 +163,13 @@ class FeishuOutputAdapter:
             return
 
         if event_type == "message.delta":
-            if str(event.get("channel") or "") != "answer":
+            if str(body.get("channel") or "") not in {"", "answer"}:
                 return
-            self._append_stream_buffer(stream_key, str(event.get("delta") or ""))
+            self._append_stream_buffer(stream_key, str(body.get("delta") or body.get("content") or ""))
             return
 
         if event_type == "message.completed":
-            message = event.get("message", {}) or {}
+            message = body.get("message", {}) if isinstance(body.get("message"), dict) else body
             await self._flush_stream_buffer(chat_id, stream_key, str(message.get("content") or ""))
             return
 
@@ -338,3 +344,4 @@ class FeishuOutputAdapter:
                 )
                 return
             return
+

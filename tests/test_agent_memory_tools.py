@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.agent_memory import AgentMemoryTools
+from tools.memory_tools import MemoryTools
 
 
 class _FakeMemory:
@@ -75,10 +75,10 @@ class _FakeSource:
         self.id = source_id
 
 
-class AgentMemoryToolsTests(unittest.IsolatedAsyncioTestCase):
+class MemoryToolsTests(unittest.IsolatedAsyncioTestCase):
     async def test_remember_knowledge_formats_preference_memory_candidate(self):
         memory = _FakeMemory()
-        tools = AgentMemoryTools(memory)
+        tools = MemoryTools(memory)
 
         raw = await tools.remember_knowledge(
             content="User prefers black coffee in the morning.",
@@ -100,7 +100,7 @@ class AgentMemoryToolsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_remember_knowledge_falls_back_to_fact_category(self):
         memory = _FakeMemory()
-        tools = AgentMemoryTools(memory)
+        tools = MemoryTools(memory)
 
         raw = await tools.remember_knowledge(
             content="User mentioned a durable detail.",
@@ -116,7 +116,7 @@ class AgentMemoryToolsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_manage_memories_lists_and_edits_memory(self):
         memory = _FakeMemory()
-        tools = AgentMemoryTools(memory)
+        tools = MemoryTools(memory)
 
         listed = json.loads(await tools.manage_memories(action="list", source=_FakeSource()))
         self.assertEqual(listed["object_type"], "memory")
@@ -138,7 +138,7 @@ class AgentMemoryToolsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_manage_memories_returns_ambiguous_candidates_and_can_delete_after_confirmation(self):
         memory = _FakeMemory()
-        tools = AgentMemoryTools(memory)
+        tools = MemoryTools(memory)
 
         ambiguous = json.loads(
             await tools.manage_memories(
@@ -151,7 +151,7 @@ class AgentMemoryToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ambiguous["status"], "ambiguous")
         self.assertGreaterEqual(len(ambiguous["candidates"]), 2)
 
-        with patch("tools.agent_memory.request_user_confirmation", AsyncMock(return_value=True)):
+        with patch("tools.memory_tools.request_user_confirmation", AsyncMock(return_value=True)):
             deleted = json.loads(
                 await tools.manage_memories(
                     action="delete",

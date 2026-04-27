@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import sys
 import tempfile
@@ -459,7 +459,7 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn(mcp_states["tavily_web"]["status"], {"requires_auth", "unavailable", "not_enabled"})
         self.assertTrue(mcp_states["tavily_web"]["fallback_tools"])
 
-    def test_core_mcp_boundary_diagnostics_distinguish_core_agent_and_runtime_native(self):
+    def test_core_mcp_boundary_diagnostics_distinguish_core_endpoint_provider_and_runtime_native(self):
         manager = AssistantModeManager(_FakeConfig())
 
         diagnostics = manager.get_core_mcp_boundary_diagnostics(
@@ -468,15 +468,15 @@ class AssistantModeManagerTests(unittest.TestCase):
         )
 
         core_servers = {item["server_name"]: item for item in diagnostics["core_mcp_servers"]}
-        agent_servers = {item["server_name"]: item for item in diagnostics["agent_managed_mcp_servers"]}
+        endpoint_provider_servers = {item["server_name"]: item for item in diagnostics["client_managed_mcp_servers"]}
         runtime_native_tools = {item["tool_name"] for item in diagnostics["runtime_native_tools"]}
         summary = diagnostics["summary"]
 
         self.assertIn("browser_automation", core_servers)
         self.assertNotIn("filesystem_tools", core_servers)
-        self.assertIn("filesystem_tools", agent_servers)
+        self.assertIn("filesystem_tools", endpoint_provider_servers)
         self.assertEqual(core_servers["browser_automation"]["boundary"], "core_mcp")
-        self.assertEqual(agent_servers["filesystem_tools"]["boundary"], "agent_mcp")
+        self.assertEqual(endpoint_provider_servers["filesystem_tools"]["boundary"], "client_local_mcp")
         self.assertEqual(summary["configured_server_count"], 1)
         self.assertEqual(summary["enabled_count"], 1)
         self.assertEqual(summary["partial_failure_count"], 0)
@@ -667,8 +667,9 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "switch_workspace",
                     "list_active_agents",
                     "list_active_clients",
+                    "list_client_tool_targets",
                     "send_endpoint_message",
-                    "emit_short_reply",
+                    "emit_progress_notice",
                     "restart_core",
                     "list_skills",
                     "load_skill",
@@ -750,3 +751,4 @@ class AssistantModeManagerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

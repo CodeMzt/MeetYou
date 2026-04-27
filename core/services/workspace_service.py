@@ -41,8 +41,8 @@ class WorkspaceService(ServiceBase):
     def normalize_governance_metadata(cls, metadata: dict | None = None) -> dict:
         raw = dict(metadata or {})
         allowed_tool_ids = cls._normalize_string_list(raw.get("allowed_tool_ids"))
-        preferred_target_client_ids = cls._normalize_string_list(raw.get("preferred_target_client_ids"))
-        preferred_target_client_types = cls._normalize_string_list(raw.get("preferred_target_client_types"))
+        preferred_target_endpoint_ids = cls._normalize_string_list(raw.get("preferred_target_endpoint_ids"))
+        preferred_endpoint_provider_types = cls._normalize_string_list(raw.get("preferred_endpoint_provider_types"))
         preferred_source_profiles = cls._normalize_string_list(raw.get("preferred_source_profiles"))
         tool_routing_overrides = cls._normalize_tool_routing_overrides(raw.get("tool_routing_overrides"))
         tool_policy = str(raw.get("tool_policy") or "").strip().lower()
@@ -57,8 +57,8 @@ class WorkspaceService(ServiceBase):
                 if key not in {
                     "tool_policy",
                     "allowed_tool_ids",
-                    "preferred_target_client_ids",
-                    "preferred_target_client_types",
+                    "preferred_target_endpoint_ids",
+                    "preferred_endpoint_provider_types",
                     "preferred_source_profiles",
                     "tool_target_routing_policy",
                     "memory_ranking_policy",
@@ -67,8 +67,8 @@ class WorkspaceService(ServiceBase):
             },
             "tool_policy": tool_policy,
             "allowed_tool_ids": allowed_tool_ids,
-            "preferred_target_client_ids": preferred_target_client_ids,
-            "preferred_target_client_types": preferred_target_client_types,
+            "preferred_target_endpoint_ids": preferred_target_endpoint_ids,
+            "preferred_endpoint_provider_types": preferred_endpoint_provider_types,
             "preferred_source_profiles": preferred_source_profiles,
             "tool_target_routing_policy": tool_target_routing_policy,
             "memory_ranking_policy": memory_ranking_policy,
@@ -85,8 +85,8 @@ class WorkspaceService(ServiceBase):
             if not tool_key or not isinstance(raw_override, dict):
                 continue
             result[tool_key] = {
-                "preferred_target_client_ids": cls._normalize_string_list(raw_override.get("preferred_target_client_ids")),
-                "preferred_target_client_types": cls._normalize_string_list(raw_override.get("preferred_target_client_types")),
+                "preferred_target_endpoint_ids": cls._normalize_string_list(raw_override.get("preferred_target_endpoint_ids")),
+                "preferred_endpoint_provider_types": cls._normalize_string_list(raw_override.get("preferred_endpoint_provider_types")),
                 "tool_target_routing_policy": cls._normalize_routing_policy(raw_override.get("tool_target_routing_policy")),
             }
         return result
@@ -102,8 +102,8 @@ class WorkspaceService(ServiceBase):
             ),
             "tool_policy": str(normalized_meta.get("tool_policy") or "allow_all"),
             "allowed_tool_ids": list(normalized_meta.get("allowed_tool_ids") or []),
-            "preferred_target_client_ids": list(normalized_meta.get("preferred_target_client_ids") or []),
-            "preferred_target_client_types": list(normalized_meta.get("preferred_target_client_types") or []),
+            "preferred_target_endpoint_ids": list(normalized_meta.get("preferred_target_endpoint_ids") or []),
+            "preferred_endpoint_provider_types": list(normalized_meta.get("preferred_endpoint_provider_types") or []),
             "preferred_source_profiles": list(normalized_meta.get("preferred_source_profiles") or []),
             "tool_target_routing_policy": str(normalized_meta.get("tool_target_routing_policy") or "balanced"),
             "memory_ranking_policy": str(normalized_meta.get("memory_ranking_policy") or "workspace_first"),
@@ -132,14 +132,14 @@ class WorkspaceService(ServiceBase):
             if not isinstance(override, dict):
                 continue
             return {
-                "preferred_target_client_ids": list(override.get("preferred_target_client_ids") or governance.get("preferred_target_client_ids") or []),
-                "preferred_target_client_types": list(override.get("preferred_target_client_types") or governance.get("preferred_target_client_types") or []),
+                "preferred_target_endpoint_ids": list(override.get("preferred_target_endpoint_ids") or governance.get("preferred_target_endpoint_ids") or []),
+                "preferred_endpoint_provider_types": list(override.get("preferred_endpoint_provider_types") or governance.get("preferred_endpoint_provider_types") or []),
                 "tool_target_routing_policy": str(override.get("tool_target_routing_policy") or governance.get("tool_target_routing_policy") or "balanced"),
                 "source": key,
             }
         return {
-            "preferred_target_client_ids": list(governance.get("preferred_target_client_ids") or []),
-            "preferred_target_client_types": list(governance.get("preferred_target_client_types") or []),
+            "preferred_target_endpoint_ids": list(governance.get("preferred_target_endpoint_ids") or []),
+            "preferred_endpoint_provider_types": list(governance.get("preferred_endpoint_provider_types") or []),
             "tool_target_routing_policy": str(governance.get("tool_target_routing_policy") or "balanced"),
             "source": "workspace_default",
         }

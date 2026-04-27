@@ -6,11 +6,11 @@ import styles from './OperationPanel.module.css'
 
 function formatPhaseLabel(phase: string): string {
   const normalized = String(phase || '').trim().toLowerCase()
-  if (normalized === 'routing') return '路由'
-  if (normalized === 'dispatching') return '分发'
-  if (normalized === 'running') return '执行'
-  if (normalized === 'done') return '完成'
-  if (normalized === 'waiting_approval') return '等待审批'
+  if (normalized === 'routing') return 'Routing'
+  if (normalized === 'dispatching') return 'Dispatching'
+  if (normalized === 'running') return 'Running'
+  if (normalized === 'done') return 'Done'
+  if (normalized === 'waiting_approval') return 'Waiting approval'
   return phase || ''
 }
 
@@ -48,7 +48,7 @@ export default function OperationPanel({ operations, onApprove, onReject, onDown
   return (
     <div className={styles.panel}>
       <div className={styles.panelHeader}>
-        <span className={styles.panelTitle}>最近操作</span>
+        <span className={styles.panelTitle}>Recent Operations</span>
         {hasMore && (
           <span className={styles.moreIndicator}>
             <MoreHorizontal size={14} />
@@ -63,8 +63,8 @@ export default function OperationPanel({ operations, onApprove, onReject, onDown
               <div className={styles.titleWrap}>
                 <div className={styles.title}>{operation.title || operation.operation_id}</div>
                 <div className={styles.meta}>
-                  {operation.target_client_id || '核心服务'} · {formatOperationStatusLabel(operation.status)}
-                  {operation.phase && ` · ${formatPhaseLabel(operation.phase)}`}
+                  {operation.target_endpoint_id || 'core.local'} - {formatOperationStatusLabel(operation.status)}
+                  {operation.phase && ` - ${formatPhaseLabel(operation.phase)}`}
                 </div>
               </div>
             </div>
@@ -72,10 +72,10 @@ export default function OperationPanel({ operations, onApprove, onReject, onDown
             {operation.approval_required && operation.approval_status === 'pending' && operation.approval_id && (
               <div className={styles.actions}>
                 <button type="button" className={styles.approveBtn} onClick={() => onApprove?.(operation.approval_id || '')}>
-                  批准
+                  Approve
                 </button>
                 <button type="button" className={styles.rejectBtn} onClick={() => onReject?.(operation.approval_id || '')}>
-                  拒绝
+                  Reject
                 </button>
               </div>
             )}
@@ -84,7 +84,7 @@ export default function OperationPanel({ operations, onApprove, onReject, onDown
                 {JSON.stringify(operation.error.details, null, 2)}
               </div>
             )}
-            <AttachmentList attachments={operation.attachments} title="附件" onDownloadAttachment={onDownloadAttachment} />
+            <AttachmentList attachments={operation.attachments} title="Attachments" onDownloadAttachment={onDownloadAttachment} />
           </div>
         ))}
       </div>

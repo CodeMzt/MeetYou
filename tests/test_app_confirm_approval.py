@@ -100,13 +100,13 @@ class _FakeOperationService:
         operation_type: str,
         execution_target: str,
         title: str = "",
-        target_client_id=None,
+        target_endpoint_id=None,
         requested_by_client_id=None,
         requested_by_session_id=None,
         status: str = "queued",
         metadata: dict | None = None,
     ):
-        del target_client_id
+        del target_endpoint_id
         row = _Row(
             id=self._counter,
             operation_id=f"op_{self._counter}",

@@ -1,4 +1,4 @@
-import json
+﻿import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -178,9 +178,9 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_client.messages[0][1]["metadata"]["transport"], "feishu")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["response_transport"], "non_streaming_external_client")
         self.assertFalse(fake_client.messages[0][1]["metadata"]["supports_streaming_reply"])
-        self.assertEqual(fake_client.messages[0][1]["metadata"]["short_reply_policy"], "prefer_before_nontrivial_final")
+        self.assertEqual(fake_client.messages[0][1]["metadata"]["progress_notice_policy"], "prefer_before_nontrivial_final")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["tool_scope"], "basic")
-        self.assertIn("emit_short_reply", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("emit_progress_notice", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
         self.assertIn("send_endpoint_message", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
         self.assertIsNone(fake_client.messages[0][1]["preferred_mode"])
         self.assertTrue(self.event_bus.inbound_queue.empty())
@@ -463,3 +463,4 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

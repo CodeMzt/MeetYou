@@ -10,7 +10,8 @@ class SessionRepository(RepositoryBase):
         *,
         session_id: str,
         thread_id,
-        client_id,
+        client_id=None,
+        origin_endpoint_id=None,
         active_workspace_id=None,
         workspace_id=None,
         status: str = "active",
@@ -20,6 +21,7 @@ class SessionRepository(RepositoryBase):
             session_id=session_id,
             thread_id=thread_id,
             client_id=client_id,
+            origin_endpoint_id=origin_endpoint_id,
             active_workspace_id=resolved_active_workspace_id,
             status=status,
         )

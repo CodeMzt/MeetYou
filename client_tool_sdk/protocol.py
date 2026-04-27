@@ -7,11 +7,11 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 
-CLIENT_TOOL_PROTOCOL_SCHEMA = "meetyou.client.ws.v1"
+CLIENT_TOOL_PROTOCOL_SCHEMA = "meetyou.endpoint.ws.v4"
 CLIENT_TOOL_SCHEMA = CLIENT_TOOL_PROTOCOL_SCHEMA
 CLIENT_TOOL_WS_SCHEMA = CLIENT_TOOL_PROTOCOL_SCHEMA
-CLIENT_TOOL_ARGUMENTS_PURPOSE = "client.tool.arguments.v1"
-CLIENT_TOOL_PROTOCOL_VERSION = 1
+CLIENT_TOOL_ARGUMENTS_PURPOSE = "endpoint.tool.arguments.v4"
+CLIENT_TOOL_PROTOCOL_VERSION = 4
 CLIENT_TOOL_FEATURE_TOOL_SNAPSHOT_OPTIONAL = "tool_snapshot_optional"
 CLIENT_TOOL_FEATURE_CONNECTION_PROMPT = "connection_prompt"
 CLIENT_TOOL_FEATURE_FEATURE_NEGOTIATION = "feature_negotiation"
@@ -142,18 +142,18 @@ class ClientEnvelope(BaseModel):
     type: str
     message_id: str
     sent_at: str
-    client_id: str
+    endpoint_id: str
     correlation_id: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class ClientHelloPayload(BaseModel):
-    client_type: str
+    provider_type: str = "desktop"
+    provider_id: str
     display_name: str
     transport_profile: str
     workspace_ids: list[str] = Field(default_factory=list)
-    available_tools: list[str] = Field(default_factory=list)
-    executable_tools: list[str] = Field(default_factory=list)
+    endpoints: list[dict[str, Any]] = Field(default_factory=list)
     supports_offline_cache: bool = False
     host: dict[str, Any] = Field(default_factory=dict)
     protocol: dict[str, Any] = Field(default_factory=dict)
@@ -199,7 +199,8 @@ class ToolCallErrorPayload(BaseModel):
 def build_client_envelope(
     *,
     envelope_type: str,
-    client_id: str,
+    client_id: str = "",
+    endpoint_id: str = "",
     payload: dict[str, Any],
     message_id: str,
     correlation_id: str = "",
@@ -208,7 +209,7 @@ def build_client_envelope(
         type=envelope_type,
         message_id=message_id,
         sent_at=utcnow_iso(),
-        client_id=client_id,
+        endpoint_id=str(endpoint_id or client_id or "").strip(),
         correlation_id=correlation_id,
         payload=payload,
     ).model_dump(by_alias=True)
@@ -221,8 +222,6 @@ def build_client_hello(
     display_name: str,
     transport_profile: str,
     workspace_ids: list[str],
-    available_tools: list[str] | None = None,
-    executable_tools: list[str] | None = None,
     supports_offline_cache: bool = False,
     host: dict[str, Any] | None = None,
     protocol_features: Iterable[Any] | None = DEFAULT_CLIENT_TOOL_PROTOCOL_FEATURES,
@@ -230,17 +229,47 @@ def build_client_hello(
     supported_schemas: Iterable[Any] | None = None,
     supported_versions: Iterable[Any] | None = None,
 ) -> dict[str, Any]:
+    provider_id = str(client_id or "").strip()
+    provider_type = str(client_type or "desktop").strip() or "desktop"
+    if provider_type == "edge":
+        endpoints = [
+            {
+                "endpoint_id": f"edge.{provider_id}.executor",
+                "endpoint_type": "edge_executor",
+                "roles": ["execution"],
+                "workspace_ids": list(workspace_ids or []),
+            }
+        ]
+    else:
+        endpoints = [
+            {
+                "endpoint_id": f"{provider_type}.{provider_id}.ui",
+                "endpoint_type": f"{provider_type}_ui",
+                "roles": ["input", "output"],
+                "workspace_ids": list(workspace_ids or []),
+            },
+            {
+                "endpoint_id": f"{provider_type}.{provider_id}.executor",
+                "endpoint_type": f"{provider_type}_executor",
+                "roles": ["execution"],
+                "workspace_ids": list(workspace_ids or []),
+            },
+        ]
+    executor_endpoint_id = str(endpoints[-1]["endpoint_id"])
     return build_client_envelope(
-        envelope_type="client.hello",
-        client_id=client_id,
+        envelope_type="endpoint.hello",
+        endpoint_id=executor_endpoint_id,
         message_id=f"msg_{uuid4().hex}",
         payload={
-            "client_type": client_type,
-            "display_name": display_name,
-            "transport_profile": transport_profile,
-            "workspace_ids": list(workspace_ids or []),
-            "available_tools": list(available_tools or []),
-            "executable_tools": list(executable_tools or []),
+            "provider": {
+                "provider_type": provider_type,
+                "provider_id": provider_id,
+                "display_name": display_name,
+                "transport_profile": transport_profile,
+                "supports_offline_cache": bool(supports_offline_cache),
+                "host": dict(host or {}),
+            },
+            "endpoints": endpoints,
             "supports_offline_cache": bool(supports_offline_cache),
             "host": dict(host or {}),
             "protocol": build_client_tool_protocol_offer(
@@ -255,34 +284,56 @@ def build_client_hello(
     )
 
 
-def build_client_tools_snapshot(*, client_id: str, revision: int, tools: list[dict[str, Any]]) -> dict[str, Any]:
+def _executor_endpoint_id(provider_id: str, provider_type: str = "desktop") -> str:
+    normalized_provider_id = str(provider_id or "").strip()
+    normalized_provider_type = str(provider_type or "desktop").strip() or "desktop"
+    return f"{normalized_provider_type}.{normalized_provider_id}.executor"
+
+
+def build_client_tools_snapshot(
+    *,
+    client_id: str,
+    revision: int,
+    tools: list[dict[str, Any]],
+    provider_type: str = "desktop",
+) -> dict[str, Any]:
+    endpoint_id = _executor_endpoint_id(client_id, provider_type)
     return build_client_envelope(
-        envelope_type="client.tools.snapshot",
-        client_id=client_id,
+        envelope_type="endpoint.capabilities.snapshot",
+        endpoint_id=endpoint_id,
         message_id=f"msg_{uuid4().hex}",
         payload={
+            "endpoint_id": endpoint_id,
             "revision": revision,
-            "tools": list(tools or []),
+            "capabilities": list(tools or []),
         },
     )
 
 
-def build_client_heartbeat(*, client_id: str, status: str = "ready", metrics: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_client_heartbeat(
+    *,
+    client_id: str,
+    status: str = "ready",
+    metrics: dict[str, Any] | None = None,
+    provider_type: str = "desktop",
+) -> dict[str, Any]:
+    endpoint_id = _executor_endpoint_id(client_id, provider_type)
     return build_client_envelope(
-        envelope_type="client.heartbeat",
-        client_id=client_id,
+        envelope_type="endpoint.heartbeat",
+        endpoint_id=endpoint_id,
         message_id=f"msg_{uuid4().hex}",
         payload={
+            "endpoint_id": endpoint_id,
             "status": status,
             "metrics": dict(metrics or {}),
         },
     )
 
 
-def build_tool_call_accepted_message(*, client_id: str, call_id: str, correlation_id: str) -> dict[str, Any]:
+def build_tool_call_accepted_message(*, client_id: str, call_id: str, correlation_id: str, provider_type: str = "desktop") -> dict[str, Any]:
     return build_client_envelope(
         envelope_type="tool.call.accepted",
-        client_id=client_id,
+        endpoint_id=_executor_endpoint_id(client_id, provider_type),
         message_id=f"msg_{uuid4().hex}",
         correlation_id=correlation_id,
         payload={
@@ -293,10 +344,18 @@ def build_tool_call_accepted_message(*, client_id: str, call_id: str, correlatio
     )
 
 
-def build_tool_call_progress_message(*, client_id: str, call_id: str, correlation_id: str, phase: str, detail: str) -> dict[str, Any]:
+def build_tool_call_progress_message(
+    *,
+    client_id: str,
+    call_id: str,
+    correlation_id: str,
+    phase: str,
+    detail: str,
+    provider_type: str = "desktop",
+) -> dict[str, Any]:
     return build_client_envelope(
         envelope_type="tool.call.progress",
-        client_id=client_id,
+        endpoint_id=_executor_endpoint_id(client_id, provider_type),
         message_id=f"msg_{uuid4().hex}",
         correlation_id=correlation_id,
         payload={
@@ -314,10 +373,11 @@ def build_tool_call_result_message(
     correlation_id: str,
     result: dict[str, Any],
     attachment_outputs: list[dict[str, Any]] | None = None,
+    provider_type: str = "desktop",
 ) -> dict[str, Any]:
     return build_client_envelope(
         envelope_type="tool.call.result",
-        client_id=client_id,
+        endpoint_id=_executor_endpoint_id(client_id, provider_type),
         message_id=f"msg_{uuid4().hex}",
         correlation_id=correlation_id,
         payload={
@@ -339,10 +399,11 @@ def build_tool_call_error_message(
     message: str,
     retryable: bool = False,
     category: str = "runtime",
+    provider_type: str = "desktop",
 ) -> dict[str, Any]:
     return build_client_envelope(
         envelope_type="tool.call.error",
-        client_id=client_id,
+        endpoint_id=_executor_endpoint_id(client_id, provider_type),
         message_id=f"msg_{uuid4().hex}",
         correlation_id=correlation_id,
         payload={
@@ -376,7 +437,7 @@ def build_tool_call_request(
 ) -> dict[str, Any]:
     return build_client_envelope(
         envelope_type="tool.call.request",
-        client_id=client_id,
+        endpoint_id=str(client_id or "").strip(),
         message_id=message_id,
         payload={
             "operation_id": operation_id,
@@ -404,8 +465,8 @@ def build_client_message(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return build_client_envelope(
-        envelope_type="client.message",
-        client_id=client_id,
+        envelope_type="delivery.message",
+        endpoint_id=client_id,
         message_id=f"msg_{uuid4().hex}",
         payload={
             "session_id": str(session_id or "").strip(),

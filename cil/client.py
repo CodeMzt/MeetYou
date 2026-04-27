@@ -126,64 +126,47 @@ class CILClient:
         )
 
     async def _handle_client_ws_payload(self, data: dict):
-        if data.get("schema") != "meetyou.client.ws.v1":
+        if data.get("schema") != "meetyou.endpoint.ws.v4":
             return
 
-        if data.get("kind") == "connection":
-            session_id = data.get("connection", {}).get("session_id") or self._conversation.session_id
-            if session_id:
-                self._conversation.session_id = session_id
+        frame_type = str(data.get("type") or "")
+        if frame_type in {"endpoint.hello.ack", "subscription.ack"}:
             if not self._connection_logged:
                 self._append(f"[系统] 已连接 gateway，会话 {self._conversation.session_id}\n")
                 self._connection_logged = True
             return
 
-        if data.get("kind") == "ack":
-            ack = data.get("ack", {})
-            if ack.get("action") == "confirm_response":
-                self._append("[系统] 确认结果已提交\n")
-            elif ack.get("action") == "input_response":
-                self._append("[系统] 补充信息已提交\n")
-            return
-
-        if data.get("kind") == "error":
-            error = data.get("error", {})
+        if frame_type == "endpoint.error":
+            error = data.get("payload", {}) or {}
             self._append(f"[系统错误] {error.get('code', 'gateway_error')}: {error.get('message', '')}\n")
             return
 
-        if data.get("kind") != "event":
+        if frame_type == "delivery.notice":
+            notice = data.get("payload", {}) or {}
+            content = str(notice.get("content") or notice.get("text") or "").strip()
+            if not content and isinstance(notice.get("message"), dict):
+                content = str(notice["message"].get("content") or "").strip()
+            if content:
+                self._append(f"Mozart: {content}\n")
             return
 
-        evt = data.get("event", {})
-        event_type = evt.get("type")
+        if frame_type != "delivery.run_event":
+            return
+
+        evt = data.get("payload", {}) or {}
+        event_type = str(evt.get("type") or "")
+        body = evt.get("payload") if isinstance(evt.get("payload"), dict) else evt
 
         if event_type == "confirm.requested":
-            self._pending_confirm_request_id = evt.get("request_id")
-            self._append(
-                "\n"
-                + "=" * 50
-                + "\n"
-                + str(evt.get("content", ""))
-                + "\n回复 y/yes/确认 或 n/no/拒绝\n"
-                + "=" * 50
-                + "\n"
-            )
+            self._pending_confirm_request_id = body.get("request_id")
+            self._append("\n" + "=" * 50 + "\n" + str(body.get("content", "")) + "\n回复 y/yes/确认 或 n/no/拒绝\n" + "=" * 50 + "\n")
             return
 
         if event_type == "human_input.requested":
-            self._pending_human_input_request_id = evt.get("request_id")
-            options = [str(item).strip() for item in (evt.get("options") or []) if str(item).strip()]
+            self._pending_human_input_request_id = body.get("request_id")
+            options = [str(item).strip() for item in (body.get("options") or []) if str(item).strip()]
             option_lines = "\n".join(f"{idx}. {item}" for idx, item in enumerate(options, start=1))
-            self._append(
-                "\n"
-                + "=" * 50
-                + "\n"
-                + str(evt.get("question", ""))
-                + (f"\n{option_lines}" if option_lines else "")
-                + "\n输入编号或直接回复内容\n"
-                + "=" * 50
-                + "\n"
-            )
+            self._append("\n" + "=" * 50 + "\n" + str(body.get("question", "") or body.get("content", "")) + (f"\n{option_lines}" if option_lines else "") + "\n输入编号或直接回复内容\n" + "=" * 50 + "\n")
             return
 
         if event_type == "confirm.resolved":
@@ -194,31 +177,19 @@ class CILClient:
             self._pending_human_input_request_id = None
             return
 
-        if event_type == "activity.status":
-            content = str(evt.get("content", "")).strip()
+        if event_type in {"activity.status", "assistant.progress_notice"}:
+            content = str(body.get("content", "") or body.get("text", "")).strip()
             if content:
                 self._append(f"[系统] {content}\n")
             return
 
-        if event_type == "message.created":
-            message = evt.get("message", {}) or {}
-            channel = str(message.get("channel") or "")
-            role = str(message.get("role") or "")
-            content = str(message.get("content") or "").replace("\r", "").strip()
-            if channel in {"short_reply", "notice"} and role == "assistant" and content:
-                self._append(f"Mozart: {content}\n")
+        if event_type in {"runtime.state", "runtime.usage", "operation.updated", "reasoning.delta"}:
             return
 
-        if event_type == "runtime.state" or event_type == "runtime.usage" or event_type == "operation.updated":
-            return
-
-        if event_type == "reasoning.delta":
-            return
-
-        if event_type == "message.delta":
-            if evt.get("channel") != "answer":
+        if event_type in {"message.delta", "assistant.message.delta"}:
+            if body.get("channel") not in {"", "answer"}:
                 return
-            content = str(evt.get("delta", "")).replace("\r", "")
+            content = str(body.get("delta", "") or body.get("content", "")).replace("\r", "")
             if content:
                 if self._stream_prefix_pending:
                     self._append("Mozart: ")
@@ -229,8 +200,8 @@ class CILClient:
                 self._streaming = True
             return
 
-        if event_type == "message.completed":
-            message = evt.get("message", {})
+        if event_type in {"message.completed", "assistant.message.completed"}:
+            message = body.get("message", {}) if isinstance(body.get("message"), dict) else body
             content = str(message.get("content", "")).replace("\r", "")
             if self._streaming:
                 if self._stream_prefix_pending:
@@ -247,7 +218,6 @@ class CILClient:
             self._streaming = False
             self._stream_prefix_pending = False
             return
-
     async def _send_message(self, text: str):
         self._append(f"You: {text}\n")
         await self._conversation.send_message(text)
@@ -405,3 +375,4 @@ class CILClient:
         finally:
             self._closed = True
             await self._conversation.close()
+

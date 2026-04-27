@@ -323,28 +323,25 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
 
 
 class HumanInputGatewayTests(unittest.TestCase):
-    def test_client_websocket_input_response_resolves_immediately(self):
+    def test_http_input_response_resolves_immediately(self):
         bus = _GatewayHumanInputEventBus()
         gateway = FastAPIGateway(bus, SessionManager(), access_token="ws-token")
         with TestClient(gateway.app) as client:
-            with client.websocket_connect("/client/ws?thread_id=thr-test&access_token=ws-token") as websocket:
-                connection = websocket.receive_json()
-                self.assertEqual(connection["kind"], "connection")
+            response = client.post(
+                "/client/sessions/web:test/human-input-response",
+                headers={"Authorization": "Bearer ws-token"},
+                json={
+                    "action": "input_response",
+                    "client_id": "desktop",
+                    "request_id": "req-123",
+                    "answer_text": "B",
+                    "selected_option": "B",
+                },
+            )
 
-                websocket.send_json(
-                    {
-                        "action": "input_response",
-                        "session_id": "web:test",
-                        "client_id": "desktop",
-                        "request_id": "req-123",
-                        "answer_text": "B",
-                        "selected_option": "B",
-                    }
-                )
-                ack = websocket.receive_json()
-
-        self.assertEqual(ack["kind"], "ack")
-        self.assertEqual(ack["ack"]["session_id"], "web:test")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["session_id"], "web:test")
         self.assertEqual(bus.calls, [("B", "req-123", "web:test", "B")])
         self.assertTrue(bus.inbound_queue.empty())
 

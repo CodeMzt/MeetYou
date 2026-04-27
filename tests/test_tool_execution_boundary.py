@@ -67,12 +67,12 @@ class ToolExecutionBoundaryTests(unittest.IsolatedAsyncioTestCase):
         del args, kwargs
         return None
 
-    async def test_local_file_tools_require_client_tool_dispatch(self):
+    async def test_local_file_tools_require_tool_router(self):
         with tempfile.TemporaryDirectory() as trusted_dir:
             manager = self._build_manager(mode_manager=_FakeModeManager([trusted_dir]))
             real_system_tools.init_system_tools(None, None, "missing.json", allow_local_fallback=False)
-            real_system_tools.set_client_tool_dispatcher(None)
-            self.addCleanup(real_system_tools.set_client_tool_dispatcher, None)
+            real_system_tools.set_tool_router(None)
+            self.addCleanup(real_system_tools.set_tool_router, None)
             self.addCleanup(real_system_tools.set_local_fallback_enabled, True)
             route_context = {"tool_bundle": ["read_local_documents"], "mcp_servers": [], "current_mode": "documents"}
 
@@ -87,7 +87,7 @@ class ToolExecutionBoundaryTests(unittest.IsolatedAsyncioTestCase):
 
             dispatcher = _RecordingDispatcher()
             manager.set_capability_dispatcher(dispatcher)
-            real_system_tools.set_client_tool_dispatcher(dispatcher)
+            real_system_tools.set_tool_router(dispatcher)
             dispatched = await manager.call_tool(
                 "read_local_documents",
                 {"paths": [str(Path(trusted_dir) / "notes.md")]},
@@ -155,12 +155,12 @@ class ToolExecutionBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_capability_snapshot_boundary_and_danxi_core_allowlist(self):
         manager = self._build_manager(mode_manager=_FakeModeManager([]))
         before = {item["tool_name"]: item for item in manager.get_tool_execution_boundary_snapshot()}
-        self.assertEqual(before["read_local_documents"]["executor_owner"], "client_tool_required")
+        self.assertEqual(before["read_local_documents"]["executor_owner"], "endpoint_required")
 
         dispatcher = _RecordingDispatcher()
         manager.set_capability_dispatcher(dispatcher)
         after = {item["tool_name"]: item for item in manager.get_tool_execution_boundary_snapshot()}
-        self.assertEqual(after["read_local_documents"]["executor_owner"], "client_tool_dispatch")
+        self.assertEqual(after["read_local_documents"]["executor_owner"], "tool_router")
         self.assertEqual(after["read_local_documents"]["source_type"], "builtin")
         self.assertEqual(after["read_local_documents"]["risk"], "read")
         self.assertTrue(after["read_local_documents"]["parallel_safe"])

@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ChatTurn,
   ClientMessage,
   ConfirmRequestPayload,
@@ -223,7 +223,7 @@ function appendClientMessage(turns: ChatTurn[], message: ClientMessage): ChatTur
     error: buildMessageError(message.status, message.role),
     temporary: Boolean(message.temporary),
   }
-  if (message.channel === 'short_reply') {
+  if (message.channel === 'progress_notice') {
     const last = turns[turns.length - 1]
     if (last?.role === 'assistant' && last.isStreaming && !last.content && !last.reasoning) {
       return [...turns.slice(0, -1), nextTurn, last]
@@ -233,7 +233,7 @@ function appendClientMessage(turns: ChatTurn[], message: ClientMessage): ChatTur
 }
 
 function completeStreamMessage(turns: ChatTurn[], message: ClientMessage, streamId: string, turnId: string): ChatTurn[] {
-  if (message.channel === 'short_reply' || message.temporary) {
+  if (message.channel === 'progress_notice' || message.temporary) {
     return appendClientMessage(turns, message)
   }
   const index = findTurnIndex(turns, streamId, turnId)
@@ -487,3 +487,4 @@ export function reduceChatState(state: ChatState, action: ChatAction): ChatState
     }
   }
 }
+

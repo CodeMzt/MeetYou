@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import {
   createInitialChatState,
   createSystemTurn,
@@ -178,7 +178,7 @@ describe('chatState', () => {
         role: 'assistant',
         content: 'working on it',
         status: 'completed',
-        channel: 'short_reply',
+        channel: 'progress_notice',
         created_at: '2026-04-08T00:00:01Z',
       },
     })
@@ -195,7 +195,7 @@ describe('chatState', () => {
         role: 'assistant',
         content: 'checking sources',
         status: 'completed',
-        channel: 'short_reply',
+        channel: 'progress_notice',
         created_at: '2026-04-08T00:00:02Z',
       },
     })
@@ -430,3 +430,4 @@ describe('chatState', () => {
     expect(state.messages[0]?.humanInputResponse?.selectedOption).toBe('桌面端')
   })
 })
+

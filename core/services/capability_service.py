@@ -25,7 +25,7 @@ class CapabilityService(ServiceBase):
         with self.session_scope() as session:
             return CapabilityRepository(session).list_for_workspace(workspace_id=workspace_id)
 
-    def resolve_tool_reference(self, *, tool_key: str, workspace_id, target_client_id: str | None = None):
+    def resolve_tool_reference(self, *, tool_key: str, workspace_id, target_endpoint_id: str | None = None):
         normalized_ref = str(tool_key or "").strip()
         if not normalized_ref:
             return None
@@ -33,12 +33,12 @@ class CapabilityService(ServiceBase):
             repo = CapabilityRepository(session)
             exact = repo.get_by_capability_id(normalized_ref)
             if exact is not None and repo.has_workspace_binding(capability_id=exact.id, workspace_id=workspace_id):
-                if target_client_id and str(getattr(exact, "provider_ref", "") or "") != str(target_client_id or ""):
+                if target_endpoint_id and str(getattr(exact, "provider_ref", "") or "") != str(target_endpoint_id or ""):
                     pass
                 else:
                     return exact
             for capability in repo.list_for_workspace(workspace_id=workspace_id):
-                if target_client_id and str(getattr(capability, "provider_ref", "") or "") != str(target_client_id or ""):
+                if target_endpoint_id and str(getattr(capability, "provider_ref", "") or "") != str(target_endpoint_id or ""):
                     continue
                 if self.get_abstract_tool_key(capability) == normalized_ref:
                     return capability

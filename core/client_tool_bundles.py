@@ -1,9 +1,9 @@
-"""Shared tool bundles for external client adapters."""
+﻿"""Shared tool bundles for external client adapters."""
 
 from typing import Any
 
 
-CLIENT_ALWAYS_AVAILABLE_TOOLS = ("emit_short_reply", "send_endpoint_message")
+CLIENT_ALWAYS_AVAILABLE_TOOLS = ("emit_progress_notice", "send_endpoint_message")
 
 EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE = [
     "ask_human",
@@ -17,7 +17,7 @@ EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE = [
     "list_active_clients",
     "list_client_tool_targets",
     "send_endpoint_message",
-    "emit_short_reply",
+    "emit_progress_notice",
     "restart_core",
     "search_knowledge",
     "search_memory",
@@ -50,3 +50,4 @@ def ensure_client_always_available_tools(metadata: dict[str, Any] | None) -> dic
             seen.add(tool_name)
     normalized["allowed_tool_bundle"] = cleaned
     return normalized
+

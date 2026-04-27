@@ -18,18 +18,18 @@ class _FakeWsManager:
         return session_id in self._sessions
 
 
-class _FakeClientWsManager:
+class _FakeEndpointWsManager:
     def __init__(self, threads=None):
         self._threads = set(threads or [])
 
-    def has_connections(self, thread_id: str) -> bool:
-        return thread_id in self._threads
+    def has_subscription(self, *, target_type: str, target_id: str) -> bool:
+        return target_type == "thread" and target_id in self._threads
 
 
 class _FakeGateway:
     def __init__(self, sessions=None, threads=None):
         self.ws_manager = _FakeWsManager(sessions=sessions)
-        self.client_ws_manager = _FakeClientWsManager(threads=threads)
+        self.endpoint_ws_manager = _FakeEndpointWsManager(threads=threads)
 
 
 class HeartbeatSignalRoutingTests(unittest.TestCase):
