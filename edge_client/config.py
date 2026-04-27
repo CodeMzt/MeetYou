@@ -18,8 +18,7 @@ class EdgeClientConfig:
     display_name: str = "Edge Client"
     client_type: str = "edge"
     workspace_ids: list[str] = field(default_factory=lambda: ["home-lab"])
-    available_tools: list[str] = field(default_factory=list)
-    executable_tools: list[str] = field(default_factory=list)
+    enabled_endpoint_tools: list[str] = field(default_factory=list)
     heartbeat_interval_seconds: int = 20
     reconnect_delay_seconds: int = 3
     max_parallel_calls: int = 2
@@ -29,14 +28,14 @@ class EdgeClientConfig:
 
     @property
     def websocket_url(self) -> str:
-        return f"{self.core_base_url.rstrip('/').replace('http://', 'ws://').replace('https://', 'wss://')}/client/ws"
+        return f"{self.core_base_url.rstrip('/').replace('http://', 'ws://').replace('https://', 'wss://')}/endpoint/ws"
 
 
 def _load_env_file(env_file_path: Path = DEFAULT_ENV_PATH) -> None:
     try:
         from dotenv import load_dotenv
 
-        load_dotenv(env_file_path, override=True)
+        load_dotenv(env_file_path, override=False)
     except ImportError:
         return
 
@@ -59,8 +58,9 @@ def _string_list(payload: dict[str, object], key: str, default: list[str]) -> li
 
 
 def load_edge_client_config(config_file_path: str | None = None) -> EdgeClientConfig:
-    _load_env_file()
     file_path = Path(config_file_path or DEFAULT_CONFIG_PATH)
+    env_root = file_path.parent.parent if file_path.parent.name == "user" else file_path.parent
+    _load_env_file(env_root / DEFAULT_ENV_PATH)
     payload: dict[str, object] = {}
     if file_path.exists():
         payload = json.loads(file_path.read_text(encoding="utf-8"))
@@ -77,8 +77,7 @@ def load_edge_client_config(config_file_path: str | None = None) -> EdgeClientCo
         display_name=str(os.environ.get("MEETYOU_EDGE_DISPLAY_NAME") or payload.get("display_name") or "Edge Client").strip(),
         client_type=str(os.environ.get("MEETYOU_EDGE_CLIENT_TYPE") or payload.get("client_type") or "edge").strip(),
         workspace_ids=[str(item).strip() for item in (payload.get("workspace_ids") if isinstance(payload.get("workspace_ids"), list) else ["home-lab"]) if str(item).strip()],
-        available_tools=_string_list(payload, "available_tools", []),
-        executable_tools=_string_list(payload, "executable_tools", []),
+        enabled_endpoint_tools=_string_list(payload, "enabled_endpoint_tools", []),
         heartbeat_interval_seconds=max(int(os.environ.get("MEETYOU_EDGE_HEARTBEAT_SECONDS") or payload.get("heartbeat_interval_seconds") or 20), 1),
         reconnect_delay_seconds=max(int(os.environ.get("MEETYOU_EDGE_RECONNECT_SECONDS") or payload.get("reconnect_delay_seconds") or 3), 1),
         max_parallel_calls=max(

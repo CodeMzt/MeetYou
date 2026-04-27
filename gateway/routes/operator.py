@@ -20,6 +20,7 @@ from gateway.models import (
     MemoryRecordPatchRequest,
     MemorySnapshotResponse,
     OperatorClientResponse,
+    OperatorEndpointResponse,
     OperatorSourceProfileResponse,
     OperatorWorkspaceCreateRequest,
     OperatorWorkspaceUpdateRequest,
@@ -42,8 +43,8 @@ def _workspace_response(workspace) -> OperatorWorkspaceResponse:
         default_execution_target=governance["default_execution_target"],
         tool_policy=governance["tool_policy"],
         allowed_tool_ids=governance["allowed_tool_ids"],
-        preferred_target_client_ids=governance["preferred_target_client_ids"],
-        preferred_target_client_types=governance["preferred_target_client_types"],
+        preferred_target_endpoint_ids=governance["preferred_target_endpoint_ids"],
+        preferred_endpoint_provider_types=governance["preferred_endpoint_provider_types"],
         preferred_source_profiles=governance["preferred_source_profiles"],
         tool_target_routing_policy=governance["tool_target_routing_policy"],
         memory_ranking_policy=governance["memory_ranking_policy"],
@@ -297,6 +298,42 @@ def build_operator_router(gateway) -> APIRouter:
             )
         return rows
 
+    @router.get("/endpoints", response_model=list[OperatorEndpointResponse])
+    async def list_endpoints(request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        snapshots = await gateway.endpoint_ws_manager.snapshot()
+        by_endpoint: dict[str, list[dict]] = {}
+        for item in snapshots:
+            endpoint_id = str(item.get("endpoint_id") or "").strip()
+            if endpoint_id:
+                by_endpoint.setdefault(endpoint_id, []).append(dict(item))
+        rows = []
+        for endpoint in domain.services.endpoint.list_all():
+            endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
+            connections = by_endpoint.get(endpoint_id, [])
+            last_seen_at = ""
+            if connections:
+                last_seen_at = str(connections[-1].get("updated_at") or connections[-1].get("connected_at") or "")
+            elif getattr(endpoint, "updated_at", None) is not None:
+                last_seen_at = endpoint.updated_at.isoformat()
+            rows.append(
+                OperatorEndpointResponse(
+                    endpoint_id=endpoint_id,
+                    endpoint_type=str(getattr(endpoint, "endpoint_type", "") or ""),
+                    provider_type=str(getattr(endpoint, "provider_type", "") or ""),
+                    transport_type=str(getattr(endpoint, "transport_type", "") or ""),
+                    status=str(getattr(endpoint, "status", "") or ""),
+                    connected=bool(connections),
+                    connection_count=len(connections),
+                    workspace_ids=list(getattr(endpoint, "workspace_scope", []) or []),
+                    capability_count=len(domain.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)),
+                    labels=list(getattr(endpoint, "labels", []) or []),
+                    last_seen_at=last_seen_at,
+                )
+            )
+        return rows
+
     @router.get("/workspaces", response_model=list[OperatorWorkspaceResponse])
     async def list_workspaces(request: Request):
         gateway._require_http_auth(request)
@@ -342,8 +379,8 @@ def build_operator_router(gateway) -> APIRouter:
             metadata={
                 "tool_policy": str(payload.tool_policy or "").strip(),
                 "allowed_tool_ids": list(payload.allowed_tool_ids or []),
-                "preferred_target_client_ids": list(payload.preferred_target_client_ids or []),
-                "preferred_target_client_types": list(payload.preferred_target_client_types or []),
+                "preferred_target_endpoint_ids": list(payload.preferred_target_endpoint_ids or []),
+                "preferred_endpoint_provider_types": list(payload.preferred_endpoint_provider_types or []),
                 "preferred_source_profiles": _validate_source_profiles(gateway, payload.preferred_source_profiles),
                 "tool_target_routing_policy": str(payload.tool_target_routing_policy or "").strip(),
                 "memory_ranking_policy": _validate_memory_ranking_policy(gateway, payload.memory_ranking_policy),

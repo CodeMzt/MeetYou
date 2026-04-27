@@ -1,5 +1,5 @@
 """
-网关请求响应模型。
+缃戝叧璇锋眰鍝嶅簲妯″瀷銆?
 """
 
 from typing import Any
@@ -356,8 +356,8 @@ class ClientProcedureResponse(BaseModel):
     applicable_modes: list[str] = Field(default_factory=list)
     recommended_tools: list[str] = Field(default_factory=list)
     preferred_tool_key: str = ""
-    preferred_target_client_ids: list[str] = Field(default_factory=list)
-    preferred_target_client_types: list[str] = Field(default_factory=list)
+    preferred_target_endpoint_ids: list[str] = Field(default_factory=list)
+    preferred_endpoint_provider_types: list[str] = Field(default_factory=list)
     tool_target_routing_policy: str = "balanced"
     default_execution_target: str = ""
     risk_profile: str = ""
@@ -609,7 +609,7 @@ class ClientOperationCreateRequest(BaseModel):
     title: str = ""
     operation_type: str
     execution_target: str = ""
-    target_client_id: str | None = None
+    target_endpoint_id: str | None = None
     tool_key: str | None = None
     tool_id: str | None = None
     capability_id: str | None = None
@@ -630,7 +630,7 @@ class ClientOperationResponse(BaseModel):
     title: str = ""
     operation_type: str
     execution_target: str
-    target_client_id: str = ""
+    target_endpoint_id: str = ""
     tool_key: str = ""
     tool_id: str = ""
     capability_id: str = ""
@@ -673,8 +673,8 @@ class ClientWorkspaceResponse(BaseModel):
     default_execution_target: str = "core_only"
     tool_policy: str = "allow_all"
     allowed_tool_ids: list[str] = Field(default_factory=list)
-    preferred_target_client_ids: list[str] = Field(default_factory=list)
-    preferred_target_client_types: list[str] = Field(default_factory=list)
+    preferred_target_endpoint_ids: list[str] = Field(default_factory=list)
+    preferred_endpoint_provider_types: list[str] = Field(default_factory=list)
     preferred_source_profiles: list[str] = Field(default_factory=list)
     tool_target_routing_policy: str = "balanced"
     memory_ranking_policy: str = "workspace_first"
@@ -824,8 +824,8 @@ class OperatorWorkspaceCreateRequest(BaseModel):
     default_execution_target: str = "core_only"
     tool_policy: str = ""
     allowed_tool_ids: list[str] = Field(default_factory=list)
-    preferred_target_client_ids: list[str] = Field(default_factory=list)
-    preferred_target_client_types: list[str] = Field(default_factory=list)
+    preferred_target_endpoint_ids: list[str] = Field(default_factory=list)
+    preferred_endpoint_provider_types: list[str] = Field(default_factory=list)
     preferred_source_profiles: list[str] = Field(default_factory=list)
     tool_target_routing_policy: str = ""
     memory_ranking_policy: str = "workspace_first"
@@ -873,8 +873,8 @@ class OperatorWorkspaceResponse(BaseModel):
     default_execution_target: str = "core_only"
     tool_policy: str = "allow_all"
     allowed_tool_ids: list[str] = Field(default_factory=list)
-    preferred_target_client_ids: list[str] = Field(default_factory=list)
-    preferred_target_client_types: list[str] = Field(default_factory=list)
+    preferred_target_endpoint_ids: list[str] = Field(default_factory=list)
+    preferred_endpoint_provider_types: list[str] = Field(default_factory=list)
     preferred_source_profiles: list[str] = Field(default_factory=list)
     tool_target_routing_policy: str = "balanced"
     memory_ranking_policy: str = "workspace_first"
@@ -900,3 +900,17 @@ class OperatorClientResponse(BaseModel):
     last_seen_at: str = ""
     owner_client_id: str = ""
     workspace_ids: list[str] = Field(default_factory=list)
+
+
+class OperatorEndpointResponse(BaseModel):
+    endpoint_id: str
+    endpoint_type: str
+    provider_type: str
+    transport_type: str
+    status: str
+    connected: bool = False
+    connection_count: int = 0
+    workspace_ids: list[str] = Field(default_factory=list)
+    capability_count: int = 0
+    labels: list[str] = Field(default_factory=list)
+    last_seen_at: str = ""

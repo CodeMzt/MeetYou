@@ -3,6 +3,27 @@ import unittest
 from cil.client import CILClient
 
 
+def _run_event(event: dict) -> dict:
+    return {
+        "schema": "meetyou.endpoint.ws.v4",
+        "type": "delivery.run_event",
+        "payload": {
+            "type": event.get("type"),
+            "stream_id": event.get("stream_id", ""),
+            "turn_id": event.get("turn_id", ""),
+            "payload": dict(event),
+        },
+    }
+
+
+def _notice(content: str) -> dict:
+    return {
+        "schema": "meetyou.endpoint.ws.v4",
+        "type": "delivery.notice",
+        "payload": {"content": content},
+    }
+
+
 class _DummyBuffer:
     def __init__(self):
         self.cursor_position = 0
@@ -70,54 +91,27 @@ class CILClientStreamTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_message_stream_without_chunks_does_not_render_blank_line(self):
         await self.client._handle_client_ws_payload(
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {"type": "message.completed", "message": {"content": ""}, "stream_id": "stream-1"},
-            }
+            _run_event({"type": "message.completed", "message": {"content": ""}, "stream_id": "stream-1"})
         )
         await self.client._handle_client_ws_payload(
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {"type": "message.completed", "message": {"content": ""}, "stream_id": "stream-1"},
-            }
+            _run_event({"type": "message.completed", "message": {"content": ""}, "stream_id": "stream-1"})
         )
 
         self.assertEqual(self.client.output_field.text, "")
 
     async def test_message_stream_chunks_render_single_assistant_line(self):
         await self.client._handle_client_ws_payload(
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {"type": "message.delta", "channel": "answer", "delta": "hello", "stream_id": "stream-1", "turn_id": "turn-1", "phase": "chunk"},
-            }
+            _run_event({"type": "message.delta", "channel": "answer", "delta": "hello", "stream_id": "stream-1", "turn_id": "turn-1", "phase": "chunk"})
         )
         await self.client._handle_client_ws_payload(
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {"type": "message.completed", "message": {"content": "hello"}, "stream_id": "stream-1", "turn_id": "turn-1"},
-            }
+            _run_event({"type": "message.completed", "message": {"content": "hello"}, "stream_id": "stream-1", "turn_id": "turn-1"})
         )
 
         self.assertEqual(self.client.output_field.text, "Mozart: hello\n")
 
-    async def test_message_created_notice_renders_independent_line(self):
+    async def test_delivery_notice_renders_independent_line(self):
         await self.client._handle_client_ws_payload(
-            {
-                "schema": "meetyou.client.ws.v1",
-                "kind": "event",
-                "event": {
-                    "type": "message.created",
-                    "message": {
-                        "role": "assistant",
-                        "channel": "notice",
-                        "content": "desktop notice",
-                    },
-                },
-            }
+            _notice("desktop notice")
         )
 
         self.assertEqual(self.client.output_field.text, "Mozart: desktop notice\n")

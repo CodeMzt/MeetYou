@@ -146,15 +146,15 @@ class ClientService(ServiceBase):
         *,
         workspace_id,
         requesting_client_id=None,
-        preferred_target_client_ids: list[str] | None = None,
-        preferred_target_client_types: list[str] | None = None,
+        preferred_target_endpoint_ids: list[str] | None = None,
+        preferred_endpoint_provider_types: list[str] | None = None,
         routing_policy: str = "balanced",
         allowed_client_ids: list[str] | None = None,
     ):
         del requesting_client_id, routing_policy
         allowed = set(self._string_list(allowed_client_ids or []))
-        preferred_ids = self._string_list(preferred_target_client_ids or [])
-        preferred_types = self._string_list(preferred_target_client_types or [])
+        preferred_ids = self._string_list(preferred_target_endpoint_ids or [])
+        preferred_types = self._string_list(preferred_endpoint_provider_types or [])
         with self.session_scope() as session:
             rows = ClientRepository(session).list_clients_for_workspace(workspace_id)
             clients = [

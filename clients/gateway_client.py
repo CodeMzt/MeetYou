@@ -51,13 +51,18 @@ class GatewayConversationClient:
         self.thread_id = str(thread_id or "").strip()
         self.session_id = ""
 
-    def _build_client_ws_url(self) -> str:
+    @property
+    def endpoint_id(self) -> str:
+        return f"{self.client_type}.{self.client_id}.ui"
+
+    def _build_endpoint_ws_url(self) -> str:
         query_items = {
             "thread_id": self.thread_id,
             "session_id": self.session_id,
-            "client_id": self.client_id,
+            "endpoint_id": self.endpoint_id,
+            "provider_id": self.client_id,
             "workspace_id": self.workspace_id,
-            "client_type": self.client_type,
+            "provider_type": self.client_type,
             "display_name": self.display_name,
         }
         query_string = urlencode(
@@ -67,7 +72,7 @@ class GatewayConversationClient:
                 if str(value or "").strip()
             }
         )
-        return f"{self.ws_base_url}/client/ws?{query_string}"
+        return f"{self.ws_base_url}/endpoint/ws?{query_string}"
 
     def _auth_headers(self) -> dict[str, str]:
         if not self.access_token:
@@ -157,10 +162,46 @@ class GatewayConversationClient:
         await self._ensure_http_session()
         assert self._http_session is not None
         self._ws = await self._http_session.ws_connect(
-            self._build_client_ws_url(),
+            self._build_endpoint_ws_url(),
             headers=self._auth_headers(),
         )
         self._ws_connected.clear()
+        await self._ws.send_json(
+            {
+                "schema": "meetyou.endpoint.ws.v4",
+                "type": "endpoint.hello",
+                "endpoint_id": self.endpoint_id,
+                "payload": {
+                    "provider": {
+                        "provider_type": self.client_type,
+                        "provider_id": self.client_id,
+                        "display_name": self.display_name,
+                        "transport_profile": "ui_ws",
+                    },
+                    "endpoints": [
+                        {
+                            "endpoint_id": self.endpoint_id,
+                            "endpoint_type": f"{self.client_type}_ui",
+                            "roles": ["input", "output"],
+                            "workspace_ids": [self.workspace_id],
+                        }
+                    ],
+                },
+            }
+        )
+        await self._ws.send_json(
+            {
+                "schema": "meetyou.endpoint.ws.v4",
+                "type": "subscription.start",
+                "endpoint_id": self.endpoint_id,
+                "payload": {
+                    "subscription_id": f"sub-{self.thread_id}",
+                    "target_type": "thread",
+                    "target_id": self.thread_id,
+                    "last_seen_event_seq": 0,
+                },
+            }
+        )
 
     async def _read_ws(self) -> None:
         if self._ws is None:
@@ -168,7 +209,7 @@ class GatewayConversationClient:
         async for message in self._ws:
             if message.type == aiohttp.WSMsgType.TEXT:
                 payload = message.json(loads=json.loads)
-                if payload.get("kind") == "connection":
+                if payload.get("type") in {"endpoint.hello.ack", "subscription.ack"}:
                     self._ws_connected.set()
                 await self._dispatch_event(payload)
             elif message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
@@ -215,12 +256,14 @@ class GatewayConversationClient:
     async def send_command(self, action: str, **payload: Any) -> None:
         await self.start()
         if self._ws is None or self._ws.closed:
-            raise GatewayClientError("Client websocket is not connected")
+            raise GatewayClientError("Endpoint websocket is not connected")
         await self._ws.send_json(
             {
+                "schema": "meetyou.endpoint.ws.v4",
+                "type": "runtime.command",
+                "endpoint_id": self.endpoint_id,
                 "action": action,
                 "session_id": self.session_id,
-                "client_id": self.client_id,
                 **payload,
             }
         )

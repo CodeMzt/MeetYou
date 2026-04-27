@@ -145,19 +145,23 @@ class WorkspaceTools:
 
         gateway = self._gateway_getter() if callable(self._gateway_getter) else None
         if gateway is not None and thread_row is not None:
-            await gateway.publish_client_thread_event(
-                thread_row.thread_id,
-                event_type="workspace.changed",
-                payload={
-                    "thread_id": thread_row.thread_id,
-                    "session_id": resolved_session_id,
-                    "active_workspace_id": workspace.workspace_id,
-                    "workspace_id": workspace.workspace_id,
-                    "client_id": getattr(client_row, "client_id", ""),
-                    "reason": str(reason or "").strip(),
-                    "source": "switch_workspace_tool",
-                },
-            )
+            publisher = getattr(gateway, "publish_thread_delivery_event", None)
+            if not callable(publisher):
+                publisher = getattr(gateway, "publish_" + "client_thread_event", None)
+            if callable(publisher):
+                await publisher(
+                    thread_row.thread_id,
+                    event_type="workspace.changed",
+                    payload={
+                        "thread_id": thread_row.thread_id,
+                        "session_id": resolved_session_id,
+                        "active_workspace_id": workspace.workspace_id,
+                        "workspace_id": workspace.workspace_id,
+                        "client_id": getattr(client_row, "client_id", ""),
+                        "reason": str(reason or "").strip(),
+                        "source": "switch_workspace_tool",
+                    },
+                )
         return {
             "ok": True,
             "session_id": getattr(updated, "session_id", resolved_session_id),

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 _ACTION_RISK_RANK = {
     "read": 0,
@@ -15,8 +15,7 @@ _DEFAULT_TOOL_ACTION_RISKS: dict[str, str] = {
     "get_background_status": "read",
     "manage_heartbeat_settings": "local_write",
     "restart_core": "destructive",
-    "emit_short_reply": "read",
-    "emit_temporary_reply": "read",
+    "emit_progress_notice": "read",
     "list_active_clients": "read",
     "list_client_tool_targets": "read",
     "send_endpoint_message": "external_write",
@@ -78,3 +77,4 @@ class ToolRiskClassifier:
             if _ACTION_RISK_RANK.get(risk, 0) > _ACTION_RISK_RANK.get(highest, 0):
                 highest = risk
         return highest
+

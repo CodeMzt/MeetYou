@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import sys
 import types
@@ -1967,7 +1967,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
-    async def test_non_streaming_external_client_gets_short_reply_policy_prompt(self):
+    async def test_non_streaming_external_client_gets_progress_notice_policy_prompt(self):
         adapter = QueuedStreamAdapter(
             rounds=[
                 [
@@ -2004,9 +2004,9 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         "transport": "meetwechat",
                         "response_transport": "non_streaming_external_client",
                         "supports_streaming_reply": False,
-                        "short_reply_policy": "prefer_before_nontrivial_final",
+                        "progress_notice_policy": "prefer_before_nontrivial_final",
                         "tool_scope": "basic",
-                        "allowed_tool_bundle": ["research_topic", "emit_short_reply"],
+                        "allowed_tool_bundle": ["research_topic", "emit_progress_notice"],
                         "allowed_mcp_servers": [],
                     },
                 },
@@ -2027,7 +2027,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 if message.get("role") == "system"
             )
             self.assertIn("[Client Response Delivery]", system_text)
-            self.assertIn("call emit_short_reply first", system_text)
+            self.assertIn("call emit_progress_notice first", system_text)
             self.assertIn("Do not use send_endpoint_message", system_text)
         finally:
             await brain.close_brain()
@@ -2169,3 +2169,4 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

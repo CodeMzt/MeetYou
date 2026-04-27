@@ -23,9 +23,9 @@ _event_bus = None
 _background_status_provider = None
 _heartbeat_settings_provider = None
 _heartbeat_settings_updater = None
-_temporary_reply_emitter = None
+_progress_notice_emitter = None
 _core_restart_handler = None
-_client_tool_dispatcher = None
+_tool_router = None
 _allow_local_fallback = True
 
 _DEFAULT_BLACKLIST_PATTERNS = [
@@ -93,9 +93,9 @@ def set_heartbeat_settings_updater(updater):
     _heartbeat_settings_updater = updater
 
 
-def set_temporary_reply_emitter(emitter):
-    global _temporary_reply_emitter
-    _temporary_reply_emitter = emitter
+def set_progress_notice_emitter(emitter):
+    global _progress_notice_emitter
+    _progress_notice_emitter = emitter
 
 
 def set_core_restart_handler(handler):
@@ -103,13 +103,13 @@ def set_core_restart_handler(handler):
     _core_restart_handler = handler
 
 
-def set_client_tool_dispatcher(dispatcher):
-    global _client_tool_dispatcher
-    _client_tool_dispatcher = dispatcher
+def set_tool_router(dispatcher):
+    global _tool_router
+    _tool_router = dispatcher
 
 
 def set_capability_dispatcher(dispatcher):
-    set_client_tool_dispatcher(dispatcher)
+    set_tool_router(dispatcher)
 
 
 def set_local_fallback_enabled(enabled: bool):
@@ -220,12 +220,12 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: b
             return f"[用户已拒绝] 命令未执行: {cmd}"
         logger.info(f"用户确认执行危险命令: {cmd}")
 
-    if _client_tool_dispatcher is not None:
-        dispatch = getattr(_client_tool_dispatcher, "dispatch_directed_tool", None)
+    if _tool_router is not None:
+        dispatch = getattr(_tool_router, "dispatch_directed_tool", None)
         if not callable(dispatch):
-            dispatch = getattr(_client_tool_dispatcher, "dispatch_workspace_tool", None)
+            dispatch = getattr(_tool_router, "dispatch_workspace_tool", None)
         if not callable(dispatch):
-            raise RuntimeError("Client tool dispatcher does not support directed tool dispatch")
+            raise RuntimeError("ToolRouter does not support endpoint tool dispatch")
         result = await dispatch(
             tool_key="shell.exec",
             arguments={"command": cmd},
@@ -419,17 +419,17 @@ async def manage_heartbeat_settings(action: str = "get", updates: dict | None = 
     )
 
 
-async def emit_short_reply(content: str, session_id: str = "", source=None) -> str:
+async def emit_progress_notice(content: str, session_id: str = "", source=None) -> str:
     text = re.sub(r"\s+", " ", str(content or "").strip())
     if not text:
         return json.dumps({"ok": False, "error": "content is required"}, ensure_ascii=False, indent=2)
     if len(text) > 120:
         text = text[:117].rstrip() + "..."
 
-    emitter = _temporary_reply_emitter
+    emitter = _progress_notice_emitter
     if emitter is None:
         return json.dumps(
-            {"ok": False, "error": "temporary reply emitter is not available"},
+            {"ok": False, "error": "progress notice emitter is not available"},
             ensure_ascii=False,
             indent=2,
         )
@@ -449,10 +449,6 @@ async def emit_short_reply(content: str, session_id: str = "", source=None) -> s
     payload.setdefault("content", text)
     payload.setdefault("session_id", resolved_session_id)
     return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-async def emit_temporary_reply(content: str, session_id: str = "", source=None) -> str:
-    return await emit_short_reply(content, session_id=session_id, source=source)
 
 
 async def restart_core(password: str, reason: str = "", delay_seconds: int = 1, session_id: str = "", source=None) -> str:

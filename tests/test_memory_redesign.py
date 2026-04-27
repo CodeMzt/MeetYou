@@ -7,7 +7,7 @@ from pathlib import Path
 
 from core.context import ContextManager
 from core.runtime_context import bind_event_context, reset_event_context
-from tools.agent_memory import AgentMemoryTools
+from tools.memory_tools import MemoryTools
 from tools.memory import Memory
 from tools.memory_layers import dt_to_iso, utcnow
 
@@ -720,7 +720,7 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("pending_consolidation", explicit_record.get("tags", []))
 
     async def test_explicit_memory_write_is_strongly_consistent(self):
-        tools = AgentMemoryTools(self.memory)
+        tools = MemoryTools(self.memory)
 
         payload = json.loads(
             await tools.remember_knowledge(

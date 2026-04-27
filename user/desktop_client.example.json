@@ -5,8 +5,7 @@
   "client_id": "desktop-main-client",
   "display_name": "Desktop Main Client",
   "workspace_ids": ["personal", "desktop-main", "study"],
-  "available_tools": ["short_reply", "file.read", "file.write", "shell.exec", "workspace.analyze"],
-  "executable_tools": ["short_reply", "file.read", "file.write", "shell.exec", "workspace.analyze"],
+  "enabled_endpoint_tools": ["file.read", "file.write", "shell.exec", "workspace.analyze"],
   "read_roots": ["."],
   "trusted_write_roots": ["."],
   "cmd_policy_path": "user/cmd_policy.json",
@@ -21,3 +20,4 @@
   "local_bridge_host": "127.0.0.1",
   "local_bridge_port": 38951
 }
+

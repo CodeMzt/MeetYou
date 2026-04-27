@@ -68,10 +68,10 @@ def register_legacy_gateway_surface(app: FastAPI, gateway: Any) -> None:
             websocket,
             code="legacy_websocket_path_removed",
             category="validation",
-            message="根路径 /ws 已停止承载聊天流，请改用 /client/ws。",
+            message="根路径 /ws 已停止承载聊天流，请改用 /endpoint/ws。",
             details={
                 "legacy_path": "/ws",
-                "replacement_path": "/client/ws",
+                "replacement_path": "/endpoint/ws",
                 "required_query": ["thread_id"],
             },
             close_code=4404,

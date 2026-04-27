@@ -194,7 +194,7 @@ def run_checks(profile: str) -> list[CheckResult]:
         _check_env_presence(
             "MEETYOU_CLIENT_ACCESS_TOKEN",
             required=False,
-            reason="recommended only if cloud verification will exercise /client/ws with a real client token",
+            reason="recommended only if cloud verification will exercise /endpoint/ws with a real endpoint token",
         )
     )
     if profile == "desktop-local-acceptance" and platform.system() != "Windows":

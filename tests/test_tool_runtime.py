@@ -325,28 +325,28 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.error.code, "tool_readonly_violation")
             self.assertTrue(result.metadata["authorization"]["read_only"])
 
-    async def test_emit_short_reply_schema_requires_call_before_slow_operations(self):
+    async def test_emit_progress_notice_schema_requires_call_before_slow_operations(self):
         manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
-        tools_path = Path(__file__).resolve().parent.parent / "user" / "tools.json"
+        tools_path = Path(__file__).resolve().parent.parent / "user" / "tools.example.json"
 
         await manager.init_tools(str(tools_path), {})
 
         schema = next(
             tool
             for tool in manager.get_all_tools()
-            if tool.get("function", {}).get("name") == "emit_short_reply"
+            if tool.get("function", {}).get("name") == "emit_progress_notice"
         )
         description = schema["function"]["description"]
         self.assertIn("must call", description)
         self.assertIn("time-consuming", description)
         self.assertIn("May be called multiple times", description)
 
-    async def test_core_local_tools_fail_without_client_tool_dispatcher(self):
+    async def test_core_local_tools_fail_without_tool_router(self):
         with tempfile.TemporaryDirectory() as trusted_dir:
             manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([trusted_dir]))
             real_system_tools.init_system_tools(None, None, "missing.json", allow_local_fallback=False)
-            real_system_tools.set_client_tool_dispatcher(None)
-            self.addCleanup(real_system_tools.set_client_tool_dispatcher, None)
+            real_system_tools.set_tool_router(None)
+            self.addCleanup(real_system_tools.set_tool_router, None)
             self.addCleanup(real_system_tools.set_local_fallback_enabled, True)
 
             command_result = await manager.call_tool(
@@ -391,7 +391,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.content.data, {"ok": True})
         self.assertIn('"tool_name": "lookup_profile"', brain._tool_message_content(result))
 
-    async def test_emit_temporary_reply_uses_runtime_context(self):
+    async def test_emit_progress_notice_uses_runtime_context(self):
         manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
         delivered = {}
 
@@ -410,8 +410,8 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "turn_id": turn_id,
             }
 
-        real_system_tools.set_temporary_reply_emitter(emitter)
-        self.addCleanup(real_system_tools.set_temporary_reply_emitter, None)
+        real_system_tools.set_progress_notice_emitter(emitter)
+        self.addCleanup(real_system_tools.set_progress_notice_emitter, None)
         token = bind_event_context(
             session_id="session-ctx",
             turn_id="turn-ctx",
@@ -419,9 +419,9 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         try:
             result = await manager.call_tool(
-                "emit_temporary_reply",
+                "emit_progress_notice",
                 {"content": "Working on it"},
-                route_context={"tool_bundle": ["emit_temporary_reply"], "mcp_servers": [], "current_mode": "general"},
+                route_context={"tool_bundle": ["emit_progress_notice"], "mcp_servers": [], "current_mode": "general"},
             )
         finally:
             reset_event_context(token)

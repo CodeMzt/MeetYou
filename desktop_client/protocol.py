@@ -13,7 +13,7 @@ from client_tool_sdk.protocol import (
     build_tool_call_progress_message,
     build_tool_call_result_message,
 )
-from client_tool_sdk.tool_ids import build_client_tool_id
+from client_tool_sdk.tool_ids import build_endpoint_tool_id
 from desktop_client.config import DesktopClientConfig
 from platform_layer.detector import normalize_platform_system
 
@@ -35,9 +35,10 @@ def _configured_tool_keys(values: list[str], defaults: list[str]) -> list[str]:
 def build_static_tools(config: DesktopClientConfig, *, extra_tools: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     workspace_ids = list(config.workspace_ids)
     client_id = config.client_id
+    executor_endpoint_id = f"desktop.{client_id}.executor"
     base = [
         {
-            "tool_id": build_client_tool_id(client_id, "utility.echo"),
+            "tool_id": build_endpoint_tool_id(executor_endpoint_id, "utility.echo"),
             "tool_key": "utility.echo",
             "kind": "tool",
             "title": "Echo Payload",
@@ -49,7 +50,7 @@ def build_static_tools(config: DesktopClientConfig, *, extra_tools: list[dict[st
             "workspace_ids": workspace_ids,
         },
         {
-            "tool_id": build_client_tool_id(client_id, "workspace.analyze"),
+            "tool_id": build_endpoint_tool_id(executor_endpoint_id, "workspace.analyze"),
             "tool_key": "workspace.analyze",
             "kind": "tool",
             "title": "Analyze Workspace",
@@ -62,7 +63,7 @@ def build_static_tools(config: DesktopClientConfig, *, extra_tools: list[dict[st
             "workspace_ids": workspace_ids,
         },
         {
-            "tool_id": build_client_tool_id(client_id, "file.read"),
+            "tool_id": build_endpoint_tool_id(executor_endpoint_id, "file.read"),
             "tool_key": "file.read",
             "kind": "tool",
             "title": "Read Local File",
@@ -75,7 +76,7 @@ def build_static_tools(config: DesktopClientConfig, *, extra_tools: list[dict[st
             "workspace_ids": workspace_ids,
         },
         {
-            "tool_id": build_client_tool_id(client_id, "file.write"),
+            "tool_id": build_endpoint_tool_id(executor_endpoint_id, "file.write"),
             "tool_key": "file.write",
             "kind": "tool",
             "title": "Write Local File",
@@ -86,7 +87,7 @@ def build_static_tools(config: DesktopClientConfig, *, extra_tools: list[dict[st
             "workspace_ids": workspace_ids,
         },
         {
-            "tool_id": build_client_tool_id(client_id, "shell.exec"),
+            "tool_id": build_endpoint_tool_id(executor_endpoint_id, "shell.exec"),
             "tool_key": "shell.exec",
             "kind": "tool",
             "title": "Execute Local Command",
@@ -102,36 +103,24 @@ def build_static_tools(config: DesktopClientConfig, *, extra_tools: list[dict[st
             normalized = dict(item)
             tool_key = str(normalized.get("tool_key") or "").strip()
             if tool_key and not normalized.get("tool_id"):
-                normalized["tool_id"] = build_client_tool_id(client_id, tool_key)
+                normalized["tool_id"] = build_endpoint_tool_id(executor_endpoint_id, tool_key)
             base.append(normalized)
-    configured_executable = [str(item).strip() for item in getattr(config, "executable_tools", []) if str(item).strip()]
-    if not configured_executable:
+    configured_tools = [str(item).strip() for item in getattr(config, "enabled_endpoint_tools", []) if str(item).strip()]
+    if not configured_tools:
         return base
-    executable = set(configured_executable)
-    return [item for item in base if str(item.get("tool_key") or "").strip() in executable]
-
-
-def build_available_tool_keys(config: DesktopClientConfig, *, extra_tools: list[dict[str, Any]] | None = None) -> list[str]:
-    keys = _configured_tool_keys(getattr(config, "available_tools", []), _configured_tool_keys(getattr(config, "executable_tools", []), DESKTOP_EXECUTABLE_TOOL_KEYS))
-    for item in extra_tools or []:
-        tool_key = str(item.get("tool_key") or "").strip()
-        if tool_key and tool_key not in keys:
-            keys.append(tool_key)
-    return keys
+    enabled = set(configured_tools)
+    return [item for item in base if str(item.get("tool_key") or "").strip() in enabled]
 
 
 def build_hello(config: DesktopClientConfig, *, extra_tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    del extra_tools
     host_os = normalize_platform_system(platform.system())
-    available_tools = build_available_tool_keys(config, extra_tools=extra_tools)
-    executable_tools = _configured_tool_keys(getattr(config, "executable_tools", []), DESKTOP_EXECUTABLE_TOOL_KEYS)
     return build_client_hello(
         client_id=config.client_id,
         client_type="desktop",
         display_name=config.display_name,
         transport_profile=config.transport_profile,
         workspace_ids=config.workspace_ids,
-        available_tools=available_tools,
-        executable_tools=executable_tools,
         supports_offline_cache=config.supports_offline_cache,
         host={
             "hostname": socket.gethostname(),

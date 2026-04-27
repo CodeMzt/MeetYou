@@ -1,372 +1,131 @@
 from __future__ import annotations
 
-import unittest
-raise unittest.SkipTest("Legacy Agent dispatch tests were replaced by Client tool dispatch tests.")
-
 import asyncio
-import os
 import unittest
+from types import SimpleNamespace
 
-from psycopg import connect
-from sqlalchemy import select
-
-from core.db.bootstrap import bootstrap_core_domain
-from core.db.models.operation import Operation, OperationCall
-from core.services.agent_dispatch_service import AgentDispatchError
-from tools.endpoint_tools import EndpointTools
+from core.services.tool_router_service import ToolRouterService
 
 
-TEST_DATABASE_NAME = "meetyou_agent_dispatch_test"
-ADMIN_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
-TEST_DATABASE_URL = f"postgresql+psycopg://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}"
+class _WorkspaceService:
+    workspace = SimpleNamespace(id="workspace-row", workspace_id="desktop-main")
+
+    def get_by_workspace_id(self, workspace_id: str):
+        return self.workspace if workspace_id == "desktop-main" else None
+
+    def get_by_id(self, row_id):
+        return self.workspace if row_id == self.workspace.id else None
 
 
-class AgentDispatchServiceTests(unittest.IsolatedAsyncioTestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._drop_database(TEST_DATABASE_NAME)
-        cls._create_database(TEST_DATABASE_NAME)
+class _EndpointService:
+    endpoint = SimpleNamespace(
+        id="endpoint-row",
+        endpoint_id="desktop.main.executor",
+        provider_type="desktop",
+        status="ready",
+        workspace_scope=["desktop-main"],
+    )
 
-    @classmethod
-    def tearDownClass(cls):
-        cls._drop_database(TEST_DATABASE_NAME)
+    def get_by_endpoint_id(self, endpoint_id: str):
+        return self.endpoint if endpoint_id == self.endpoint.endpoint_id else None
 
-    @staticmethod
-    def _admin_connect():
-        return connect(ADMIN_DATABASE_URL, autocommit=True)
+    def get_by_id(self, row_id):
+        return self.endpoint if row_id == self.endpoint.id else None
 
-    @classmethod
-    def _drop_database(cls, db_name: str) -> None:
-        with cls._admin_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s AND pid <> pg_backend_pid()",
-                    (db_name,),
-                )
-                cur.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
 
-    @classmethod
-    def _create_database(cls, db_name: str) -> None:
-        with cls._admin_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'CREATE DATABASE "{db_name}"')
+class _EndpointCapabilityService:
+    capability = SimpleNamespace(
+        id="capability-row",
+        endpoint_id="endpoint-row",
+        capability_id="endpoint.desktop.main.executor.file.read",
+        tool_key="file.read",
+        enabled=True,
+        requires_confirmation=False,
+        risk_level="read",
+    )
 
-    async def asyncSetUp(self):
-        self.domain = bootstrap_core_domain(database_url=TEST_DATABASE_URL, run_migrations=True)
-        self.desktop_workspace = self.domain.services.workspace.get_by_workspace_id("desktop-main")
-        self.client = self.domain.services.client.ensure_client(
-            client_id="electron-main",
-            principal_id=self.domain.principal.id,
-            client_type="electron",
-            display_name="Electron Main",
+    def list_for_endpoint(self, *, endpoint_row_id):
+        return [self.capability] if endpoint_row_id == "endpoint-row" else []
+
+    def list_enabled_for_tool(self, *, tool_key: str):
+        return [self.capability] if tool_key == "file.read" else []
+
+
+class _OperationService:
+    def __init__(self):
+        self.operations: list[dict] = []
+
+    def create_operation(self, **kwargs):
+        self.operations.append(dict(kwargs))
+        return SimpleNamespace(id="operation-row", operation_id="op_1", **kwargs)
+
+
+class _OperationCallService:
+    def __init__(self):
+        self.created: list[dict] = []
+        self.statuses: list[tuple[str, str]] = []
+
+    def create_call(self, **kwargs):
+        self.created.append(dict(kwargs))
+        return SimpleNamespace(id="call-row", call_id="call_1", **kwargs)
+
+    def mark_dispatched(self, *, call_id: str):
+        self.statuses.append((call_id, "dispatched"))
+
+    def mark_succeeded(self, *, call_id: str, result: dict):
+        self.statuses.append((call_id, "succeeded"))
+
+    def mark_failed(self, *, call_id: str, error: dict):
+        self.statuses.append((call_id, "failed"))
+
+
+class EndpointToolDispatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tool_router_dispatches_endpoint_tool_request_frame(self):
+        operation_service = _OperationService()
+        call_service = _OperationCallService()
+        router = ToolRouterService(
+            actor_service=SimpleNamespace(),
+            workspace_service=_WorkspaceService(),
+            endpoint_service=_EndpointService(),
+            endpoint_capability_service=_EndpointCapabilityService(),
+            session_service=SimpleNamespace(get_by_session_id=lambda session_id: None),
+            thread_service=SimpleNamespace(get_by_id=lambda row_id: None),
+            operation_service=operation_service,
+            operation_call_service=call_service,
         )
-        self.thread = self.domain.services.thread.create_thread(
-            principal_id=self.domain.principal.id,
-            workspace_id=self.desktop_workspace.id,
-            title="Dispatch Thread",
-        )
-        self.session = self.domain.services.session.create_session(
-            thread_id=self.thread.id,
-            client_id=self.client.id,
-            workspace_id=self.desktop_workspace.id,
-        )
-        self.agent = self.domain.services.agent.register_agent(
-            principal_id=self.domain.principal.id,
-            agent_id="desktop-main-agent",
-            agent_type="desktop",
-            display_name="Desktop Main Agent",
-            transport_profile="desktop_wss",
-            workspace_rows=[self.desktop_workspace],
-            owner_client_id=self.client.id,
-        )
-        self.domain.services.capability.replace_agent_capabilities(
-            agent=self.agent,
-            capabilities=[
-                {
-                    "capability_id": "agent.desktop-main-agent.file.read",
-                    "kind": "tool",
-                    "title": "Read Local File",
-                    "risk_level": "read",
-                    "requires_confirmation": False,
-                    "workspace_ids": ["desktop-main"],
-                }
-            ],
-            workspace_rows=[self.desktop_workspace],
-            revision=1,
-        )
+        frames: list[dict] = []
 
-    async def asyncTearDown(self):
-        self.domain.engine.dispose()
+        async def endpoint_transport(*, endpoint_id: str, payload: dict) -> bool:
+            frames.append({"endpoint_id": endpoint_id, "payload": payload})
 
-    async def test_dispatch_agent_capability_waits_for_agent_result(self):
-        async def fake_transport(*, agent_id: str, payload: dict) -> bool:
-            self.assertEqual(agent_id, "desktop-main-agent")
-            call_id = payload["payload"]["call_id"]
-
-            async def resolve_later():
-                await asyncio.sleep(0.01)
-                await self.domain.agent_dispatch.notify_call_result(
-                    call_id=call_id,
-                    result={"summary": "demo.txt", "content": "hello", "size_bytes": 5},
-                )
-                self.domain.services.operation_call.mark_succeeded(
-                    call_id=call_id,
-                    result={"summary": "demo.txt", "content": "hello", "size_bytes": 5},
-                )
+            async def resolve_later() -> None:
+                await asyncio.sleep(0)
+                await router.notify_call_result("call_1", {"summary": "read ok"})
 
             asyncio.create_task(resolve_later())
             return True
 
-        self.domain.agent_dispatch.set_transport(fake_transport)
-        result = await self.domain.agent_dispatch.dispatch_agent_capability(
-            capability_suffix="file.read",
+        router.set_endpoint_transport(endpoint_transport)
+
+        result = await router.route_tool_call(
+            tool_key="file.read",
             arguments={"path": "demo.txt"},
-            session_id=self.session.session_id,
-            title="Read demo.txt for wait-result test",
-            operation_type="tool.read_local_documents",
+            workspace_id="desktop-main",
+            endpoint_id="desktop.main.executor",
+            title="Read file",
         )
 
-        self.assertEqual(result["content"], "hello")
-        with self.domain.session_factory() as session:
-            operation = session.execute(
-                select(Operation).where(Operation.title == "Read demo.txt for wait-result test")
-            ).scalar_one()
-            call = session.execute(
-                select(OperationCall).where(OperationCall.operation_id == operation.id)
-            ).scalar_one()
-            self.assertEqual(operation.status, "succeeded")
-            self.assertEqual(call.status, "succeeded")
+        self.assertEqual(result, {"summary": "read ok"})
+        self.assertEqual(frames[0]["endpoint_id"], "desktop.main.executor")
+        frame = frames[0]["payload"]
+        self.assertEqual(frame["schema"], "meetyou.endpoint.ws.v4")
+        self.assertEqual(frame["type"], "tool.call.request")
+        self.assertEqual(frame["payload"]["tool_key"], "file.read")
+        self.assertEqual(frame["payload"]["call_id"], "call_1")
+        self.assertEqual(operation_service.operations[0]["execution_target_type"], "endpoint")
+        self.assertEqual(operation_service.operations[0]["execution_target_id"], "desktop.main.executor")
+        self.assertEqual(call_service.created[0]["execution_target_id"], "desktop.main.executor")
 
-    async def test_dispatch_prefers_client_owned_local_backend(self):
-        other_client = self.domain.services.client.ensure_client(
-            client_id="feishu-client",
-            principal_id=self.domain.principal.id,
-            client_type="feishu",
-            display_name="Feishu Client",
-        )
-        self.domain.services.agent.register_agent(
-            principal_id=self.domain.principal.id,
-            agent_id="shared-desktop-agent",
-            agent_type="desktop",
-            display_name="Shared Desktop Agent",
-            transport_profile="desktop_wss",
-            workspace_rows=[self.desktop_workspace],
-            owner_client_id=other_client.id,
-        )
-        selection = self.domain.agent_dispatch._select_target_agent(  # noqa: SLF001
-            capability_suffix="file.read",
-            session_id=self.session.session_id,
-        )
-        self.assertEqual(selection.agent.agent_id, "desktop-main-agent")
 
-    async def test_replace_agent_capabilities_truncates_oversized_titles_for_persistence(self):
-        long_title = "Read the complete contents of a file from the file system as text. " * 8
-        self.domain.services.capability.replace_agent_capabilities(
-            agent=self.agent,
-            capabilities=[
-                {
-                    "capability_id": "agent.desktop-main-agent.file.read_text_file",
-                    "kind": "tool",
-                    "title": long_title,
-                    "risk_level": "read",
-                    "requires_confirmation": False,
-                    "workspace_ids": ["desktop-main"],
-                }
-            ],
-            workspace_rows=[self.desktop_workspace],
-            revision=2,
-        )
-
-        capability = self.domain.services.capability.get_by_capability_id(
-            "agent.desktop-main-agent.file.read_text_file"
-        )
-        self.assertIsNotNone(capability)
-        self.assertLessEqual(len(capability.title), 255)
-        self.assertEqual((capability.meta or {}).get("full_title"), long_title)
-
-    async def test_dispatch_encrypts_sensitive_arguments_for_agent_transport(self):
-        transport_payload: dict[str, object] = {}
-
-        async def fake_transport(*, agent_id: str, payload: dict) -> bool:
-            self.assertEqual(agent_id, "desktop-main-agent")
-            transport_payload.update(payload)
-            call_id = payload["payload"]["call_id"]
-
-            async def resolve_later():
-                await asyncio.sleep(0.01)
-                await self.domain.agent_dispatch.notify_call_result(
-                    call_id=call_id,
-                    result={"summary": "ok"},
-                )
-                self.domain.services.operation_call.mark_succeeded(
-                    call_id=call_id,
-                    result={"summary": "ok"},
-                )
-
-            asyncio.create_task(resolve_later())
-            return True
-
-        self.domain.agent_dispatch.set_transport(fake_transport)
-        old_secret = os.environ.get("MEETYOU_CREDENTIAL_SECRET")
-        os.environ["MEETYOU_CREDENTIAL_SECRET"] = "dispatch-test-secret"
-        try:
-            await self.domain.agent_dispatch.dispatch_agent_capability(
-                capability_suffix="file.read",
-                arguments={"path": "demo.txt", "access_token": "token-abc"},
-                session_id=self.session.session_id,
-                title="Read demo.txt for encrypted-args test",
-                operation_type="tool.read_local_documents",
-            )
-        finally:
-            if old_secret is None:
-                os.environ.pop("MEETYOU_CREDENTIAL_SECRET", None)
-            else:
-                os.environ["MEETYOU_CREDENTIAL_SECRET"] = old_secret
-
-        payload = transport_payload["payload"]
-        self.assertEqual(payload["arguments"]["access_token"], "[REDACTED]")
-        self.assertTrue(payload["encrypted_arguments"])
-
-        with self.domain.session_factory() as session:
-            operation = session.execute(
-                select(Operation).where(Operation.title == "Read demo.txt for encrypted-args test")
-            ).scalar_one()
-            call = session.execute(
-                select(OperationCall).where(OperationCall.operation_id == operation.id)
-            ).scalar_one()
-            self.assertEqual(operation.meta["arguments"]["access_token"], "[REDACTED]")
-            self.assertTrue(operation.meta["arguments_encrypted"])
-            self.assertEqual(call.arguments["access_token"], "[REDACTED]")
-
-    async def test_dispatch_agent_capability_does_not_fallback_to_other_workspace_agent(self):
-        home_lab_workspace = self.domain.services.workspace.get_by_workspace_id("home-lab")
-        other_thread = self.domain.services.thread.create_thread(
-            principal_id=self.domain.principal.id,
-            workspace_id=home_lab_workspace.id,
-            title="Home Lab Thread",
-        )
-        other_session = self.domain.services.session.create_session(
-            thread_id=other_thread.id,
-            client_id=self.client.id,
-            workspace_id=home_lab_workspace.id,
-        )
-
-        with self.assertRaises(AgentDispatchError) as error_context:
-            await self.domain.agent_dispatch.dispatch_agent_capability(
-                capability_suffix="file.read",
-                arguments={"path": "demo.txt"},
-                session_id=other_session.session_id,
-                title="Read demo.txt for home-lab rejection test",
-                operation_type="tool.read_local_documents",
-            )
-        self.assertEqual(error_context.exception.tool_error_code, "agent_capability_unavailable")
-        self.assertEqual(error_context.exception.tool_error_details["workspace_id"], "home-lab")
-        self.assertEqual(error_context.exception.tool_error_details["capability_suffix"], "file.read")
-
-        with self.domain.session_factory() as session:
-            operations = session.execute(
-                select(Operation).where(Operation.title == "Read demo.txt for home-lab rejection test")
-            ).scalars().all()
-            calls = session.execute(
-                select(OperationCall).where(
-                    OperationCall.operation_id.in_([operation.id for operation in operations])
-                )
-            ).scalars().all()
-            self.assertEqual(len(operations), 0)
-            self.assertEqual(len(calls), 0)
-
-    async def test_specific_agent_capability_requires_confirmation_for_risky_capability(self):
-        self.domain.services.capability.replace_agent_capabilities(
-            agent=self.agent,
-            capabilities=[
-                {
-                    "capability_id": "agent.desktop-main-agent.file.write",
-                    "kind": "tool",
-                    "title": "Write Local File",
-                    "risk_level": "write",
-                    "requires_confirmation": True,
-                    "workspace_ids": ["desktop-main"],
-                }
-            ],
-            workspace_rows=[self.desktop_workspace],
-            revision=3,
-        )
-
-        with self.assertRaises(AgentDispatchError) as error_context:
-            await self.domain.agent_dispatch.dispatch_specific_agent_capability(
-                agent_id="desktop-main-agent",
-                capability_ref="file.write",
-                arguments={"path": "demo.txt", "content": "hello"},
-                session_id=self.session.session_id,
-                timeout_seconds=5,
-                confirmed=False,
-            )
-
-        self.assertEqual(error_context.exception.tool_error_code, "agent_capability_confirmation_required")
-
-    async def test_endpoint_tool_routes_client_capability_call_to_owned_agent(self):
-        class _AgentWsManager:
-            async def connected_agent_ids(self):
-                return {"desktop-main-agent"}
-
-            async def snapshot(self):
-                return [{"agent_id": "desktop-main-agent", "connected_at": "2026-04-08T00:00:00Z"}]
-
-        class _ClientWsManager:
-            async def snapshot(self, **kwargs):
-                if kwargs.get("client_id") == "electron-main":
-                    return [
-                        {
-                            "client_id": "electron-main",
-                            "session_id": self_session_id,
-                            "thread_id": self_thread_id,
-                            "workspace_id": "desktop-main",
-                            "connected_at": "2026-04-08T00:00:00Z",
-                        }
-                    ]
-                return []
-
-        class _Gateway:
-            agent_ws_manager = _AgentWsManager()
-            client_ws_manager = _ClientWsManager()
-
-        self_session_id = self.session.session_id
-        self_thread_id = self.thread.thread_id
-
-        async def fake_transport(*, agent_id: str, payload: dict) -> bool:
-            self.assertEqual(agent_id, "desktop-main-agent")
-            self.assertEqual(payload["payload"]["capability_id"], "agent.desktop-main-agent.file.read")
-            call_id = payload["payload"]["call_id"]
-
-            async def resolve_later():
-                await asyncio.sleep(0.01)
-                await self.domain.agent_dispatch.notify_call_result(
-                    call_id=call_id,
-                    result={"summary": "demo.txt", "content": "hello"},
-                )
-                self.domain.services.operation_call.mark_succeeded(
-                    call_id=call_id,
-                    result={"summary": "demo.txt", "content": "hello"},
-                )
-
-            asyncio.create_task(resolve_later())
-            return True
-
-        self.domain.agent_dispatch.set_transport(fake_transport)
-        tools = EndpointTools()
-        tools.set_core_domain(self.domain)
-        tools.set_runtime(gateway_getter=lambda: _Gateway())
-
-        result = await tools.send_endpoint_message(
-            target_type="client",
-            target_id="electron-main",
-            delivery_kind="capability_call",
-            capability_ref="file.read",
-            arguments={"path": "demo.txt"},
-            session_id=self.session.session_id,
-            timeout_seconds=5,
-        )
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["agent_id"], "desktop-main-agent")
-        self.assertEqual(result["result"]["content"], "hello")
+if __name__ == "__main__":
+    unittest.main()

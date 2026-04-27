@@ -39,11 +39,11 @@ function countRunningOperations(operations: OperationView[]): number {
 }
 
 function formatOperationTone(tone: string): string {
-  if (tone === 'running') return '进行中'
-  if (tone === 'pending') return '等待中'
-  if (tone === 'success') return '成功'
-  if (tone === 'failed') return '失败'
-  return '状态未知'
+  if (tone === 'running') return 'Running'
+  if (tone === 'pending') return 'Pending'
+  if (tone === 'success') return 'Succeeded'
+  if (tone === 'failed') return 'Failed'
+  return 'Unknown'
 }
 
 export default function WorkspacePanel({
@@ -76,7 +76,7 @@ export default function WorkspacePanel({
     <section className={styles.panel}>
       <div className={styles.header}>
         <div>
-          <div className={styles.kicker}>当前工作区</div>
+          <div className={styles.kicker}>Current Workspace</div>
           <h2 className={styles.title}>{workspace.title || workspace.workspace_id}</h2>
           {workspace.description && <p className={styles.description}>{workspace.description}</p>}
         </div>
@@ -84,15 +84,15 @@ export default function WorkspacePanel({
 
       <div className={styles.statusGrid}>
         <div className={styles.statusCard}>
-          <span className={styles.statusLabel}>服务端</span>
+          <span className={styles.statusLabel}>Core</span>
           <span className={styles.statusValue}>{getConnectionText(connectionState)}</span>
         </div>
         <div className={styles.statusCard}>
-          <span className={styles.statusLabel}>本地工具</span>
-          <span className={styles.statusValue}>{desktopToolsAvailable ? '在线' : '离线'}</span>
+          <span className={styles.statusLabel}>鏈湴宸ュ叿</span>
+          <span className={styles.statusValue}>{desktopToolsAvailable ? 'Online' : 'Offline'}</span>
         </div>
         <div className={styles.statusCard}>
-          <span className={styles.statusLabel}>工作区</span>
+          <span className={styles.statusLabel}>Workspace</span>
           <span className={styles.statusValue}>{formatResourceStatusLabel(workspace.status)}</span>
         </div>
       </div>
@@ -106,15 +106,15 @@ export default function WorkspacePanel({
 
       <div className={styles.activityRow}>
         <div className={styles.activityCard}>
-          <span className={styles.activityLabel}>运行中操作</span>
+          <span className={styles.activityLabel}>Running Operations</span>
           <span className={styles.activityValue}>{runningOperations}</span>
         </div>
         <div className={styles.activityCard}>
-          <span className={styles.activityLabel}>待处理审批</span>
+          <span className={styles.activityLabel}>Pending Approvals</span>
           <span className={styles.activityValue}>{pendingApprovals}</span>
         </div>
         <div className={styles.activityCard}>
-          <span className={styles.activityLabel}>待补充输入</span>
+          <span className={styles.activityLabel}>Pending Input</span>
           <span className={styles.activityValue}>{pendingInputs}</span>
         </div>
       </div>
@@ -122,31 +122,31 @@ export default function WorkspacePanel({
       <div className={styles.metaList}>
         <div className={styles.metaItem}>
           <Wrench size={12} />
-          <span>允许工具：{workspace.allowed_tool_ids.length || '全部'}</span>
+          <span>Allowed tools: {workspace.allowed_tool_ids.length || 'All'}</span>
         </div>
         <div className={styles.metaItem}>
           <Activity size={12} />
-          <span>偏好 Client 数：{workspace.preferred_target_client_ids.length || 0}</span>
+          <span>Preferred endpoints: {workspace.preferred_target_endpoint_ids.length || 0}</span>
         </div>
         <div className={styles.metaItem}>
           <Sparkles size={12} />
           <span>
-            来源偏好：{workspace.preferred_source_profiles.length > 0
+            Source preferences: {workspace.preferred_source_profiles.length > 0
               ? workspace.preferred_source_profiles.map((item) => formatSourceProfileLabel(item)).join(' / ')
-              : '未设置'}
+              : 'Unset'}
           </span>
         </div>
         <div className={styles.metaItem}>
           <LayoutTemplate size={12} />
-          <span>记忆排序：{formatMemoryRankingPolicyLabel(workspace.memory_ranking_policy)}</span>
+          <span>Memory ranking: {formatMemoryRankingPolicyLabel(workspace.memory_ranking_policy)}</span>
         </div>
       </div>
 
       {recentOperations.length > 0 ? (
         <div className={styles.operationsCard}>
           <div className={styles.operationsHeader}>
-            <span className={styles.kicker}>开发调试</span>
-            <span className={styles.operationsHint}>最近操作（最多 3 条）</span>
+            <span className={styles.kicker}>Recent Operations</span>
+            <span className={styles.operationsHint}>Latest 3 operations</span>
           </div>
           <div className={styles.operationsList}>
             {recentOperations.map((item) => (
@@ -163,7 +163,7 @@ export default function WorkspacePanel({
                       disabled={approvalSubmittingIds.includes(item.approval_id)}
                       onClick={() => onDecideOperationApproval?.(item.approval_id || '', 'approve')}
                     >
-                      批准
+                      Approve
                     </button>
                     <button
                       type="button"
@@ -171,7 +171,7 @@ export default function WorkspacePanel({
                       disabled={approvalSubmittingIds.includes(item.approval_id)}
                       onClick={() => onDecideOperationApproval?.(item.approval_id || '', 'reject')}
                     >
-                      拒绝
+                      Reject
                     </button>
                   </div>
                 ) : null}
@@ -185,7 +185,7 @@ export default function WorkspacePanel({
         <div className={styles.procedureHeader}>
           <div className={styles.procedureTitleRow}>
             <Pin size={13} />
-            <span className={styles.procedureKicker}>当前规程</span>
+            <span className={styles.procedureKicker}>Current Procedure</span>
           </div>
           <span className={styles.procedureSource} data-source={procedureSource}>
             {formatProcedureSourceLabel(procedureSource)}
@@ -218,13 +218,13 @@ export default function WorkspacePanel({
             ) : null}
             {latestInferenceVisible ? (
               <div className={styles.procedureHint}>
-                最近一次推断：{formatInferenceReasonLabel(procedureContext?.latest_inferred_reason || '')}
+                Latest inference: {formatInferenceReasonLabel(procedureContext?.latest_inferred_reason || '')}
               </div>
             ) : null}
           </>
         ) : (
           <p className={styles.procedureEmpty}>
-            当前 thread 还没有固定或推断出的 procedure，上下文会在后续对话中自动刷新。
+            This thread does not have a pinned or inferred procedure yet. Context will refresh during later turns.
           </p>
         )}
       </div>

@@ -16,7 +16,8 @@ from core.db.repositories import (
     ApprovalRepository,
     AttachmentRepository,
     ContextPoolRepository,
-    ClientRepository,
+    EndpointCapabilityRepository,
+    EndpointRepository,
     OperationRepository,
     PrincipalRepository,
     SessionRepository,
@@ -94,6 +95,16 @@ class DatabasePhase1Tests(unittest.TestCase):
                 "attachments",
                 "client_workspace_memberships",
                 "context_pool_items",
+                "actors",
+                "endpoints",
+                "endpoint_connections",
+                "endpoint_capabilities",
+                "runs",
+                "run_events",
+                "scheduled_jobs",
+                "scheduled_job_runs",
+                "endpoint_outbox",
+                "delivery_attempts",
             }.issubset(tables)
         )
         self.assertNotIn("agents", tables)
@@ -103,7 +114,8 @@ class DatabasePhase1Tests(unittest.TestCase):
     def test_repositories_can_create_phase1_resource_chain(self):
         with self.session_factory() as session:
             principal_repo = PrincipalRepository(session)
-            client_repo = ClientRepository(session)
+            endpoint_repo = EndpointRepository(session)
+            endpoint_capability_repo = EndpointCapabilityRepository(session)
             workspace_repo = WorkspaceRepository(session)
             context_pool_repo = ContextPoolRepository(session)
             thread_repo = ThreadRepository(session)
@@ -113,22 +125,27 @@ class DatabasePhase1Tests(unittest.TestCase):
             attachment_repo = AttachmentRepository(session)
 
             principal = principal_repo.create(principal_key="self", display_name="Self")
-            client = client_repo.create(
-                client_id="desktop-main",
-                principal_id=principal.id,
-                client_type="electron",
-                display_name="Desktop Main",
+            endpoint = endpoint_repo.upsert(
+                endpoint_id="desktop-main.executor",
+                endpoint_type="tool_executor",
+                provider_type="desktop",
+                transport_type="websocket",
                 status="online",
-                available_tools=["file.read", "shell.exec"],
-                executable_tools=["file.read", "shell.exec"],
-                transport_profile="desktop_wss",
+                workspace_scope=["personal"],
+                labels=["local_tools"],
+                metadata={"display_name": "Desktop Main"},
+            )
+            endpoint_capability = endpoint_capability_repo.upsert(
+                endpoint_id=endpoint.id,
+                tool_key="shell.exec",
+                capability_id="endpoint.desktop-main.executor.shell.exec",
+                risk_level="system",
             )
             workspace = workspace_repo.create(
                 workspace_id="personal",
                 principal_id=principal.id,
                 title="Personal",
             )
-            client_repo.bind_workspace(workspace_id=workspace.id, client_id=client.id)
             thread = thread_repo.create(
                 thread_id=f"thr_{uuid.uuid4().hex}",
                 principal_id=principal.id,
@@ -138,7 +155,7 @@ class DatabasePhase1Tests(unittest.TestCase):
             conversation = session_repo.create(
                 session_id=f"sess_{uuid.uuid4().hex}",
                 thread_id=thread.id,
-                client_id=client.id,
+                origin_endpoint_id=endpoint.id,
                 active_workspace_id=workspace.id,
             )
             context_item = context_pool_repo.create(
@@ -146,11 +163,11 @@ class DatabasePhase1Tests(unittest.TestCase):
                 principal_id=principal.id,
                 thread_id=thread.id,
                 session_id=conversation.id,
-                source_client_id=client.id,
+                origin_endpoint_id=endpoint.id,
                 home_workspace_id=workspace.id,
                 active_workspace_id=workspace.id,
-                content="Desktop client asked about payment callback retries.",
-                canonical_text="desktop client asked about payment callback retries",
+                content="Desktop endpoint asked about payment callback retries.",
+                canonical_text="desktop endpoint asked about payment callback retries",
                 role="user",
             )
             operation = operation_repo.create(
@@ -158,8 +175,10 @@ class DatabasePhase1Tests(unittest.TestCase):
                 thread_id=thread.id,
                 workspace_id=workspace.id,
                 operation_type="capture_screenshot",
-                execution_target="specific_client",
-                target_client_id=client.id,
+                execution_target="specific_endpoint",
+                execution_target_type="endpoint",
+                execution_target_id=endpoint.endpoint_id,
+                target_endpoint_id=endpoint.id,
                 title="Capture screenshot",
             )
             approval = approval_repo.create(
@@ -180,9 +199,9 @@ class DatabasePhase1Tests(unittest.TestCase):
             session.commit()
 
             self.assertIsNotNone(principal_repo.get_by_principal_key("self"))
-            self.assertIsNotNone(client_repo.get_by_client_id("desktop-main"))
+            self.assertIsNotNone(endpoint_repo.get_by_endpoint_id("desktop-main.executor"))
+            self.assertIsNotNone(endpoint_capability_repo.get_by_capability_id(endpoint_capability.capability_id))
             self.assertIsNotNone(workspace_repo.get_by_workspace_id("personal"))
-            self.assertTrue(client_repo.is_bound_to_workspace(client_id="desktop-main", workspace_id=workspace.id))
             self.assertIsNotNone(thread_repo.get_by_thread_id(thread.thread_id))
             self.assertIsNotNone(session_repo.get_by_session_id(conversation.session_id))
             self.assertIsNotNone(context_pool_repo.get_by_context_id(context_item.context_id))

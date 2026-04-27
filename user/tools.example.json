@@ -231,7 +231,7 @@
       "type": "function",
       "function": {
         "name": "send_endpoint_message",
-        "description": "Send a realtime notice or dispatch a directed tool call to a target Client other than the normal current-session reply path. Do not use this to answer the originating user or to send progress updates to the same client; use emit_short_reply for progress and the final assistant answer for the actual reply. Use only when the user explicitly asks to notify or call a specific target Client.",
+        "description": "Send a realtime notice or dispatch a directed tool call to a target Client other than the normal current-session reply path. Do not use this to answer the originating user or to send progress updates to the same client; use emit_progress_notice for progress and the final assistant answer for the actual reply. Use only when the user explicitly asks to notify or call a specific target Client.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -288,7 +288,7 @@
     {
       "type": "function",
       "function": {
-        "name": "emit_short_reply",
+        "name": "emit_progress_notice",
         "description": "Send a brief standalone assistant reply to the current session while the current turn is still thinking or tool-calling. You must call this before any potentially time-consuming operation, including web/page reading, research, local file or workspace work, directed Client tool calls, endpoint messaging, or other slow I/O. For non-streaming external clients such as Feishu or WeChat/MeetWeChat, call this before a nontrivial or multi-sentence final answer unless the answer is immediate and very short. May be called multiple times.",
         "parameters": {
           "type": "object",
@@ -325,25 +325,6 @@
           },
           "required": [
             "password"
-          ]
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "emit_temporary_reply",
-        "description": "Compatibility alias for emit_short_reply. Sends a brief standalone assistant reply while the current turn is still thinking or tool-calling. Use before potentially time-consuming operations when the primary emit_short_reply name is unavailable.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "content": {
-              "type": "string",
-              "description": "A short standalone reply, ideally one sentence."
-            }
-          },
-          "required": [
-            "content"
           ]
         }
       }
@@ -1936,3 +1917,4 @@
     }
   ]
 }
+

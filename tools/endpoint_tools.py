@@ -4,12 +4,11 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from client_tool_protocol import build_client_message
 from core.runtime_context import get_event_context
-from core.services.client_tool_dispatch_service import ClientToolDispatchError
+from core.services.tool_router_service import ToolRouterError
 
 
-_ONLINE_CLIENT_STATUSES = {"online", "ready", "active"}
+_ONLINE_ENDPOINT_STATUSES = {"online", "ready", "active"}
 
 
 def _utcnow_iso() -> str:
@@ -78,39 +77,42 @@ class EndpointTools:
                         return workspace
         return None
 
-    @staticmethod
-    def _client_payload(client, *, connected: bool = False, snapshots: list[dict[str, Any]] | None = None, workspace_ids: list[str] | None = None) -> dict[str, Any]:
+    def _endpoint_payload(self, endpoint, *, connected: bool = False, snapshots: list[dict[str, Any]] | None = None, include_capabilities: bool = True) -> dict[str, Any]:
         rows = list(snapshots or [])
         first = rows[0] if rows else {}
-        return {
-            "client_id": str(getattr(client, "client_id", "") or first.get("client_id") or ""),
-            "display_name": str(first.get("display_name") or getattr(client, "display_name", "") or ""),
-            "client_type": str(first.get("client_type") or getattr(client, "client_type", "") or ""),
-            "status": str(getattr(client, "status", "") or ("online" if connected else "")),
+        provider = first.get("provider") if isinstance(first.get("provider"), dict) else {}
+        endpoint_id = str(getattr(endpoint, "endpoint_id", "") or first.get("endpoint_id") or "")
+        capabilities: list[dict[str, Any]] = []
+        if include_capabilities:
+            for capability in self._domain().services.endpoint_capability.list_for_endpoint(endpoint_row_id=getattr(endpoint, "id", None)):
+                capabilities.append(
+                    {
+                        "capability_id": str(getattr(capability, "capability_id", "") or ""),
+                        "tool_key": str(getattr(capability, "tool_key", "") or ""),
+                        "risk_level": str(getattr(capability, "risk_level", "") or "read"),
+                        "requires_confirmation": bool(getattr(capability, "requires_confirmation", False)),
+                        "enabled": bool(getattr(capability, "enabled", True)),
+                    }
+                )
+        payload = {
+            "endpoint_id": endpoint_id,
+            "display_name": str(provider.get("display_name") or getattr(endpoint, "meta", {}).get("display_name", "") or endpoint_id),
+            "endpoint_type": str(getattr(endpoint, "endpoint_type", "") or ""),
+            "provider_type": str(getattr(endpoint, "provider_type", "") or ""),
+            "transport_type": str(getattr(endpoint, "transport_type", "") or ""),
+            "status": str(getattr(endpoint, "status", "") or ("online" if connected else "")),
             "connected": bool(connected),
             "connection_count": len(rows),
-            "thread_ids": _string_list(item.get("thread_id") for item in rows),
-            "session_ids": _string_list(item.get("session_id") for item in rows),
-            "workspace_ids": _string_list(workspace_ids or [item.get("workspace_id") for item in rows]),
-            "transport_profile": str(first.get("transport_profile") or getattr(client, "transport_profile", "") or ""),
-            "available_tools": _string_list(first.get("available_tools") or getattr(client, "available_tools", []) or []),
-            "executable_tools": _string_list(first.get("executable_tools") or getattr(client, "executable_tools", []) or []),
-            "last_seen_at": getattr(client, "last_seen_at", "").isoformat()
-            if getattr(client, "last_seen_at", None) is not None
+            "workspace_ids": _string_list(getattr(endpoint, "workspace_scope", []) or []),
+            "capabilities": capabilities,
+            "last_seen_at": getattr(endpoint, "updated_at", "").isoformat()
+            if getattr(endpoint, "updated_at", None) is not None
             else "",
             "connected_at": str(first.get("connected_at") or ""),
             "updated_at": str(first.get("updated_at") or ""),
-            "host": dict(first.get("host") or {
-                "name": getattr(client, "host_name", ""),
-                "os": getattr(client, "host_os", ""),
-                "arch": getattr(client, "host_arch", ""),
-            }),
+            "provider": provider,
         }
-
-    def _workspace_ids_for_client(self, client_id: str) -> list[str]:
-        domain = self._domain()
-        rows = domain.services.client.list_workspace_bindings(client_id)
-        return _string_list(getattr(workspace, "workspace_id", "") for workspace, _membership in rows)
+        return payload
 
     async def list_active_clients(
         self,
@@ -124,40 +126,36 @@ class EndpointTools:
         domain = self._domain()
         gateway = self._gateway()
         workspace = self._workspace_row(workspace_id, session_id=session_id)
-        snapshot = await gateway.client_ws_manager.snapshot(
-            thread_id=thread_id,
-            workspace_id=str(getattr(workspace, "workspace_id", "") or ""),
-        )
-        snapshots_by_client: dict[str, list[dict[str, Any]]] = {}
+        del thread_id
+        snapshot = await gateway.endpoint_ws_manager.snapshot()
+        snapshots_by_endpoint: dict[str, list[dict[str, Any]]] = {}
         for item in snapshot:
-            client_id = str(item.get("client_id") or "").strip()
-            if client_id:
-                snapshots_by_client.setdefault(client_id, []).append(item)
+            endpoint_id = str(item.get("endpoint_id") or "").strip()
+            if endpoint_id:
+                snapshots_by_endpoint.setdefault(endpoint_id, []).append(item)
 
-        if workspace is not None:
-            client_rows = [client for client, _membership in domain.services.client.list_clients_for_workspace(workspace.id)]
-        else:
-            client_rows = list(domain.services.client.list_clients())
+        endpoints = list(domain.services.endpoint.list_all())
+        workspace_key = str(getattr(workspace, "workspace_id", "") or "").strip()
 
-        clients: list[dict[str, Any]] = []
-        for client in client_rows:
-            client_id = str(getattr(client, "client_id", "") or "").strip()
-            if not client_id or client_id not in snapshots_by_client:
+        results: list[dict[str, Any]] = []
+        for endpoint in endpoints:
+            endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip()
+            workspace_scope = _string_list(getattr(endpoint, "workspace_scope", []) or [])
+            if workspace_key and workspace_key not in workspace_scope and "*" not in workspace_scope:
                 continue
-            if str(getattr(client, "status", "") or "").strip().lower() not in _ONLINE_CLIENT_STATUSES:
+            if not endpoint_id or endpoint_id not in snapshots_by_endpoint:
                 continue
-            payload = self._client_payload(
-                client,
+            if str(getattr(endpoint, "status", "") or "").strip().lower() not in _ONLINE_ENDPOINT_STATUSES:
+                continue
+            payload = self._endpoint_payload(
+                endpoint,
                 connected=True,
-                snapshots=snapshots_by_client.get(client_id, []),
-                workspace_ids=self._workspace_ids_for_client(client_id),
+                snapshots=snapshots_by_endpoint.get(endpoint_id, []),
+                include_capabilities=include_tools,
             )
-            if not include_tools:
-                payload.pop("available_tools", None)
-                payload.pop("executable_tools", None)
-            clients.append(payload)
-        clients.sort(key=lambda item: (str(item.get("display_name") or "").lower(), str(item.get("client_id") or "")))
-        return {"ok": True, "count": len(clients), "clients": clients}
+            results.append(payload)
+        results.sort(key=lambda item: (str(item.get("display_name") or "").lower(), str(item.get("endpoint_id") or "")))
+        return {"ok": True, "count": len(results), "endpoints": results}
 
     async def list_client_tool_targets(
         self,
@@ -169,48 +167,42 @@ class EndpointTools:
     ) -> dict[str, Any]:
         del route_context
         domain = self._domain()
-        gateway = self._gateway()
         workspace = self._workspace_row(workspace_id, session_id=session_id)
         normalized_tool_key = str(tool_key or "").strip()
-        connected_ids = await gateway.client_ws_manager.connected_client_ids()
+        connected_ids = await self._gateway().endpoint_ws_manager.connected_endpoint_ids()
 
-        if workspace is not None:
-            rows = domain.services.client.list_tool_clients_for_workspace(
-                workspace_id=workspace.id,
-                tool_key=normalized_tool_key,
-            )
-            client_rows = [client for client, _membership in rows]
-        else:
-            client_rows = list(domain.services.client.list_clients())
+        endpoint_rows = list(domain.services.endpoint.list_all())
+        workspace_key = str(getattr(workspace, "workspace_id", "") or "").strip()
 
         targets: list[dict[str, Any]] = []
-        for client in client_rows:
-            client_id = str(getattr(client, "client_id", "") or "").strip()
-            if not client_id or client_id not in connected_ids:
+        for endpoint in endpoint_rows:
+            endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip()
+            workspace_scope = _string_list(getattr(endpoint, "workspace_scope", []) or [])
+            if workspace_key and workspace_key not in workspace_scope and "*" not in workspace_scope:
                 continue
-            if str(getattr(client, "status", "") or "").strip().lower() not in _ONLINE_CLIENT_STATUSES:
+            if not endpoint_id or endpoint_id not in connected_ids:
                 continue
-            executable_tools = _string_list(getattr(client, "executable_tools", []) or [])
-            if normalized_tool_key and normalized_tool_key not in executable_tools:
+            if str(getattr(endpoint, "status", "") or "").strip().lower() not in _ONLINE_ENDPOINT_STATUSES:
                 continue
-            snapshots = await gateway.client_ws_manager.snapshot(client_id=client_id)
-            payload = self._client_payload(
-                client,
+            capabilities = domain.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)
+            tool_keys = _string_list(getattr(capability, "tool_key", "") for capability in capabilities if getattr(capability, "enabled", True))
+            if normalized_tool_key and normalized_tool_key not in tool_keys:
+                continue
+            snapshots = await self._gateway().endpoint_ws_manager.snapshot(endpoint_id=endpoint_id)
+            payload = self._endpoint_payload(
+                endpoint,
                 connected=True,
                 snapshots=snapshots,
-                workspace_ids=self._workspace_ids_for_client(client_id),
+                include_capabilities=include_tools,
             )
             if normalized_tool_key:
                 payload["matched_tool_key"] = normalized_tool_key
-            if not include_tools:
-                payload.pop("available_tools", None)
-                payload.pop("executable_tools", None)
             targets.append(payload)
         targets.sort(
             key=lambda item: (
-                0 if str(item.get("client_type") or "").lower() == "desktop" else 1,
+                0 if str(item.get("provider_type") or "").lower() == "desktop" else 1,
                 str(item.get("display_name") or "").lower(),
-                str(item.get("client_id") or ""),
+                str(item.get("endpoint_id") or ""),
             )
         )
         return {
@@ -218,151 +210,50 @@ class EndpointTools:
             "count": len(targets),
             "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or ""),
             "tool_key": normalized_tool_key,
-            "clients": targets,
+            "endpoints": targets,
         }
-
-    @staticmethod
-    def _filter_client_notice_snapshot(snapshot: list[dict[str, Any]], *, session_id: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
-        filtered = list(snapshot or [])
-        normalized_session_id = str(session_id or "").strip()
-        normalized_workspace_id = str(workspace_id or "").strip()
-        if normalized_session_id:
-            filtered = [item for item in filtered if str(item.get("session_id") or "").strip() == normalized_session_id]
-        if normalized_workspace_id:
-            filtered = [item for item in filtered if str(item.get("workspace_id") or "").strip() == normalized_workspace_id]
-        return filtered
-
-    @staticmethod
-    def _build_notice_message(
-        *,
-        client_id: str,
-        thread_id: str,
-        session_id: str,
-        workspace_id: str,
-        content: str,
-        target_id: str,
-    ) -> dict[str, Any]:
-        return {
-            "message_id": f"msg_notice_{uuid4().hex}",
-            "thread_id": thread_id,
-            "session_id": session_id,
-            "active_workspace_id": workspace_id,
-            "workspace_id": workspace_id,
-            "client_id": client_id,
-            "role": "assistant",
-            "content": content,
-            "status": "completed",
-            "channel": "notice",
-            "created_at": _utcnow_iso(),
-            "metadata": {
-                "source": "send_endpoint_message",
-                "delivery_kind": "notice",
-                "target_type": "client",
-                "target_id": target_id,
-            },
-        }
-
-    async def _deliver_notice_to_client_snapshots(
-        self,
-        gateway,
-        *,
-        client_id: str,
-        snapshots: list[dict[str, Any]],
-        content: str,
-    ) -> dict[str, Any]:
-        delivered_count = 0
-        message_ids: list[str] = []
-        seen_routes: set[tuple[str, str, str]] = set()
-        for item in snapshots:
-            thread_id = str(item.get("thread_id") or "").strip()
-            payload_session_id = str(item.get("session_id") or "").strip()
-            payload_workspace_id = str(item.get("workspace_id") or "").strip()
-            route_key = (thread_id, payload_session_id, payload_workspace_id)
-            if route_key in seen_routes:
-                continue
-            seen_routes.add(route_key)
-            message = self._build_notice_message(
-                client_id=client_id,
-                thread_id=thread_id,
-                session_id=payload_session_id,
-                workspace_id=payload_workspace_id,
-                content=content,
-                target_id=client_id,
-            )
-            route_count = await gateway.client_ws_manager.publish_client_event(
-                client_id,
-                event_type="message.created",
-                payload={
-                    "thread_id": thread_id,
-                    "session_id": payload_session_id,
-                    "message": message,
-                },
-                thread_id=thread_id,
-                session_id=payload_session_id,
-                workspace_id=payload_workspace_id,
-            )
-            if route_count > 0:
-                delivered_count += route_count
-                message_ids.append(message["message_id"])
-        return {"connection_count": delivered_count, "message_ids": message_ids}
 
     async def _send_notice(self, *, target_type: str, target_id: str, content: str, session_id: str = "", workspace_id: str = "") -> dict[str, Any]:
         gateway = self._gateway()
-        target = str(target_type or "client").strip().lower()
+        target = str(target_type or "endpoint").strip().lower()
         normalized_target_id = str(target_id or "").strip()
         text = str(content or "").strip()
-        if target != "client":
+        if target != "endpoint":
             raise _tool_error("unsupported_target_type", f"Unsupported target_type: {target_type}")
         if not normalized_target_id:
-            raise _tool_error("target_client_id_required", "target_id is required for client delivery.")
+            raise _tool_error("target_endpoint_id_required", "target_id is required for endpoint delivery.")
         if not text:
             raise _tool_error("content_required", "content is required for notice delivery.")
+        endpoint = self._domain().services.endpoint.get_by_endpoint_id(normalized_target_id)
+        if endpoint is None:
+            raise _tool_error("endpoint_not_found", f"Unknown endpoint: {normalized_target_id}")
 
-        snapshot = await gateway.client_ws_manager.snapshot(client_id=normalized_target_id)
-        snapshot = self._filter_client_notice_snapshot(
-            snapshot,
-            session_id=session_id,
-            workspace_id=workspace_id,
-        )
-        if not snapshot:
-            raise _tool_error("client_offline", f"Client is offline: {normalized_target_id}", retryable=True)
-
-        protocol_delivered = await gateway.client_ws_manager.send_to_client(
-            normalized_target_id,
-            build_client_message(
-                client_id=normalized_target_id,
-                session_id=session_id,
-                content=text,
-                role="assistant",
-                event_type="notice",
-                metadata={
-                    "source": "send_endpoint_message",
-                    "delivery_kind": "notice",
-                    "target_type": "client",
+        message_id = f"notice_{uuid4().hex}"
+        delivered_count = await gateway.endpoint_ws_manager.publish_notice(
+            target_endpoint_id=normalized_target_id,
+            payload={
+                "notice_id": message_id,
+                "target_endpoint_id": normalized_target_id,
+                "session_id": str(session_id or ""),
+                "workspace_id": str(workspace_id or ""),
+                "content": text,
+                "created_at": _utcnow_iso(),
+                "metadata": {
+                    "runtime_action": "delivery.notice",
+                    "target_type": "endpoint",
                     "target_id": normalized_target_id,
                 },
-            ),
-            session_id=session_id,
-            workspace_id=workspace_id,
+            },
         )
-        delivery = await self._deliver_notice_to_client_snapshots(
-            gateway,
-            client_id=normalized_target_id,
-            snapshots=snapshot,
-            content=text,
-        )
-        delivered_count = int(delivery["connection_count"]) + int(protocol_delivered)
         if delivered_count <= 0:
-            raise _tool_error("client_delivery_failed", f"Client delivery failed: {normalized_target_id}", retryable=True)
-        message_ids = list(delivery["message_ids"])
+            raise _tool_error("endpoint_delivery_failed", f"Endpoint delivery failed: {normalized_target_id}", retryable=True)
         return {
             "ok": True,
             "delivered": True,
-            "target_type": "client",
+            "target_type": "endpoint",
             "target_id": normalized_target_id,
             "connection_count": delivered_count,
-            "message_id": message_ids[0] if message_ids else "",
-            "message_ids": message_ids,
+            "notice_id": message_id,
         }
 
     async def _send_tool_call(
@@ -378,19 +269,18 @@ class EndpointTools:
         confirmed: bool = False,
     ) -> dict[str, Any]:
         domain = self._domain()
-        dispatcher = getattr(domain, "client_tool_dispatch", None)
+        dispatcher = getattr(domain, "tool_router", None)
         if dispatcher is None:
-            raise _tool_error("client_tool_dispatch_unavailable", "Client tool dispatcher is unavailable.", retryable=True)
-        target = str(target_type or "client").strip().lower()
+            raise _tool_error("tool_router_unavailable", "ToolRouter is unavailable.", retryable=True)
+        target = str(target_type or "endpoint").strip().lower()
         normalized_target_id = str(target_id or "").strip()
         normalized_tool_key = str(tool_key or "").strip()
         normalized_session_id = str(session_id or get_event_context().get("session_id") or "").strip()
         normalized_workspace_id = str(workspace_id or get_event_context().get("workspace_id") or "").strip()
-        source_client_id = str(get_event_context().get("client_id") or "").strip()
-        if target != "client":
+        if target != "endpoint":
             raise _tool_error("unsupported_target_type", f"Unsupported target_type: {target_type}")
         if not normalized_target_id:
-            raise _tool_error("target_client_id_required", "target_id is required for client tool calls.")
+            raise _tool_error("target_endpoint_id_required", "target_id is required for endpoint tool calls.")
         if not normalized_tool_key:
             raise _tool_error("tool_key_required", "tool_key is required for tool_call delivery.")
 
@@ -398,22 +288,20 @@ class EndpointTools:
             result = await dispatcher.dispatch_directed_tool(
                 tool_key=normalized_tool_key,
                 arguments=dict(arguments or {}),
-                source_client_id=source_client_id,
-                target_client_id=normalized_target_id,
+                target_endpoint_id=normalized_target_id,
                 session_id=normalized_session_id,
                 workspace_id=normalized_workspace_id,
                 title=f"Endpoint tool call: {normalized_tool_key}",
-                operation_type="tool.send_endpoint_message",
                 timeout_seconds=int(timeout_seconds or 120),
                 confirmed=bool(confirmed),
             )
-        except ClientToolDispatchError:
+        except ToolRouterError:
             raise
         return {
             "ok": True,
-            "target_type": "client",
+            "target_type": "endpoint",
             "target_id": normalized_target_id,
-            "target_client_id": normalized_target_id,
+            "target_endpoint_id": normalized_target_id,
             "tool_key": normalized_tool_key,
             "result": result,
         }

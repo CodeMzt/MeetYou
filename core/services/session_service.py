@@ -7,13 +7,14 @@ from core.services.base import ServiceBase
 
 
 class SessionService(ServiceBase):
-    def create_session(self, *, thread_id, client_id, active_workspace_id=None, workspace_id=None, status: str = "active"):
+    def create_session(self, *, thread_id, client_id=None, origin_endpoint_id=None, active_workspace_id=None, workspace_id=None, status: str = "active"):
         resolved_active_workspace_id = active_workspace_id if active_workspace_id is not None else workspace_id
         with self.session_scope() as session:
             return SessionRepository(session).create(
                 session_id=f"sess_{uuid4().hex}",
                 thread_id=thread_id,
                 client_id=client_id,
+                origin_endpoint_id=origin_endpoint_id,
                 active_workspace_id=resolved_active_workspace_id,
                 status=status,
             )

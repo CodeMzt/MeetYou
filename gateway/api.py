@@ -13,12 +13,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from client_tool_protocol import build_client_message
 from core.exceptions import ConfigError
 from core.interaction_response_service import InteractionResponseService
 from core.protocol_schema import build_ui_protocol_schema
-from gateway.client_ws import ClientWebSocketManager
 from gateway.dependencies import GatewayDependencies
+from gateway.endpoint_ws import EndpointWebSocketManager
 from gateway.legacy_surface import register_legacy_gateway_surface
 from gateway.models import (
     ConfigEntryResponse,
@@ -41,9 +40,9 @@ from gateway.models import (
     UiProtocolSchemaResponse,
 )
 from gateway.serialization import make_json_safe
-from gateway.routes import build_client_router, build_developer_router, build_operator_router
+from gateway.routes import build_client_router, build_developer_router, build_endpoint_router, build_operator_router
 from service_runtime.models import RuntimeError, RuntimeErrorCategory
-from gateway.ws_manager import ClientOutputAdapter, WebSocketManager, WebSocketOutputAdapter
+from gateway.ws_manager import WebSocketManager, WebSocketOutputAdapter
 
 
 _HTTP_SCHEMA = "meetyou.http.v1"
@@ -125,9 +124,8 @@ class FastAPIGateway:
             if origin
         )
         self.ws_manager = WebSocketManager(delivery_observer=ws_delivery_observer)
-        self.client_ws_manager = ClientWebSocketManager()
+        self.endpoint_ws_manager = EndpointWebSocketManager()
         self.output_adapter = WebSocketOutputAdapter(self.ws_manager)
-        self.client_output_adapter = ClientOutputAdapter(self.client_ws_manager, build_client_message)
         self.app = FastAPI(title="MeetYou Gateway")
         self.app.add_middleware(
             CORSMiddleware,
@@ -256,7 +254,7 @@ class FastAPIGateway:
             details={
                 "legacy_path": legacy_path,
                 "replacement_path": replacement_path,
-                "formal_surface": "client/* + client/ws",
+                "formal_surface": "thread/run/delivery + endpoint/ws",
             },
         )
 
@@ -270,14 +268,22 @@ class FastAPIGateway:
             message="Core domain services are not available",
         )
 
-    async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict) -> None:
-        await self.client_ws_manager.publish_event(thread_id, event_type=event_type, payload=payload)
+    async def publish_thread_delivery_event(self, thread_id: str, *, event_type: str, payload: dict) -> int:
+        return await self.endpoint_ws_manager.publish_run_event(
+            thread_id=thread_id,
+            event={
+                "type": str(event_type or ""),
+                "thread_id": thread_id,
+                "payload": dict(payload or {}),
+                "durable": False,
+            },
+        )
 
-    async def dispatch_client_tool_call(self, *, client_id: str, payload: dict) -> bool:
-        return bool(await self.client_ws_manager.send_client_tool_call(client_id, payload))
+    async def publish_endpoint_run_event(self, *, thread_id: str = "", run_id: str = "", event: dict) -> int:
+        return await self.endpoint_ws_manager.publish_run_event(thread_id=thread_id, run_id=run_id, event=event)
 
-    async def dispatch_client_call(self, *, client_id: str, payload: dict) -> bool:
-        return await self.dispatch_client_tool_call(client_id=client_id, payload=payload)
+    async def dispatch_endpoint_call(self, *, endpoint_id: str, payload: dict) -> bool:
+        return bool(await self.endpoint_ws_manager.send_to_endpoint(endpoint_id, payload))
 
     async def build_client_connection_prompt(
         self,
@@ -431,6 +437,7 @@ class FastAPIGateway:
 
     def _setup_routes(self):
         self.app.include_router(build_client_router(self))
+        self.app.include_router(build_endpoint_router(self))
         self.app.include_router(build_operator_router(self))
         self.app.include_router(build_developer_router(self))
         register_legacy_gateway_surface(self.app, self)

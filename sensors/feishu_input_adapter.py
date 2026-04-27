@@ -1,4 +1,4 @@
-"""
+﻿"""
 飞书输入适配器。
 """
 
@@ -79,9 +79,9 @@ class FeishuInputAdapter:
             self.handle_event,
         )
         if self._formal_client_chain_enabled:
-            logger.info("Feishu 输入已切到 Client API + client/ws 正式主链。")
+            logger.info("Feishu 输入已切到 Endpoint API + /endpoint/ws 正式主链。")
         else:
-            logger.warning("Feishu 输入仍处于兼容事件总线模式；正式运行请通过 Client API + client/ws 主链接入。")
+            logger.warning("Feishu 输入仍处于兼容事件总线模式；正式运行请通过 Endpoint API + /endpoint/ws 主链接入。")
 
     def _use_formal_client_chain(self) -> bool:
         return self._formal_client_chain_enabled
@@ -262,7 +262,7 @@ class FeishuInputAdapter:
                     "transport": "feishu",
                     "response_transport": "non_streaming_external_client",
                     "supports_streaming_reply": False,
-                    "short_reply_policy": "prefer_before_nontrivial_final",
+                    "progress_notice_policy": "prefer_before_nontrivial_final",
                     "tool_scope": "basic",
                     "allowed_tool_bundle": list(EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE),
                     "allowed_mcp_servers": [],
@@ -355,3 +355,4 @@ class FeishuInputAdapter:
             await client.close()
         self._gateway_clients.clear()
         await self._client.stop()
+

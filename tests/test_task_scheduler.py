@@ -172,8 +172,8 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 due_at=due_at,
                 auto_run=True,
                 preferred_tool_key="manage_tasks",
-                preferred_target_client_ids=["desktop-main-client"],
-                preferred_target_client_types=["desktop"],
+                preferred_target_endpoint_ids=["desktop-main-client"],
+                preferred_endpoint_provider_types=["desktop"],
                 tool_target_routing_policy="strict_preferred",
                 source={"id": "desktop-user"},
                 session_id="web:session:1",
@@ -182,15 +182,15 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         task = created["tasks"][0]
         self.assertEqual(task["preferred_tool_key"], "manage_tasks")
-        self.assertEqual(task["preferred_target_client_ids"], ["desktop-main-client"])
-        self.assertEqual(task["preferred_target_client_types"], ["desktop"])
+        self.assertEqual(task["preferred_target_endpoint_ids"], ["desktop-main-client"])
+        self.assertEqual(task["preferred_endpoint_provider_types"], ["desktop"])
         self.assertEqual(task["tool_target_routing_policy"], "strict_preferred")
 
         claimed = await manager.claim_due_tasks()
         self.assertEqual(len(claimed), 1)
         self.assertEqual(claimed[0]["preferred_tool_key"], "manage_tasks")
-        self.assertEqual(claimed[0]["preferred_target_client_ids"], ["desktop-main-client"])
-        self.assertEqual(claimed[0]["preferred_target_client_types"], ["desktop"])
+        self.assertEqual(claimed[0]["preferred_target_endpoint_ids"], ["desktop-main-client"])
+        self.assertEqual(claimed[0]["preferred_endpoint_provider_types"], ["desktop"])
         self.assertEqual(claimed[0]["tool_target_routing_policy"], "strict_preferred")
 
     async def test_weekly_recurrence_object_requires_explicit_trigger_hour(self):

@@ -5,11 +5,11 @@
   "display_name": "Home Lab Edge Client",
   "client_type": "edge",
   "workspace_ids": ["home-lab"],
-  "available_tools": ["short_reply", "workspace.analyze"],
-  "executable_tools": ["short_reply", "workspace.analyze"],
+  "enabled_endpoint_tools": ["utility.echo", "math.add", "math.divide"],
   "heartbeat_interval_seconds": 20,
   "reconnect_delay_seconds": 3,
   "max_parallel_calls": 2,
   "supports_offline_cache": false,
   "transport_profile": "edge_wss"
 }
+

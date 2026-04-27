@@ -162,14 +162,14 @@ async def setup_app_runtime(app) -> None:
         ),
         migrate_current=True,
     )
-    capability_dispatcher = app.core_domain.client_tool_dispatch
+    capability_dispatcher = app.core_domain.tool_router
     system_tools.set_capability_dispatcher(capability_dispatcher)
     app.tools_manager.set_core_domain(app.core_domain)
     tools_manager_dispatch_setter = getattr(app.tools_manager, "set_capability_dispatcher", None)
     if callable(tools_manager_dispatch_setter):
         tools_manager_dispatch_setter(capability_dispatcher)
     else:
-        app.tools_manager.set_client_tool_dispatcher(capability_dispatcher)
+        app.tools_manager.set_tool_router(capability_dispatcher)
     await sync_config_state_to_db(app)
     await sync_memory_state_to_db(app)
     logger.info(
@@ -222,12 +222,11 @@ async def setup_app_runtime(app) -> None:
         access_token=gateway_access_token,
         cors_origins=app.config.get("gateway_cors_origins") or [],
     )
-    app.core_domain.client_tool_dispatch.set_transport(app.gateway.dispatch_client_tool_call)
+    app.core_domain.tool_router.set_endpoint_transport(app.gateway.dispatch_endpoint_call)
     runtime_bridge_setter = getattr(app.tools_manager, "set_runtime_bridge", None)
     if callable(runtime_bridge_setter):
         runtime_bridge_setter(session_manager=app.session_manager, gateway_getter=lambda: app.gateway)
     app.speaker.register_adapter("web", app.gateway.output_adapter)
-    app.speaker.register_adapter("internal", app.gateway.client_output_adapter)
     await app.gateway.start(host=host, port=port)
 
     if app.config.get_bool("enable_feishu_bot"):
@@ -241,7 +240,7 @@ async def setup_app_runtime(app) -> None:
         )
         app._register_feishu_broadcast_targets()
         await app.feishu_input.run()
-        logger.info("Feishu Bot 已通过 Client API + client/ws 正式主链接入。")
+        logger.info("Feishu Bot is connected through the V4 Endpoint/Delivery chain.")
 
     if app.config.get_bool("enable_meetwechat_client"):
         wechat_client = MeetWeChatClient(
@@ -265,7 +264,7 @@ async def setup_app_runtime(app) -> None:
             output_adapter=app.wechat_output,
         )
         await app.wechat_input.run()
-        logger.info("MeetWeChat Client is connected through Client API + client/ws.")
+        logger.info("MeetWeChat endpoint is connected through the V4 Endpoint/Delivery chain.")
 
     app.status_manager.set_global(RuntimeStatus.IDLE.value, "")
     logger.info("Service runtime initialized")

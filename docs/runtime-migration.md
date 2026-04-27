@@ -1,30 +1,31 @@
-# Service Runtime Migration
+﻿# Service Runtime Migration
 
-## 破坏性变更
+## 鐮村潖鎬у彉鏇?
 
-- 运行入口统一为 `python main.py service`
-- Launcher 命令改为 `start service`
-- `enable_gateway` 已删除，服务运行时始终托管 HTTP / WebSocket 网关
-- `source_profiles` 已删除，研究来源只从 `source_catalog_path` 指向的目录文件读取
-- 任务系统不再从 `memory_graph.json` 导入 legacy `task` 记录，旧任务记录会在记忆层初始化时清理
-- 主路径工具错误统一为结构化 `ToolCallResult.error`，不再依赖 `"Error: ..."` 字符串契约
+- 杩愯鍏ュ彛缁熶竴涓?`python main.py service`
+- Launcher 鍛戒护鏀逛负 `start service`
+- `enable_gateway` 宸插垹闄わ紝鏈嶅姟杩愯鏃跺缁堟墭绠?HTTP / WebSocket 缃戝叧
+- `source_profiles` 宸插垹闄わ紝鐮旂┒鏉ユ簮鍙粠 `source_catalog_path` 鎸囧悜鐨勭洰褰曟枃浠惰鍙?
+- 浠诲姟绯荤粺涓嶅啀浠?`memory_graph.json` 瀵煎叆 legacy `task` 璁板綍锛屾棫浠诲姟璁板綍浼氬湪璁板繂灞傚垵濮嬪寲鏃舵竻鐞?
+- 涓昏矾寰勫伐鍏烽敊璇粺涓€涓虹粨鏋勫寲 `ToolCallResult.error`锛屼笉鍐嶄緷璧?`"Error: ..."` 瀛楃涓插绾?
 
-## 升级步骤
+## 鍗囩骇姝ラ
 
-1. 将所有启动脚本里的 `python main.py gateway` 改为 `python main.py service`
-2. 将 Launcher 自动化脚本里的 `start gateway` 改为 `start service`
-3. 从 `user/config.json` 和环境模板中删除 `enable_gateway`
-4. 将旧的 `source_profiles` 配置迁移到 `user/source_catalog.json` 的 `default_source_profiles`
-5. 如果有自定义客户端直接解析工具返回值里的 `"Error: ..."`, 改为读取结构化错误对象里的 `code`、`category`、`message`
+1. 灏嗘墍鏈夊惎鍔ㄨ剼鏈噷鐨?`python main.py gateway` 鏀逛负 `python main.py service`
+2. 灏?Launcher 鑷姩鍖栬剼鏈噷鐨?`start gateway` 鏀逛负 `start service`
+3. 浠?`user/config.json` 鍜岀幆澧冩ā鏉夸腑鍒犻櫎 `enable_gateway`
+4. 灏嗘棫鐨?`source_profiles` 閰嶇疆杩佺Щ鍒?`user/source_catalog.json` 鐨?`default_source_profiles`
+5. 濡傛灉鏈夎嚜瀹氫箟瀹㈡埛绔洿鎺ヨВ鏋愬伐鍏疯繑鍥炲€奸噷鐨?`"Error: ..."`, 鏀逛负璇诲彇缁撴瀯鍖栭敊璇璞￠噷鐨?`code`銆乣category`銆乣message`
 
-## 兼容性说明
+## 鍏煎鎬ц鏄?
 
-- `gateway_host`、`gateway_port`、`gateway_access_token` 继续保留，它们描述的是服务内置网关适配层的监听与鉴权配置
-- 正式客户端入口仍是 `POST /client/messages` 与 `GET /client/ws`
-- 根路径兼容 surface 仅保留迁移错误或过渡性只读能力，后续会继续收缩
+- `gateway_host`銆乣gateway_port`銆乣gateway_access_token` 缁х画淇濈暀锛屽畠浠弿杩扮殑鏄湇鍔″唴缃綉鍏抽€傞厤灞傜殑鐩戝惉涓庨壌鏉冮厤缃?
+- 姝ｅ紡瀹㈡埛绔叆鍙ｄ粛鏄?`POST /thread/run/delivery APIs` 涓?`GET /endpoint/ws`
+- 鏍硅矾寰勫吋瀹?surface 浠呬繚鐣欒縼绉婚敊璇垨杩囨浮鎬у彧璇昏兘鍔涳紝鍚庣画浼氱户缁敹缂?
 
-## Core 启动职责
+## Core 鍚姩鑱岃矗
 
-- `core/app.py` 的 `App.setup()` 在 Core 完成依赖装配、网关启动并进入 idle 后，会主动向 `EventBus.inbound_queue` 注入一次 `system:boot` 启动消息
-- 这条启动消息使用 `start` prompt 构造，目标为 broadcast，并标记为 transient boot event，用于触发 Core 启动后的首轮唤醒
-- Launcher、service 入口与外部客户端只负责拉起 Core；boot 消息注入的责任明确归属 Core 启动阶段本身
+- `core/app.py` 鐨?`App.setup()` 鍦?Core 瀹屾垚渚濊禆瑁呴厤銆佺綉鍏冲惎鍔ㄥ苟杩涘叆 idle 鍚庯紝浼氫富鍔ㄥ悜 `EventBus.inbound_queue` 娉ㄥ叆涓€娆?`system:boot` 鍚姩娑堟伅
+- 杩欐潯鍚姩娑堟伅浣跨敤 `start` prompt 鏋勯€狅紝鐩爣涓?broadcast锛屽苟鏍囪涓?transient boot event锛岀敤浜庤Е鍙?Core 鍚姩鍚庣殑棣栬疆鍞ら啋
+- Launcher銆乻ervice 鍏ュ彛涓庡閮ㄥ鎴风鍙礋璐ｆ媺璧?Core锛沚oot 娑堟伅娉ㄥ叆鐨勮矗浠绘槑纭綊灞?Core 鍚姩闃舵鏈韩
+

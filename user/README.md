@@ -1,11 +1,11 @@
-# User Templates
+﻿# User Templates
 
-`user/` 用于本地运行态配置、缓存和状态文件。真实运行文件默认被 `.gitignore` 忽略；仓库只保留可复制的模板。
+`user/` 鐢ㄤ簬鏈湴杩愯鎬侀厤缃€佺紦瀛樺拰鐘舵€佹枃浠躲€傜湡瀹炶繍琛屾枃浠堕粯璁よ `.gitignore` 蹇界暐锛涗粨搴撳彧淇濈暀鍙鍒剁殑妯℃澘銆?
 
-常用模板：
+甯哥敤妯℃澘锛?
 
 - `config.example.json` -> `config.json`
-- `config.docker.example.json` -> `config.json`（Core Docker / Compose 路径）
+- `config.docker.example.json` -> `config.json`锛圕ore Docker / Compose 璺緞锛?
 - `tools.example.json` -> `tools.json`
 - `core_mcp_servers.example.json` -> `core_mcp_servers.json`
 - `mcp_servers.example.json` -> `mcp_servers.json`
@@ -16,68 +16,67 @@
 - `desktop_client.example.json` -> `desktop_client.json`
 - `edge_client.example.json` -> `edge_client.json`
 
-也可以使用初始化脚本：
+涔熷彲浠ヤ娇鐢ㄥ垵濮嬪寲鑴氭湰锛?
 
 - `python scripts/prepare_core_runtime.py --profile host`
 - `python scripts/prepare_core_runtime.py --profile docker --output-root deploy/docker/runtime`
 - `python scripts/check_core_runtime.py --profile host --env-file .env`
 - `python scripts/check_core_runtime.py --profile docker --runtime-root deploy/docker/runtime`
 
-`desktop_client.json` 常用字段：
+`desktop_client.json` 甯哥敤瀛楁锛?
 
-- `core_base_url`: Core Service 基地址；runtime 会转换为 `GET /client/ws`
-- `core_access_token`: Desktop Client 访问 Core 的统一访问令牌；也可由 `MEETYOU_CLIENT_ACCESS_TOKEN` 或 `MEETYOU_GATEWAY_ACCESS_TOKEN` 提供
-- `gateway_access_token`: desktop backend 访问 Core HTTP surface 时使用的访问令牌
-- `client_id`: Desktop Client 唯一标识
-- `display_name`: 显示名称
-- `workspace_ids`: 当前 Client 声明加入的 workspace 列表
-- `available_tools`: 该 Client 作为调用起点时允许发起的 tool key
-- `executable_tools`: 该 Client 作为目标时可承接的 directed tool key
-- `read_roots`: 本地文件读取根目录
-- `trusted_write_roots`: 本地写入可信根目录
-- `cmd_policy_path`: 本地命令策略文件路径
-- `mcp_servers_path`: Desktop Client 本地 MCP 配置文件路径
-- `transport_profile`: 连接形态，默认 `desktop_wss`
-- `local_bridge_enabled`: 是否开启 Electron UI 使用的本地 `/desktop/*` HTTP / WS 入口
-- `local_bridge_host` / `local_bridge_port`: 本地 desktop backend 监听地址，默认 `127.0.0.1:38951`
+- `core_base_url`: Core Service 鍩哄湴鍧€锛況untime 浼氳浆鎹负 `GET /endpoint/ws`
+- `core_access_token`: Desktop Client 璁块棶 Core 鐨勭粺涓€璁块棶浠ょ墝锛涗篃鍙敱 `MEETYOU_CLIENT_ACCESS_TOKEN` 鎴?`MEETYOU_GATEWAY_ACCESS_TOKEN` 鎻愪緵
+- `gateway_access_token`: desktop backend 璁块棶 Core HTTP surface 鏃朵娇鐢ㄧ殑璁块棶浠ょ墝
+- `client_id`: Desktop Endpoint Provider 唯一标识
+- `display_name`: 鏄剧ず鍚嶇О
+- `workspace_ids`: 褰撳墠 Endpoint Provider 声明鍔犲叆鐨?workspace 鍒楄〃
+- `enabled_endpoint_tools`: Endpoint Provider 声明给 Core 的可执行 EndpointCapability tool key
+- `read_roots`: 鏈湴鏂囦欢璇诲彇鏍圭洰褰?
+- `trusted_write_roots`: 鏈湴鍐欏叆鍙俊鏍圭洰褰?
+- `cmd_policy_path`: 鏈湴鍛戒护绛栫暐鏂囦欢璺緞
+- `mcp_servers_path`: Desktop Client 鏈湴 MCP 閰嶇疆鏂囦欢璺緞
+- `transport_profile`: 杩炴帴褰㈡€侊紝榛樿 `desktop_wss`
+- `local_bridge_enabled`: 鏄惁寮€鍚?Electron UI 浣跨敤鐨勬湰鍦?`/desktop/*` HTTP / WS 鍏ュ彛
+- `local_bridge_host` / `local_bridge_port`: 鏈湴 desktop backend 鐩戝惉鍦板潃锛岄粯璁?`127.0.0.1:38951`
 
-`edge_client.json` 常用字段：
+`edge_client.json` 甯哥敤瀛楁锛?
 
-- `core_base_url`: Core Service 基地址；runtime 会转换为 `GET /client/ws`
-- `core_access_token`: Edge Client 访问 Core 的统一访问令牌
-- `client_id`: Edge Client 唯一标识
-- `client_type`: 当前边缘执行器类型，默认 `edge`
-- `workspace_ids`: 允许加入的 workspace 列表
-- `available_tools`: 该 Client 作为调用起点时允许发起的 tool key
-- `executable_tools`: 该 Client 作为目标时可承接的 directed tool key
-- `heartbeat_interval_seconds`: 心跳间隔
-- `transport_profile`: 连接形态，默认 `edge_wss`
+- `core_base_url`: Core Service 鍩哄湴鍧€锛況untime 浼氳浆鎹负 `GET /endpoint/ws`
+- `core_access_token`: Edge Client 璁块棶 Core 鐨勭粺涓€璁块棶浠ょ墝
+- `client_id`: Edge Endpoint Provider 唯一标识
+- `client_type`: 褰撳墠杈圭紭鎵ц鍣ㄧ被鍨嬶紝榛樿 `edge`
+- `workspace_ids`: 鍏佽鍔犲叆鐨?workspace 鍒楄〃
+- `enabled_endpoint_tools`: Endpoint Provider 声明给 Core 的可执行 EndpointCapability tool key
+- `heartbeat_interval_seconds`: 蹇冭烦闂撮殧
+- `transport_profile`: 杩炴帴褰㈡€侊紝榛樿 `edge_wss`
 
-正式连接口径：
+姝ｅ紡杩炴帴鍙ｅ緞锛?
 
-- `desktop_client` 与 `edge_client` 都通过 `GET /client/ws` + `meetyou.client.ws.v1` 接入 Core
-- 握手帧为 `client.hello`、`client.tools.snapshot`、`client.ready`、`client.heartbeat`
-- directed tool 调用使用 `tool.call.request`、`tool.call.result`、`tool.call.error`
-- 同一 `client_id` 允许多条 `/client/ws` 连接，每条连接可声明自己的订阅、会话上下文与可执行 tools
-- 桌面 UI 默认通过 `desktop_client` 暴露的 loopback `/desktop/*` API 与本地 backend 交互
-- 不再存在正式 `/agent/ws` 运行时，也不再使用 `MEETYOU_AGENT_*` 访问令牌
+- `desktop_client` 涓?`edge_client` 閮介€氳繃 `GET /endpoint/ws` + `meetyou.endpoint.ws.v4` 鎺ュ叆 Core
+- 鎻℃墜甯т负 `endpoint.hello`、`endpoint.capabilities.snapshot`、`endpoint.ready`、`endpoint.heartbeat`
+- directed tool 璋冪敤浣跨敤 `tool.call.request`銆乣tool.call.result`銆乣tool.call.error`
+- 鍚屼竴 endpoint provider 鍏佽澶氭潯 `/endpoint/ws` 杩炴帴锛屾瘡鏉¤繛鎺ュ彲澹版槑鑷繁鐨勮闃呫€佷細璇濅笂涓嬫枃涓?endpoint capabilities
+- 妗岄潰 UI 榛樿閫氳繃 `desktop_client` 鏆撮湶鐨?loopback `/desktop/*` API 涓庢湰鍦?backend 浜や簰
+- 涓嶅啀瀛樺湪姝ｅ紡 `/agent/ws` 杩愯鏃讹紝涔熶笉鍐嶄娇鐢?`MEETYOU_AGENT_*` 璁块棶浠ょ墝
 
-MCP 文件边界：
+MCP 鏂囦欢杈圭晫锛?
 
-- `core_mcp_servers.json`: 仅用于 Core 侧安全 MCP，适合服务端可运行且不依赖终端在线的能力
-- `mcp_servers.json`: 仅用于 Desktop Client 本地 MCP，依赖本机环境与本地权限边界
-- 缺少 `core_mcp_servers.json` 不代表 Desktop Client 的 `mcp_servers.json` 缺失
-- Core 自身的轻量运行时工具仍是 runtime-native tool，不需要配置到 `core_mcp_servers.json`
+- `core_mcp_servers.json`: 浠呯敤浜?Core 渚у畨鍏?MCP锛岄€傚悎鏈嶅姟绔彲杩愯涓斾笉渚濊禆缁堢鍦ㄧ嚎鐨勮兘鍔?
+- `mcp_servers.json`: 浠呯敤浜?Desktop Client 鏈湴 MCP锛屼緷璧栨湰鏈虹幆澧冧笌鏈湴鏉冮檺杈圭晫
+- 缂哄皯 `core_mcp_servers.json` 涓嶄唬琛?Desktop Client 鐨?`mcp_servers.json` 缂哄け
+- Core 鑷韩鐨勮交閲忚繍琛屾椂宸ュ叿浠嶆槸 runtime-native tool锛屼笉闇€瑕侀厤缃埌 `core_mcp_servers.json`
 
-运行时可能自动生成：
+杩愯鏃跺彲鑳借嚜鍔ㄧ敓鎴愶細
 
 - `memory_tasks.json`
 - `memory_tasks.json.bak`
 
-首次初始化建议至少准备：
+棣栨鍒濆鍖栧缓璁嚦灏戝噯澶囷細
 
 - `config.json`
 - `tools.json`
 - `cmd_policy.json`
 - `source_catalog.json`
 - `memory_graph.json`
+

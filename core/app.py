@@ -81,8 +81,7 @@ _CONTEXT_POOL_TOOL_SKIPLIST = {
     "switch_workspace",
     "list_workspaces",
     "update_context",
-    "emit_short_reply",
-    "emit_temporary_reply",
+    "emit_progress_notice",
     "restart_core",
 }
 
@@ -272,7 +271,7 @@ class App:
         system_tools.set_background_status_provider(self.heart.get_background_status)
         system_tools.set_heartbeat_settings_provider(self.get_heartbeat_settings)
         system_tools.set_heartbeat_settings_updater(self.update_heartbeat_settings)
-        system_tools.set_temporary_reply_emitter(self.emit_temporary_reply)
+        system_tools.set_progress_notice_emitter(self.emit_progress_notice)
 
         self.session_manager = SessionManager()
         self.heart.set_session_manager(self.session_manager)
@@ -773,7 +772,7 @@ class App:
         system_tools.set_background_status_provider(self.heart.get_background_status)
         system_tools.set_heartbeat_settings_provider(self.get_heartbeat_settings)
         system_tools.set_heartbeat_settings_updater(self.update_heartbeat_settings)
-        system_tools.set_temporary_reply_emitter(self.emit_temporary_reply)
+        system_tools.set_progress_notice_emitter(self.emit_progress_notice)
         system_tools.set_core_restart_handler(self.request_core_restart)
 
     async def _refresh_mode_runtime(self):
@@ -794,8 +793,8 @@ class App:
             "source_profile": "scheduled_tasks",
             "task_routing": {
                 "preferred_tool_key": str(task_record.get("preferred_tool_key") or "").strip(),
-                "preferred_target_client_ids": list(task_record.get("preferred_target_client_ids") or task_record.get("preferred_client_ids") or []),
-                "preferred_target_client_types": list(task_record.get("preferred_target_client_types") or task_record.get("preferred_client_types") or []),
+                "preferred_target_endpoint_ids": list(task_record.get("preferred_target_endpoint_ids") or task_record.get("preferred_endpoint_ids") or []),
+                "preferred_endpoint_provider_types": list(task_record.get("preferred_endpoint_provider_types") or task_record.get("preferred_endpoint_provider_types") or []),
                 "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
             },
             "tool_bundle": [
@@ -883,14 +882,14 @@ class App:
         metadata = dict(getattr(binding, "metadata", {}) or {}) if binding is not None else {}
         return str(metadata.get("thread_id") or "").strip()
 
-    def _has_active_client_thread(self, session_id: str) -> bool:
+    def _has_active_endpoint_thread(self, session_id: str) -> bool:
         thread_id = self._resolve_session_thread_id(session_id)
         if not thread_id:
             return False
         gateway = getattr(self, "gateway", None)
-        client_ws_manager = getattr(gateway, "client_ws_manager", None)
-        has_connections = getattr(client_ws_manager, "has_connections", None)
-        return bool(callable(has_connections) and has_connections(thread_id))
+        endpoint_ws_manager = getattr(gateway, "endpoint_ws_manager", None)
+        has_subscription = getattr(endpoint_ws_manager, "has_subscription", None)
+        return bool(callable(has_subscription) and has_subscription(target_type="thread", target_id=thread_id))
 
     def _has_legacy_web_session(self, session_id: str) -> bool:
         gateway = getattr(self, "gateway", None)
@@ -919,8 +918,8 @@ class App:
                 "task_key": str(task_record.get("task_key") or ""),
                 "task_summary": _normalize_task_summary(task_record),
                 "preferred_tool_key": str(task_record.get("preferred_tool_key") or ""),
-                "preferred_target_client_ids": list(task_record.get("preferred_target_client_ids") or task_record.get("preferred_client_ids") or []),
-                "preferred_target_client_types": list(task_record.get("preferred_target_client_types") or task_record.get("preferred_client_types") or []),
+                "preferred_target_endpoint_ids": list(task_record.get("preferred_target_endpoint_ids") or task_record.get("preferred_endpoint_ids") or []),
+                "preferred_endpoint_provider_types": list(task_record.get("preferred_endpoint_provider_types") or task_record.get("preferred_endpoint_provider_types") or []),
                 "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced") or "balanced",
                 "source": "scheduled_task",
             },
@@ -984,9 +983,9 @@ class App:
     def _can_deliver_task_update(self, session_id: str, target: EventTarget) -> bool:
         resolved_target = self._resolve_background_target(session_id, target)
         if resolved_target.kind == TargetKind.WEB.value:
-            return self._has_active_client_thread(session_id) or self._has_legacy_web_session(session_id)
+            return self._has_active_endpoint_thread(session_id) or self._has_legacy_web_session(session_id)
         if resolved_target.kind in {TargetKind.FEISHU.value, TargetKind.WECHAT.value}:
-            return self._has_active_client_thread(session_id)
+            return self._has_active_endpoint_thread(session_id)
         if resolved_target.kind == TargetKind.CLI.value:
             return bool(session_id)
         return False
@@ -1314,8 +1313,8 @@ class App:
             "orchestration": task_record.get("orchestration") if isinstance(task_record.get("orchestration"), dict) else {},
             "routing": {
                 "preferred_tool_key": str(task_record.get("preferred_tool_key") or "").strip(),
-                "preferred_target_client_ids": list(task_record.get("preferred_target_client_ids") or task_record.get("preferred_client_ids") or []),
-                "preferred_target_client_types": list(task_record.get("preferred_target_client_types") or task_record.get("preferred_client_types") or []),
+                "preferred_target_endpoint_ids": list(task_record.get("preferred_target_endpoint_ids") or task_record.get("preferred_endpoint_ids") or []),
+                "preferred_endpoint_provider_types": list(task_record.get("preferred_endpoint_provider_types") or task_record.get("preferred_endpoint_provider_types") or []),
                 "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
             },
         }
@@ -2003,7 +2002,7 @@ class App:
             "snapshot": await self.get_heartbeat_settings(),
         }
 
-    async def emit_temporary_reply(
+    async def emit_progress_notice(
         self,
         content: str,
         *,
@@ -2024,7 +2023,7 @@ class App:
         if status not in {RuntimeStatus.THINKING.value, RuntimeStatus.TOOL_CALLING.value}:
             return {
                 "delivered": False,
-                "reason": "short_reply_not_allowed",
+                "reason": "progress_notice_not_allowed",
                 "status": status,
             }
         context_turn_id = str(turn_id or context.get("turn_id") or "").strip()
@@ -2037,7 +2036,8 @@ class App:
                 "active_turn_id": active_turn_id,
             }
         bridge = self._get_client_thread_bridge()
-        result = await bridge.publish_short_assistant_message(
+        publisher = getattr(bridge, "publish_progress_notice", None)
+        result = await publisher(
             resolved_session_id,
             content=text,
             turn_id=active_turn_id or context_turn_id,
@@ -2045,7 +2045,7 @@ class App:
         )
         if result.get("delivered"):
             logger.info(
-                "Short reply emitted",
+                "Progress notice emitted",
                 extra={
                     "session_id": resolved_session_id,
                     "turn_id": active_turn_id or context_turn_id,

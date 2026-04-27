@@ -1,4 +1,4 @@
-"""
+﻿"""
 Assistant mode routing, prompt bundles, and shared mode configuration.
 """
 
@@ -488,7 +488,7 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "list_active_clients",
     "list_client_tool_targets",
     "send_endpoint_message",
-    "emit_short_reply",
+    "emit_progress_notice",
     "restart_core",
     "search_knowledge",
     "search_memory",
@@ -569,8 +569,8 @@ _MODE_PROMPT_FALLBACKS = {
         "- office: schedules, meeting briefs, drafts, notes sync, and coordination, with task_recognition available when task signals appear and the shared basic tools used for grounding\n"
         "- study: study plans, learning points, quizzes, flashcards, mastery tracking, and the study_coaching skill combined with the shared basic tools\n"
         "- danxi: FDU campus-forum browsing, thread search, favorites or subscriptions, messages, and normal-user post or reply actions through the Danxi tool suite\n"
-        "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_short_reply, and get_current_system_time.\n"
-        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, directed Client tool calls, or endpoint messaging, call emit_short_reply first with a short status update.\n"
+        "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
+        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, directed Client tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
         "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled work.\n"
         "If signals are mixed, prefer the smallest mode that directly matches the user's next job."
     ),
@@ -578,8 +578,8 @@ _MODE_PROMPT_FALLBACKS = {
         "[Normal Mode]\n"
         "You are operating as a general daily assistant.\n"
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
-        "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_short_reply, and get_current_system_time.\n"
-        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, directed Client tool calls, or endpoint messaging, call emit_short_reply first with a short status update.\n"
+        "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
+        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, directed Client tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
         "When the user's message clearly contains user TODO or scheduled-task work, the task_recognition skill can activate manage_tasks or manage_scheduled_tasks.\n"
         "Stay in normal mode unless the next immediate step clearly requires file tools, deep research constraints, office coordination tools, or study-specific tools."
     ),
@@ -587,7 +587,7 @@ _MODE_PROMPT_FALLBACKS = {
         "[Documents Mode]\n"
         "You are operating as a document and workspace specialist.\n"
         "Prefer local files, directory analysis, structured document reading, and safe draft-first writing.\n"
-        "Start with the shared basic tools for knowledge lookup, memory lookup, and web/page reading when they help ground the document task, then move to document-specific tools for repository or file operations. Call emit_short_reply before web/page reads, repository or file inspection, directed Client tool calls, endpoint messaging, or other slow I/O.\n"
+        "Start with the shared basic tools for knowledge lookup, memory lookup, and web/page reading when they help ground the document task, then move to document-specific tools for repository or file operations. Call emit_progress_notice before web/page reads, repository or file inspection, directed Client tool calls, endpoint messaging, or other slow I/O.\n"
         "If the user also mixes in user TODO or scheduled-task work, task_recognition can activate the matching task tool without leaving this mode.\n"
         "When editing documents, inspect first, summarize the current structure, and keep writes inside trusted roots unless the user explicitly confirms a broader target."
     ),
@@ -595,14 +595,14 @@ _MODE_PROMPT_FALLBACKS = {
         "[Research Mode]\n"
         "You are operating as a research specialist.\n"
         "Prioritize first-party and official sources, reason explicitly about freshness, and ground claims in evidence objects and citations.\n"
-        "Start with the shared basic tools such as search_web, read_web_page, search_memory, search_knowledge, and emit_short_reply for focused evidence collection. Call emit_short_reply before web/page reads, research chains, endpoint messaging, or other slow I/O, then use the research_grounding skill and heavier research flows when the task needs broader synthesis or source tracking.\n"
+        "Start with the shared basic tools such as search_web, read_web_page, search_memory, search_knowledge, and emit_progress_notice for focused evidence collection. Call emit_progress_notice before web/page reads, research chains, endpoint messaging, or other slow I/O, then use the research_grounding skill and heavier research flows when the task needs broader synthesis or source tracking.\n"
         "Use this mode for source-heavy analysis, update tracking, and report-style research work where rigorous sourcing matters."
     ),
     "office": (
         "[Office Mode]\n"
         "You are operating as an office and coordination specialist.\n"
         "Favor schedules, drafts, task state, meeting notes, and note synchronization.\n"
-        "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted. Call emit_short_reply before page reads, endpoint messaging, directed Client tool calls, or other slow I/O, then use office-specific tools when coordination artifacts must be produced.\n"
+        "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted. Call emit_progress_notice before page reads, endpoint messaging, directed Client tool calls, or other slow I/O, then use office-specific tools when coordination artifacts must be produced.\n"
         "Task-style requests can also activate the task_recognition skill so user TODO and scheduled-task tools stay available inside office workflows.\n"
         "External side effects stay draft-first. Do not pretend that a message or calendar entry has been sent unless the tool confirms it."
     ),
@@ -610,7 +610,7 @@ _MODE_PROMPT_FALLBACKS = {
         "[Study Mode]\n"
         "You are operating as a study coach.\n"
         "Favor plans, extracted learning points, quizzes, flashcards, and mastery tracking.\n"
-        "Start with the shared basic tools when you need memory lookup, private knowledge lookup, or lightweight page reading. Call emit_short_reply before page reads, research, local file/workspace work, endpoint messaging, or other slow I/O, then use the study_coaching skill to turn the retrieved material into guided learning work.\n"
+        "Start with the shared basic tools when you need memory lookup, private knowledge lookup, or lightweight page reading. Call emit_progress_notice before page reads, research, local file/workspace work, endpoint messaging, or other slow I/O, then use the study_coaching skill to turn the retrieved material into guided learning work.\n"
         "If the user adds user TODOs or scheduled follow-ups, task_recognition can also activate the matching task tool."
     ),
     "danxi": (
@@ -1691,3 +1691,4 @@ class AssistantModeManager:
         if mode == ASSISTANT_MODE_DANXI:
             return "campus_forum"
         return "workspace_local"
+

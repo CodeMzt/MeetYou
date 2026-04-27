@@ -13,7 +13,7 @@ from client_tool_sdk.protocol import (
     build_tool_call_progress_message,
     build_tool_call_result_message,
 )
-from client_tool_sdk.tool_ids import build_client_tool_id
+from client_tool_sdk.tool_ids import build_endpoint_tool_id
 from edge_client.config import EdgeClientConfig
 from platform_layer.detector import normalize_platform_system
 
@@ -35,8 +35,9 @@ def _tool_definition(
     input_schema: dict[str, Any],
     output_schema: dict[str, Any],
 ) -> dict[str, Any]:
+    endpoint_id = f"edge.{config.client_id}.executor"
     return {
-        "tool_id": build_client_tool_id(config.client_id, tool_key),
+        "tool_id": build_endpoint_tool_id(endpoint_id, tool_key),
         "tool_key": tool_key,
         "kind": "tool",
         "title": title,
@@ -115,25 +116,21 @@ def build_static_tools(config: EdgeClientConfig, *, extra_tools: list[dict[str, 
     ]
     if extra_tools:
         base.extend(dict(item) for item in extra_tools)
-    configured_executable = [str(item).strip() for item in getattr(config, "executable_tools", []) if str(item).strip()]
-    if not configured_executable:
+    configured_tools = [str(item).strip() for item in getattr(config, "enabled_endpoint_tools", []) if str(item).strip()]
+    if not configured_tools:
         return base
-    executable = set(configured_executable)
-    return [item for item in base if str(item.get("tool_key") or "").strip() in executable]
+    enabled = set(configured_tools)
+    return [item for item in base if str(item.get("tool_key") or "").strip() in enabled]
 
 
 def build_hello(config: EdgeClientConfig) -> dict[str, Any]:
     host_os = normalize_platform_system(platform.system())
-    executable_tools = _configured_tool_keys(getattr(config, "executable_tools", []), EDGE_EXECUTABLE_TOOL_KEYS)
-    available_tools = _configured_tool_keys(getattr(config, "available_tools", []), executable_tools)
     return build_client_hello(
         client_id=config.client_id,
         client_type=config.client_type,
         display_name=config.display_name,
         transport_profile=config.transport_profile,
         workspace_ids=config.workspace_ids,
-        available_tools=available_tools,
-        executable_tools=executable_tools,
         supports_offline_cache=config.supports_offline_cache,
         host={
             "hostname": socket.gethostname(),
@@ -148,15 +145,16 @@ def build_tools_snapshot(config: EdgeClientConfig, *, revision: int = 1, extra_t
         client_id=config.client_id,
         revision=revision,
         tools=build_static_tools(config, extra_tools=extra_tools),
+        provider_type=config.client_type,
     )
 
 
 def build_heartbeat(config: EdgeClientConfig, *, status: str = "ready", metrics: dict[str, Any] | None = None) -> dict[str, Any]:
-    return build_client_heartbeat(client_id=config.client_id, status=status, metrics=metrics)
+    return build_client_heartbeat(client_id=config.client_id, status=status, metrics=metrics, provider_type=config.client_type)
 
 
 def build_call_accepted(config: EdgeClientConfig, *, call_id: str, correlation_id: str) -> dict[str, Any]:
-    return build_tool_call_accepted_message(client_id=config.client_id, call_id=call_id, correlation_id=correlation_id)
+    return build_tool_call_accepted_message(client_id=config.client_id, call_id=call_id, correlation_id=correlation_id, provider_type=config.client_type)
 
 
 def build_call_progress(config: EdgeClientConfig, *, call_id: str, correlation_id: str, phase: str, detail: str) -> dict[str, Any]:
@@ -166,11 +164,12 @@ def build_call_progress(config: EdgeClientConfig, *, call_id: str, correlation_i
         correlation_id=correlation_id,
         phase=phase,
         detail=detail,
+        provider_type=config.client_type,
     )
 
 
 def build_call_result(config: EdgeClientConfig, *, call_id: str, correlation_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    return build_tool_call_result_message(client_id=config.client_id, call_id=call_id, correlation_id=correlation_id, result=result)
+    return build_tool_call_result_message(client_id=config.client_id, call_id=call_id, correlation_id=correlation_id, result=result, provider_type=config.client_type)
 
 
 def build_call_error(config: EdgeClientConfig, *, call_id: str, correlation_id: str, code: str, message: str, retryable: bool = False) -> dict[str, Any]:
@@ -181,4 +180,5 @@ def build_call_error(config: EdgeClientConfig, *, call_id: str, correlation_id: 
         code=code,
         message=message,
         retryable=retryable,
+        provider_type=config.client_type,
     )

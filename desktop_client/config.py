@@ -29,8 +29,7 @@ class DesktopClientConfig:
     client_id: str = field(default_factory=_default_client_id)
     display_name: str = field(default_factory=_default_display_name)
     workspace_ids: list[str] = field(default_factory=lambda: ["personal", "desktop-main", "study"])
-    available_tools: list[str] = field(default_factory=list)
-    executable_tools: list[str] = field(default_factory=list)
+    enabled_endpoint_tools: list[str] = field(default_factory=list)
     read_roots: list[str] = field(default_factory=lambda: ["."])
     trusted_write_roots: list[str] = field(default_factory=lambda: ["."])
     cmd_policy_path: str = "user/cmd_policy.json"
@@ -49,7 +48,7 @@ class DesktopClientConfig:
 
     @property
     def websocket_url(self) -> str:
-        return f"{self.core_base_url.rstrip('/').replace('http://', 'ws://').replace('https://', 'wss://')}/client/ws"
+        return f"{self.core_base_url.rstrip('/').replace('http://', 'ws://').replace('https://', 'wss://')}/endpoint/ws"
 
     @property
     def workspace_root(self) -> Path:
@@ -107,7 +106,7 @@ def _load_env_file(env_file_path: Path = DEFAULT_ENV_PATH) -> None:
     try:
         from dotenv import load_dotenv
 
-        load_dotenv(env_file_path, override=True)
+        load_dotenv(env_file_path, override=False)
     except ImportError:
         return
 
@@ -135,18 +134,17 @@ def load_desktop_client_config(config_file_path: str | None = None) -> DesktopCl
     env_workspace_ids = os.environ.get("MEETYOU_CLIENT_WORKSPACES", "").strip()
 
     return DesktopClientConfig(
-        core_base_url=str(payload.get("core_base_url") or os.environ.get("MEETYOU_CORE_BASE_URL") or "http://127.0.0.1:8000").strip(),
+        core_base_url=str(os.environ.get("MEETYOU_CORE_BASE_URL") or payload.get("core_base_url") or "http://127.0.0.1:8000").strip(),
         core_access_token=_resolve_core_access_token(payload),
         gateway_access_token=str(
-            payload.get("gateway_access_token")
-            or os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
+            os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN")
+            or payload.get("gateway_access_token")
             or ""
         ).strip(),
-        client_id=str(payload.get("client_id") or os.environ.get("MEETYOU_CLIENT_ID") or _default_client_id()).strip(),
-        display_name=str(payload.get("display_name") or os.environ.get("MEETYOU_CLIENT_DISPLAY_NAME") or _default_display_name()).strip(),
+        client_id=str(os.environ.get("MEETYOU_CLIENT_ID") or payload.get("client_id") or _default_client_id()).strip(),
+        display_name=str(os.environ.get("MEETYOU_CLIENT_DISPLAY_NAME") or payload.get("display_name") or _default_display_name()).strip(),
         workspace_ids=[item for item in (env_workspace_ids.split(",") if env_workspace_ids else workspace_ids or ["personal", "desktop-main", "study"]) if str(item).strip()],
-        available_tools=_string_list(payload, "available_tools", []),
-        executable_tools=_string_list(payload, "executable_tools", []),
+        enabled_endpoint_tools=_string_list(payload, "enabled_endpoint_tools", []),
         read_roots=[str(item) for item in (payload.get("read_roots") if isinstance(payload.get("read_roots"), list) else ["."])],
         trusted_write_roots=[str(item) for item in (payload.get("trusted_write_roots") if isinstance(payload.get("trusted_write_roots"), list) else ["."])],
         cmd_policy_path=str(payload.get("cmd_policy_path") or "user/cmd_policy.json"),

@@ -46,8 +46,8 @@ class _FakeTaskManager:
                 },
                 "origin_session_id": "web:session-1",
                 "preferred_tool_key": "manage_tasks",
-                "preferred_target_client_ids": ["desktop-main-client"],
-                "preferred_target_client_types": ["desktop"],
+                "preferred_target_endpoint_ids": ["desktop-main-client"],
+                "preferred_endpoint_provider_types": ["desktop"],
                 "tool_target_routing_policy": "balanced",
             }
         ]

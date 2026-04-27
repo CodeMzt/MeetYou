@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import unittest
-raise unittest.SkipTest("Legacy Agent connection manager tests were replaced by Client websocket manager coverage.")
 
-from gateway.agent_ws_manager import AgentConnectionManager
-from gateway.client_ws import ClientWebSocketManager
-from gateway.routes.client import _ensure_client_always_available_tools
+from gateway.endpoint_ws import ENDPOINT_WS_SCHEMA, EndpointWebSocketManager
 
 
 class _FakeWebSocket:
@@ -21,144 +18,78 @@ class _FailingWebSocket:
         raise RuntimeError("closed")
 
 
-class GatewayConnectionManagerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_agent_manager_reports_connected_snapshot(self):
-        manager = AgentConnectionManager()
+class GatewayEndpointConnectionManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_endpoint_manager_binds_identity_and_sends_notice(self):
+        manager = EndpointWebSocketManager()
         websocket = _FakeWebSocket()
 
-        await manager.connect("agent-1", websocket)
-
-        self.assertTrue(await manager.is_connected("agent-1"))
-        self.assertEqual(await manager.connected_agent_ids(), {"agent-1"})
-        snapshot = await manager.snapshot()
-        self.assertEqual(snapshot[0]["agent_id"], "agent-1")
-        self.assertTrue(snapshot[0]["connected"])
-
-        await manager.disconnect("agent-1", websocket)
-        self.assertFalse(await manager.is_connected("agent-1"))
-
-    async def test_agent_manager_ignores_stale_disconnect_after_reconnect(self):
-        manager = AgentConnectionManager()
-        stale = _FakeWebSocket()
-        current = _FakeWebSocket()
-
-        await manager.connect("agent-1", stale)
-        await manager.connect("agent-1", current)
-
-        self.assertFalse(await manager.disconnect("agent-1", stale))
-        self.assertTrue(await manager.is_connected("agent-1"))
-
-        self.assertTrue(await manager.disconnect("agent-1", current))
-        self.assertFalse(await manager.is_connected("agent-1"))
-
-    async def test_agent_manager_drops_connection_after_send_failure(self):
-        manager = AgentConnectionManager()
-
-        await manager.connect("agent-1", _FailingWebSocket())
-
-        self.assertFalse(await manager.send_to_agent("agent-1", {"type": "notice"}))
-        self.assertFalse(await manager.is_connected("agent-1"))
-
-    async def test_client_manager_binds_identity_and_sends_targeted_event(self):
-        manager = ClientWebSocketManager()
-        websocket = _FakeWebSocket()
-
-        await manager.connect("thr-1", websocket)
-        await manager.bind_connection(
+        await manager.connect(websocket)
+        await manager.bind_endpoint(
             websocket,
-            thread_id="thr-1",
-            client_id="desktop-app",
-            session_id="sess-1",
-            workspace_id="desktop-main",
-            client_type="electron",
-            display_name="Desktop App",
+            endpoint_id="desktop.main",
+            connection_id="conn-1",
+            provider={"provider_type": "desktop", "display_name": "Desktop"},
         )
 
-        snapshot = await manager.snapshot(client_id="desktop-app")
+        snapshot = await manager.snapshot(endpoint_id="desktop.main")
         self.assertEqual(len(snapshot), 1)
-        self.assertEqual(snapshot[0]["session_id"], "sess-1")
-        self.assertEqual(snapshot[0]["workspace_id"], "desktop-main")
+        self.assertEqual(snapshot[0]["connection_id"], "conn-1")
+        self.assertTrue(snapshot[0]["connected"])
 
-        delivered = await manager.publish_client_event(
-            "desktop-app",
-            event_type="message.created",
-            payload={"thread_id": "thr-1", "message": {"message_id": "msg-1"}},
+        delivered = await manager.publish_notice(
+            target_endpoint_id="desktop.main",
+            payload={"notice_id": "notice-1", "content": "hello"},
         )
 
         self.assertEqual(delivered, 1)
-        self.assertEqual(websocket.frames[0]["event"]["type"], "message.created")
+        self.assertEqual(websocket.frames[0]["schema"], ENDPOINT_WS_SCHEMA)
+        self.assertEqual(websocket.frames[0]["type"], "delivery.notice")
 
-        await manager.disconnect("thr-1", websocket)
-        self.assertEqual(await manager.snapshot(client_id="desktop-app"), [])
+        await manager.disconnect(websocket)
+        self.assertEqual(await manager.snapshot(endpoint_id="desktop.main"), [])
 
-    async def test_client_manager_updates_session_workspace_for_existing_socket(self):
-        manager = ClientWebSocketManager()
-        websocket = _FakeWebSocket()
-
-        await manager.connect("thr-1", websocket)
-        await manager.bind_connection(
-            websocket,
-            thread_id="thr-1",
-            client_id="desktop-app",
-            session_id="sess-1",
-            workspace_id="personal",
-        )
-
-        updated = await manager.update_session_metadata("sess-1", workspace_id="desktop-main")
-
-        self.assertEqual(updated, 1)
-        self.assertEqual(await manager.snapshot(workspace_id="personal"), [])
-        refreshed = await manager.snapshot(workspace_id="desktop-main")
-        self.assertEqual(len(refreshed), 1)
-        self.assertEqual(refreshed[0]["client_id"], "desktop-app")
-
-    async def test_client_manager_filters_targeted_event_by_session(self):
-        manager = ClientWebSocketManager()
+    async def test_endpoint_manager_publishes_thread_and_operation_subscriptions(self):
+        manager = EndpointWebSocketManager()
         first = _FakeWebSocket()
         second = _FakeWebSocket()
 
-        await manager.connect("thr-1", first)
-        await manager.bind_connection(
-            first,
+        await manager.connect(first)
+        await manager.bind_endpoint(first, endpoint_id="desktop.main", connection_id="conn-1")
+        await manager.subscribe(first, target_type="thread", target_id="thr-1", subscription_id="sub-thread")
+
+        await manager.connect(second)
+        await manager.bind_endpoint(second, endpoint_id="feishu.chat", connection_id="conn-2")
+        await manager.subscribe(second, target_type="operation", target_id="op-1", subscription_id="sub-op")
+
+        run_count = await manager.publish_run_event(
             thread_id="thr-1",
-            client_id="desktop-app",
-            session_id="sess-1",
-            workspace_id="desktop-main",
+            event={"event_id": "evt-1", "type": "message.delta", "payload": {"delta": "hi"}},
         )
-        await manager.connect("thr-2", second)
-        await manager.bind_connection(
-            second,
-            thread_id="thr-2",
-            client_id="desktop-app",
-            session_id="sess-2",
-            workspace_id="desktop-main",
+        operation_count = await manager.publish_operation_update(
+            operation_id="op-1",
+            payload={"operation_id": "op-1", "status": "running"},
         )
 
-        delivered = await manager.publish_client_event(
-            "desktop-app",
-            event_type="message.created",
-            payload={"thread_id": "thr-1", "message": {"message_id": "msg-1"}},
-            session_id="sess-1",
+        self.assertEqual(run_count, 1)
+        self.assertEqual(operation_count, 1)
+        self.assertEqual(first.frames[0]["type"], "delivery.run_event")
+        self.assertEqual(second.frames[0]["type"], "delivery.operation_update")
+        self.assertTrue(manager.has_subscription(target_type="thread", target_id="thr-1"))
+
+    async def test_endpoint_manager_drops_connection_after_send_failure(self):
+        manager = EndpointWebSocketManager()
+        websocket = _FailingWebSocket()
+
+        await manager.connect(websocket)
+        await manager.bind_endpoint(websocket, endpoint_id="desktop.main", connection_id="conn-1")
+
+        delivered = await manager.publish_notice(
+            target_endpoint_id="desktop.main",
+            payload={"notice_id": "notice-1", "content": "hello"},
         )
 
-        self.assertEqual(delivered, 1)
-        self.assertEqual(len(first.frames), 1)
-        self.assertEqual(second.frames, [])
-
-
-class ClientToolExposureTests(unittest.TestCase):
-    def test_client_allowed_bundle_keeps_endpoint_and_short_reply_tools(self):
-        metadata = _ensure_client_always_available_tools(
-            {
-                "allowed_tool_bundle": ["search_web", "send_endpoint_message"],
-                "tool_scope": "custom",
-            }
-        )
-
-        self.assertEqual(
-            metadata["allowed_tool_bundle"],
-            ["search_web", "send_endpoint_message", "emit_short_reply"],
-        )
+        self.assertEqual(delivered, 0)
+        self.assertEqual(await manager.connected_endpoint_ids(), set())
 
 
 if __name__ == "__main__":

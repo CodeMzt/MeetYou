@@ -31,8 +31,8 @@ function procedureDetailSignature(procedure: ClientThreadProcedureContext['effec
     applicable_modes: procedure.applicable_modes,
     recommended_tools: procedure.recommended_tools,
     preferred_tool_key: procedure.preferred_tool_key,
-    preferred_target_client_ids: procedure.preferred_target_client_ids,
-    preferred_target_client_types: procedure.preferred_target_client_types,
+    preferred_target_endpoint_ids: procedure.preferred_target_endpoint_ids,
+    preferred_endpoint_provider_types: procedure.preferred_endpoint_provider_types,
     tool_target_routing_policy: procedure.tool_target_routing_policy,
     default_execution_target: procedure.default_execution_target,
     risk_profile: procedure.risk_profile,
@@ -271,10 +271,10 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
         size_bytes: uploadResult.size_bytes,
       })
       setAttachmentInventoryVersion((current) => current + 1)
-      publishStatusFeedback(`附件上传成功：${file.name}`, 'success')
+      publishStatusFeedback(`闄勪欢涓婁紶鎴愬姛锛?{file.name}`, 'success')
       return attachment
     } catch (error) {
-      publishStatusFeedback(`附件上传失败：${error instanceof Error ? error.message : 'unknown error'}`, 'error')
+      publishStatusFeedback(`闄勪欢涓婁紶澶辫触锛?{error instanceof Error ? error.message : 'unknown error'}`, 'error')
       return null
     }
   }, [baseUrl, clientContext, initializeClientContext, publishStatusFeedback])
@@ -285,7 +285,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       await triggerAttachmentDownload(baseUrl, attachmentId, context.clientId)
       return true
     } catch (error) {
-      publishStatusFeedback(`附件下载失败：${error instanceof Error ? error.message : 'unknown error'}`, 'error')
+      publishStatusFeedback(`闄勪欢涓嬭浇澶辫触锛?{error instanceof Error ? error.message : 'unknown error'}`, 'error')
       return null
     }
   }, [baseUrl, clientContext, initializeClientContext, publishStatusFeedback])

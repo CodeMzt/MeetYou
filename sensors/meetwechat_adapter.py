@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -528,78 +528,98 @@ class MeetWeChatOutputService:
             await result
 
     async def send_client_event(self, chat_id: str, payload: dict[str, Any]) -> None:
-        if payload.get("schema") != "meetyou.client.ws.v1":
+        if payload.get("schema") != "meetyou.endpoint.ws.v4":
             return
-        kind = payload.get("kind")
-        if kind == "error":
-            self._complete_pending(chat_id, False, "client websocket error")
+        frame_type = str(payload.get("type") or "")
+        pending = self._pending_replies.get(chat_id)
+        if frame_type == "endpoint.error":
+            self._complete_pending(chat_id, False, "endpoint websocket error")
             return
-        if kind != "event":
+        if frame_type == "delivery.notice":
+            notice = payload.get("payload", {}) or {}
+            content = str(notice.get("content") or notice.get("text") or "").strip()
+            if not content and isinstance(notice.get("message"), dict):
+                content = str(notice["message"].get("content") or "").strip()
+            if not content:
+                return
+            if pending is not None:
+                self._enqueue_outbound(
+                    pending,
+                    content,
+                    delay_before_send=False,
+                    complete_pending=False,
+                )
+            else:
+                try:
+                    await self._send_direct_text(chat_id, content)
+                except Exception as exc:
+                    logger.warning("MeetWeChat direct notice send failed chat=%s error=%s", _mask(chat_id), exc)
             return
-        event = payload.get("event", {}) or {}
+        if frame_type != "delivery.run_event":
+            return
+        event = payload.get("payload", {}) or {}
         event_type = str(event.get("type") or "")
+        body = event.get("payload") if isinstance(event.get("payload"), dict) else event
         stream_id = str(event.get("stream_id") or "")
         stream_key = self._stream_key(chat_id, stream_id)
-        pending = self._pending_replies.get(chat_id)
 
         if event_type == "confirm.requested":
             if pending is not None:
-                request_id = str(event.get("request_id") or "")
+                request_id = str(body.get("request_id") or "")
                 self._pending_confirm_requests[pending.participant_key] = request_id
-                text = f"{event.get('content', '')}\nConfirm ID: {request_id}\nReply y/yes to approve, n/no to reject."
+                text = f"{body.get('content', '')}\nConfirm ID: {request_id}\nReply y/yes to approve, n/no to reject."
                 self._enqueue_outbound(pending, text, delay_before_send=False)
             return
         if event_type == "confirm.resolved":
-            request_id = str(event.get("request_id") or "")
+            request_id = str(body.get("request_id") or "")
             for key, value in list(self._pending_confirm_requests.items()):
                 if not request_id or value == request_id:
                     self._pending_confirm_requests.pop(key, None)
             return
         if event_type == "human_input.requested":
             if pending is not None:
-                request_id = str(event.get("request_id") or "")
-                options = [str(item).strip() for item in event.get("options", []) if str(item).strip()]
+                request_id = str(body.get("request_id") or "")
+                options = [str(item).strip() for item in body.get("options", []) if str(item).strip()]
                 self._pending_human_input_requests[pending.participant_key] = {
                     "request_id": request_id,
                     "options": options,
                 }
                 option_lines = "\n".join(f"{index}. {option}" for index, option in enumerate(options, start=1))
                 suffix = f"\n{option_lines}" if option_lines else ""
-                text = f"{event.get('question', '')}{suffix}\nReply with a number or text.\nRequest ID: {request_id}"
+                text = f"{body.get('question', '')}{suffix}\nReply with a number or text.\nRequest ID: {request_id}"
                 self._enqueue_outbound(pending, text, delay_before_send=False)
             return
         if event_type == "human_input.resolved":
-            request_id = str(event.get("request_id") or "")
+            request_id = str(body.get("request_id") or "")
             for key, value in list(self._pending_human_input_requests.items()):
                 if not request_id or value.get("request_id") == request_id:
                     self._pending_human_input_requests.pop(key, None)
             return
-        if event_type == "message.created":
-            message = event.get("message", {}) or {}
-            channel = str(message.get("channel") or "")
-            if channel in {"short_reply", "notice"} and pending is not None:
+        if event_type == "assistant.progress_notice":
+            content = str(body.get("content") or body.get("text") or "").strip()
+            if not content:
+                return
+            if pending is not None:
                 self._enqueue_outbound(
                     pending,
-                    str(message.get("content") or ""),
+                    content,
                     delay_before_send=False,
                     complete_pending=False,
                 )
-            elif channel in {"short_reply", "notice"}:
-                content = str(message.get("content") or "")
-                if content.strip():
-                    try:
-                        await self._send_direct_text(chat_id, content)
-                    except Exception as exc:
-                        logger.warning("MeetWeChat direct notice send failed chat=%s error=%s", _mask(chat_id), exc)
+            else:
+                try:
+                    await self._send_direct_text(chat_id, content)
+                except Exception as exc:
+                    logger.warning("MeetWeChat direct notice send failed chat=%s error=%s", _mask(chat_id), exc)
             return
         if event_type in {"reasoning.delta", "operation.updated", "activity.status"}:
             return
         if event_type == "message.delta":
-            if str(event.get("channel") or "") == "answer":
-                self._append_stream_buffer(stream_key, str(event.get("delta") or ""))
+            if str(body.get("channel") or "") in {"", "answer"}:
+                self._append_stream_buffer(stream_key, str(body.get("delta") or body.get("content") or ""))
             return
         if event_type == "message.completed":
-            message = event.get("message", {}) or {}
+            message = body.get("message", {}) if isinstance(body.get("message"), dict) else body
             text = "".join(self._stream_buffers.pop(stream_key, [])) if stream_key else ""
             text += str(message.get("content") or "")
             if pending is None:
@@ -1215,7 +1235,7 @@ class MeetWeChatInputAdapter:
             "transport": "meetwechat",
             "response_transport": "non_streaming_external_client",
             "supports_streaming_reply": False,
-            "short_reply_policy": "prefer_before_nontrivial_final",
+            "progress_notice_policy": "prefer_before_nontrivial_final",
             "tool_scope": "basic",
             "allowed_tool_bundle": list(MEETWECHAT_BASIC_TOOL_BUNDLE),
             "allowed_mcp_servers": [],
@@ -1230,3 +1250,4 @@ class MeetWeChatInputAdapter:
             "raw_hash": event.raw_hash,
             "is_group_mention": event.is_group_mention,
         }
+

@@ -63,8 +63,8 @@ class ProcedureService(ServiceBase):
     def normalize_meta(cls, meta: dict | None = None) -> dict:
         raw = dict(meta or {})
         preferred_tool_key = str(raw.get("preferred_tool_key") or "").strip()
-        preferred_target_client_ids = cls._normalize_string_list(raw.get("preferred_target_client_ids"))
-        preferred_target_client_types = cls._normalize_string_list(raw.get("preferred_target_client_types"))
+        preferred_target_endpoint_ids = cls._normalize_string_list(raw.get("preferred_target_endpoint_ids"))
+        preferred_endpoint_provider_types = cls._normalize_string_list(raw.get("preferred_endpoint_provider_types"))
         tool_target_routing_policy = cls._normalize_routing_policy(raw.get("tool_target_routing_policy"))
         infer_keywords = cls._normalize_infer_keywords(raw.get("infer_keywords"))
         return {
@@ -74,15 +74,15 @@ class ProcedureService(ServiceBase):
                 if key
                 not in {
                     "preferred_tool_key",
-                    "preferred_target_client_ids",
-                    "preferred_target_client_types",
+                    "preferred_target_endpoint_ids",
+                    "preferred_endpoint_provider_types",
                     "tool_target_routing_policy",
                     "infer_keywords",
                 }
             },
             "preferred_tool_key": preferred_tool_key,
-            "preferred_target_client_ids": preferred_target_client_ids,
-            "preferred_target_client_types": preferred_target_client_types,
+            "preferred_target_endpoint_ids": preferred_target_endpoint_ids,
+            "preferred_endpoint_provider_types": preferred_endpoint_provider_types,
             "tool_target_routing_policy": tool_target_routing_policy,
             "infer_keywords": infer_keywords,
         }
@@ -95,8 +95,8 @@ class ProcedureService(ServiceBase):
         return {
             "recommended_tools": recommended_tools,
             "preferred_tool_key": preferred_tool_key,
-            "preferred_target_client_ids": list(meta.get("preferred_target_client_ids") or []),
-            "preferred_target_client_types": list(meta.get("preferred_target_client_types") or []),
+            "preferred_target_endpoint_ids": list(meta.get("preferred_target_endpoint_ids") or []),
+            "preferred_endpoint_provider_types": list(meta.get("preferred_endpoint_provider_types") or []),
             "tool_target_routing_policy": str(meta.get("tool_target_routing_policy") or "balanced"),
         }
 
@@ -115,8 +115,8 @@ class ProcedureService(ServiceBase):
                 getattr(procedure, "recommended_source_profiles", []) or []
             ),
             "preferred_tool_key": routing["preferred_tool_key"],
-            "preferred_target_client_ids": routing["preferred_target_client_ids"],
-            "preferred_target_client_types": routing["preferred_target_client_types"],
+            "preferred_target_endpoint_ids": routing["preferred_target_endpoint_ids"],
+            "preferred_endpoint_provider_types": routing["preferred_endpoint_provider_types"],
             "tool_target_routing_policy": routing["tool_target_routing_policy"],
             "default_execution_target": str(getattr(procedure, "default_execution_target", "") or ""),
             "risk_profile": str(getattr(procedure, "risk_profile", "") or ""),
@@ -158,7 +158,7 @@ class ProcedureService(ServiceBase):
         if normalized_mode and normalized_mode in applicable_modes:
             score += 5
             reasons.append(f"mode:{normalized_mode}")
-        if normalized_workspace_id.startswith("desktop") and "desktop" in cls.normalize_meta(getattr(procedure, "meta", {}) or {}).get("preferred_target_client_types", []):
+        if normalized_workspace_id.startswith("desktop") and "desktop" in cls.normalize_meta(getattr(procedure, "meta", {}) or {}).get("preferred_endpoint_provider_types", []):
             score += 2
             reasons.append("workspace:desktop")
         if normalized_workspace_id.startswith("study") and "study" in applicable_modes:

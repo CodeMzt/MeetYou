@@ -178,13 +178,13 @@ describe('clientApi', () => {
         JSON.stringify([
           {
             procedure_id: 'proc_focus',
-            title: '专注模式',
-            description: '进入专注执行流程',
+            title: '涓撴敞妯″紡',
+            description: '杩涘叆涓撴敞鎵ц娴佺▼',
             applicable_modes: ['general'],
             recommended_tools: ['manage_tasks'],
             preferred_tool_key: 'manage_tasks',
-            preferred_target_client_ids: [],
-            preferred_target_client_types: ['desktop'],
+            preferred_target_endpoint_ids: [],
+            preferred_endpoint_provider_types: ['desktop'],
             tool_target_routing_policy: 'balanced',
             default_execution_target: 'specific_client',
             risk_profile: 'low',
@@ -211,12 +211,12 @@ describe('clientApi', () => {
           JSON.stringify({
             procedure_id: 'code_review',
             title: 'Code Review',
-            description: '围绕代码变更、风险与验证给出结构化审查。',
+            description: 'Review code changes before merging.',
             applicable_modes: ['general'],
             recommended_tools: ['search_memory'],
             preferred_tool_key: 'search_memory',
-            preferred_target_client_ids: [],
-            preferred_target_client_types: [],
+            preferred_target_endpoint_ids: [],
+            preferred_endpoint_provider_types: [],
             tool_target_routing_policy: 'balanced',
             default_execution_target: 'core_only',
             risk_profile: 'read',
@@ -236,12 +236,12 @@ describe('clientApi', () => {
             latest_inferred_procedure: {
               procedure_id: 'code_review',
               title: 'Code Review',
-              description: '围绕代码变更、风险与验证给出结构化审查。',
+              description: 'Review code changes before merging.',
               applicable_modes: ['general'],
               recommended_tools: ['search_memory'],
               preferred_tool_key: 'search_memory',
-              preferred_target_client_ids: [],
-              preferred_target_client_types: [],
+              preferred_target_endpoint_ids: [],
+              preferred_endpoint_provider_types: [],
               tool_target_routing_policy: 'balanced',
               default_execution_target: 'core_only',
               risk_profile: 'read',
@@ -253,12 +253,12 @@ describe('clientApi', () => {
             effective_procedure: {
               procedure_id: 'code_review',
               title: 'Code Review',
-              description: '围绕代码变更、风险与验证给出结构化审查。',
+              description: 'Review code changes before merging.',
               applicable_modes: ['general'],
               recommended_tools: ['search_memory'],
               preferred_tool_key: 'search_memory',
-              preferred_target_client_ids: [],
-              preferred_target_client_types: [],
+              preferred_target_endpoint_ids: [],
+              preferred_endpoint_provider_types: [],
               tool_target_routing_policy: 'balanced',
               default_execution_target: 'core_only',
               risk_profile: 'read',
@@ -295,12 +295,12 @@ describe('clientApi', () => {
             pinned_procedure: {
               procedure_id: 'code_review',
               title: 'Code Review',
-              description: '围绕代码变更、风险与验证给出结构化审查。',
+              description: 'Review code changes before merging.',
               applicable_modes: ['general'],
               recommended_tools: ['search_memory'],
               preferred_tool_key: 'search_memory',
-              preferred_target_client_ids: [],
-              preferred_target_client_types: [],
+              preferred_target_endpoint_ids: [],
+              preferred_endpoint_provider_types: [],
               tool_target_routing_policy: 'balanced',
               default_execution_target: 'core_only',
               risk_profile: 'read',
@@ -313,12 +313,12 @@ describe('clientApi', () => {
             effective_procedure: {
               procedure_id: 'code_review',
               title: 'Code Review',
-              description: '围绕代码变更、风险与验证给出结构化审查。',
+              description: 'Review code changes before merging.',
               applicable_modes: ['general'],
               recommended_tools: ['search_memory'],
               preferred_tool_key: 'search_memory',
-              preferred_target_client_ids: [],
-              preferred_target_client_types: [],
+              preferred_target_endpoint_ids: [],
+              preferred_endpoint_provider_types: [],
               tool_target_routing_policy: 'balanced',
               default_execution_target: 'core_only',
               risk_profile: 'read',
@@ -362,16 +362,16 @@ describe('clientApi', () => {
       new Response(
         JSON.stringify({
           workspace_id: 'study',
-          title: '学习',
+          title: 'Study',
           status: 'active',
           base_mode: 'study',
-          description: '学习资料、笔记与复盘工作空间。',
+          description: 'Study workspace for focused learning.',
           prompt_overlay: '',
           default_execution_target: 'core_only',
           tool_policy: 'allow_all',
           allowed_tool_ids: [],
-          preferred_target_client_ids: [],
-          preferred_target_client_types: [],
+          preferred_target_endpoint_ids: [],
+          preferred_endpoint_provider_types: [],
           preferred_source_profiles: ['study_materials', 'workspace_local'],
           tool_target_routing_policy: 'balanced',
           memory_ranking_policy: 'workspace_first',
@@ -532,13 +532,13 @@ describe('clientApi', () => {
         email: 'user@example.com',
         password: 'secret',
       }),
-    ).rejects.toThrow('当前环境不支持加密发送 Danxi 凭证，请在 Electron 桌面端中使用。')
+    ).rejects.toThrow('Encrypted Danxi credential transport is only available in the Electron desktop app.')
 
     await expect(
       updateDanxiWebvpnCookie('http://127.0.0.1:8000', {
         cookie_header: 'vpn=ok',
       }),
-    ).rejects.toThrow('当前环境不支持加密发送 Danxi 凭证，请在 Electron 桌面端中使用。')
+    ).rejects.toThrow('Encrypted Danxi credential transport is only available in the Electron desktop app.')
 
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
@@ -593,7 +593,7 @@ describe('clientApi', () => {
             has_webvpn_cookie: false,
             webvpn_required: false,
             direct_connect_available: true,
-            profile: { user_id: 7, nickname: '阿明' },
+            profile: { user_id: 7, nickname: 'Student' },
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
@@ -603,7 +603,7 @@ describe('clientApi', () => {
           JSON.stringify({
             ok: true,
             status_code: 201,
-            message: '回复已发布，帖子详情已可刷新。',
+            message: 'reply created',
             hole_id: 101,
             floor_id: 9001,
           }),
@@ -615,7 +615,7 @@ describe('clientApi', () => {
           JSON.stringify({
             ok: true,
             status_code: 200,
-            message: '回复已更新，帖子详情已可刷新。',
+            message: 'reply updated',
             floor_id: 9001,
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -626,7 +626,7 @@ describe('clientApi', () => {
           JSON.stringify({
             ok: true,
             status_code: 200,
-            message: '回复已删除，帖子详情已可刷新。',
+            message: 'reply deleted',
             floor_id: 9001,
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -636,10 +636,10 @@ describe('clientApi', () => {
         new Response(
           JSON.stringify({
             hole_id: 101,
-            title: '帖子 #101',
-            summary: '主贴在询问宿舍报修流程，共整理到 2 条楼层，参与者约 2 位。',
-            key_points: ['主贴在询问宿舍报修流程', '当前帖子显示 2 条回复。'],
-            reply_highlights: ['匿名: 先在企业微信提交工单'],
+            title: 'Post #101',
+            summary: 'Summary with two key points and two replies.',
+            key_points: ['first point', 'second point'],
+            reply_highlights: ['reply highlight'],
             floor_count: 2,
             participant_count: 2,
             generated_at: '2026-04-14T00:00:00Z',
@@ -649,17 +649,17 @@ describe('clientApi', () => {
       ) as typeof fetch
 
     const profile = await getDanxiProfile('http://127.0.0.1:8000', { refresh: true })
-    const created = await createDanxiReply('http://127.0.0.1:8000', 101, { content: '我也遇到这个问题' })
-    const updated = await updateDanxiReply('http://127.0.0.1:8000', 9001, { content: '已解决，谢谢' })
+    const created = await createDanxiReply('http://127.0.0.1:8000', 101, { content: '鎴戜篃閬囧埌杩欎釜闂' })
+    const updated = await updateDanxiReply('http://127.0.0.1:8000', 9001, { content: '宸茶В鍐筹紝璋㈣阿' })
     const deleted = await deleteDanxiReply('http://127.0.0.1:8000', 9001, { confirm: true })
     const summary = await getDanxiPostSummary('http://127.0.0.1:8000', 101, { floor_limit: 20 })
 
-    expect(profile.profile?.nickname).toBe('阿明')
+    expect(profile.profile?.nickname).toBe('Student')
     expect(created.ok).toBe(true)
-    expect(updated.message).toContain('更新')
+    expect(updated.message).toContain('updated')
     expect(deleted.floor_id).toBe(9001)
     expect(summary.hole_id).toBe(101)
-    expect(summary.reply_highlights[0]).toContain('企业微信')
+    expect(summary.reply_highlights[0]).toContain('reply highlight')
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       1,
       'http://127.0.0.1:8000/desktop/danxi/profile?refresh=true',

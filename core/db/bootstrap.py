@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,8 +9,8 @@ from alembic.config import Config as AlembicConfig
 from core.config import ConfigManager
 from core.db.engine import create_db_engine, create_session_factory, get_database_url
 from core.storage.object_store import build_object_store
-from core.services.client_tool_dispatch_service import ClientToolDispatchService
 from core.services import (
+    ActorService,
     ApprovalService,
     AttachmentService,
     CapabilityService,
@@ -18,16 +18,27 @@ from core.services import (
     ConfigStateService,
     ContextPoolService,
     CoreServices,
+    DeliveryAttemptService,
+    DeliveryService,
+    EndpointCapabilityService,
+    EndpointConnectionService,
+    EndpointOutboxService,
+    EndpointRegistryService,
     MemoryStateService,
     MessageService,
     OperationService,
     OperationCallService,
     PrincipalService,
     ProcedureService,
+    RunEventService,
+    RunService,
+    ScheduledJobRunService,
+    SchedulerService,
     SessionService,
     RuntimeStateBlobService,
     TaskStateService,
     ThreadService,
+    ToolRouterService,
     WorkspaceService,
 )
 
@@ -37,16 +48,16 @@ DEFAULT_PRINCIPAL_NAME = "Self"
 DEFAULT_WORKSPACES = (
     {
         "workspace_id": "personal",
-        "title": "个人",
-        "description": "默认个人工作空间，适合日常问答、个人记忆与轻量研究。",
+        "title": "Personal",
+        "description": "Default personal workspace for everyday questions, memory, and lightweight research.",
         "base_mode": "general",
-        "prompt_overlay": "把这里视为默认个人工作空间；除非用户明确要求专门流程，否则优先给出简洁、通用、可直接执行的帮助。",
-        "default_execution_target": "core_only",
+        "prompt_overlay": "Treat this as the default personal workspace unless the user selects a more specific workflow.",
+        "default_execution_target": "core.local",
         "metadata": {
             "tool_policy": "allow_all",
             "allowed_tool_ids": [],
-            "preferred_target_client_ids": [],
-            "preferred_target_client_types": [],
+            "preferred_target_endpoint_ids": [],
+            "preferred_endpoint_provider_types": [],
             "preferred_source_profiles": ["workspace_local"],
             "tool_target_routing_policy": "balanced",
             "memory_ranking_policy": "workspace_first",
@@ -55,16 +66,16 @@ DEFAULT_WORKSPACES = (
     },
     {
         "workspace_id": "desktop-main",
-        "title": "主桌面",
-        "description": "主桌面开发与本地自动化工作空间。",
+        "title": "Desktop Main",
+        "description": "Desktop development and local automation workspace.",
         "base_mode": "automation",
-        "prompt_overlay": "该工作区绑定到主桌面环境；优先采用本地开发工作流、可复现诊断步骤，并在写入操作前明确提醒人工确认。",
-        "default_execution_target": "specific_client",
+        "prompt_overlay": "Prefer local development workflows and reproducible verification. Request confirmation before risky writes.",
+        "default_execution_target": "specific_endpoint",
         "metadata": {
             "tool_policy": "allow_all",
             "allowed_tool_ids": [],
-            "preferred_target_client_ids": [],
-            "preferred_target_client_types": ["desktop"],
+            "preferred_target_endpoint_ids": [],
+            "preferred_endpoint_provider_types": ["desktop"],
             "preferred_source_profiles": ["workspace_local"],
             "tool_target_routing_policy": "balanced",
             "memory_ranking_policy": "workspace_first",
@@ -73,16 +84,16 @@ DEFAULT_WORKSPACES = (
     },
     {
         "workspace_id": "study",
-        "title": "学习",
-        "description": "学习资料、笔记与复盘工作空间。",
+        "title": "Study",
+        "description": "Study materials, notes, and review workspace.",
         "base_mode": "study",
-        "prompt_overlay": "当任务符合学习场景时，优先采用教学式解释、结构化笔记和复习题。",
-        "default_execution_target": "core_only",
+        "prompt_overlay": "Use teaching-style explanations, structured notes, and review questions for study tasks.",
+        "default_execution_target": "core.local",
         "metadata": {
             "tool_policy": "allow_all",
             "allowed_tool_ids": [],
-            "preferred_target_client_ids": [],
-            "preferred_target_client_types": [],
+            "preferred_target_endpoint_ids": [],
+            "preferred_endpoint_provider_types": [],
             "preferred_source_profiles": ["study_materials"],
             "tool_target_routing_policy": "balanced",
             "memory_ranking_policy": "workspace_first",
@@ -91,16 +102,16 @@ DEFAULT_WORKSPACES = (
     },
     {
         "workspace_id": "home-lab",
-        "title": "家庭实验室",
-        "description": "家庭实验室、边缘节点与设备编排工作空间。",
+        "title": "Home Lab",
+        "description": "Home lab, edge nodes, and device orchestration workspace.",
         "base_mode": "automation",
-        "prompt_overlay": "假设该工作区负责共享实验室设备；当执行离开 Core 时，优先采用感知设备环境的自动化方案并路由到可用工作区代理。",
-        "default_execution_target": "workspace_any_client",
+        "prompt_overlay": "Use available endpoint providers when work must run outside Core.",
+        "default_execution_target": "workspace_any_endpoint",
         "metadata": {
             "tool_policy": "allow_all",
             "allowed_tool_ids": [],
-            "preferred_target_client_ids": [],
-            "preferred_target_client_types": ["raspi", "desktop"],
+            "preferred_target_endpoint_ids": [],
+            "preferred_endpoint_provider_types": ["raspi", "desktop"],
             "preferred_source_profiles": ["workspace_local"],
             "tool_target_routing_policy": "balanced",
             "memory_ranking_policy": "workspace_first",
@@ -111,74 +122,74 @@ DEFAULT_WORKSPACES = (
 DEFAULT_PROCEDURES = (
     {
         "procedure_id": "daily_research_digest",
-        "title": "每日研究摘要",
-        "description": "汇总指定主题的最新进展、来源与结论。",
-        "prompt_overlay": "优先关注最新进展，明确引用来源，并把结论整理成简洁的每日摘要。",
+        "title": "Daily Research Digest",
+        "description": "Summarize recent progress, sources, and conclusions for a specified topic.",
+        "prompt_overlay": "Prioritize recent developments, cite sources clearly, and return a concise digest.",
         "applicable_modes": ["research", "general"],
         "recommended_capabilities": ["search_web", "read_web_page", "search_memory", "summarize_text"],
         "recommended_source_profiles": ["policy_global", "workspace_local"],
-        "default_execution_target": "core_only",
+        "default_execution_target": "core.local",
         "risk_profile": "read",
         "meta": {
             "preferred_tool_key": "search_web",
-            "preferred_target_client_ids": [],
-            "preferred_target_client_types": [],
+            "preferred_target_endpoint_ids": [],
+            "preferred_endpoint_provider_types": [],
             "tool_target_routing_policy": "balanced",
             "infer_keywords": ["research", "digest", "latest", "news", "updates", "monitor"],
         },
     },
     {
         "procedure_id": "code_review",
-        "title": "代码审查",
-        "description": "围绕代码变更、风险与验证给出结构化审查。",
-        "prompt_overlay": "优先关注正确性、回归风险、测试覆盖和明确后续动作，风格建议放在后面。",
+        "title": "Code Review",
+        "description": "Review code changes for correctness, regressions, risk, and missing tests.",
+        "prompt_overlay": "Focus on correctness, regression risk, test coverage, and clear next actions.",
         "applicable_modes": ["documents", "general", "research"],
         "recommended_capabilities": ["search_memory", "summarize_text"],
         "recommended_source_profiles": ["workspace_local"],
-        "default_execution_target": "core_only",
+        "default_execution_target": "core.local",
         "risk_profile": "read",
         "meta": {
             "preferred_tool_key": "search_memory",
-            "preferred_target_client_ids": [],
-            "preferred_target_client_types": [],
+            "preferred_target_endpoint_ids": [],
+            "preferred_endpoint_provider_types": [],
             "tool_target_routing_policy": "balanced",
-            "infer_keywords": ["code review", "review", "patch", "diff", "regression", "bug", "代码审查"],
+            "infer_keywords": ["code review", "review", "patch", "diff", "regression", "bug"],
         },
     },
     {
         "procedure_id": "desktop_fix_loop",
-        "title": "桌面修复闭环",
-        "description": "定位桌面环境问题，给出假设、验证与修复闭环。",
-        "prompt_overlay": "按照诊断-验证-修复闭环推进，优先给出可复现证据，并在写入操作前明确提示风险。",
+        "title": "Desktop Fix Loop",
+        "description": "Diagnose, verify, and repair desktop environment issues.",
+        "prompt_overlay": "Move through diagnosis, verification, and repair. Ask before risky writes.",
         "applicable_modes": ["automation", "general"],
         "recommended_capabilities": ["search_memory", "manage_tasks"],
         "recommended_source_profiles": ["workspace_local"],
-        "default_execution_target": "specific_client",
+        "default_execution_target": "specific_endpoint",
         "risk_profile": "write",
         "meta": {
             "preferred_tool_key": "manage_tasks",
-            "preferred_target_client_ids": [],
-            "preferred_target_client_types": ["desktop"],
+            "preferred_target_endpoint_ids": [],
+            "preferred_endpoint_provider_types": ["desktop"],
             "tool_target_routing_policy": "balanced",
-            "infer_keywords": ["desktop", "client", "fix", "repair", "shell", "command", "桌面", "修复"],
+            "infer_keywords": ["desktop", "endpoint", "fix", "repair", "shell", "command"],
         },
     },
     {
         "procedure_id": "study_note_synthesis",
-        "title": "学习笔记整理",
-        "description": "把学习材料整理为结构化笔记、问题与复盘项。",
-        "prompt_overlay": "提炼关键概念，整理成简洁笔记，并以复习题或下一步建议收尾。",
+        "title": "Study Note Synthesis",
+        "description": "Organize study materials into structured notes, questions, and review items.",
+        "prompt_overlay": "Extract key ideas, organize concise notes, and end with review prompts or next steps.",
         "applicable_modes": ["study", "documents"],
         "recommended_capabilities": ["search_memory", "summarize_text", "manage_tasks"],
         "recommended_source_profiles": ["workspace_local"],
-        "default_execution_target": "core_only",
+        "default_execution_target": "core.local",
         "risk_profile": "read",
         "meta": {
             "preferred_tool_key": "summarize_text",
-            "preferred_target_client_ids": [],
-            "preferred_target_client_types": [],
+            "preferred_target_endpoint_ids": [],
+            "preferred_endpoint_provider_types": [],
             "tool_target_routing_policy": "balanced",
-            "infer_keywords": ["study", "note", "notes", "synthesis", "review question", "学习", "笔记", "复习"],
+            "infer_keywords": ["study", "note", "notes", "synthesis", "review question"],
         },
     },
 )
@@ -190,7 +201,7 @@ class CoreDomainContext:
     engine: object
     session_factory: object
     services: CoreServices
-    client_tool_dispatch: ClientToolDispatchService
+    tool_router: object
     principal: object
     workspaces: dict[str, object]
 
@@ -208,18 +219,47 @@ def run_database_migrations(database_url: str) -> None:
 
 
 def build_core_services(session_factory) -> CoreServices:
+    actor = ActorService(session_factory)
+    workspace = WorkspaceService(session_factory)
+    endpoint = EndpointRegistryService(session_factory)
+    endpoint_capability = EndpointCapabilityService(session_factory)
+    operation = OperationService(session_factory)
+    operation_call = OperationCallService(session_factory)
+    endpoint_outbox = EndpointOutboxService(session_factory)
+    delivery_attempt = DeliveryAttemptService(session_factory)
     return CoreServices(
         principal=PrincipalService(session_factory),
-        workspace=WorkspaceService(session_factory),
+        actor=actor,
+        workspace=workspace,
         client=ClientService(session_factory),
+        endpoint=endpoint,
+        endpoint_connection=EndpointConnectionService(session_factory),
+        endpoint_capability=endpoint_capability,
+        endpoint_outbox=endpoint_outbox,
+        delivery_attempt=delivery_attempt,
+        delivery=DeliveryService(outbox_service=endpoint_outbox, attempt_service=delivery_attempt),
         capability=CapabilityService(session_factory),
         tool=CapabilityService(session_factory),
         procedure=ProcedureService(session_factory),
         thread=ThreadService(session_factory),
         session=SessionService(session_factory),
+        run=RunService(session_factory),
+        run_event=RunEventService(session_factory),
+        scheduler=SchedulerService(session_factory),
+        scheduled_job_run=ScheduledJobRunService(session_factory),
+        tool_router=ToolRouterService(
+            actor_service=actor,
+            workspace_service=workspace,
+            endpoint_service=endpoint,
+            endpoint_capability_service=endpoint_capability,
+            session_service=SessionService(session_factory),
+            thread_service=ThreadService(session_factory),
+            operation_service=operation,
+            operation_call_service=operation_call,
+        ),
         state_blob=RuntimeStateBlobService(session_factory),
-        operation=OperationService(session_factory),
-        operation_call=OperationCallService(session_factory),
+        operation=operation,
+        operation_call=operation_call,
         approval=ApprovalService(session_factory),
         attachment=AttachmentService(session_factory),
         message=MessageService(session_factory),
@@ -227,7 +267,70 @@ def build_core_services(session_factory) -> CoreServices:
         context_pool=ContextPoolService(session_factory),
         memory_state=MemoryStateService(session_factory),
         task_state=TaskStateService(session_factory),
+)
+
+
+def _ensure_v4_system_records(services: CoreServices) -> None:
+    scheduler_actor = services.actor.ensure_actor(
+        actor_id="system.scheduler",
+        actor_type="system_scheduler",
+        display_name="System Scheduler",
+        permission_profile_id="profile.system_scheduler",
     )
+    heartbeat_actor = services.actor.ensure_actor(
+        actor_id="system.heartbeat",
+        actor_type="system_heartbeat",
+        display_name="System Heartbeat",
+        permission_profile_id="profile.system_heartbeat",
+    )
+    maintenance_actor = services.actor.ensure_actor(
+        actor_id="system.maintenance",
+        actor_type="system_maintenance",
+        display_name="System Maintenance",
+        permission_profile_id="profile.system_maintenance",
+    )
+    del heartbeat_actor, maintenance_actor
+    services.endpoint.ensure_endpoint(
+        endpoint_id="core.local",
+        endpoint_type="core_local",
+        provider_type="core",
+        transport_type="inproc",
+        owner_actor_id=scheduler_actor.id,
+        labels=["core", "execution"],
+        priority=0,
+        metadata={"execution_target": True},
+    )
+    services.endpoint.ensure_endpoint(
+        endpoint_id="core.scheduler",
+        endpoint_type="core_scheduler",
+        provider_type="core",
+        transport_type="inproc",
+        owner_actor_id=scheduler_actor.id,
+        labels=["core", "scheduler"],
+        priority=0,
+        metadata={"system_clock": True},
+    )
+    services.endpoint.ensure_endpoint(
+        endpoint_id="core.inbox",
+        endpoint_type="core_inbox",
+        provider_type="core",
+        transport_type="database",
+        owner_actor_id=scheduler_actor.id,
+        labels=["core", "delivery"],
+        priority=10,
+        metadata={"delivery_sink": True},
+    )
+    services.endpoint.ensure_endpoint(
+        endpoint_id="core.notification",
+        endpoint_type="core_notification",
+        provider_type="core",
+        transport_type="inproc",
+        owner_actor_id=scheduler_actor.id,
+        labels=["core", "notice"],
+        priority=10,
+        metadata={"delivery_sink": True},
+    )
+    services.scheduler.ensure_system_heartbeat(interval_seconds=600)
 
 
 def bootstrap_core_domain(
@@ -245,35 +348,9 @@ def bootstrap_core_domain(
     engine = create_db_engine(resolved_database_url)
     session_factory = create_session_factory(engine)
     object_store = build_object_store(resolved_config, storage_root_override=attachment_storage_root)
-    services = CoreServices(
-        principal=PrincipalService(session_factory),
-        workspace=WorkspaceService(session_factory),
-        client=ClientService(session_factory),
-        capability=CapabilityService(session_factory),
-        tool=CapabilityService(session_factory),
-        procedure=ProcedureService(session_factory),
-        thread=ThreadService(session_factory),
-        session=SessionService(session_factory),
-        state_blob=RuntimeStateBlobService(session_factory),
-        operation=OperationService(session_factory),
-        operation_call=OperationCallService(session_factory),
-        approval=ApprovalService(session_factory),
-        attachment=AttachmentService(session_factory, storage_root=attachment_storage_root, object_store=object_store),
-        message=MessageService(session_factory),
-        config_state=ConfigStateService(session_factory),
-        context_pool=ContextPoolService(session_factory),
-        memory_state=MemoryStateService(session_factory),
-        task_state=TaskStateService(session_factory),
-    )
-    client_tool_dispatch = ClientToolDispatchService(
-        client_service=services.client,
-        capability_service=services.capability,
-        session_service=services.session,
-        thread_service=services.thread,
-        workspace_service=services.workspace,
-        operation_service=services.operation,
-        operation_call_service=services.operation_call,
-    )
+    services = build_core_services(session_factory)
+    services.attachment = AttachmentService(session_factory, storage_root=attachment_storage_root, object_store=object_store)
+    _ensure_v4_system_records(services)
 
     principal = services.principal.ensure_principal(
         principal_key=DEFAULT_PRINCIPAL_KEY,
@@ -288,7 +365,7 @@ def bootstrap_core_domain(
             description=item.get("description", ""),
             base_mode=item["base_mode"],
             prompt_overlay=item.get("prompt_overlay", ""),
-            default_execution_target=item.get("default_execution_target", "core_only"),
+            default_execution_target=item.get("default_execution_target", "core.local"),
             metadata=item.get("metadata"),
         )
         workspaces[item["workspace_id"]] = workspace
@@ -312,7 +389,8 @@ def bootstrap_core_domain(
         engine=engine,
         session_factory=session_factory,
         services=services,
-        client_tool_dispatch=client_tool_dispatch,
+        tool_router=services.tool_router,
         principal=principal,
         workspaces=workspaces,
     )
+

@@ -25,7 +25,7 @@ function deriveOperationTone(status: string): OperationView['tone'] {
 
 function deriveOperationSummary(result: Record<string, unknown>, error: Record<string, unknown>, detail: string, phase: string, status: string): string {
   if (status === 'waiting_approval') {
-    return detail || '等待审批'
+    return detail || '绛夊緟瀹℃壒'
   }
   if (typeof result.summary === 'string' && result.summary) {
     return result.summary
@@ -62,7 +62,7 @@ function applyOperationEvent(
     title: event.title || existing?.title || event.operationId,
     operation_type: event.operationType || existing?.operation_type || 'tool_call',
     execution_target: event.executionTarget || existing?.execution_target || 'specific_client',
-    target_client_id: event.targetClientId || existing?.target_client_id || '',
+    target_endpoint_id: event.targetEndpointId || existing?.target_endpoint_id || '',
     tool_key: event.toolKey || existing?.tool_key || '',
     tool_id: event.toolId || existing?.tool_id || '',
     status,
@@ -100,7 +100,7 @@ export function useOperations(
       startTransition(() => {
         dispatchChat({
           type: 'append_system_turn',
-          turn: createSystemTurn(decision === 'approve' ? '已提交审批通过，正在继续执行。' : '已提交审批拒绝。'),
+          turn: createSystemTurn(decision === 'approve' ? 'Operation approved.' : 'Operation rejected.'),
         })
         setOperations((current) =>
           current.map((item) =>
@@ -110,7 +110,7 @@ export function useOperations(
                   approval_status: decision === 'approve' ? 'approved' : 'rejected',
                   status: decision === 'approve' ? 'queued' : 'rejected',
                   tone: decision === 'approve' ? 'pending' : 'failed',
-                  summary: decision === 'approve' ? '审批已通过，等待调度' : '审批已拒绝',
+                  summary: decision === 'approve' ? 'Approval granted; waiting for execution.' : 'Approval rejected.',
                 }
               : item,
           ),

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import logging
@@ -75,7 +75,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "description": (
                 "Send a realtime notice or dispatch a directed tool call to a target Client other than the "
                 "normal current-session reply path. Do not use this to answer the originating user or to send "
-                "progress updates to the same client; use emit_short_reply for progress and the final assistant "
+                "progress updates to the same client; use emit_progress_notice for progress and the final assistant "
                 "answer for the actual reply. Use only when the user explicitly asks to notify or call a "
                 "specific target Client."
             ),
@@ -98,10 +98,10 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "metadata": {"action_risk": "external_write", "safe_parallel": False},
         },
     },
-    "emit_short_reply": {
+    "emit_progress_notice": {
         "type": "function",
         "function": {
-            "name": "emit_short_reply",
+            "name": "emit_progress_notice",
             "description": (
                 "Send a brief standalone assistant reply to the current session while the current turn is still "
                 "thinking or tool-calling. You must call this before any potentially time-consuming operation, "
@@ -241,14 +241,8 @@ class ToolRegistry:
             function = tool.get("function") if isinstance(tool, dict) else None
             if not isinstance(function, dict):
                 continue
-            if function.get("name") == "emit_temporary_reply":
-                function["description"] = (
-                    "Compatibility alias for emit_short_reply. Sends a brief standalone assistant reply "
-                    "while the current turn is still thinking or tool-calling. Use before potentially "
-                    "time-consuming operations when the primary emit_short_reply name is unavailable."
-                )
-            if function.get("name") == "emit_short_reply":
-                function["description"] = _BUILTIN_FALLBACK_TOOL_SCHEMAS["emit_short_reply"]["function"]["description"]
+            if function.get("name") == "emit_progress_notice":
+                function["description"] = _BUILTIN_FALLBACK_TOOL_SCHEMAS["emit_progress_notice"]["function"]["description"]
 
     def has_builtin(self, tool_name: str) -> bool:
         return tool_name in self.supported_funcs
@@ -394,3 +388,4 @@ class ToolRegistry:
             for name in allowlist
             if (tool := self._tool_schema_by_name(name, sections=("chain_tools", "common_tools"))) is not None
         ]
+

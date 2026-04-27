@@ -232,7 +232,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(payload["error"]["code"], "legacy_http_path_removed")
         self.assertEqual(payload["error"]["details"]["legacy_path"], legacy_path)
         self.assertEqual(payload["error"]["details"]["replacement_path"], replacement_path)
-        self.assertEqual(payload["error"]["details"]["formal_surface"], "client/* + client/ws")
+        self.assertEqual(payload["error"]["details"]["formal_surface"], "thread/run/delivery + endpoint/ws")
 
     def test_health_returns_structured_runtime_health(self):
         response = self.client.get("/health")
@@ -424,7 +424,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
             payload = websocket.receive_json()
             self.assertEqual(payload["kind"], "error")
             self.assertEqual(payload["error"]["code"], "legacy_websocket_path_removed")
-            self.assertEqual(payload["error"]["details"]["replacement_path"], "/client/ws")
+            self.assertEqual(payload["error"]["details"]["replacement_path"], "/endpoint/ws")
             with self.assertRaises(WebSocketDisconnect):
                 websocket.receive_json()
 

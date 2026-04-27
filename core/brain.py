@@ -1,4 +1,4 @@
-"""
+﻿"""
 Main conversational orchestration.
 """
 
@@ -1305,7 +1305,7 @@ class Brain:
                 "transport",
                 "response_transport",
                 "supports_streaming_reply",
-                "short_reply_policy",
+                "progress_notice_policy",
             }
         ):
             client_response = dict(route_dict.get("client_response") or {})
@@ -1321,13 +1321,13 @@ class Brain:
                 client_response["response_transport"] = response_transport
             if "supports_streaming_reply" in metadata:
                 client_response["supports_streaming_reply"] = bool(metadata.get("supports_streaming_reply"))
-            short_reply_policy = str(
-                metadata.get("short_reply_policy")
-                or client_response.get("short_reply_policy")
+            progress_notice_policy = str(
+                metadata.get("progress_notice_policy")
+                or client_response.get("progress_notice_policy")
                 or ""
             ).strip()
-            if short_reply_policy:
-                client_response["short_reply_policy"] = short_reply_policy
+            if progress_notice_policy:
+                client_response["progress_notice_policy"] = progress_notice_policy
             if client_response:
                 route_dict["client_response"] = client_response
         route_dict["disable_tools"] = bool(metadata.get("disable_tools"))
@@ -1689,15 +1689,15 @@ class Brain:
             return []
         if bool(client_response.get("supports_streaming_reply", True)):
             return []
-        short_reply_policy = str(client_response.get("short_reply_policy") or "").strip()
-        if short_reply_policy not in {"prefer_before_nontrivial_final", "required_before_nontrivial_final"}:
+        progress_notice_policy = str(client_response.get("progress_notice_policy") or "").strip()
+        if progress_notice_policy not in {"prefer_before_nontrivial_final", "required_before_nontrivial_final"}:
             return []
         tool_bundle = [
             str(item or "").strip()
             for item in route_context.get("tool_bundle", [])
             if str(item or "").strip()
         ]
-        if tool_bundle and "emit_short_reply" not in tool_bundle:
+        if tool_bundle and "emit_progress_notice" not in tool_bundle:
             return []
         transport = str(client_response.get("transport") or "external").strip()
         response_transport = str(client_response.get("response_transport") or "non_streaming_external_client").strip()
@@ -1710,9 +1710,9 @@ class Brain:
                     f"Response delivery: {response_transport}\n"
                     "This client does not stream partial assistant text. If this turn will require tool calls, "
                     "slow I/O, nontrivial reasoning, or a final answer longer than two short sentences, call "
-                    "emit_short_reply first with a brief natural status update. Do not call it for an immediate "
+                    "emit_progress_notice first with a brief natural status update. Do not call it for an immediate "
                     "one-sentence answer. Do not use send_endpoint_message for progress updates or for replying "
-                    "to this same originating client; use emit_short_reply for progress and the final assistant "
+                    "to this same originating client; use emit_progress_notice for progress and the final assistant "
                     "answer for the actual reply. Use send_endpoint_message only when the user explicitly asks "
                     "to notify a different target Client."
                 ),
@@ -3299,3 +3299,4 @@ class Brain:
         if transient_turn and len(session.chat_history) > turn_input_index:
             del session.chat_history[turn_input_index:]
         yield BrainOutputEvent(type="done")
+

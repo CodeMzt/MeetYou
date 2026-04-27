@@ -53,25 +53,25 @@ class _GatewayConfirmEventBus:
 
 
 class GatewayConfirmResponseTests(unittest.TestCase):
-    def test_client_websocket_confirm_response_resolves_immediately(self):
+    def test_http_confirm_response_resolves_immediately(self):
         bus = _GatewayConfirmEventBus()
         gateway = FastAPIGateway(bus, SessionManager(), access_token="ws-token")
         with TestClient(gateway.app) as client:
-            with client.websocket_connect("/client/ws?thread_id=thr-test&access_token=ws-token") as websocket:
-                connection = websocket.receive_json()
-                self.assertEqual(connection["kind"], "connection")
-
-                websocket.send_json({
+            response = client.post(
+                "/client/sessions/web:test/confirm-response",
+                headers={"Authorization": "Bearer ws-token"},
+                json={
                     "action": "confirm_response",
-                    "session_id": "web:test",
                     "client_id": "desktop",
                     "request_id": "req-123",
                     "accepted": True,
-                })
-                ack = websocket.receive_json()
+                },
+            )
 
-        self.assertEqual(ack["kind"], "ack")
-        self.assertEqual(ack["ack"]["session_id"], "web:test")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["session_id"], "web:test")
         self.assertEqual(bus.calls, [(True, "req-123", "web:test", "desktop", "")])
         self.assertTrue(bus.inbound_queue.empty())
 

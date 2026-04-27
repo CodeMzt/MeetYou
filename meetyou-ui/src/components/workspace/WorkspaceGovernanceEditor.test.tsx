@@ -5,16 +5,16 @@ import WorkspaceGovernanceEditor from './WorkspaceGovernanceEditor'
 
 const workspace: ClientWorkspace = {
   workspace_id: 'study',
-  title: '学习',
+  title: 'Study',
   status: 'active',
   base_mode: 'study',
-  description: '学习资料、笔记与复盘工作空间。',
+  description: 'Study workspace for focused learning.',
   prompt_overlay: '',
   default_execution_target: 'core_only',
   tool_policy: 'allow_all',
   allowed_tool_ids: [],
-  preferred_target_client_ids: [],
-  preferred_target_client_types: [],
+  preferred_target_endpoint_ids: [],
+  preferred_endpoint_provider_types: [],
   preferred_source_profiles: ['study_materials', 'workspace_local'],
   tool_target_routing_policy: 'balanced',
   memory_ranking_policy: 'workspace_first',
@@ -31,10 +31,10 @@ describe('WorkspaceGovernanceEditor', () => {
       />,
     )
 
-    expect(markup).toContain('来源偏好与记忆排序')
+    expect(markup).toContain('Preferred Source Profiles')
     expect(markup).toContain('Base Mode')
-    expect(markup).toContain('学习资料')
-    expect(markup).toContain('工作区/本地知识')
-    expect(markup).toContain('当前工作区优先')
+    expect(markup).toContain('工作区：Study')
+    expect(markup).toContain('Study')
+    expect(markup).toContain('Memory Ranking Policy')
   })
 })
