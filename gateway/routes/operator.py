@@ -21,6 +21,10 @@ from gateway.models import (
     MemorySnapshotResponse,
     OperatorClientResponse,
     OperatorEndpointResponse,
+    OperatorScheduledJobCreateRequest,
+    OperatorScheduledJobDeleteResponse,
+    OperatorScheduledJobResponse,
+    OperatorScheduledJobUpdateRequest,
     OperatorSourceProfileResponse,
     OperatorWorkspaceCreateRequest,
     OperatorWorkspaceUpdateRequest,
@@ -50,6 +54,43 @@ def _workspace_response(workspace) -> OperatorWorkspaceResponse:
         memory_ranking_policy=governance["memory_ranking_policy"],
         tool_routing_overrides=governance["tool_routing_overrides"],
     )
+
+
+def _scheduled_job_response(domain, job) -> OperatorScheduledJobResponse:
+    workspace_id = ""
+    if getattr(job, "workspace_id", None) is not None:
+        workspace = domain.services.workspace.get_by_id(job.workspace_id)
+        workspace_id = str(getattr(workspace, "workspace_id", "") or "")
+    return OperatorScheduledJobResponse(
+        job_id=job.job_id,
+        kind=job.kind,
+        name=job.name,
+        workspace_id=workspace_id,
+        singleton_key=str(getattr(job, "singleton_key", "") or ""),
+        enabled=bool(job.enabled),
+        deletable=bool(job.deletable),
+        editable_fields=[str(item) for item in (job.editable_fields or [])],
+        trigger_type=job.trigger_type,
+        trigger_config=dict(job.trigger_config or {}),
+        timezone=job.timezone,
+        action_ref=job.action_ref,
+        run_template=dict(job.run_template or {}),
+        execution_policy=dict(job.execution_policy or {}),
+        delivery_policy=dict(job.delivery_policy or {}),
+        concurrency_policy=dict(job.concurrency_policy or {}),
+        misfire_policy=dict(job.misfire_policy or {}),
+        metadata=dict(getattr(job, "meta", {}) or {}),
+        created_at=job.created_at.isoformat() if getattr(job, "created_at", None) is not None else "",
+        updated_at=job.updated_at.isoformat() if getattr(job, "updated_at", None) is not None else "",
+    )
+
+
+def _interval_trigger_config(trigger_config: dict | None, interval_seconds: int | None) -> dict:
+    config = dict(trigger_config or {})
+    if interval_seconds is not None:
+        config["type"] = "interval"
+        config["interval_seconds"] = int(interval_seconds)
+    return config
 
 
 def gateway_workspace_governance(workspace) -> dict:
@@ -333,6 +374,104 @@ def build_operator_router(gateway) -> APIRouter:
                 )
             )
         return rows
+
+    @router.get("/scheduled-jobs", response_model=list[OperatorScheduledJobResponse])
+    async def list_scheduled_jobs(request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        return [_scheduled_job_response(domain, job) for job in domain.services.scheduler.list_jobs()]
+
+    @router.post("/scheduled-jobs", response_model=OperatorScheduledJobResponse)
+    async def create_scheduled_job(payload: OperatorScheduledJobCreateRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        workspace_row_id = None
+        if payload.workspace_id:
+            workspace = domain.services.workspace.get_by_workspace_id(payload.workspace_id)
+            if workspace is None:
+                gateway._raise_http_error(
+                    status_code=404,
+                    code="workspace_not_found",
+                    category=RuntimeErrorCategory.VALIDATION.value,
+                    message=f"Unknown workspace: {payload.workspace_id}",
+                )
+            workspace_row_id = workspace.id
+        try:
+            job = domain.services.scheduler.create_job(
+                job_id=payload.job_id,
+                kind=payload.kind,
+                name=payload.name,
+                workspace_id=workspace_row_id,
+                singleton_key=payload.singleton_key,
+                enabled=payload.enabled,
+                trigger_type=payload.trigger_type,
+                trigger_config=_interval_trigger_config(payload.trigger_config, payload.interval_seconds),
+                timezone=payload.timezone,
+                action_ref=payload.action_ref,
+                run_template=payload.run_template,
+                execution_policy=payload.execution_policy,
+                delivery_policy=payload.delivery_policy,
+                concurrency_policy=payload.concurrency_policy,
+                misfire_policy=payload.misfire_policy,
+                metadata=payload.metadata,
+            )
+        except Exception as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code="scheduled_job_create_failed",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        return _scheduled_job_response(domain, job)
+
+    @router.patch("/scheduled-jobs/{job_id}", response_model=OperatorScheduledJobResponse)
+    async def update_scheduled_job(job_id: str, payload: OperatorScheduledJobUpdateRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        updates = payload.model_dump(exclude_unset=True)
+        trigger_config = updates.pop("trigger_config", None)
+        interval_seconds = updates.pop("interval_seconds", None)
+        if trigger_config is not None or interval_seconds is not None:
+            updates["trigger_config"] = _interval_trigger_config(trigger_config, interval_seconds)
+        try:
+            job = domain.services.scheduler.update_job(job_id=job_id, **updates)
+        except Exception as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code="scheduled_job_update_failed",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        if job is None:
+            gateway._raise_http_error(
+                status_code=404,
+                code="scheduled_job_not_found",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=f"Unknown scheduled job: {job_id}",
+            )
+        return _scheduled_job_response(domain, job)
+
+    @router.delete("/scheduled-jobs/{job_id}", response_model=OperatorScheduledJobDeleteResponse)
+    async def delete_scheduled_job(job_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            deleted = domain.services.scheduler.delete_job(job_id=job_id)
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code="scheduled_job_not_deletable",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        if not deleted:
+            gateway._raise_http_error(
+                status_code=404,
+                code="scheduled_job_not_found",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=f"Unknown scheduled job: {job_id}",
+            )
+        return OperatorScheduledJobDeleteResponse(job_id=job_id, deleted=True)
 
     @router.get("/workspaces", response_model=list[OperatorWorkspaceResponse])
     async def list_workspaces(request: Request):

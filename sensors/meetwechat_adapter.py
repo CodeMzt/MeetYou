@@ -620,8 +620,8 @@ class MeetWeChatOutputService:
             return
         if event_type == "message.completed":
             message = body.get("message", {}) if isinstance(body.get("message"), dict) else body
-            text = "".join(self._stream_buffers.pop(stream_key, [])) if stream_key else ""
-            text += str(message.get("content") or "")
+            buffered = "".join(self._stream_buffers.pop(stream_key, [])) if stream_key else ""
+            text = str(message.get("content") or "").strip() or buffered
             if pending is None:
                 return
             self._enqueue_outbound(pending, text)

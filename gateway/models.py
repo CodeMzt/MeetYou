@@ -914,3 +914,66 @@ class OperatorEndpointResponse(BaseModel):
     capability_count: int = 0
     labels: list[str] = Field(default_factory=list)
     last_seen_at: str = ""
+
+
+class OperatorScheduledJobCreateRequest(BaseModel):
+    job_id: str | None = None
+    kind: str = "scheduled_task"
+    name: str = ""
+    workspace_id: str | None = None
+    singleton_key: str | None = None
+    enabled: bool = True
+    trigger_type: str = "interval"
+    trigger_config: dict[str, Any] = Field(default_factory=dict)
+    interval_seconds: int | None = None
+    timezone: str = "UTC"
+    action_ref: str = ""
+    run_template: dict[str, Any] = Field(default_factory=dict)
+    execution_policy: dict[str, Any] = Field(default_factory=dict)
+    delivery_policy: dict[str, Any] = Field(default_factory=dict)
+    concurrency_policy: dict[str, Any] = Field(default_factory=dict)
+    misfire_policy: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OperatorScheduledJobUpdateRequest(BaseModel):
+    name: str | None = None
+    enabled: bool | None = None
+    trigger_config: dict[str, Any] | None = None
+    interval_seconds: int | None = None
+    timezone: str | None = None
+    action_ref: str | None = None
+    run_template: dict[str, Any] | None = None
+    execution_policy: dict[str, Any] | None = None
+    delivery_policy: dict[str, Any] | None = None
+    concurrency_policy: dict[str, Any] | None = None
+    misfire_policy: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class OperatorScheduledJobResponse(BaseModel):
+    job_id: str
+    kind: str
+    name: str = ""
+    workspace_id: str = ""
+    singleton_key: str = ""
+    enabled: bool = True
+    deletable: bool = True
+    editable_fields: list[str] = Field(default_factory=list)
+    trigger_type: str = "interval"
+    trigger_config: dict[str, Any] = Field(default_factory=dict)
+    timezone: str = "UTC"
+    action_ref: str = ""
+    run_template: dict[str, Any] = Field(default_factory=dict)
+    execution_policy: dict[str, Any] = Field(default_factory=dict)
+    delivery_policy: dict[str, Any] = Field(default_factory=dict)
+    concurrency_policy: dict[str, Any] = Field(default_factory=dict)
+    misfire_policy: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class OperatorScheduledJobDeleteResponse(BaseModel):
+    job_id: str
+    deleted: bool

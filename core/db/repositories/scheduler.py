@@ -96,6 +96,55 @@ class ScheduledJobRepository(RepositoryBase):
     def get_by_job_id(self, job_id: str) -> ScheduledJob | None:
         return self.session.query(ScheduledJob).filter_by(job_id=job_id).one_or_none()
 
+    def list_all(self) -> list[ScheduledJob]:
+        return list(self.session.query(ScheduledJob).order_by(ScheduledJob.job_id.asc()).all())
+
+    def update(
+        self,
+        *,
+        job_id: str,
+        name: str | None = None,
+        enabled: bool | None = None,
+        trigger_config: dict | None = None,
+        timezone: str | None = None,
+        action_ref: str | None = None,
+        run_template: dict | None = None,
+        execution_policy: dict | None = None,
+        delivery_policy: dict | None = None,
+        concurrency_policy: dict | None = None,
+        misfire_policy: dict | None = None,
+        metadata: dict | None = None,
+    ) -> ScheduledJob | None:
+        row = self.get_by_job_id(job_id)
+        if row is None:
+            return None
+        editable = set(row.editable_fields or [])
+        is_system = not bool(row.deletable)
+        if name is not None and not is_system:
+            row.name = name
+        if enabled is not None and ("enabled" in editable or not is_system):
+            row.enabled = bool(enabled)
+        if trigger_config is not None and ("trigger_config" in editable or "trigger_config.interval_seconds" in editable or not is_system):
+            row.trigger_config = dict(trigger_config or {})
+        if timezone is not None and not is_system:
+            row.timezone = timezone
+        if action_ref is not None and not is_system:
+            row.action_ref = action_ref
+        if run_template is not None and not is_system:
+            row.run_template = dict(run_template or {})
+        if execution_policy is not None and ("execution_policy" in editable or "execution_policy.limits" in editable or not is_system):
+            row.execution_policy = dict(execution_policy or {})
+        if delivery_policy is not None and ("delivery_policy" in editable or not is_system):
+            row.delivery_policy = dict(delivery_policy or {})
+        if concurrency_policy is not None and not is_system:
+            row.concurrency_policy = dict(concurrency_policy or {})
+        if misfire_policy is not None and not is_system:
+            row.misfire_policy = dict(misfire_policy or {})
+        if metadata is not None and not is_system:
+            row.meta = dict(metadata or {})
+        self.session.flush()
+        return row
+
     def set_enabled(self, *, job_id: str, enabled: bool) -> ScheduledJob | None:
         row = self.get_by_job_id(job_id)
         if row is None:

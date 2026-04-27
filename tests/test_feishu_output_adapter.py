@@ -11,7 +11,21 @@ class _FakeClientSession:
         return None
 
 
-sys.modules.setdefault("aiohttp", types.SimpleNamespace(ClientSession=_FakeClientSession))
+class _FakeClientTimeout:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+_FakeWSMsgType = types.SimpleNamespace(TEXT="TEXT", CLOSED="CLOSED", ERROR="ERROR")
+sys.modules.setdefault(
+    "aiohttp",
+    types.SimpleNamespace(
+        ClientSession=_FakeClientSession,
+        ClientTimeout=_FakeClientTimeout,
+        WSMsgType=_FakeWSMsgType,
+    ),
+)
 
 from core.io_protocol import EventTarget, EventType, StreamEventType, make_source
 from sensors.feishu_output_adapter import FeishuOutputAdapter
@@ -359,6 +373,30 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
         self.assertEqual(len(message_calls), 1)
+        content = json.loads(message_calls[0]["json"]["content"])
+        self.assertEqual(content["text"], "hello")
+
+    async def test_client_event_non_streaming_external_does_not_duplicate_completed_answer(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
+
+        await adapter.send_client_event(
+            "oc_test",
+            _run_event({"type": "message.delta", "stream_id": "stream-1", "channel": "answer", "delta": "你好"}),
+        )
+        await adapter.send_client_event(
+            "oc_test",
+            _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "你好"}}),
+        )
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+        content = json.loads(message_calls[0]["json"]["content"])
+        self.assertEqual(content["text"], "你好")
 
 
 if __name__ == "__main__":
