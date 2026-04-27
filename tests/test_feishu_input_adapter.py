@@ -181,7 +181,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_client.messages[0][1]["metadata"]["progress_notice_policy"], "prefer_before_nontrivial_final")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["tool_scope"], "basic")
         self.assertIn("emit_progress_notice", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
-        self.assertIn("send_endpoint_message", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
+        self.assertNotIn("send_endpoint_message", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
         self.assertIsNone(fake_client.messages[0][1]["preferred_mode"])
         self.assertTrue(self.event_bus.inbound_queue.empty())
 

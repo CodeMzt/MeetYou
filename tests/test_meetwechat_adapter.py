@@ -211,7 +211,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
             MEETWECHAT_BASIC_TOOL_BUNDLE,
         )
         self.assertIn("emit_progress_notice", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
-        self.assertIn("send_endpoint_message", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
+        self.assertNotIn("send_endpoint_message", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
         self.assertEqual(meetwechat_client.sent[0]["chat_id"], "chat-1")
         self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
         self.assertEqual(meetwechat_client.sent[0]["idempotency_key"], "meetyou:evt-1:1")

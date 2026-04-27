@@ -163,7 +163,10 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
             websocket,
             _frame("subscription.ack", correlation_id=correlation_id, payload={"subscription_id": subscription_id, "target_type": target_type, "target_id": target_id}),
         )
-        if target_type == "thread":
+        replay = payload.get("replay", True)
+        if isinstance(replay, str):
+            replay = replay.strip().lower() not in {"0", "false", "no", "off"}
+        if target_type == "thread" and bool(replay):
             thread = domain.services.thread.get_by_thread_id(target_id)
             if thread is not None:
                 for event in domain.services.run_event.list_for_thread_after(

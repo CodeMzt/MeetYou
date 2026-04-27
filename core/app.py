@@ -2446,7 +2446,6 @@ class App:
         client_id = str(metadata.get("client_id") or source_metadata.get("client_id") or "").strip()
         if not client_id and source_kind in {"web", "feishu", "wechat", "cli"}:
             client_id = source_id
-        client_id = str(metadata.get("client_id") or source_metadata.get("client_id") or "").strip()
         active_workspace_id = str(metadata.get("active_workspace_id") or metadata.get("workspace_id") or "").strip()
         token = bind_event_context(
             trace_id=getattr(request.event, "event_id", ""),
