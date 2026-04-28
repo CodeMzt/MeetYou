@@ -61,7 +61,7 @@ WEB_RESEARCH_POLICY_MESSAGE = (
     "[Scenario Chain Policy]\n"
     "Use research_topic for current information, recommendations, comparisons, and open-ended web research.\n"
     "Use inspect_page when the user provides a direct URL or asks to inspect a specific page, PDF, or webpage.\n"
-    "Switch to research mode only when the next step clearly needs source tracking, evidence-heavy analysis, or research-style report work.\n"
+    "Keep research-style work in general mode; use research tools and skills when the next step needs source tracking, evidence-heavy analysis, or report work.\n"
     "Use search_knowledge for prior conversations, user preferences, project history, or Notion knowledge.\n"
     "Use manage_tasks for explicit to-do management: create, list, update, and complete.\n"
     "Do not try to recreate the chain yourself with raw browser, Tavily, or memory primitives; the high-level tools already orchestrate that.\n"
@@ -1128,14 +1128,10 @@ class Brain:
     ) -> dict[str, Any]:
         current_mode = self._normalize_mode_name(mode, fallback=ASSISTANT_MODE_NORMAL)
         source_profile = "workspace_local"
-        if current_mode == "research":
-            source_profile = "tech_updates"
-        elif current_mode == "study":
-            source_profile = "study_materials"
         return {
             "requested_mode": self._normalize_mode_name(requested_mode, fallback=ASSISTANT_MODE_NORMAL),
             "current_mode": current_mode or session.metadata.get("current_mode", "") or ASSISTANT_MODE_NORMAL,
-            "route_reason": reason or "Assistant mode manager unavailable; using default normal mode.",
+            "route_reason": reason or "Assistant mode manager unavailable; using default general mode.",
             "source_profile": source_profile,
             "tool_bundle": [],
             "mcp_servers": [],
@@ -1155,18 +1151,6 @@ class Brain:
         return ""
 
     def _resolve_governed_source_profile(self, route_context: dict[str, Any]) -> tuple[str, str]:
-        effective_procedure = route_context.get("effective_procedure")
-        if isinstance(effective_procedure, dict):
-            profile = self._first_source_profile(effective_procedure.get("recommended_source_profiles"))
-            if profile:
-                return profile, f"Effective procedure source profile preference: {profile}"
-
-        pinned_procedure = route_context.get("pinned_procedure")
-        if isinstance(pinned_procedure, dict):
-            profile = self._first_source_profile(pinned_procedure.get("recommended_source_profiles"))
-            if profile:
-                return profile, f"Pinned procedure source profile preference: {profile}"
-
         workspace = route_context.get("workspace")
         if isinstance(workspace, dict):
             current_source_profile = str(route_context.get("source_profile") or "").strip()
@@ -1209,69 +1193,6 @@ class Brain:
                 "preferred_source_profiles": workspace_preferred_source_profiles,
                 "memory_ranking_policy": workspace_memory_ranking_policy,
             }
-        procedure_payload = metadata.get("pinned_procedure")
-        procedure_id = str(metadata.get("pinned_procedure_id") or "").strip()
-        if isinstance(procedure_payload, dict) and procedure_id:
-            normalized_procedure = {
-                "procedure_id": procedure_id,
-                "title": str(procedure_payload.get("title") or "").strip(),
-                "description": str(procedure_payload.get("description") or "").strip(),
-                "prompt_overlay": str(procedure_payload.get("prompt_overlay") or "").strip(),
-                "applicable_modes": [str(item).strip() for item in procedure_payload.get("applicable_modes", []) if str(item).strip()],
-                "recommended_capabilities": [
-                    str(item).strip() for item in procedure_payload.get("recommended_capabilities", []) if str(item).strip()
-                ],
-                "recommended_source_profiles": [
-                    str(item).strip() for item in procedure_payload.get("recommended_source_profiles", []) if str(item).strip()
-                ],
-                "default_execution_target": str(procedure_payload.get("default_execution_target") or "").strip(),
-                "risk_profile": str(procedure_payload.get("risk_profile") or "").strip(),
-                "status": str(procedure_payload.get("status") or "").strip(),
-            }
-            route_dict["pinned_procedure"] = normalized_procedure
-            existing_reason = str(route_dict.get("route_reason") or "").strip()
-            procedure_reason = f"Pinned procedure: {procedure_id}"
-            if procedure_reason not in existing_reason:
-                route_dict["route_reason"] = (
-                    f"{existing_reason} {procedure_reason}".strip()
-                    if existing_reason
-                    else procedure_reason
-                )
-        effective_procedure_payload = metadata.get("effective_procedure")
-        effective_procedure_source = str(metadata.get("effective_procedure_source") or "").strip()
-        if isinstance(effective_procedure_payload, dict):
-            route_dict["effective_procedure"] = {
-                "procedure_id": str(effective_procedure_payload.get("procedure_id") or "").strip(),
-                "title": str(effective_procedure_payload.get("title") or "").strip(),
-                "description": str(effective_procedure_payload.get("description") or "").strip(),
-                "prompt_overlay": str(effective_procedure_payload.get("prompt_overlay") or "").strip(),
-                "applicable_modes": [
-                    str(item).strip() for item in effective_procedure_payload.get("applicable_modes", []) if str(item).strip()
-                ],
-                "recommended_capabilities": [
-                    str(item).strip()
-                    for item in effective_procedure_payload.get("recommended_capabilities", [])
-                    if str(item).strip()
-                ],
-                "recommended_source_profiles": [
-                    str(item).strip()
-                    for item in effective_procedure_payload.get("recommended_source_profiles", [])
-                    if str(item).strip()
-                ],
-                "default_execution_target": str(effective_procedure_payload.get("default_execution_target") or "").strip(),
-                "risk_profile": str(effective_procedure_payload.get("risk_profile") or "").strip(),
-                "status": str(effective_procedure_payload.get("status") or "").strip(),
-                "source": effective_procedure_source,
-            }
-            if effective_procedure_source == "inferred":
-                existing_reason = str(route_dict.get("route_reason") or "").strip()
-                inferred_reason = f"Inferred procedure: {route_dict['effective_procedure']['procedure_id']}"
-                if inferred_reason not in existing_reason:
-                    route_dict["route_reason"] = (
-                        f"{existing_reason} {inferred_reason}".strip()
-                        if existing_reason
-                        else inferred_reason
-                    )
         allowed_tool_bundle = metadata.get("allowed_tool_bundle")
         if isinstance(allowed_tool_bundle, list):
             clean_tools = []
@@ -1290,9 +1211,9 @@ class Brain:
                 if str(item).strip()
             ] if isinstance(allowed_mcp_servers, list) else []
             tool_scope = str(metadata.get("tool_scope") or "custom").strip() or "custom"
-            route_dict["client_tool_scope"] = tool_scope
+            route_dict["endpoint_tool_scope"] = tool_scope
             existing_reason = str(route_dict.get("route_reason") or "").strip()
-            scope_reason = f"Client tool scope: {tool_scope}"
+            scope_reason = f"Endpoint tool scope: {tool_scope}"
             if scope_reason not in existing_reason:
                 route_dict["route_reason"] = (
                     f"{existing_reason} {scope_reason}".strip()
@@ -1488,8 +1409,8 @@ class Brain:
                 session,
                 ASSISTANT_MODE_NORMAL,
                 requested_mode=ASSISTANT_MODE_NORMAL,
-                reason="Preferred mode selected: normal",
-            ), "preferred_normal"
+                reason="Preferred mode selected: general",
+            ), "preferred_general"
         return self._resolve_route(input_info, session), "heuristic"
 
     def _should_expose_mode_switch_tool(self, requested_mode: str) -> bool:
@@ -1531,8 +1452,8 @@ class Brain:
         if requested_mode == ASSISTANT_MODE_NORMAL:
             lines = [
                 "[Mode Switching]",
-                "The user's preference is normal mode. Treat it as the default working style for ordinary conversation, lightweight planning, and basic web search or direct page reading.",
-                "Switch only when the next immediate step clearly needs file tools, deep research constraints, office coordination tools, or study-specific tools.",
+                "The user's preference is general mode. Treat it as the default working style for ordinary conversation, lightweight planning, and basic web search or direct page reading.",
+                "Switch only when the next immediate step clearly needs automation coordination or Danxi forum tools.",
                 "Call switch_assistant_mode as soon as the next step needs another mode. After the switch, continue the same turn with tools from the rebuilt route runtime.",
             ]
         else:
@@ -1705,16 +1626,16 @@ class Brain:
             {
                 "role": "system",
                 "content": (
-                    "[Client Response Delivery]\n"
+                    "[Endpoint Response Delivery]\n"
                     f"Origin transport: {transport}\n"
                     f"Response delivery: {response_transport}\n"
-                    "This client does not stream partial assistant text. If this turn will require tool calls, "
+                    "This endpoint does not stream partial assistant text. If this turn will require tool calls, "
                     "slow I/O, nontrivial reasoning, or a final answer longer than two short sentences, call "
                     "emit_progress_notice first with a brief natural status update. Do not call it for an immediate "
                     "one-sentence answer. Do not use send_endpoint_message for progress updates or for replying "
-                    "to this same originating client; use emit_progress_notice for progress and the final assistant "
+                    "to this same originating endpoint; use emit_progress_notice for progress and the final assistant "
                     "answer for the actual reply. Use send_endpoint_message only when the user explicitly asks "
-                    "to notify a different target Client."
+                    "to notify a different target Endpoint."
                 ),
             }
         ]
@@ -2256,7 +2177,7 @@ class Brain:
 
                 for tool_call in tool_calls:
                     tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-                    if tool_call.name in {"manage_tasks", "manage_scheduled_tasks"}:
+                    if tool_call.name == "manage_tasks":
                         action = str(tool_args.get("action") or "").strip().lower()
                         task_key = str(tool_args.get("task_key") or "").strip()
                         manage_task_actions.append(

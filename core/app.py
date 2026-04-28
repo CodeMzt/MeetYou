@@ -54,6 +54,7 @@ from core.model_capabilities.resolver import get_model_capability_resolver
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.session_actor import SessionActorRuntime
 from core.session_manager import SessionManager
+from core.services.heartbeat_workflow import HeartbeatWorkflow
 from core.speaker import Speaker
 from core.status import RuntimeStatus, StatusManager, utcnow_iso
 from core.tools_manager import ToolsManager
@@ -94,6 +95,23 @@ class SessionExecutionRequest:
     target: EventTarget
     is_boot: bool
     is_proactive_idle_poke: bool = False
+
+
+def _initial_progress_notice_content(metadata: dict[str, Any]) -> str:
+    values = dict(metadata or {})
+    if bool(values.get("transient")):
+        return ""
+    if bool(values.get("supports_streaming_reply", True)) and not bool(values.get("progress_notice_autostart")):
+        return ""
+    policy = str(values.get("progress_notice_policy") or "").strip()
+    if policy != "required_before_nontrivial_final" and not bool(values.get("progress_notice_autostart")):
+        return ""
+    text = str(
+        values.get("progress_notice_content")
+        or values.get("initial_progress_notice")
+        or "我正在处理，请稍候。"
+    ).strip()
+    return text
 
 
 def _normalize_task_summary(task_record: dict[str, Any]) -> str:
@@ -788,9 +806,9 @@ class App:
         tools = self.tools_manager.get_scheduled_job_tools()
         task_record = task_record or {}
         return tools, {
-            "current_mode": "scheduled_task",
-            "route_reason": "Scheduler claimed an assistant-owned background task.",
-            "source_profile": "scheduled_tasks",
+            "current_mode": "general",
+            "route_reason": "Scheduler claimed an assistant-owned V4 scheduled job.",
+            "source_profile": "scheduled_jobs",
             "task_routing": {
                 "preferred_tool_key": str(task_record.get("preferred_tool_key") or "").strip(),
                 "preferred_target_endpoint_ids": list(task_record.get("preferred_target_endpoint_ids") or task_record.get("preferred_endpoint_ids") or []),
@@ -1301,8 +1319,7 @@ class App:
             "You are executing an assistant-owned scheduled background job, not a user TODO.\n"
             "Use only the allowed tools.\n"
             "Do the smallest reliable amount of work needed to complete the scheduled task.\n"
-            "When the business task is truly complete, call manage_scheduled_tasks with action=complete and the exact task_key.\n"
-            "If the work ran but the business task is not fully complete yet, do not mark it complete.\n"
+            "Legacy TaskManager completion confirmation is disabled in V4; return the execution summary and let Scheduler own job state.\n"
             "Never use destructive or external-send behavior.\n"
             "Return a concise execution summary in plain text."
         )
@@ -1418,20 +1435,10 @@ class App:
         if control_kind == "reply_control":
             await self._handle_reply_control_event(event)
             return True
-        if control_kind == "scheduled_task" and task_key:
-            await self._handle_scheduled_task(
+        if control_kind in {"scheduled_task", "scheduled_reminder"} and task_key:
+            logger.info(
+                "Ignoring legacy TaskManager scheduler control event for %s; V4 Scheduler jobs run through scheduled_jobs and RunEventLog.",
                 task_key,
-                claim_token=claim_token,
-                trace_id=getattr(event, "event_id", ""),
-                operation_id=operation_id,
-            )
-            return True
-        if control_kind == "scheduled_reminder" and task_key:
-            await self._handle_scheduled_reminder(
-                task_key,
-                claim_token=claim_token,
-                trace_id=getattr(event, "event_id", ""),
-                operation_id=operation_id,
             )
             return True
         return False
@@ -1952,13 +1959,538 @@ class App:
             "updated_at": utcnow_iso(),
         }
 
+    @staticmethod
+    def _scheduler_job_public_event_payload(
+        *,
+        event,
+        run,
+        thread_row=None,
+        session_row=None,
+        stream_id: str = "",
+        turn_id: str = "",
+    ) -> dict[str, Any]:
+        created_at = getattr(event, "created_at", None)
+        return {
+            "event_id": str(getattr(event, "event_id", "") or ""),
+            "run_id": str(getattr(run, "run_id", "") or ""),
+            "thread_id": str(getattr(thread_row, "thread_id", "") or "") if thread_row is not None else "",
+            "session_id": str(getattr(session_row, "session_id", "") or "") if session_row is not None else "",
+            "seq": int(getattr(event, "seq", 0) or 0),
+            "type": str(getattr(event, "type", "") or ""),
+            "payload": dict(getattr(event, "payload", {}) or {}),
+            "durable": bool(getattr(event, "durable", True)),
+            "stream_id": str(stream_id or ""),
+            "turn_id": str(turn_id or ""),
+            "created_at": created_at.isoformat() if created_at is not None and hasattr(created_at, "isoformat") else "",
+        }
+
+    async def _publish_scheduler_run_event(
+        self,
+        *,
+        event,
+        run,
+        thread_row=None,
+        session_row=None,
+        stream_id: str = "",
+        turn_id: str = "",
+    ) -> None:
+        gateway = getattr(self, "gateway", None)
+        if gateway is None or thread_row is None:
+            return
+        publisher = getattr(gateway, "publish_endpoint_run_event", None)
+        if not callable(publisher):
+            return
+        await publisher(
+            thread_id=str(getattr(thread_row, "thread_id", "") or ""),
+            run_id=str(getattr(run, "run_id", "") or ""),
+            event=self._scheduler_job_public_event_payload(
+                event=event,
+                run=run,
+                thread_row=thread_row,
+                session_row=session_row,
+                stream_id=stream_id,
+                turn_id=turn_id,
+            ),
+        )
+
+    @staticmethod
+    def _scheduler_tool_names(tools: list[dict]) -> list[str]:
+        names: list[str] = []
+        for tool in tools:
+            name = str(tool.get("function", {}).get("name", "")).strip()
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _filter_scheduler_tools(tools: list[dict], requested_names: Any) -> list[dict]:
+        if not isinstance(requested_names, list):
+            return tools
+        allowlist = [str(item or "").strip() for item in requested_names if str(item or "").strip()]
+        if not allowlist:
+            return tools
+        by_name = {
+            str(tool.get("function", {}).get("name", "")).strip(): tool
+            for tool in tools
+            if str(tool.get("function", {}).get("name", "")).strip()
+        }
+        return [by_name[name] for name in allowlist if name in by_name]
+
+    def _scheduler_workspace_row(self, job, *, workspace_id: str = "", run_template: dict[str, Any] | None = None):
+        if self.core_domain is None:
+            return None
+        services = self.core_domain.services
+        if getattr(job, "workspace_id", None) is not None:
+            workspace = services.workspace.get_by_id(job.workspace_id)
+            if workspace is not None:
+                return workspace
+        template = dict(run_template or {})
+        workspace_key = str(template.get("workspace_id") or workspace_id or "personal").strip() or "personal"
+        return services.workspace.get_by_workspace_id(workspace_key)
+
+    def _ensure_scheduler_thread_session(
+        self,
+        job,
+        *,
+        workspace_row,
+        run_template: dict[str, Any],
+        delivery_policy: dict[str, Any],
+    ):
+        if self.core_domain is None or workspace_row is None:
+            return None, None
+        services = self.core_domain.services
+        thread_row = None
+        session_row = None
+        session_id = str(run_template.get("session_id") or delivery_policy.get("session_id") or "").strip()
+        if session_id:
+            session_row = services.session.get_by_session_id(session_id)
+            if session_row is not None:
+                thread_row = services.thread.get_by_id(session_row.thread_id)
+        thread_id = str(
+            run_template.get("thread_id")
+            or delivery_policy.get("thread_id")
+            or (getattr(job, "meta", {}) or {}).get("thread_id")
+            or ""
+        ).strip()
+        if thread_row is None and thread_id:
+            thread_row = services.thread.get_by_thread_id(thread_id)
+
+        create_thread = bool(run_template.get("create_thread", delivery_policy.get("create_thread", True)))
+        if thread_row is None and create_thread:
+            title = str(run_template.get("thread_title") or getattr(job, "name", "") or getattr(job, "job_id", "") or "Scheduled job").strip()
+            thread_row = services.thread.create_thread(
+                principal_id=self.core_domain.principal.id,
+                workspace_id=workspace_row.id,
+                title=f"Scheduled job: {title}",
+            )
+            if bool(getattr(job, "deletable", True)):
+                metadata = dict(getattr(job, "meta", {}) or {})
+                metadata["thread_id"] = thread_row.thread_id
+                services.scheduler.update_job(job_id=str(getattr(job, "job_id", "") or ""), metadata=metadata)
+
+        if session_row is None and thread_row is not None:
+            scheduler_endpoint = services.endpoint.get_by_endpoint_id("core.scheduler")
+            session_row = services.session.create_session(
+                thread_id=thread_row.id,
+                origin_endpoint_id=getattr(scheduler_endpoint, "id", None),
+                workspace_id=workspace_row.id,
+                status="active",
+            )
+        return thread_row, session_row
+
+    def _scheduler_job_messages(self, job, *, run_template: dict[str, Any], manual: bool) -> list[dict[str, Any]]:
+        raw_messages = run_template.get("messages")
+        if isinstance(raw_messages, list) and raw_messages:
+            return [dict(item) for item in raw_messages if isinstance(item, dict)]
+        prompt = str(
+            run_template.get("prompt")
+            or run_template.get("content")
+            or run_template.get("instruction")
+            or getattr(job, "name", "")
+            or getattr(job, "job_id", "")
+            or "Run the scheduled job."
+        ).strip()
+        system_prompt = str(run_template.get("system_prompt") or "").strip() or (
+            "[V4 Scheduler Job]\n"
+            "You are executing a Core-owned Scheduler job. Scheduler owns the timing; Endpoint providers only execute routed capabilities.\n"
+            "Use assistant.progress_notice for progress when work is nontrivial. The final result must be returned as normal assistant text so Core can persist it as a Message.\n"
+            "Do not use send_endpoint_message to answer the originating scheduled job thread."
+        )
+        user_payload = {
+            "job_id": str(getattr(job, "job_id", "") or ""),
+            "name": str(getattr(job, "name", "") or ""),
+            "kind": str(getattr(job, "kind", "") or ""),
+            "action_ref": str(getattr(job, "action_ref", "") or "core.workflow.assistant_turn"),
+            "manual_trigger": bool(manual),
+            "scheduled_at": utcnow_iso(),
+            "prompt": prompt,
+            "parameters": dict(run_template.get("parameters") or {}),
+            "metadata": dict(getattr(job, "meta", {}) or {}),
+        }
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+        ]
+
+    async def _deliver_scheduler_message_targets(
+        self,
+        *,
+        job,
+        run,
+        message,
+        delivery_policy: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if self.core_domain is None:
+            return []
+        services = self.core_domain.services
+        targets = delivery_policy.get("targets") if isinstance(delivery_policy.get("targets"), list) else []
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            if not isinstance(target, dict):
+                continue
+            endpoint_id = str(target.get("endpoint_id") or "").strip()
+            if not endpoint_id:
+                continue
+            endpoint = services.endpoint.get_by_endpoint_id(endpoint_id)
+            if endpoint is None:
+                results.append({"endpoint_id": endpoint_id, "status": "missing"})
+                continue
+            result = await services.delivery.deliver(
+                target_endpoint=endpoint,
+                message_type=str(target.get("message_type") or "message").strip() or "message",
+                payload={
+                    "job_id": str(getattr(job, "job_id", "") or ""),
+                    "run_id": str(getattr(run, "run_id", "") or ""),
+                    "message_id": str(getattr(message, "message_id", "") or "") if message is not None else "",
+                    "content": str(getattr(message, "content", "") or "") if message is not None else "",
+                },
+                offline_policy=str(target.get("offline_policy") or "store_and_retry"),
+            )
+            results.append({"endpoint_id": endpoint_id, **dict(result or {})})
+        return results
+
+    @staticmethod
+    def _scheduler_interval_seconds(job) -> int:
+        trigger_config = getattr(job, "trigger_config", {}) or {}
+        if not isinstance(trigger_config, dict):
+            return 0
+        try:
+            interval = int(trigger_config.get("interval_seconds") or 0)
+        except (TypeError, ValueError):
+            return 0
+        return interval if interval > 0 else 0
+
+    async def _run_assistant_scheduled_job(self, job, *, workspace_id: str = "", manual: bool = False) -> dict[str, Any]:
+        if self.core_domain is None:
+            return {"triggered": False, "reason": "core_domain_unavailable", "job_id": str(getattr(job, "job_id", "") or "")}
+        services = self.core_domain.services
+        run_template = dict(getattr(job, "run_template", {}) or {})
+        delivery_policy = dict(getattr(job, "delivery_policy", {}) or {})
+        workspace_row = self._scheduler_workspace_row(job, workspace_id=workspace_id, run_template=run_template)
+        if workspace_row is None:
+            raise ValueError("workspace_id is required for triggering this scheduled job.")
+        scheduler_actor = services.actor.get_by_actor_id("system.scheduler")
+        if scheduler_actor is None:
+            scheduler_actor = services.actor.ensure_actor(
+                actor_id="system.scheduler",
+                actor_type="system_scheduler",
+                display_name="System Scheduler",
+                permission_profile_id="profile.system_scheduler",
+            )
+        scheduler_endpoint = services.endpoint.get_by_endpoint_id("core.scheduler")
+        thread_row, session_row = self._ensure_scheduler_thread_session(
+            job,
+            workspace_row=workspace_row,
+            run_template=run_template,
+            delivery_policy=delivery_policy,
+        )
+        run = services.run.create_run(
+            workspace_id=workspace_row.id,
+            thread_id=getattr(thread_row, "id", None),
+            trigger_type="scheduled_job",
+            origin_actor_id=scheduler_actor.id,
+            origin_endpoint_id=getattr(scheduler_endpoint, "id", None),
+            status="running",
+            input={
+                "job_id": str(getattr(job, "job_id", "") or ""),
+                "manual": bool(manual),
+                "action_ref": str(getattr(job, "action_ref", "") or "core.workflow.assistant_turn"),
+                "run_template": run_template,
+            },
+            execution_policy=dict(getattr(job, "execution_policy", {}) or {}),
+            delivery_policy=delivery_policy,
+            metadata={"scheduled_job_id": str(getattr(job, "job_id", "") or ""), "manual": bool(manual)},
+        )
+        job_run = services.scheduled_job_run.create_job_run(
+            job_id=getattr(job, "id", None),
+            run_id=run.id,
+            status="running",
+            metadata={"manual": bool(manual), "job_id": str(getattr(job, "job_id", "") or "")},
+        )
+        stream_id = str(run_template.get("stream_id") or f"scheduler:{getattr(job, 'job_id', '')}").strip()
+        turn_id = str(run_template.get("turn_id") or uuid4().hex).strip()
+        started_event = services.run_event.append_event(
+            run_id=run.id,
+            thread_id=getattr(thread_row, "id", None),
+            type="run.started",
+            durable=True,
+            payload={"trigger_type": "scheduled_job", "job_id": str(getattr(job, "job_id", "") or ""), "manual": bool(manual)},
+        )
+        await self._publish_scheduler_run_event(
+            event=started_event,
+            run=run,
+            thread_row=thread_row,
+            session_row=session_row,
+            stream_id=stream_id,
+            turn_id=turn_id,
+        )
+
+        tools = self._filter_scheduler_tools(self.tools_manager.get_scheduled_job_tools(), run_template.get("tool_bundle"))
+        tool_names = self._scheduler_tool_names(tools)
+        route_context = {
+            "current_mode": str(run_template.get("mode") or "general"),
+            "route_reason": "Scheduler triggered a Core-owned V4 scheduled job.",
+            "source_profile": str(run_template.get("source_profile") or "scheduled_jobs"),
+            "tool_bundle": tool_names,
+            "mcp_servers": list(run_template.get("mcp_servers") or []),
+            "task_routing": {
+                "preferred_tool_key": str(run_template.get("preferred_tool_key") or "").strip(),
+                "preferred_target_endpoint_ids": list(run_template.get("preferred_target_endpoint_ids") or []),
+                "preferred_endpoint_provider_types": list(run_template.get("preferred_endpoint_provider_types") or []),
+                "tool_target_routing_policy": str(run_template.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
+            },
+        }
+        session_id = str(getattr(session_row, "session_id", "") or f"system:scheduler:{getattr(job, 'job_id', '')}")
+        token = bind_event_context(
+            trace_id=str(getattr(run, "run_id", "") or ""),
+            session_id=session_id,
+            source=make_source(SourceKind.SYSTEM.value, "scheduler"),
+            target=EventTarget(kind=TargetKind.INTERNAL.value),
+            job_id=str(getattr(job, "job_id", "") or ""),
+            **self._runtime_principal_context(),
+        )
+        try:
+            try:
+                result = await self.brain.run_background_turn(
+                    api_url=self.config.get("api_url") or "",
+                    api_key=self.config.get("api_key") or "",
+                    model=self.config.get("model") or "",
+                    messages=self._scheduler_job_messages(job, run_template=run_template, manual=manual),
+                    tools=tools,
+                    session_id=session_id,
+                    source=make_source(SourceKind.SYSTEM.value, "scheduler"),
+                    route_context=route_context,
+                    adapter_options=Brain._build_adapter_options(self._build_model_options({})),
+                    max_rounds=int(run_template.get("max_rounds") or 6),
+                )
+            except Exception as exc:
+                logger.exception("Scheduled job %s failed during background turn", getattr(job, "job_id", ""))
+                result = {
+                    "status": "error",
+                    "content": f"Error: {exc}",
+                    "tool_names": [],
+                    "result": {"error": self._runtime_error_payload_from_exception(exc)},
+                }
+        finally:
+            reset_event_context(token)
+
+        content = str(result.get("content") or "").strip()
+        succeeded = str(result.get("status") or "").strip() == "ok" and not content.lower().startswith("error:")
+        message = None
+        if content and thread_row is not None:
+            message = services.message.create_message(
+                thread_id=thread_row.id,
+                session_id=getattr(session_row, "id", None),
+                run_id=run.id,
+                role="assistant",
+                content=content,
+                status="completed" if succeeded else "failed",
+                created_by_actor_id=scheduler_actor.id,
+                origin_endpoint_id=getattr(scheduler_endpoint, "id", None),
+                active_workspace_id=workspace_row.id,
+                meta={
+                    "job_id": str(getattr(job, "job_id", "") or ""),
+                    "job_run_id": str(getattr(job_run, "job_run_id", "") or ""),
+                    "turn_id": turn_id,
+                    "stream_id": stream_id,
+                },
+            )
+            message_event = services.run_event.append_event(
+                run_id=run.id,
+                thread_id=thread_row.id,
+                type="message.completed",
+                durable=True,
+                payload={
+                    "thread_id": str(getattr(thread_row, "thread_id", "") or ""),
+                    "session_id": str(getattr(session_row, "session_id", "") or ""),
+                    "message": {
+                        "message_id": message.message_id,
+                        "thread_id": thread_row.thread_id,
+                        "session_id": str(getattr(session_row, "session_id", "") or ""),
+                        "role": message.role,
+                        "content": message.content,
+                        "status": message.status,
+                        "channel": message.channel,
+                        "created_at": message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
+                    },
+                    "stream_id": stream_id,
+                    "turn_id": turn_id,
+                },
+            )
+            await self._publish_scheduler_run_event(
+                event=message_event,
+                run=run,
+                thread_row=thread_row,
+                session_row=session_row,
+                stream_id=stream_id,
+                turn_id=turn_id,
+            )
+
+        target_deliveries = await self._deliver_scheduler_message_targets(
+            job=job,
+            run=run,
+            message=message,
+            delivery_policy=delivery_policy,
+        )
+        final_status = "succeeded" if succeeded else "failed"
+        completed_event = services.run_event.append_event(
+            run_id=run.id,
+            thread_id=getattr(thread_row, "id", None),
+            type="run.completed",
+            durable=True,
+            payload={
+                "status": final_status,
+                "job_id": str(getattr(job, "job_id", "") or ""),
+                "job_run_id": str(getattr(job_run, "job_run_id", "") or ""),
+                "message_id": str(getattr(message, "message_id", "") or "") if message is not None else "",
+                "tool_names": list(result.get("tool_names") or []),
+                "deliveries": target_deliveries,
+            },
+        )
+        services.run.update_status(
+            run_row_id=run.id,
+            status=final_status,
+            output={
+                "status": final_status,
+                "message_id": str(getattr(message, "message_id", "") or "") if message is not None else "",
+                "content": content,
+                "result": dict(result.get("result") or {}),
+            },
+        )
+        services.scheduled_job_run.update_status(
+            job_run_id=getattr(job_run, "id", None),
+            status=final_status,
+            error={} if succeeded else {"message": content or "scheduled job failed", "result": dict(result or {})},
+            metadata={"message_id": str(getattr(message, "message_id", "") or "") if message is not None else ""},
+        )
+        await self._publish_scheduler_run_event(
+            event=completed_event,
+            run=run,
+            thread_row=thread_row,
+            session_row=session_row,
+            stream_id=stream_id,
+            turn_id=turn_id,
+        )
+        return {
+            "triggered": True,
+            "job_id": str(getattr(job, "job_id", "") or ""),
+            "job_run_id": str(getattr(job_run, "job_run_id", "") or ""),
+            "run_id": str(getattr(run, "run_id", "") or ""),
+            "thread_id": str(getattr(thread_row, "thread_id", "") or "") if thread_row is not None else "",
+            "session_id": str(getattr(session_row, "session_id", "") or "") if session_row is not None else "",
+            "message_id": str(getattr(message, "message_id", "") or "") if message is not None else "",
+            "status": final_status,
+            "actor_id": "system.scheduler",
+        }
+
+    async def _run_scheduler_job_once(self, job) -> None:
+        job_id = str(getattr(job, "job_id", "") or "").strip()
+        action_ref = str(getattr(job, "action_ref", "") or "").strip()
+        if job_id == "system.heartbeat" or action_ref == "core.workflow.heartbeat":
+            try:
+                if self.core_domain is not None:
+                    HeartbeatWorkflow(self.core_domain.services).run_once(workspace_id="personal")
+            except Exception as exc:
+                logger.warning("Failed to record system heartbeat scheduler run: %s", exc)
+            await self.heart.heartbeat_processor(once=True)
+            return
+        await self._run_assistant_scheduled_job(job, manual=False)
+
+    async def trigger_scheduled_job(self, *, job_id: str, workspace_id: str = "", manual: bool = True) -> dict[str, Any]:
+        if self.core_domain is None:
+            return {"triggered": False, "reason": "core_domain_unavailable", "job_id": str(job_id or "").strip()}
+        job = self.core_domain.services.scheduler.get_job(str(job_id or "").strip())
+        if job is None:
+            return {"triggered": False, "reason": "not_found", "job_id": str(job_id or "").strip()}
+        action_ref = str(getattr(job, "action_ref", "") or "").strip()
+        if str(getattr(job, "job_id", "") or "") == "system.heartbeat" or action_ref == "core.workflow.heartbeat":
+            result = HeartbeatWorkflow(self.core_domain.services).run_once(workspace_id=workspace_id or "personal")
+            await self.heart.heartbeat_processor(once=True)
+            return result
+        return await self._run_assistant_scheduled_job(job, workspace_id=workspace_id, manual=manual)
+
+    async def scheduler_processor(self):
+        shutdown = self.event_bus.shutdown_event
+        last_run_at: dict[str, datetime] = {}
+        while True:
+            if shutdown.is_set():
+                break
+            wait_seconds = 30
+            try:
+                if self.core_domain is None:
+                    wait_seconds = 1
+                else:
+                    now = datetime.now(timezone.utc)
+                    jobs = list(self.core_domain.services.scheduler.list_jobs())
+                    for job in jobs:
+                        job_id = str(getattr(job, "job_id", "") or "").strip()
+                        interval_seconds = self._scheduler_interval_seconds(job)
+                        if interval_seconds > 0:
+                            wait_seconds = max(1, min(wait_seconds, interval_seconds))
+                        if not job_id or not bool(getattr(job, "enabled", True)) or interval_seconds <= 0:
+                            continue
+                        previous = last_run_at.get(job_id)
+                        if previous is None:
+                            last_run_at[job_id] = now
+                            continue
+                        if (now - previous).total_seconds() < interval_seconds:
+                            continue
+                        last_run_at[job_id] = now
+                        await self._run_scheduler_job_once(job)
+            except Exception as exc:
+                logger.error("Scheduler tick failed: %s", exc)
+
+            try:
+                await asyncio.wait_for(shutdown.wait(), timeout=max(int(wait_seconds), 1))
+                break
+            except asyncio.TimeoutError:
+                pass
+
     async def get_heartbeat_settings(self) -> dict[str, Any]:
         status = {}
         try:
             status = await self.heart.get_background_status()
         except Exception as exc:
             status = {"status_error": str(exc)}
+        system_job = None
+        try:
+            if self.core_domain is not None:
+                job = self.core_domain.services.scheduler.get_job("system.heartbeat")
+                if job is not None:
+                    system_job = {
+                        "job_id": str(getattr(job, "job_id", "") or ""),
+                        "kind": str(getattr(job, "kind", "") or ""),
+                        "enabled": bool(getattr(job, "enabled", True)),
+                        "deletable": bool(getattr(job, "deletable", True)),
+                        "trigger_type": str(getattr(job, "trigger_type", "") or "interval"),
+                        "trigger_config": dict(getattr(job, "trigger_config", {}) or {}),
+                        "editable_fields": list(getattr(job, "editable_fields", []) or []),
+                        "action_ref": str(getattr(job, "action_ref", "") or ""),
+                    }
+        except Exception as exc:
+            system_job = {"error": str(exc)}
         return {
+            "system_heartbeat": system_job or {},
             "settings": self.heart.get_idle_poke_settings_snapshot(),
             "status": {
                 "idle_poke_eligible": bool(status.get("idle_poke_eligible")),
@@ -1974,21 +2506,25 @@ class App:
         }
 
     async def update_heartbeat_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
-        allowed = {
+        idle_allowed = {
             "heartbeat_idle_poke_enabled",
             "heartbeat_idle_poke_after_seconds",
             "heartbeat_idle_poke_cooldown_seconds",
             "heartbeat_idle_context_compaction_enabled",
         }
+        scheduler_allowed = {
+            "system_heartbeat_enabled",
+            "system_heartbeat_interval_seconds",
+        }
         normalized = {
             key: value
             for key, value in dict(updates or {}).items()
-            if str(key or "").strip() in allowed
+            if str(key or "").strip() in idle_allowed
         }
         rejected = sorted(
             str(key or "").strip()
             for key in dict(updates or {})
-            if str(key or "").strip() and str(key or "").strip() not in allowed
+            if str(key or "").strip() and str(key or "").strip() not in idle_allowed | scheduler_allowed
         )
         result = await self.apply_config_updates(normalized) if normalized else {
             "applied_keys": [],
@@ -1996,8 +2532,24 @@ class App:
             "restart_required_keys": [],
             "warnings": [],
         }
+        scheduler_updates: list[str] = []
+        if self.core_domain is not None:
+            scheduler = self.core_domain.services.scheduler
+            if "system_heartbeat_enabled" in dict(updates or {}):
+                scheduler.set_enabled(
+                    job_id="system.heartbeat",
+                    enabled=bool(dict(updates or {}).get("system_heartbeat_enabled")),
+                )
+                scheduler_updates.append("system_heartbeat_enabled")
+            if "system_heartbeat_interval_seconds" in dict(updates or {}):
+                interval = int(dict(updates or {}).get("system_heartbeat_interval_seconds") or 0)
+                if interval <= 0:
+                    raise ValueError("system_heartbeat_interval_seconds must be positive")
+                scheduler.update_interval(job_id="system.heartbeat", interval_seconds=interval)
+                scheduler_updates.append("system_heartbeat_interval_seconds")
         return {
             **result,
+            "scheduler_applied_keys": scheduler_updates,
             "rejected_keys": rejected,
             "snapshot": await self.get_heartbeat_settings(),
         }
@@ -2326,53 +2878,6 @@ class App:
             is_proactive_idle_poke=is_proactive_idle_poke,
         )
 
-    def _enrich_request_procedure_context(self, request: SessionExecutionRequest) -> None:
-        core_services = getattr(self, "core_services", None)
-        core_domain = getattr(self, "core_domain", None)
-        if core_services is None or core_domain is None:
-            return
-        metadata = dict(request.input_info.get("metadata") or {})
-        session_row = core_services.session.get_by_session_id(request.session_id)
-        if session_row is None:
-            return
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        workspace_row = core_services.workspace.get_by_id(session_row.workspace_id)
-        if thread_row is None or workspace_row is None:
-            return
-        if request.event.type == EventType.MESSAGE.value and request.event.role == "user":
-            inference = core_services.procedure.infer_for_turn(
-                principal_id=core_domain.principal.id,
-                content=str(request.input_info.get("content") or ""),
-                preferred_mode=str(metadata.get("preferred_mode") or workspace_row.base_mode or ""),
-                workspace_id=str(getattr(workspace_row, "workspace_id", "") or ""),
-            )
-            core_services.thread.set_latest_inferred_procedure(
-                thread_id=thread_row.id,
-                procedure_id=str(inference.get("procedure_id") or ""),
-                score=int(inference.get("score", 0) or 0),
-                reason=str(inference.get("reason") or ""),
-                inferred_at=str(inference.get("inferred_at") or ""),
-            )
-            refreshed_thread = core_services.thread.get_by_id(thread_row.id)
-            if refreshed_thread is not None:
-                thread_row = refreshed_thread
-        context = core_services.procedure.get_thread_context(thread_row)
-        pinned = context.get("pinned_procedure")
-        effective = context.get("effective_procedure")
-        if isinstance(pinned, dict):
-            metadata["pinned_procedure_id"] = str(pinned.get("procedure_id") or "")
-            metadata["pinned_procedure"] = dict(pinned)
-        else:
-            metadata.pop("pinned_procedure_id", None)
-            metadata.pop("pinned_procedure", None)
-        if isinstance(effective, dict):
-            metadata["effective_procedure"] = dict(effective)
-            metadata["effective_procedure_source"] = str(context.get("source") or "none")
-        else:
-            metadata.pop("effective_procedure", None)
-            metadata["effective_procedure_source"] = "none"
-        request.input_info["metadata"] = metadata
-
     async def _process_proactive_idle_poke(self, request: SessionExecutionRequest) -> None:
         metadata = dict(request.input_info.get("metadata") or {})
         api_key = self.config.get("api_key") or ""
@@ -2459,7 +2964,6 @@ class App:
             active_workspace_id=active_workspace_id,
             workspace_id=active_workspace_id,
             thread_id=str(metadata.get("thread_id") or ""),
-            pinned_procedure_id=str(metadata.get("pinned_procedure_id") or ""),
             **self._runtime_principal_context(),
         )
         reasoning_started = False
@@ -2475,8 +2979,6 @@ class App:
             api_url = self.config.get("api_url") or ""
             model = self.config.get("model") or ""
             model_options = self._build_model_options(getattr(request.event, "metadata", {}))
-
-            self._enrich_request_procedure_context(request)
 
             if request.event.type == EventType.MESSAGE.value and request.event.role == "user":
                 await self._emit_pending_task_updates(request.session_id, request.target, request.event.source)
@@ -2544,6 +3046,15 @@ class App:
                 finish_reason="",
             )
             await self._emit_runtime_status_event(request.session_id, request.target, turn_id)
+
+            initial_progress_notice = _initial_progress_notice_content(metadata)
+            if initial_progress_notice:
+                await self._get_client_thread_bridge().publish_progress_notice(
+                    request.session_id,
+                    content=initial_progress_notice,
+                    turn_id=turn_id,
+                    stream_id=stream_id,
+                )
 
             async for output in self.brain.input_brain(
                 request.session_id,

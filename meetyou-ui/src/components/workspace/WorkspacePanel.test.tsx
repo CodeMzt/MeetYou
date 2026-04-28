@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { ClientThreadProcedureContext, ClientWorkspace, OperationView } from '../../types'
+import type { ClientWorkspace, OperationView } from '../../types'
 import WorkspacePanel from './WorkspacePanel'
 
 const workspace: ClientWorkspace = {
@@ -21,54 +21,11 @@ const workspace: ClientWorkspace = {
   tool_routing_overrides: {},
 }
 
-const procedureContext: ClientThreadProcedureContext = {
-  source: 'inferred',
-  pinned_procedure: null,
-  latest_inferred_procedure: {
-    procedure_id: 'code_review',
-    title: 'Code Review',
-    description: 'Review code changes before merging.',
-    applicable_modes: ['general'],
-    recommended_tools: ['search_memory', 'summarize_text'],
-    preferred_tool_key: 'search_memory',
-    preferred_target_endpoint_ids: [],
-    preferred_endpoint_provider_types: [],
-    tool_target_routing_policy: 'balanced',
-    default_execution_target: 'core_only',
-    risk_profile: 'read',
-    status: 'active',
-    prompt_overlay: 'Focus on correctness first.',
-    recommended_source_profiles: ['workspace_local'],
-    infer_keywords: ['review', 'patch'],
-  },
-  effective_procedure: {
-    procedure_id: 'code_review',
-    title: 'Code Review',
-    description: 'Review code changes before merging.',
-    applicable_modes: ['general'],
-    recommended_tools: ['search_memory', 'summarize_text'],
-    preferred_tool_key: 'search_memory',
-    preferred_target_endpoint_ids: [],
-    preferred_endpoint_provider_types: [],
-    tool_target_routing_policy: 'balanced',
-    default_execution_target: 'core_only',
-    risk_profile: 'read',
-    status: 'active',
-    prompt_overlay: 'Focus on correctness first.',
-    recommended_source_profiles: ['workspace_local'],
-    infer_keywords: ['review', 'patch'],
-  },
-  latest_inferred_reason: 'keywords:review,patch',
-  latest_inferred_score: 7,
-  latest_inferred_at: '2026-04-12T00:00:00Z',
-}
-
 describe('WorkspacePanel', () => {
-  it('renders current procedure context as read-only workspace metadata', () => {
+  it('renders workspace metadata without legacy workflow context', () => {
     const markup = renderToStaticMarkup(
       <WorkspacePanel
         workspace={workspace}
-        procedureContext={procedureContext}
         connectionState="connected"
         desktopToolsAvailable={false}
         operations={[] as OperationView[]}
@@ -77,20 +34,17 @@ describe('WorkspacePanel', () => {
       />,
     )
 
-    expect(markup).toContain('Current Workspace')
-    expect(markup).toContain('Code Review')
-    expect(markup).toContain('Current Procedure')
-    expect(markup).toContain('Running Operations')
-    expect(markup).toContain('search_memory')
-    expect(markup).toContain('Workspace')
-    expect(markup).toContain('Current Procedure')
+    expect(markup).toContain('当前工作区')
+    expect(markup).toContain('本地工具')
+    expect(markup).toContain('运行中操作')
+    expect(markup).toContain('工作区/本地知识')
+    expect(markup).not.toContain('固定流程')
   })
 
   it('renders approval actions for pending approval-required operations', () => {
     const markup = renderToStaticMarkup(
       <WorkspacePanel
         workspace={workspace}
-        procedureContext={procedureContext}
         connectionState="connected"
         desktopToolsAvailable={false}
         operations={[
@@ -104,7 +58,7 @@ describe('WorkspacePanel', () => {
             execution_target: 'core_only',
             target_endpoint_id: '',
             tool_key: 'shell.exec',
-            tool_id: 'client.desktop-main.shell.exec',
+            tool_id: 'endpoint.desktop.desktop-main.executor.shell.exec',
             call_id: 'call_1',
             phase: 'waiting_approval',
             detail: '',
@@ -124,7 +78,7 @@ describe('WorkspacePanel', () => {
       />,
     )
 
-    expect(markup).toContain('Approve')
-    expect(markup).toContain('Reject')
+    expect(markup).toContain('允许')
+    expect(markup).toContain('拒绝')
   })
 })

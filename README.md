@@ -23,6 +23,8 @@ external endpoints -----------------------/        v        Memory / Operation /
 - Streaming 必须走 RunEventLog + Delivery fan-out。
 - Tool 调度必须走 ToolRouter + ExecutionTarget；权限挂在 Actor / Workspace / RunPolicy，执行能力挂在 EndpointCapability。
 - V4 不保留 `/client/ws`、`source_client_id`、`target_client_id`、`ClientToolDispatchService` 兼容路径。
+- 运行态助手模式只保留 `general` / `automation` / `danxi`；旧 `normal` / `office` 等输入只在边界归一化。
+- Procedure 已删除；可复用工作流统一通过 SKILL（`list_skills` / `load_skill` / `create_skill`）和能力注册表暴露。
 
 当前生效的设计与计划文档在 `docs/v4/`；`docs/v3/` 和 `docs/archive/v2/` 是历史参考。
 
@@ -51,7 +53,7 @@ python -m service_runtime
 python main.py service
 ```
 
-### Desktop Client
+### Desktop Endpoint Provider
 
 `desktop_client/` 是桌面本地后端，与 Electron UI 一起构成统一桌面端：
 
@@ -73,7 +75,7 @@ python -m desktop_client
 python main.py desktop-client
 ```
 
-### Edge Client
+### Edge Endpoint Provider
 
 `edge_client/` 是按 workspace 接入的边缘运行时：
 
@@ -184,9 +186,9 @@ Workspace / procedure governance 公共字段：
 core/                 Core 编排、会话、状态、模式路由、应用生命周期
 gateway/              FastAPI HTTP / WebSocket Gateway
 service_runtime/      Core 生产运行入口
-client_tool_sdk/      待重命名的 Endpoint protocol SDK 兼容目录
-desktop_client/       桌面本地后端与 directed tool runtime
-edge_client/          边缘 Client runtime
+endpoint_tool_sdk/    Endpoint protocol / runtime SDK 正式入口
+desktop_client/       桌面本地后端与 Endpoint tool runtime
+edge_client/          边缘 Endpoint Provider runtime
 meetyou-ui/           Electron + React 桌面端
 tools/                Core tool 集合
 adapters/             LLM 与外部服务适配器
@@ -245,7 +247,7 @@ MEETYOU_GATEWAY_ACCESS_TOKEN=
 MEETYOU_CLIENT_ACCESS_TOKEN=
 MEETYOU_CORE_BASE_URL=http://127.0.0.1:8000
 MEETYOU_CLIENT_ID=desktop-main
-MEETYOU_CLIENT_DISPLAY_NAME=Desktop Client
+MEETYOU_CLIENT_DISPLAY_NAME=Desktop Endpoint Provider
 MEETYOU_CLIENT_WORKSPACES=desktop-main
 MEETYOU_CREDENTIAL_SECRET=
 ```
@@ -253,11 +255,11 @@ MEETYOU_CREDENTIAL_SECRET=
 说明：
 
 - `MEETYOU_GATEWAY_ACCESS_TOKEN` 用于 Gateway HTTP / WebSocket 鉴权。
-- `MEETYOU_CLIENT_ACCESS_TOKEN` 是 Client 访问 Core 的统一访问令牌。
+- `MEETYOU_CLIENT_ACCESS_TOKEN` 是 Endpoint Provider 访问 Core 的统一访问令牌（变量名暂沿用，语义已是 Endpoint）。
 - 不要新增或恢复 `MEETYOU_AGENT_*`。
 - `user/config.json` 是必需文件；密钥放 `.env`。
 - `user/core_mcp_servers.json` 只给 Core 侧安全 MCP。
-- `user/mcp_servers.json` 只给 Desktop Client 本地 MCP。
+- `user/mcp_servers.json` 只给 Desktop Endpoint Provider 本地 MCP。
 
 ## 启动
 
@@ -305,7 +307,7 @@ service -> UI -> desktop backend(由 UI 托管) -> desktop provider session -> /
 后端最小验证：
 
 ```powershell
-python -m compileall core gateway tools desktop_client edge_client client_tool_sdk service_runtime main.py client_tool_protocol.py
+python -m compileall core gateway tools desktop_client edge_client endpoint_tool_sdk service_runtime main.py endpoint_tool_protocol.py
 python -m unittest tests.test_runtime_entrypoints tests.test_config_manager
 ```
 
@@ -327,9 +329,9 @@ scripts\manual-acceptance.cmd start
 ## 发布与回滚
 
 - Core Service 持有数据库 migration 与协议协商主导权。
-- 发布涉及数据库 schema 时，先升级 Core，再升级 Desktop Client / Edge Client / UI。
+- 发布涉及数据库 schema 时，先升级 Core，再升级 Desktop / Edge Endpoint Provider / UI。
 - 只有保留对应 PostgreSQL 快照时，才可以宣称 Core 可安全回滚。
-- 当前默认只承诺 Core / Client 同版与相邻一代发布的兼容窗口。
+- 当前默认只承诺 Core / Endpoint Provider 同版与相邻一代发布的兼容窗口。
 
 ## 参考文档
 
@@ -340,3 +342,7 @@ scripts\manual-acceptance.cmd start
 - `docs/v3/design/desktop-unified-client.md`
 - `docs/v3/operations/desktop-client-acceptance.md`
 - `user/README.md`
+
+## 版本迭代线
+
+- V4 当前线：Core-owned Runtime + Endpoint Routing；`/endpoint/ws`、RunEvent + Delivery fan-out、ToolRouter + ExecutionTarget、Scheduler-owned `system.heartbeat`、SKILL-first workflows；运行态模式收敛为 `general` / `automation` / `danxi`，Procedure 与 V3 Client 兼容路径下线。

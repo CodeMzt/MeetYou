@@ -32,7 +32,7 @@ class _InjectedSemanticRouter:
     ):
         del content, current_mode, source_kind, sticky_current_mode, enable_keyword_fallback
         return SemanticRouteDecision(
-            mode="research",
+            mode="general",
             confidence="high",
             reason="Injected semantic router selected research.",
             source_profile="finance_macro",
@@ -72,11 +72,8 @@ def _populate_skill_dir(target_dir: Path) -> None:
         "knowledge-synthesis",
         "office-coordination",
         "hotspot-tracking",
-        "mode-normal",
-        "mode-documents",
-        "mode-research",
-        "mode-office",
-        "mode-study",
+        "mode-general",
+        "mode-automation",
         "mode-danxi",
     ):
         (target_dir / skill_name).write_text((source_dir / skill_name).read_text(encoding="utf-8"), encoding="utf-8")
@@ -95,8 +92,8 @@ class AssistantModeManagerTests(unittest.TestCase):
             source=SimpleNamespace(kind="desktop", id="desktop-user"),
         )
 
-        self.assertEqual(route.current_mode, "normal")
-        self.assertEqual(route.requested_mode, "normal")
+        self.assertEqual(route.current_mode, "general")
+        self.assertEqual(route.requested_mode, "general")
         self.assertEqual(route.source_profile, "workspace_local")
 
     def test_routes_documents_for_local_paths(self):
@@ -111,9 +108,8 @@ class AssistantModeManagerTests(unittest.TestCase):
             source=SimpleNamespace(kind="desktop", id="desktop-user"),
         )
 
-        self.assertEqual(route.current_mode, "documents")
+        self.assertEqual(route.current_mode, "general")
         self.assertEqual(route.source_profile, "workspace_local")
-        self.assertIn("documents", route.route_reason)
         self.assertTrue("local_path" in route.route_reason or "directory" in route.route_reason)
 
     def test_routes_normal_for_lightweight_web_queries(self):
@@ -128,7 +124,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             source=SimpleNamespace(kind="web", id="browser-tab"),
         )
 
-        self.assertEqual(route.current_mode, "normal")
+        self.assertEqual(route.current_mode, "general")
         self.assertEqual(route.source_profile, "workspace_local")
         self.assertIn("direct_url", route.route_reason)
 
@@ -144,7 +140,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             source=SimpleNamespace(kind="web", id="browser-tab"),
         )
 
-        self.assertEqual(route.current_mode, "research")
+        self.assertEqual(route.current_mode, "general")
         self.assertEqual(route.source_profile, "policy_global")
         self.assertIn("research", route.route_reason)
         self.assertIn("research_grounding", route.active_skills or [])
@@ -152,13 +148,10 @@ class AssistantModeManagerTests(unittest.TestCase):
     def test_composes_mode_and_skill_prompts(self):
         manager = AssistantModeManager(_FakeConfig())
 
-        prompt_text = manager.get_prompt_for_mode("research")
+        prompt_text = manager.get_prompt_for_mode("general")
 
-        self.assertIn("[Research Mode]", prompt_text)
-        self.assertIn("[Research Mode Skill]", prompt_text)
-        self.assertIn("[Research Grounding Skill]", prompt_text)
-        self.assertIn("evidence-first research posture", prompt_text)
-        self.assertIn("Reason about freshness explicitly", prompt_text)
+        self.assertIn("[General Mode]", prompt_text)
+        self.assertIn("[General Mode Skill]", prompt_text)
         self.assertIn("Purpose:", prompt_text)
         self.assertIn("When to use:", prompt_text)
         self.assertIn("Boundaries:", prompt_text)
@@ -169,13 +162,13 @@ class AssistantModeManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             try:
                 os.chdir(tmp_dir)
-                prompt_text = manager.get_prompt_for_mode("study")
+                prompt_text = manager.get_prompt_for_mode("general")
             finally:
                 os.chdir(previous_cwd)
 
-        self.assertIn("[Study Mode]", prompt_text)
-        self.assertIn("Start with the shared basic tools", prompt_text)
-        self.assertIn("[Study Coaching Skill]", prompt_text)
+        self.assertIn("[General Mode]", prompt_text)
+        self.assertIn("Start with shared basic tools", prompt_text)
+        self.assertIn("[Task Recognition Skill]", prompt_text)
 
     def test_defaults_skill_prompt_dir_to_prompt_skill(self):
         manager = AssistantModeManager(_FakeConfig())
@@ -193,11 +186,8 @@ class AssistantModeManagerTests(unittest.TestCase):
             "knowledge-synthesis",
             "office-coordination",
             "hotspot-tracking",
-            "mode-normal",
-            "mode-documents",
-            "mode-research",
-            "mode-office",
-            "mode-study",
+            "mode-general",
+            "mode-automation",
             "mode-danxi",
         ):
             skill_path = repo_root / "prompt" / "SKILL" / skill_name
@@ -219,7 +209,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "content": "Draft a meeting agenda and follow-up email for tomorrow's schedule sync.",
                 "metadata": {},
             },
-            session_metadata={"current_mode": "documents"},
+            session_metadata={"current_mode": "general"},
             source=SimpleNamespace(kind="feishu", id="chat-1"),
         )
         study_route = manager.route(
@@ -227,13 +217,13 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "content": "Quiz me on distributed systems and generate flashcards from my notes.",
                 "metadata": {},
             },
-            session_metadata={"current_mode": "office", "preferred_mode": "research"},
+            session_metadata={"current_mode": "automation", "preferred_mode": "general"},
             source=SimpleNamespace(kind="desktop", id="desktop-user"),
         )
 
-        self.assertEqual(office_route.current_mode, "office")
-        self.assertEqual(study_route.requested_mode, "normal")
-        self.assertEqual(study_route.current_mode, "study")
+        self.assertEqual(office_route.current_mode, "automation")
+        self.assertEqual(study_route.requested_mode, "general")
+        self.assertEqual(study_route.current_mode, "general")
         self.assertEqual(study_route.source_profile, "study_materials")
 
     def test_task_recognition_skill_extends_study_mode_tools(self):
@@ -248,12 +238,12 @@ class AssistantModeManagerTests(unittest.TestCase):
             source=SimpleNamespace(kind="desktop", id="desktop-user"),
         )
 
-        self.assertEqual(route.current_mode, "study")
+        self.assertEqual(route.current_mode, "general")
         self.assertIn("task_recognition", route.active_skills or [])
         self.assertIn("manage_tasks", route.tool_bundle)
-        self.assertIn("manage_scheduled_tasks", route.tool_bundle)
+        self.assertIn("manage_scheduled_jobs", route.tool_bundle)
         prompt_text = manager.assemble_prompt_for_route(route.to_dict())
-        self.assertIn("[Study Mode Skill]", prompt_text)
+        self.assertIn("[General Mode Skill]", prompt_text)
         self.assertIn("[Task Recognition Skill]", prompt_text)
         self.assertIn("[Study Coaching Skill]", prompt_text)
 
@@ -269,7 +259,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             source=SimpleNamespace(kind="web", id="browser-tab"),
         )
 
-        self.assertEqual(route.current_mode, "research")
+        self.assertEqual(route.current_mode, "general")
         self.assertIn("search_memory", route.tool_bundle)
         self.assertIn("search_web", route.tool_bundle)
         self.assertIn("read_web_page", route.tool_bundle)
@@ -278,7 +268,7 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("create_skill", route.tool_bundle)
         self.assertIn("summarize_text", route.tool_bundle)
         self.assertTrue(route.authorization_policy["read_only"])
-        self.assertIn("mode:research", route.authorization_policy["policy_sources"])
+        self.assertIn("skill:research_grounding", route.authorization_policy["policy_sources"])
 
     def test_route_records_capability_sources_and_skill_activation_reasons(self):
         manager = AssistantModeManager(_FakeConfig())
@@ -303,7 +293,7 @@ class AssistantModeManagerTests(unittest.TestCase):
 
         prompt_text = manager.assemble_prompt_for_route(
             {
-                "current_mode": "normal",
+                "current_mode": "general",
                 "content": "Please turn these rough notes into a clean outline and action list.",
                 "active_skills": [],
                 "loaded_skills": [],
@@ -315,12 +305,12 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("load_skill", prompt_text)
         self.assertIn("Before using non-skill business tools", prompt_text)
 
-    def test_prompt_treats_active_skills_as_primary_procedure(self):
+    def test_prompt_treats_active_skills_as_primary_workflow_guide(self):
         manager = AssistantModeManager(_FakeConfig())
 
         prompt_text = manager.assemble_prompt_for_route(
             {
-                "current_mode": "office",
+                "current_mode": "automation",
                 "content": "Summarize the meeting and produce follow-up actions.",
                 "active_skills": ["knowledge_synthesis"],
                 "loaded_skills": ["office_coordination"],
@@ -328,71 +318,24 @@ class AssistantModeManagerTests(unittest.TestCase):
         )
 
         self.assertIn("[Skill-First Policy]", prompt_text)
-        self.assertIn("knowledge_synthesis, office_coordination", prompt_text)
-        self.assertIn("primary operating procedure", prompt_text)
-
-    def test_prompt_includes_pinned_procedure_policy(self):
-        manager = AssistantModeManager(_FakeConfig())
-
-        prompt_text = manager.assemble_prompt_for_route(
-            {
-                "current_mode": "normal",
-                "content": "Please review this patch and call out regressions.",
-                "active_skills": [],
-                "loaded_skills": [],
-                "pinned_procedure": {
-                    "procedure_id": "code_review",
-                    "title": "Code Review",
-                    "description": "围绕代码变更、风险与验证给出结构化审查。",
-                    "prompt_overlay": "Focus on correctness, regressions, tests, and concrete follow-up actions.",
-                    "recommended_capabilities": ["search_memory", "summarize_text"],
-                    "recommended_source_profiles": ["workspace_local"],
-                    "default_execution_target": "assistant",
-                    "risk_profile": "read",
-                },
-            }
-        )
-
-        self.assertIn("[Pinned Procedure]", prompt_text)
-        self.assertIn("code_review", prompt_text)
-        self.assertIn("Focus on correctness, regressions, tests", prompt_text)
-
-    def test_prompt_includes_inferred_procedure_context(self):
-        manager = AssistantModeManager(_FakeConfig())
-
-        prompt_text = manager.assemble_prompt_for_route(
-            {
-                "current_mode": "normal",
-                "content": "Please review this patch and call out regressions.",
-                "active_skills": [],
-                "loaded_skills": [],
-                "effective_procedure": {
-                    "procedure_id": "code_review",
-                    "title": "Code Review",
-                    "prompt_overlay": "Focus on correctness first.",
-                    "recommended_capabilities": ["search_memory"],
-                    "source": "inferred",
-                },
-            }
-        )
-
-        self.assertIn("[Current Procedure Context]", prompt_text)
-        self.assertIn("Current inferred procedure", prompt_text)
-        self.assertIn("search_memory", prompt_text)
+        self.assertIn("knowledge_synthesis", prompt_text)
+        self.assertIn("office_coordination", prompt_text)
+        self.assertIn("primary workflow guide", prompt_text)
+        self.assertNotIn("Procedure", prompt_text)
 
     def test_prompt_includes_workspace_policy(self):
         manager = AssistantModeManager(_FakeConfig())
 
         prompt_text = manager.assemble_prompt_for_route(
             {
-                "current_mode": "study",
+                "current_mode": "general",
                 "content": "Help me structure this material.",
                 "active_skills": [],
                 "loaded_skills": [],
                 "workspace": {
                     "workspace_id": "study",
                     "title": "Study",
-                    "base_mode": "study",
+                    "base_mode": "general",
                     "prompt_overlay": "Prefer teaching-oriented explanations and review questions.",
                     "default_execution_target": "core_only",
                     "preferred_source_profiles": ["study_materials"],
@@ -403,7 +346,7 @@ class AssistantModeManagerTests(unittest.TestCase):
 
         self.assertIn("[Workspace Policy]", prompt_text)
         self.assertIn("Current workspace: Study (study).", prompt_text)
-        self.assertIn("Default workspace mode: study", prompt_text)
+        self.assertIn("Default workspace mode: general", prompt_text)
         self.assertIn("Default workspace execution target: core_only", prompt_text)
         self.assertIn("Preferred source profiles: study_materials", prompt_text)
         self.assertIn("Memory ranking policy: workspace_first", prompt_text)
@@ -448,7 +391,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "generate_flashcards",
                 "track_mastery",
                 "manage_tasks",
-                "manage_scheduled_tasks",
+                "manage_scheduled_jobs",
             ],
             available_mcp_servers=["filesystem_tools"],
             configured_mcp_servers=["filesystem_tools", "tavily_web", "notion_knowledge"],
@@ -476,7 +419,7 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertNotIn("filesystem_tools", core_servers)
         self.assertIn("filesystem_tools", endpoint_provider_servers)
         self.assertEqual(core_servers["browser_automation"]["boundary"], "core_mcp")
-        self.assertEqual(endpoint_provider_servers["filesystem_tools"]["boundary"], "client_local_mcp")
+        self.assertEqual(endpoint_provider_servers["filesystem_tools"]["boundary"], "endpoint_local_mcp")
         self.assertEqual(summary["configured_server_count"], 1)
         self.assertEqual(summary["enabled_count"], 1)
         self.assertEqual(summary["partial_failure_count"], 0)
@@ -486,7 +429,7 @@ class AssistantModeManagerTests(unittest.TestCase):
     def test_skill_management_tools_are_available_in_all_modes(self):
         manager = AssistantModeManager(_FakeConfig())
 
-        for mode in ("normal", "documents", "research", "office", "study", "danxi"):
+        for mode in ("general", "automation", "danxi"):
             bundle = manager.get_tool_bundle(mode)
             self.assertIn("list_skills", bundle["tools"])
             self.assertIn("load_skill", bundle["tools"])
@@ -500,11 +443,11 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "content": "Please just summarize this local folder.",
                 "metadata": {},
             },
-            session_metadata={"current_mode": "documents"},
+            session_metadata={"current_mode": "general"},
             source=SimpleNamespace(kind="desktop", id="desktop-user"),
         )
 
-        self.assertEqual(route.current_mode, "research")
+        self.assertEqual(route.current_mode, "general")
         self.assertEqual(route.source_profile, "finance_macro")
         self.assertIn("research_grounding", route.active_skills or [])
         self.assertIn("track_source_updates", route.tool_bundle)
@@ -521,15 +464,15 @@ class AssistantModeManagerTests(unittest.TestCase):
         route = manager.route(
             {
                 "content": "Please summarize this folder.",
-                "metadata": {"preferred_mode": "research"},
+                "metadata": {"preferred_mode": "general"},
             },
-            session_metadata={"current_mode": "documents"},
+            session_metadata={"current_mode": "general"},
             source=SimpleNamespace(kind="desktop", id="desktop-user"),
         )
 
-        self.assertEqual(route.requested_mode, "research")
-        self.assertEqual(route.current_mode, "research")
-        self.assertIn("Preferred mode override requested", route.route_reason)
+        self.assertEqual(route.requested_mode, "general")
+        self.assertEqual(route.current_mode, "general")
+        self.assertIn("Preferred mode selected: general", route.route_reason)
 
     def test_preferred_danxi_mode_uses_forum_bundle(self):
         manager = AssistantModeManager(_FakeConfig())
@@ -539,7 +482,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "content": "浏览一下 Danxi 热门帖子并整理重点。",
                 "metadata": {"preferred_mode": "danxi"},
             },
-            session_metadata={"current_mode": "normal"},
+            session_metadata={"current_mode": "general"},
             source=SimpleNamespace(kind="desktop", id="desktop-user"),
         )
 
@@ -560,13 +503,13 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "content": "Please help me browse around this topic normally first.",
                 "metadata": {"preferred_mode": "normal"},
             },
-            session_metadata={"current_mode": "documents"},
+            session_metadata={"current_mode": "general"},
             source=SimpleNamespace(kind="desktop", id="desktop-user"),
         )
 
-        self.assertEqual(route.requested_mode, "normal")
-        self.assertEqual(route.current_mode, "normal")
-        self.assertIn("Preferred mode selected: normal", route.route_reason)
+        self.assertEqual(route.requested_mode, "general")
+        self.assertEqual(route.current_mode, "general")
+        self.assertIn("Preferred mode selected: general", route.route_reason)
 
     def test_lists_loads_and_creates_open_skills(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -588,10 +531,10 @@ class AssistantModeManagerTests(unittest.TestCase):
             self.assertTrue(any(item["skill_type"] == "mode" for item in all_skills))
             self.assertTrue(any(item["skill_type"] == "reusable" for item in all_skills))
 
-            research_mode_skill = manager.load_skill("mode:research")
-            self.assertIsNotNone(research_mode_skill)
-            self.assertEqual(research_mode_skill["skill_type"], "mode")
-            self.assertIn("[Research Mode Skill]", research_mode_skill["content"])
+            general_mode_skill = manager.load_skill("mode:general")
+            self.assertIsNotNone(general_mode_skill)
+            self.assertEqual(general_mode_skill["skill_type"], "mode")
+            self.assertIn("[General Mode Skill]", general_mode_skill["content"])
 
             created = manager.create_skill(
                 skill_id="release_note_triage",
@@ -599,7 +542,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                 summary="Summarize release notes into actionable updates.",
                 content="Read the release notes, extract breaking changes, and produce action items.",
                 recommended_tools=["research_topic", "compile_report"],
-                applicable_modes=["research", "documents"],
+                applicable_modes=["general"],
                 scenarios=["release notes", "change review"],
             )
             self.assertEqual(created["skill_type"], "reusable")
@@ -611,7 +554,7 @@ class AssistantModeManagerTests(unittest.TestCase):
 
             prompt_text = manager.assemble_prompt_for_route(
                 {
-                    "current_mode": "research",
+                    "current_mode": "general",
                     "content": "Review a new SDK release.",
                     "active_skills": ["research_grounding"],
                     "loaded_skills": ["release_note_triage"],
@@ -623,7 +566,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             self.assertIsNotNone(capability)
             self.assertIn("research_topic", capability["tools"])
 
-            bundle = manager.get_tool_bundle("research", loaded_skills=["release_note_triage"])
+            bundle = manager.get_tool_bundle("general", loaded_skills=["release_note_triage"])
             self.assertIn("research_topic", bundle["tools"])
             self.assertIn("compile_report", bundle["tools"])
 
@@ -649,7 +592,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                 summary="Inspect a workspace and summarize next actions.",
                 content="Inspect the workspace and produce next actions.",
                 recommended_tools=["analyze_workspace", "compile_report"],
-                applicable_modes=["documents"],
+                applicable_modes=["general"],
                 scenarios=["workspace triage"],
             )
 
@@ -665,16 +608,14 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "manage_memories",
                     "list_workspaces",
                     "switch_workspace",
-                    "list_active_agents",
-                    "list_active_clients",
-                    "list_client_tool_targets",
+                    "list_active_endpoints",
+                    "list_endpoint_tool_targets",
                     "send_endpoint_message",
                     "emit_progress_notice",
                     "restart_core",
                     "list_skills",
                     "load_skill",
                     "create_skill",
-                    "manage_procedures",
                 "summarize_text",
                 "organize_notes",
                 "extract_action_items",
@@ -701,7 +642,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "generate_flashcards",
                     "track_mastery",
                     "manage_tasks",
-                    "manage_scheduled_tasks",
+                    "manage_scheduled_jobs",
                     "danxi_login",
                     "danxi_logout",
                     "danxi_get_session_status",
@@ -725,7 +666,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             )
 
             self.assertEqual(problems, [])
-            bundle = manager.get_tool_bundle("documents", loaded_skills=["workspace_triage"])
+            bundle = manager.get_tool_bundle("general", loaded_skills=["workspace_triage"])
             self.assertIn("analyze_workspace", bundle["tools"])
             self.assertIn("compile_report", bundle["tools"])
 

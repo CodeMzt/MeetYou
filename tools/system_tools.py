@@ -221,7 +221,7 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: b
         logger.info(f"用户确认执行危险命令: {cmd}")
 
     if _tool_router is not None:
-        dispatch = getattr(_tool_router, "dispatch_directed_tool", None)
+        dispatch = getattr(_tool_router, "dispatch_tool_call", None)
         if not callable(dispatch):
             dispatch = getattr(_tool_router, "dispatch_workspace_tool", None)
         if not callable(dispatch):
@@ -237,8 +237,8 @@ async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: b
 
     if not _allow_local_fallback:
         error = RuntimeError("Core local fallback is disabled")
-        error.tool_error_code = "local_client_required"
-        error.tool_error_message = "当前 Core 不再直接执行本地命令，请连接具备 shell.exec 的 Desktop Client 后重试。"
+        error.tool_error_code = "local_endpoint_required"
+        error.tool_error_message = "当前 Core 不再直接执行本地命令，请连接具备 shell.exec 的 Desktop Endpoint Provider 后重试。"
         error.tool_error_details = {
             "tool_key": "shell.exec",
             "session_id": str(session_id or ""),
@@ -386,6 +386,8 @@ async def manage_heartbeat_settings(action: str = "get", updates: dict | None = 
         )
 
     allowed = {
+        "system_heartbeat_enabled",
+        "system_heartbeat_interval_seconds",
         "heartbeat_idle_poke_enabled",
         "heartbeat_idle_poke_after_seconds",
         "heartbeat_idle_poke_cooldown_seconds",

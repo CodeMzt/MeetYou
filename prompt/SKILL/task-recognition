@@ -3,7 +3,7 @@ Detect when the user is creating, listing, updating, blocking, rescheduling, or 
 
 Purpose:
 - Turn user TODO language into persistent TODO tracking only when the user actually wants durable task state.
-- Route any time-triggered, recurring, scheduled, reminder-at-a-time, or assistant-background job request into the scheduled-task tool instead of the user TODO tool.
+- Route any time-triggered, recurring, scheduled, reminder-at-a-time, or assistant-background job request into the V4 Scheduler job tool instead of the user TODO tool.
 
 When to use:
 - Treat explicit TODOs, follow-ups, blockers, status updates, and completion updates as user task-management work.
@@ -12,7 +12,7 @@ When to use:
 
 Tool paths:
 - manage_tasks for persisted user TODO creation, listing, status changes, and completion.
-- manage_scheduled_tasks for assistant-owned single-run or recurring scheduled tasks.
+- manage_scheduled_jobs for assistant-owned single-run or recurring scheduled work backed by Core Scheduler.
 
 Boundaries:
 - When the user only wants planning advice without tracking, answer directly and avoid unnecessary task writes.

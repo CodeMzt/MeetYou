@@ -61,11 +61,9 @@ class FakeToolsManager:
         self.calls = []
         self.schemas = {
             "lookup_profile": self._build_tool_schema("lookup_profile"),
-            "normal_tool": self._build_tool_schema("normal_tool"),
-            "documents_tool": self._build_tool_schema("documents_tool"),
-            "research_tool": self._build_tool_schema("research_tool"),
-            "office_tool": self._build_tool_schema("office_tool"),
-            "study_tool": self._build_tool_schema("study_tool"),
+            "general_tool": self._build_tool_schema("general_tool"),
+            "automation_tool": self._build_tool_schema("automation_tool"),
+            "danxi_tool": self._build_tool_schema("danxi_tool"),
             "research_topic": self._build_tool_schema("research_topic"),
             "inspect_page": self._build_tool_schema("inspect_page"),
             "track_source_updates": self._build_tool_schema("track_source_updates"),
@@ -113,7 +111,7 @@ class FakeToolsManager:
 class _FakeModeManager:
     def __init__(self, router_config=None):
         self._router_config = {
-            "default_mode": "normal",
+            "default_mode": "general",
             "sticky_current_mode": True,
             "allow_preferred_override": True,
             "allow_in_turn_switch": True,
@@ -128,21 +126,30 @@ class _FakeModeManager:
         return dict(self._router_config)
 
     def get_auto_router_prompt(self):
-        return "[Auto Router]\nnormal/documents/research/office/study"
+        return "[Auto Router]\ngeneral/automation/danxi"
 
     def get_prompt_for_mode(self, mode: str):
         return f"[{mode}]"
 
     def build_route_for_mode(self, mode: str, *, requested_mode: str = "auto", reason: str = "", content: str = ""):
-        del content
+        mode = {
+            "normal": "general",
+            "office": "automation",
+            "auto": "general",
+            "documents": "general",
+            "research": "general",
+            "study": "general",
+        }.get(str(mode or "").strip().lower(), str(mode or "").strip().lower() or "general")
+        if mode not in {"general", "automation", "danxi"}:
+            mode = "general"
         source_profile = "workspace_local"
         tool_bundle = [f"{mode}_tool"]
-        if mode == "normal":
-            tool_bundle = ["normal_tool", "research_topic", "inspect_page"]
-        if mode == "research":
+        if mode == "general":
+            tool_bundle = ["general_tool", "research_topic", "inspect_page"]
+        lowered = content.lower()
+        if any(token in lowered for token in ("watchlist", "track updates", "source updates", "research report", "citations", "evidence")):
             source_profile = "tech_updates"
-            tool_bundle = ["research_tool", "research_topic", "inspect_page", "track_source_updates"]
-        elif mode == "study":
+        elif "quiz" in lowered or "study notes" in lowered:
             source_profile = "study_materials"
         return RouteDecision(
             requested_mode=requested_mode,
@@ -160,37 +167,37 @@ class _FakeModeManager:
         lowered = content.lower()
         if any(token in lowered for token in ("watchlist", "track updates", "source updates", "research report", "citations", "evidence")):
             return self.build_route_for_mode(
-                "research",
-                reason="Matched research signals: deep_research",
+                "general",
+                reason="Matched general research signals: deep_research",
                 content=content,
             )
         if "http" in content or any(token in lowered for token in ("latest", "web", "website", "url", "link")):
             return self.build_route_for_mode(
-                "normal",
-                reason="Matched normal signals: light_web",
+                "general",
+                reason="Matched general signals: light_web",
                 content=content,
             )
         if "quiz" in lowered:
             return self.build_route_for_mode(
-                "study",
-                reason="Matched study signals: quiz",
+                "general",
+                reason="Matched general study signals: quiz",
                 content=content,
             )
         if "meeting" in lowered:
             return self.build_route_for_mode(
-                "office",
-                reason="Matched office signals: meeting",
+                "automation",
+                reason="Matched automation signals: meeting",
                 content=content,
             )
         if any(token in lowered for token in ("file", "folder", "repo", "workspace", "directory", "local path")):
             return self.build_route_for_mode(
-                "documents",
-                reason="Matched documents signals: local_path",
+                "general",
+                reason="Matched general workspace signals: local_path",
                 content=content,
             )
         return self.build_route_for_mode(
-            "normal",
-            reason="Matched normal signals: default",
+            "general",
+            reason="Matched general signals: default",
             content=content,
         )
 
@@ -961,7 +968,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-1",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"research","reason":"Need latest external verification"}',
+                                arguments_str='{"mode":"general","reason":"Need latest external verification"}',
                             )
                         ],
                     ),
@@ -1030,23 +1037,23 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     RuntimeStatus.ANSWERING.value,
                 ],
             )
-            self.assertIn("documents_tool", adapter.stream_calls[0]["tool_names"])
+            self.assertIn("general_tool", adapter.stream_calls[0]["tool_names"])
             self.assertIn("switch_assistant_mode", adapter.stream_calls[0]["tool_names"])
-            self.assertNotIn("research_tool", adapter.stream_calls[0]["tool_names"])
-            self.assertIn("research_tool", adapter.stream_calls[1]["tool_names"])
+            self.assertNotIn("automation_tool", adapter.stream_calls[0]["tool_names"])
+            self.assertIn("general_tool", adapter.stream_calls[1]["tool_names"])
             self.assertIn("switch_assistant_mode", adapter.stream_calls[1]["tool_names"])
-            self.assertNotIn("documents_tool", adapter.stream_calls[1]["tool_names"])
-            self.assertIn("[documents]", [m["content"] for m in adapter.stream_calls[0]["messages"] if m.get("role") == "system"])
-            self.assertIn("[research]", [m["content"] for m in adapter.stream_calls[1]["messages"] if m.get("role") == "system"])
+            self.assertNotIn("automation_tool", adapter.stream_calls[1]["tool_names"])
+            self.assertIn("[general]", [m["content"] for m in adapter.stream_calls[0]["messages"] if m.get("role") == "system"])
+            self.assertIn("[general]", [m["content"] for m in adapter.stream_calls[1]["messages"] if m.get("role") == "system"])
             self.assertEqual(
                 [entry["mode"] for entry in session.metadata["route_history"]],
-                ["documents", "research"],
+                ["general", "general"],
             )
-            self.assertEqual(session.metadata["current_mode"], "research")
-            self.assertEqual(session.metadata["route_history"][1]["origin"], "switch_tool")
-            self.assertEqual(session.metadata["route_history"][1]["from_mode"], "documents")
-            self.assertEqual(session.metadata["route_history"][1]["to_mode"], "research")
-            self.assertEqual(session.metadata["route_history"][1]["switch_count"], 1)
+            self.assertEqual(session.metadata["current_mode"], "general")
+            self.assertEqual(session.metadata["route_history"][1]["origin"], "switch_tool_noop")
+            self.assertEqual(session.metadata["route_history"][1]["from_mode"], "general")
+            self.assertEqual(session.metadata["route_history"][1]["to_mode"], "general")
+            self.assertEqual(session.metadata["route_history"][1]["switch_count"], 0)
         finally:
             await brain.close_brain()
 
@@ -1054,7 +1061,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         adapter = QueuedStreamAdapter(
             rounds=[
                 [
-                    StreamEvent(type="text", text="normal"),
+                    StreamEvent(type="text", text="general"),
                     StreamEvent(
                         type="usage",
                         usage={
@@ -1092,18 +1099,18 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
             session = brain.get_or_create_session("session-normal-start")
-            self.assertEqual(session.metadata["current_mode"], "normal")
-            self.assertEqual(session.metadata["route_history"][0]["origin"], "preferred_normal")
-            self.assertIn("normal_tool", adapter.stream_calls[0]["tool_names"])
+            self.assertEqual(session.metadata["current_mode"], "general")
+            self.assertEqual(session.metadata["route_history"][0]["origin"], "preferred_general")
+            self.assertIn("general_tool", adapter.stream_calls[0]["tool_names"])
             self.assertIn("research_topic", adapter.stream_calls[0]["tool_names"])
             self.assertIn("inspect_page", adapter.stream_calls[0]["tool_names"])
             self.assertIn("switch_assistant_mode", adapter.stream_calls[0]["tool_names"])
             self.assertNotIn("track_source_updates", adapter.stream_calls[0]["tool_names"])
-            self.assertIn("[normal]", [m["content"] for m in adapter.stream_calls[0]["messages"] if m.get("role") == "system"])
+            self.assertIn("[general]", [m["content"] for m in adapter.stream_calls[0]["messages"] if m.get("role") == "system"])
         finally:
             await brain.close_brain()
 
-    async def test_preferred_normal_can_escalate_to_research_for_deep_research(self):
+    async def test_preferred_normal_stays_general_for_deep_research(self):
         adapter = QueuedStreamAdapter(
             rounds=[
                 [
@@ -1113,7 +1120,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-1",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"research","reason":"Need citations and source tracking"}',
+                                arguments_str='{"mode":"general","reason":"Need citations and source tracking"}',
                             )
                         ],
                     ),
@@ -1168,14 +1175,14 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             session = brain.get_or_create_session("session-normal-escalate")
             self.assertEqual(
                 [entry["mode"] for entry in session.metadata["route_history"]],
-                ["normal", "research"],
+                ["general", "general"],
             )
-            self.assertEqual(session.metadata["current_mode"], "research")
-            self.assertEqual(session.metadata["route_history"][1]["origin"], "switch_tool")
-            self.assertIn("normal_tool", adapter.stream_calls[0]["tool_names"])
+            self.assertEqual(session.metadata["current_mode"], "general")
+            self.assertEqual(session.metadata["route_history"][1]["origin"], "switch_tool_noop")
+            self.assertIn("general_tool", adapter.stream_calls[0]["tool_names"])
             self.assertNotIn("track_source_updates", adapter.stream_calls[0]["tool_names"])
-            self.assertIn("research_tool", adapter.stream_calls[1]["tool_names"])
-            self.assertIn("track_source_updates", adapter.stream_calls[1]["tool_names"])
+            self.assertIn("general_tool", adapter.stream_calls[1]["tool_names"])
+            self.assertNotIn("track_source_updates", adapter.stream_calls[1]["tool_names"])
         finally:
             await brain.close_brain()
 
@@ -1190,7 +1197,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-1",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"research","reason":"Need citations and source tracking"}',
+                                arguments_str='{"mode":"general","reason":"Need citations and source tracking"}',
                             ),
                             ToolCallInfo(
                                 id="tool-1",
@@ -1248,10 +1255,10 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
             session = brain.get_or_create_session("session-switch-same-round")
-            self.assertEqual(session.metadata["current_mode"], "research")
+            self.assertEqual(session.metadata["current_mode"], "general")
             self.assertEqual(
                 [entry["mode"] for entry in session.metadata["route_history"]],
-                ["normal", "research"],
+                ["general", "general"],
             )
             self.assertEqual(
                 [call["tool_name"] for call in tools_manager.calls],
@@ -1265,7 +1272,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     if message.get("role") == "tool"
                 )
             )
-            self.assertIn("[research]", [m["content"] for m in adapter.stream_calls[1]["messages"] if m.get("role") == "system"])
+            self.assertIn("[general]", [m["content"] for m in adapter.stream_calls[1]["messages"] if m.get("role") == "system"])
         finally:
             await brain.close_brain()
 
@@ -1302,7 +1309,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "role": "user",
                     "content": "Please research this topic.",
-                    "metadata": {"preferred_mode": "research"},
+                    "metadata": {"preferred_mode": "general"},
                 },
                 "key",
                 "https://api.openai.com/v1/responses",
@@ -1311,10 +1318,10 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
             session = brain.get_or_create_session("session-mode-lock")
-            self.assertIn("research_tool", adapter.stream_calls[0]["tool_names"])
-            self.assertNotIn("switch_assistant_mode", adapter.stream_calls[0]["tool_names"])
-            self.assertEqual(session.metadata["current_mode"], "research")
-            self.assertEqual(session.metadata["route_history"][0]["origin"], "manual_lock")
+            self.assertIn("general_tool", adapter.stream_calls[0]["tool_names"])
+            self.assertIn("switch_assistant_mode", adapter.stream_calls[0]["tool_names"])
+            self.assertEqual(session.metadata["current_mode"], "general")
+            self.assertEqual(session.metadata["route_history"][0]["origin"], "preferred_general")
         finally:
             await brain.close_brain()
 
@@ -1355,7 +1362,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         "preferred_mode": "normal",
                         "workspace_id": "study",
                         "workspace_title": "Study",
-                        "workspace_base_mode": "study",
+                        "workspace_base_mode": "general",
                         "workspace_prompt_overlay": "Prefer teaching-oriented explanations.",
                         "workspace_default_execution_target": "core_only",
                         "workspace_preferred_source_profiles": ["policy_global"],
@@ -1447,7 +1454,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-1",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"research","reason":"Need external verification"}',
+                                arguments_str='{"mode":"general","reason":"Need external verification"}',
                             )
                         ],
                     ),
@@ -1468,7 +1475,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-2",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"study","reason":"Turn the verified material into study notes"}',
+                                arguments_str='{"mode":"general","reason":"Turn the verified material into study notes"}',
                             )
                         ],
                     ),
@@ -1489,7 +1496,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-3",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"office","reason":"Draft a meeting follow-up"}',
+                                arguments_str='{"mode":"automation","reason":"Draft a meeting follow-up"}',
                             )
                         ],
                     ),
@@ -1538,21 +1545,13 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
             session = brain.get_or_create_session("session-switch-limit")
-            self.assertEqual(session.metadata["current_mode"], "study")
+            self.assertEqual(session.metadata["current_mode"], "automation")
             self.assertEqual(
                 [entry["origin"] for entry in session.metadata["route_history"]],
-                ["heuristic", "switch_tool", "switch_tool", "switch_tool_limit"],
+                ["heuristic", "switch_tool_noop", "switch_tool_noop", "switch_tool"],
             )
-            self.assertEqual(session.metadata["route_history"][-1]["switch_count"], 2)
-            self.assertIn("study_tool", adapter.stream_calls[3]["tool_names"])
-            self.assertNotIn("office_tool", adapter.stream_calls[3]["tool_names"])
-            self.assertTrue(
-                any(
-                    "max_switches_per_turn=2 reached" in str(message.get("content") or "")
-                    for message in session.chat_history
-                    if message.get("role") == "tool"
-                )
-            )
+            self.assertEqual(session.metadata["route_history"][-1]["switch_count"], 1)
+            self.assertIn("automation_tool", adapter.stream_calls[3]["tool_names"])
         finally:
             await brain.close_brain()
 
@@ -1566,12 +1565,12 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-1",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"research","reason":"Need web verification"}',
+                                arguments_str='{"mode":"general","reason":"Need web verification"}',
                             ),
                             ToolCallInfo(
                                 id="switch-2",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"study","reason":"Turn findings into notes"}',
+                                arguments_str='{"mode":"general","reason":"Turn findings into notes"}',
                             ),
                         ],
                     ),
@@ -1620,10 +1619,10 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
             session = brain.get_or_create_session("session-multi-switch-round")
-            self.assertEqual(session.metadata["current_mode"], "study")
+            self.assertEqual(session.metadata["current_mode"], "general")
             self.assertEqual(
                 [entry["origin"] for entry in session.metadata["route_history"]],
-                ["heuristic", "switch_tool", "switch_tool"],
+                ["heuristic", "switch_tool_noop", "switch_tool_noop"],
             )
             self.assertFalse(
                 any(
@@ -1645,12 +1644,12 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-1",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"research","reason":"Need web verification"}',
+                                arguments_str='{"mode":"general","reason":"Need web verification"}',
                             ),
                             ToolCallInfo(
                                 id="switch-2",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"study","reason":"Turn findings into notes"}',
+                                arguments_str='{"mode":"general","reason":"Turn findings into notes"}',
                             ),
                         ],
                     ),
@@ -1699,7 +1698,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
             session = brain.get_or_create_session("session-switch-round-limit")
-            self.assertEqual(session.metadata["current_mode"], "research")
+            self.assertEqual(session.metadata["current_mode"], "general")
             self.assertTrue(
                 any(
                     "max_switches_per_round=1 reached" in str(message.get("content") or "")
@@ -1798,7 +1797,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             ToolCallInfo(
                                 id="switch-1",
                                 name="switch_assistant_mode",
-                                arguments_str='{"mode":"documents","reason":"Stay on local files"}',
+                                arguments_str='{"mode":"general","reason":"Stay on local files"}',
                             )
                         ],
                     ),
@@ -1847,16 +1846,16 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
             session = brain.get_or_create_session("session-switch-noop")
-            self.assertEqual(session.metadata["current_mode"], "documents")
+            self.assertEqual(session.metadata["current_mode"], "general")
             self.assertEqual(
                 [entry["origin"] for entry in session.metadata["route_history"]],
                 ["heuristic", "switch_tool_noop"],
             )
             self.assertEqual(session.metadata["route_history"][1]["switch_count"], 0)
-            self.assertIn("documents_tool", adapter.stream_calls[1]["tool_names"])
+            self.assertIn("general_tool", adapter.stream_calls[1]["tool_names"])
             self.assertTrue(
                 any(
-                    "Already in documents" in str(message.get("content") or "")
+                    "Already in general" in str(message.get("content") or "")
                     for message in session.chat_history
                     if message.get("role") == "tool"
                 )
@@ -1903,7 +1902,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
             session = brain.get_or_create_session("session-disable-tools")
             self.assertEqual(adapter.stream_calls[0]["tool_names"], ["switch_assistant_mode"])
-            self.assertEqual(session.metadata["current_mode"], "documents")
+            self.assertEqual(session.metadata["current_mode"], "general")
             self.assertIn("Tools disabled for transient internal signal.", session.metadata["route_reason"])
         finally:
             await brain.close_brain()
@@ -1957,13 +1956,13 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             tool_names = adapter.stream_calls[0]["tool_names"]
             self.assertIn("research_topic", tool_names)
             self.assertIn("inspect_page", tool_names)
-            self.assertNotIn("documents_tool", tool_names)
+            self.assertNotIn("automation_tool", tool_names)
             self.assertEqual(
                 session.metadata["current_route"]["tool_bundle"],
                 ["research_topic", "inspect_page"],
             )
             self.assertEqual(session.metadata["current_route"]["mcp_servers"], [])
-            self.assertEqual(session.metadata["current_route"]["client_tool_scope"], "basic")
+            self.assertEqual(session.metadata["current_route"]["endpoint_tool_scope"], "basic")
         finally:
             await brain.close_brain()
 
@@ -2026,7 +2025,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 for message in adapter.stream_calls[0]["messages"]
                 if message.get("role") == "system"
             )
-            self.assertIn("[Client Response Delivery]", system_text)
+            self.assertIn("[Endpoint Response Delivery]", system_text)
             self.assertIn("call emit_progress_notice first", system_text)
             self.assertIn("Do not use send_endpoint_message", system_text)
         finally:

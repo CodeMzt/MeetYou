@@ -61,89 +61,25 @@ class PromptAssembler:
             lines.append(prompt_overlay)
         return "\n".join(lines)
 
-    def _build_pinned_procedure_policy(self, procedure: dict[str, Any] | None) -> str:
-        if not isinstance(procedure, dict):
-            return ""
-        procedure_id = str(procedure.get("procedure_id") or "").strip()
-        title = str(procedure.get("title") or "").strip()
-        description = str(procedure.get("description") or "").strip()
-        prompt_overlay = str(procedure.get("prompt_overlay") or "").strip()
-        applicable_modes = _unique_strings(procedure.get("applicable_modes"))
-        recommended_capabilities = _unique_strings(procedure.get("recommended_capabilities"))
-        recommended_source_profiles = _unique_strings(procedure.get("recommended_source_profiles"))
-        default_execution_target = str(procedure.get("default_execution_target") or "").strip()
-        risk_profile = str(procedure.get("risk_profile") or "").strip()
-        if not any(
-            [
-                procedure_id,
-                title,
-                description,
-                prompt_overlay,
-                applicable_modes,
-                recommended_capabilities,
-                recommended_source_profiles,
-                default_execution_target,
-                risk_profile,
-            ]
-        ):
-            return ""
-        lines = ["[Pinned Procedure]"]
-        header = title or procedure_id
-        if procedure_id and title and procedure_id != title:
-            header = f"{title} ({procedure_id})"
-        elif procedure_id:
-            header = procedure_id
-        if header:
-            lines.append(f"Follow this pinned procedure first: {header}.")
-        if description:
-            lines.append(description)
-        if prompt_overlay:
-            lines.append(prompt_overlay)
-        if applicable_modes:
-            lines.append(f"Applicable modes: {', '.join(applicable_modes)}")
-        if recommended_capabilities:
-            lines.append(f"Recommended capabilities: {', '.join(recommended_capabilities)}")
-        if recommended_source_profiles:
-            lines.append(f"Recommended source profiles: {', '.join(recommended_source_profiles)}")
-        if default_execution_target:
-            lines.append(f"Default execution target: {default_execution_target}")
-        if risk_profile:
-            lines.append(f"Risk profile: {risk_profile}")
-        return "\n".join(lines)
-
-    def _build_effective_procedure_policy(self, procedure: dict[str, Any] | None) -> str:
-        if not isinstance(procedure, dict):
-            return ""
-        source = str(procedure.get("source") or "").strip().lower()
-        if source != "inferred":
-            return ""
-        procedure_id = str(procedure.get("procedure_id") or "").strip()
-        title = str(procedure.get("title") or "").strip()
-        prompt_overlay = str(procedure.get("prompt_overlay") or "").strip()
-        recommended_capabilities = _unique_strings(procedure.get("recommended_capabilities"))
-        if not any([procedure_id, title, prompt_overlay, recommended_capabilities]):
-            return ""
-        header = title or procedure_id
-        if procedure_id and title and procedure_id != title:
-            header = f"{title} ({procedure_id})"
-        lines = ["[Current Procedure Context]"]
-        if header:
-            lines.append(f"Current inferred procedure: {header}.")
-        if prompt_overlay:
-            lines.append(prompt_overlay)
-        if recommended_capabilities:
-            lines.append(f"Recommended capabilities: {', '.join(recommended_capabilities)}")
-        return "\n".join(lines)
-
     def _build_skill_first_policy(self, capability_set) -> str:
         policy_lines = ["[Skill-First Policy]"]
         active_or_loaded = _unique_strings([*capability_set.active_skills, *capability_set.loaded_skills])
         if active_or_loaded:
+            skill_bits = []
+            for skill_id in active_or_loaded:
+                capability = self._capability_registry.get_skill_capability(skill_id)
+                if capability is None:
+                    skill_bits.append(skill_id)
+                    continue
+                summary = capability.summary.strip()
+                if summary:
+                    skill_bits.append(f"{capability.capability_id}: {summary}")
+                else:
+                    skill_bits.append(capability.capability_id)
+            policy_lines.append("Treat active SKILL files as the primary workflow guide for this turn.")
+            policy_lines.extend(f"- {item}" for item in skill_bits)
             policy_lines.append(
-                f"Treat these skills as the primary operating procedure first: {', '.join(active_or_loaded)}."
-            )
-            policy_lines.append(
-                "Use business tools under those skills instead of bypassing them with ad-hoc tool calls."
+                "Use the tools and boundaries declared by those skills instead of inventing a separate workflow layer."
             )
         else:
             policy_lines.append(
@@ -218,17 +154,15 @@ class PromptAssembler:
     def assemble_for_route(self, route_context: dict[str, Any] | None) -> str:
         route_context = route_context or {}
         prompt_text = self.assemble_for_mode(
-            str(route_context.get("current_mode") or "").strip() or "normal",
+            str(route_context.get("current_mode") or "").strip() or "general",
             content=str(route_context.get("content") or "").strip(),
             active_skills=[str(item).strip() for item in route_context.get("active_skills", []) if str(item).strip()],
             loaded_skills=[str(item).strip() for item in route_context.get("loaded_skills", []) if str(item).strip()],
         )
         workspace_policy = self._build_workspace_policy(route_context.get("workspace"))
-        procedure_policy = self._build_pinned_procedure_policy(route_context.get("pinned_procedure"))
-        effective_procedure_policy = self._build_effective_procedure_policy(route_context.get("effective_procedure"))
         sections = [
             section
-            for section in [workspace_policy, procedure_policy, effective_procedure_policy, prompt_text]
+            for section in [workspace_policy, prompt_text]
             if section
         ]
         return "\n\n".join(sections).strip()

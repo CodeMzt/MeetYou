@@ -3,14 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
+from starlette.responses import JSONResponse
 
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_SPECIFIC_ENDPOINT, EXECUTION_TARGETS
+from core.services.tool_router_service import ToolRouterError
 from gateway.models import (
     AckPayload,
     AckResponse,
     ClientActiveWorkspacePatchRequest,
-    ClientAvailableClientResponse,
     ClientConfirmResponseRequest,
     ClientConfirmResponseResult,
     ClientHumanInputResponseRequest,
@@ -24,6 +25,7 @@ from gateway.models import (
     ClientThreadCreateRequest,
     ClientThreadResponse,
     ClientWorkspaceResponse,
+    EndpointAvailableResponse,
 )
 
 
@@ -59,7 +61,6 @@ def _thread_response(thread, workspace_id: str) -> ClientThreadResponse:
         title=thread.title,
         status=thread.status,
         summary=thread.summary,
-        pinned_procedure_id=thread.pinned_procedure_id,
     )
 
 
@@ -126,6 +127,47 @@ def _find_endpoint(domain, endpoint_id: str = ""):
     return domain.services.endpoint.get_by_endpoint_id(normalized)
 
 
+def _request_actor_row_id(domain):
+    principal_key = str(getattr(domain.principal, "principal_key", "") or "self").strip() or "self"
+    actor_id = f"user:{principal_key}"
+    actor = domain.services.actor.get_by_actor_id(actor_id)
+    if actor is None:
+        actor = domain.services.actor.ensure_actor(
+            actor_id=actor_id,
+            actor_type="user",
+            owner_user_id=principal_key,
+            display_name=str(getattr(domain.principal, "display_name", "") or principal_key),
+            permission_profile_id="profile.default_user",
+            metadata={"principal_key": principal_key},
+        )
+    return getattr(actor, "id", None)
+
+
+def _raise_tool_router_error(gateway, exc: ToolRouterError) -> None:
+    status_code = 503 if exc.retryable else 400
+    if exc.code in {"workspace_not_found", "execution_target_not_found"}:
+        status_code = 404
+    elif exc.code == "tool_confirmation_required":
+        status_code = 409
+    elif exc.code == "endpoint_tool_timeout":
+        status_code = 504
+    elif exc.code in {
+        "endpoint_transport_unavailable",
+        "external_executor_unavailable",
+        "target_endpoint_unavailable",
+        "execution_target_unavailable",
+    }:
+        status_code = 503
+    gateway._raise_http_error(
+        status_code=status_code,
+        code=exc.code,
+        category="dependency" if status_code in {503, 504} else "validation",
+        message=exc.message,
+        retryable=exc.retryable,
+        details=exc.details,
+    )
+
+
 def build_client_router(gateway) -> APIRouter:
     router = APIRouter(prefix="/client", tags=["client-v4-http"])
 
@@ -135,7 +177,27 @@ def build_client_router(gateway) -> APIRouter:
         domain = gateway._require_core_domain()
         return [_workspace_response(workspace) for workspace in domain.services.workspace.list_workspaces()]
 
-    @router.get("/workspaces/{workspace_id}/clients", response_model=list[ClientAvailableClientResponse])
+    @router.get("/workspaces/{workspace_id}/clients")
+    async def legacy_list_workspace_clients(workspace_id: str, request: Request, include_tools: bool = True):
+        del workspace_id, include_tools
+        gateway._require_http_auth(request)
+        return JSONResponse(
+            status_code=410,
+            content={
+                "schema": _HTTP_SCHEMA,
+                "kind": "error",
+                "error": {
+                    "code": "legacy_http_path_removed",
+                    "message": "Workspace clients are removed in V4. Use workspace endpoints.",
+                    "details": {
+                        "legacy_path": "/client/workspaces/{workspace_id}/clients",
+                        "replacement_path": "/client/workspaces/{workspace_id}/endpoints",
+                    },
+                },
+            },
+        )
+
+    @router.get("/workspaces/{workspace_id}/endpoints", response_model=list[EndpointAvailableResponse])
     async def list_workspace_endpoints(workspace_id: str, request: Request, include_tools: bool = True):
         del include_tools
         gateway._require_http_auth(request)
@@ -148,10 +210,11 @@ def build_client_router(gateway) -> APIRouter:
                 continue
             meta = dict(getattr(endpoint, "meta", {}) or {})
             endpoints.append(
-                ClientAvailableClientResponse(
-                    client_id=endpoint.endpoint_id,
+                EndpointAvailableResponse(
+                    endpoint_id=endpoint.endpoint_id,
                     display_name=str(meta.get("display_name") or endpoint.endpoint_id),
-                    client_type=endpoint.provider_type,
+                    endpoint_type=endpoint.endpoint_type,
+                    provider_type=endpoint.provider_type,
                     status="online" if endpoint.endpoint_id in connected else endpoint.status,
                     workspace_ids=scope,
                     transport_profile=endpoint.transport_type,
@@ -174,7 +237,6 @@ def build_client_router(gateway) -> APIRouter:
             principal_id=domain.principal.id,
             workspace_id=workspace.id,
             title=payload.title,
-            pinned_procedure_id=payload.pinned_procedure_id,
         )
         return _thread_response(thread, workspace.workspace_id)
 
@@ -282,27 +344,36 @@ def build_client_router(gateway) -> APIRouter:
         domain = gateway._require_core_domain()
         thread = _find_thread(domain, payload.thread_id)
         workspace = _find_workspace(domain, payload.workspace_id)
-        result = await domain.tool_router.dispatch_directed_tool(
-            tool_key=str(payload.tool_key or payload.capability_id or payload.tool_id or "").strip(),
-            arguments=dict(payload.arguments or {}),
-            target_endpoint_id=str(payload.target_endpoint_id or ""),
-            session_id=str(payload.session_id or ""),
-            workspace_id=workspace.workspace_id,
-            title=payload.title or payload.operation_type,
-            confirmed=True,
-        )
-        operation = domain.services.operation.create_operation(
-            thread_id=thread.id,
-            workspace_id=workspace.id,
-            operation_type=payload.operation_type,
-            execution_target=payload.execution_target
-            or (EXECUTION_TARGET_SPECIFIC_ENDPOINT if payload.target_endpoint_id else "core.local"),
-            execution_target_type="endpoint",
-            execution_target_id=str(result.get("execution_target_id") or payload.target_endpoint_id or ""),
-            title=payload.title or payload.operation_type,
-            status="succeeded",
-            metadata={"tool_key": payload.tool_key or "", "result": result},
-        )
+        try:
+            result = await domain.tool_router.dispatch_tool_call(
+                tool_key=str(payload.tool_key or payload.capability_id or payload.tool_id or "").strip(),
+                arguments=dict(payload.arguments or {}),
+                target_endpoint_id=str(payload.target_endpoint_id or ""),
+                session_id=str(payload.session_id or ""),
+                workspace_id=workspace.workspace_id,
+                thread_row_id=thread.id,
+                requested_by_actor_id=_request_actor_row_id(domain),
+                title=payload.title or payload.operation_type,
+                confirmed=True,
+                return_operation=True,
+            )
+        except ToolRouterError as exc:
+            _raise_tool_router_error(gateway, exc)
+        operation_id = str(result.get("operation_id") or "").strip()
+        operation = domain.services.operation.get_by_operation_id(operation_id) if operation_id else None
+        if operation is None:
+            operation = domain.services.operation.create_operation(
+                thread_id=thread.id,
+                workspace_id=workspace.id,
+                operation_type=payload.operation_type,
+                execution_target=payload.execution_target
+                or (EXECUTION_TARGET_SPECIFIC_ENDPOINT if payload.target_endpoint_id else "core.local"),
+                execution_target_type="endpoint",
+                execution_target_id=str(result.get("execution_target_id") or payload.target_endpoint_id or ""),
+                title=payload.title or payload.operation_type,
+                status="succeeded",
+                metadata={"tool_key": payload.tool_key or "", "result": result},
+            )
         return _operation_response(operation, thread_id=thread.thread_id, workspace_id=workspace.workspace_id)
 
     @router.get("/operations/{operation_id}", response_model=ClientOperationResponse)

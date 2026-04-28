@@ -113,7 +113,15 @@ class DesktopCoreClient:
             self._session = None
 
     def _build_core_http_url(self, core_path: str, query_string: str = "") -> str:
-        suffix = f"{core_path}{('?' + query_string) if query_string else ''}"
+        parsed = urlsplit(str(core_path or ""))
+        query_items = parse_qsl(parsed.query, keep_blank_values=True)
+        existing_keys = {key for key, _value in query_items}
+        for key, value in parse_qsl(str(query_string or ""), keep_blank_values=True):
+            if key in existing_keys:
+                continue
+            query_items.append((key, value))
+        merged_path = urlunsplit(("", "", parsed.path, urlencode(query_items), parsed.fragment))
+        suffix = merged_path or "/"
         return f"{self._config.core_base_url.rstrip('/')}{suffix}"
 
     def _build_core_ws_url(self, request, *, local_access_token: str) -> str:

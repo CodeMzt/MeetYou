@@ -10,20 +10,25 @@ from difflib import SequenceMatcher
 from math import sqrt
 from typing import Any, Protocol
 
-ASSISTANT_MODE_NORMAL = "normal"
-ASSISTANT_MODE_DOCUMENTS = "documents"
-ASSISTANT_MODE_RESEARCH = "research"
-ASSISTANT_MODE_OFFICE = "office"
-ASSISTANT_MODE_STUDY = "study"
+ASSISTANT_MODE_GENERAL = "general"
+ASSISTANT_MODE_AUTOMATION = "automation"
 ASSISTANT_MODES = (
-    ASSISTANT_MODE_NORMAL,
-    ASSISTANT_MODE_DOCUMENTS,
-    ASSISTANT_MODE_RESEARCH,
-    ASSISTANT_MODE_OFFICE,
-    ASSISTANT_MODE_STUDY,
+    ASSISTANT_MODE_GENERAL,
+    ASSISTANT_MODE_AUTOMATION,
 )
 
-_BOOLEAN_FALLBACK_ORDER = (ASSISTANT_MODE_NORMAL, ASSISTANT_MODE_DOCUMENTS, ASSISTANT_MODE_OFFICE, ASSISTANT_MODE_STUDY)
+_PUBLIC_MODE_ALIASES = {
+    "general": ASSISTANT_MODE_GENERAL,
+    "normal": ASSISTANT_MODE_GENERAL,
+    "auto": ASSISTANT_MODE_GENERAL,
+    "documents": ASSISTANT_MODE_GENERAL,
+    "research": ASSISTANT_MODE_GENERAL,
+    "study": ASSISTANT_MODE_GENERAL,
+    "automation": ASSISTANT_MODE_AUTOMATION,
+    "office": ASSISTANT_MODE_AUTOMATION,
+}
+
+_BOOLEAN_FALLBACK_ORDER = (ASSISTANT_MODE_GENERAL, ASSISTANT_MODE_AUTOMATION)
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 _PATH_RE = re.compile(
     r"(?i)(?:[a-z]:[\\/][^\s]+|(?:\.{1,2}[\\/]|[\\/])?[^\s]+\.(?:md|txt|pdf|docx|xlsx|pptx|csv|json|py|ts|tsx|js|jsx|html))"
@@ -81,7 +86,6 @@ _RESEARCH_INTENTS = (
     "monitor",
     "monitoring",
     "policy change",
-    "latest guidance",
     "deep research",
     "hot topic",
     "hotspot",
@@ -339,30 +343,24 @@ _SOURCE_PROFILE_INTENTS: dict[str, tuple[str, ...]] = {
 }
 
 _MODE_EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
-    ASSISTANT_MODE_NORMAL: (
+    ASSISTANT_MODE_GENERAL: (
         ("general_planning", "help me think through my plan for tomorrow and break it into a few simple options"),
         ("light_web_lookup", "look up the latest page, compare a couple options, and summarize what changed today"),
         ("everyday_help", "give me quick general help without turning this into a formal research report"),
-    ),
-    ASSISTANT_MODE_DOCUMENTS: (
         ("workspace_analysis", "analyze the repository structure, inspect the workspace, and explain the directory tree"),
         ("document_editing", "read a local markdown file, rewrite the document, and summarize the folder contents"),
         ("local_artifacts", "open a local path and generate a report from files in the project workspace"),
-    ),
-    ASSISTANT_MODE_RESEARCH: (
         ("evidence_report", "create a research report with citations, evidence tables, and official sources"),
         ("update_monitoring", "track source updates, monitor policy changes, and verify information with sources"),
         ("deep_verification", "do deep research, cite the sources, and keep the answer evidence-heavy"),
-    ),
-    ASSISTANT_MODE_OFFICE: (
-        ("meeting_coordination", "draft a meeting agenda, schedule sync, attendee note, and follow-up email"),
-        ("workplace_coordination", "prepare minutes, calendar invites, action items, and message drafts"),
-        ("notes_sync", "sync notes from a meeting and turn them into coordination updates"),
-    ),
-    ASSISTANT_MODE_STUDY: (
         ("learning_support", "quiz me on the course material, generate flashcards, and explain key learning points"),
         ("study_planning", "build a study plan, review a chapter, and track mastery for an upcoming exam"),
         ("practice_session", "teach me the lesson, create practice problems, and coach me through the material"),
+    ),
+    ASSISTANT_MODE_AUTOMATION: (
+        ("meeting_coordination", "draft a meeting agenda, schedule sync, attendee note, and follow-up email"),
+        ("workplace_coordination", "prepare minutes, calendar invites, action items, and message drafts"),
+        ("notes_sync", "sync notes from a meeting and turn them into coordination updates"),
     ),
 }
 
@@ -456,6 +454,17 @@ def _contains_any(text: str, items: tuple[str, ...]) -> list[str]:
         if item in text:
             matched.append(item)
     return matched
+
+
+def _normalize_route_mode(value: Any, *, fallback: str = ASSISTANT_MODE_GENERAL) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = _PUBLIC_MODE_ALIASES.get(normalized, normalized)
+    if normalized in ASSISTANT_MODES:
+        return normalized
+    fallback_normalized = _PUBLIC_MODE_ALIASES.get(str(fallback or "").strip().lower(), str(fallback or "").strip().lower())
+    if fallback_normalized in ASSISTANT_MODES:
+        return fallback_normalized
+    return ASSISTANT_MODE_GENERAL
 
 
 def _score(matches: list[str], *, weight: int = 2) -> int:
@@ -605,14 +614,14 @@ class ExampleSemanticAdapter:
             reasons[mode].extend(example_signals)
 
         if _has_local_path(content):
-            scores[ASSISTANT_MODE_DOCUMENTS] += 0.58
-            reasons[ASSISTANT_MODE_DOCUMENTS].append("local_path")
+            scores[ASSISTANT_MODE_GENERAL] += 0.58
+            reasons[ASSISTANT_MODE_GENERAL].append("local_path")
         if _URL_RE.search(content):
-            scores[ASSISTANT_MODE_NORMAL] += 0.24
-            reasons[ASSISTANT_MODE_NORMAL].append("direct_url")
+            scores[ASSISTANT_MODE_GENERAL] += 0.24
+            reasons[ASSISTANT_MODE_GENERAL].append("direct_url")
         if source_kind in {"feishu", "email", "im"}:
-            scores[ASSISTANT_MODE_OFFICE] += 0.28
-            reasons[ASSISTANT_MODE_OFFICE].append(f"source:{source_kind}")
+            scores[ASSISTANT_MODE_AUTOMATION] += 0.28
+            reasons[ASSISTANT_MODE_AUTOMATION].append(f"source:{source_kind}")
         if request.sticky_current_mode and current_mode in ASSISTANT_MODES:
             scores[current_mode] += 0.08
             reasons[current_mode].append("sticky_context")
@@ -622,11 +631,11 @@ class ExampleSemanticAdapter:
         confidence = _confidence_from_score(best_score)
         signals = _unique_strings(reasons[best_mode])[:4]
         if best_score < 0.22:
-            fallback_mode = current_mode if current_mode in ASSISTANT_MODES else ASSISTANT_MODE_NORMAL
+            fallback_mode = current_mode if current_mode in ASSISTANT_MODES else ASSISTANT_MODE_GENERAL
             reason = (
                 f"Semantic adapter found no strong specialist route and reused {fallback_mode}."
                 if current_mode in ASSISTANT_MODES
-                else "Semantic adapter found no strong specialist route and defaulted to normal."
+                else "Semantic adapter found no strong specialist route and defaulted to general."
             )
             return SemanticDecisionResult(
                 value=fallback_mode,
@@ -712,31 +721,13 @@ class ExampleSemanticAdapter:
         normalized_name = str(skill_name or "").strip()
         normalized_mode = str(mode or "").strip().lower()
         raw_content = str(content or "").strip()
-        if normalized_name == "research_grounding" and normalized_mode == ASSISTANT_MODE_RESEARCH:
+        if normalized_name == "office_coordination" and normalized_mode == ASSISTANT_MODE_AUTOMATION:
             return SemanticDecisionResult(
                 value=True,
                 confidence="high",
                 score=1.0,
-                reason="Semantic adapter activated research_grounding from research mode.",
-                signals=["mode:research"],
-                adapter_name=self.adapter_name,
-            )
-        if normalized_name == "study_coaching" and normalized_mode == ASSISTANT_MODE_STUDY:
-            return SemanticDecisionResult(
-                value=True,
-                confidence="high",
-                score=1.0,
-                reason="Semantic adapter activated study_coaching from study mode.",
-                signals=["mode:study"],
-                adapter_name=self.adapter_name,
-            )
-        if normalized_name == "office_coordination" and normalized_mode == ASSISTANT_MODE_OFFICE:
-            return SemanticDecisionResult(
-                value=True,
-                confidence="high",
-                score=1.0,
-                reason="Semantic adapter activated office_coordination from office mode.",
-                signals=["mode:office"],
+                reason="Semantic adapter activated office_coordination from automation mode.",
+                signals=["mode:automation"],
                 adapter_name=self.adapter_name,
             )
         examples = _SKILL_EXAMPLES.get(normalized_name, ())
@@ -772,33 +763,33 @@ class KeywordFallbackAdapter:
         task_matches = _contains_any(lowered, _TASK_MANAGEMENT_INTENTS)
 
         if document_matches:
-            scores[ASSISTANT_MODE_DOCUMENTS] += _score(document_matches)
-            reasons[ASSISTANT_MODE_DOCUMENTS].extend(document_matches[:4])
+            scores[ASSISTANT_MODE_GENERAL] += _score(document_matches)
+            reasons[ASSISTANT_MODE_GENERAL].extend(document_matches[:4])
         if research_matches:
-            scores[ASSISTANT_MODE_RESEARCH] += _score(research_matches, weight=3)
-            reasons[ASSISTANT_MODE_RESEARCH].extend(research_matches[:4])
+            scores[ASSISTANT_MODE_GENERAL] += _score(research_matches, weight=3)
+            reasons[ASSISTANT_MODE_GENERAL].extend(research_matches[:4])
         if office_matches:
-            scores[ASSISTANT_MODE_OFFICE] += _score(office_matches)
-            reasons[ASSISTANT_MODE_OFFICE].extend(office_matches[:4])
+            scores[ASSISTANT_MODE_AUTOMATION] += _score(office_matches)
+            reasons[ASSISTANT_MODE_AUTOMATION].extend(office_matches[:4])
         if study_matches:
-            scores[ASSISTANT_MODE_STUDY] += _score(study_matches)
-            reasons[ASSISTANT_MODE_STUDY].extend(study_matches[:4])
+            scores[ASSISTANT_MODE_GENERAL] += _score(study_matches)
+            reasons[ASSISTANT_MODE_GENERAL].extend(study_matches[:4])
         if light_web_matches:
-            scores[ASSISTANT_MODE_NORMAL] += _score(light_web_matches)
-            reasons[ASSISTANT_MODE_NORMAL].extend(light_web_matches[:4])
+            scores[ASSISTANT_MODE_GENERAL] += _score(light_web_matches)
+            reasons[ASSISTANT_MODE_GENERAL].extend(light_web_matches[:4])
         if task_matches:
             for candidate in _BOOLEAN_FALLBACK_ORDER:
                 scores[candidate] += 1
 
         if _has_local_path(content):
-            scores[ASSISTANT_MODE_DOCUMENTS] += 5
-            reasons[ASSISTANT_MODE_DOCUMENTS].append("local_path")
+            scores[ASSISTANT_MODE_GENERAL] += 5
+            reasons[ASSISTANT_MODE_GENERAL].append("local_path")
         if _URL_RE.search(content):
-            scores[ASSISTANT_MODE_NORMAL] += 4
-            reasons[ASSISTANT_MODE_NORMAL].append("direct_url")
+            scores[ASSISTANT_MODE_GENERAL] += 4
+            reasons[ASSISTANT_MODE_GENERAL].append("direct_url")
         if source_kind in {"feishu", "email", "im"}:
-            scores[ASSISTANT_MODE_OFFICE] += 2
-            reasons[ASSISTANT_MODE_OFFICE].append(f"source:{source_kind}")
+            scores[ASSISTANT_MODE_AUTOMATION] += 2
+            reasons[ASSISTANT_MODE_AUTOMATION].append(f"source:{source_kind}")
         if request.sticky_current_mode and current_mode in ASSISTANT_MODES:
             scores[current_mode] += 1
             reasons[current_mode].append("sticky_context")
@@ -807,11 +798,11 @@ class KeywordFallbackAdapter:
         best_score = scores[best_mode]
         confidence = "high" if best_score >= 6 else "medium" if best_score >= 3 else "low"
         if best_score <= 0:
-            fallback_mode = current_mode if current_mode in ASSISTANT_MODES else ASSISTANT_MODE_NORMAL
+            fallback_mode = current_mode if current_mode in ASSISTANT_MODES else ASSISTANT_MODE_GENERAL
             reason = (
                 f"Keyword fallback found no strong routing signal and reused {fallback_mode}."
                 if current_mode in ASSISTANT_MODES
-                else "Keyword fallback found no strong routing signal and defaulted to normal."
+                else "Keyword fallback found no strong routing signal and defaulted to general."
             )
             return SemanticDecisionResult(
                 value=fallback_mode,
@@ -893,14 +884,10 @@ class KeywordFallbackAdapter:
             value = bool(matches)
         elif normalized_name == "research_grounding":
             matches = _contains_any(lowered, _RESEARCH_INTENTS)
-            value = normalized_mode == ASSISTANT_MODE_RESEARCH or bool(matches)
-            if normalized_mode == ASSISTANT_MODE_RESEARCH:
-                matches = ["mode:research", *matches]
+            value = bool(matches)
         elif normalized_name == "study_coaching":
             matches = _contains_any(lowered, _STUDY_INTENTS)
-            value = normalized_mode == ASSISTANT_MODE_STUDY or bool(matches)
-            if normalized_mode == ASSISTANT_MODE_STUDY:
-                matches = ["mode:study", *matches]
+            value = bool(matches)
         elif normalized_name == "knowledge_synthesis":
             matches = _contains_any(
                 lowered,
@@ -922,9 +909,9 @@ class KeywordFallbackAdapter:
             value = bool(matches)
         elif normalized_name == "office_coordination":
             matches = _contains_any(lowered, (*_OFFICE_INTENTS, "action items", "owner", "follow-up"))
-            value = normalized_mode == ASSISTANT_MODE_OFFICE or bool(matches)
-            if normalized_mode == ASSISTANT_MODE_OFFICE:
-                matches = ["mode:office", *matches]
+            value = normalized_mode == ASSISTANT_MODE_AUTOMATION or bool(matches)
+            if normalized_mode == ASSISTANT_MODE_AUTOMATION:
+                matches = ["mode:automation", *matches]
         elif normalized_name == "hotspot_tracking":
             matches = _contains_any(
                 lowered,
@@ -971,7 +958,7 @@ class SemanticRouterAgent:
     ) -> SemanticRouteRequest:
         return SemanticRouteRequest(
             content=str(content or "").strip(),
-            current_mode=str(current_mode or "").strip().lower(),
+            current_mode=_normalize_route_mode(current_mode, fallback=""),
             source_kind=str(source_kind or "").strip().lower(),
             sticky_current_mode=bool(sticky_current_mode),
         )
@@ -987,10 +974,10 @@ class SemanticRouterAgent:
         if best_decision is not None:
             return best_decision
         return SemanticDecisionResult(
-            value=request.current_mode if request.current_mode in ASSISTANT_MODES else ASSISTANT_MODE_NORMAL,
+            value=request.current_mode if request.current_mode in ASSISTANT_MODES else ASSISTANT_MODE_GENERAL,
             confidence="low",
             score=0.0,
-            reason="Semantic router has no configured adapter and defaulted to normal.",
+            reason="Semantic router has no configured adapter and defaulted to general.",
             signals=[],
             adapter_name="unconfigured_semantic_router",
         )
@@ -1089,7 +1076,10 @@ class SemanticRouterAgent:
                 selected = fallback
                 used_keyword_fallback = True
                 reason = f"{primary.reason} {fallback.reason}".strip()
-        best_mode = str(selected.value or ASSISTANT_MODE_NORMAL)
+        raw_mode = str(selected.value or ASSISTANT_MODE_GENERAL).strip().lower()
+        best_mode = _normalize_route_mode(raw_mode, fallback=request.current_mode or ASSISTANT_MODE_GENERAL)
+        if raw_mode and raw_mode != best_mode and raw_mode not in _PUBLIC_MODE_ALIASES:
+            reason = f"{reason} V4 normalized unsupported route mode {raw_mode} to {best_mode}.".strip()
         active_skills: list[str] = []
         for skill_name in (
             "task_recognition",
@@ -1107,9 +1097,10 @@ class SemanticRouterAgent:
             )
             if decision.value:
                 active_skills.append(skill_name)
-        if best_mode == ASSISTANT_MODE_RESEARCH:
+        lowered_content = request.content.lower()
+        if _contains_any(lowered_content, _RESEARCH_INTENTS):
             source_profile = self.classify_source_profile(request.content, enable_keyword_fallback=enable_keyword_fallback)
-        elif best_mode == ASSISTANT_MODE_STUDY:
+        elif _contains_any(lowered_content, _STUDY_INTENTS):
             source_profile = "study_materials"
         else:
             source_profile = "workspace_local"

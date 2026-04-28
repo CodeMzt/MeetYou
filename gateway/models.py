@@ -1,5 +1,5 @@
 """
-缃戝叧璇锋眰鍝嶅簲妯″瀷銆?
+网关请求与响应模型。
 """
 
 from typing import Any
@@ -337,7 +337,6 @@ class ClientThreadCreateRequest(BaseModel):
     workspace_id: str = ""
     title: str = ""
     mode: str = "general"
-    pinned_procedure_id: str | None = None
 
     @property
     def resolved_home_workspace_id(self) -> str:
@@ -349,61 +348,6 @@ class ClientThreadCreateRequest(BaseModel):
         return to_public_assistant_mode(value)
 
 
-class ClientProcedureResponse(BaseModel):
-    procedure_id: str
-    title: str = ""
-    description: str = ""
-    applicable_modes: list[str] = Field(default_factory=list)
-    recommended_tools: list[str] = Field(default_factory=list)
-    preferred_tool_key: str = ""
-    preferred_target_endpoint_ids: list[str] = Field(default_factory=list)
-    preferred_endpoint_provider_types: list[str] = Field(default_factory=list)
-    tool_target_routing_policy: str = "balanced"
-    default_execution_target: str = ""
-    risk_profile: str = ""
-    status: str = "active"
-
-    @field_validator("applicable_modes", mode="before")
-    @classmethod
-    def _normalize_applicable_modes(cls, value: Any) -> list[str]:
-        if not isinstance(value, list):
-            return []
-        result = []
-        seen = set()
-        for item in value:
-            normalized = to_public_assistant_mode(item)
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            result.append(normalized)
-        return result
-
-    @field_validator("default_execution_target", mode="before")
-    @classmethod
-    def _normalize_default_execution_target(cls, value: Any) -> str:
-        return normalize_execution_target(value)
-
-
-class ClientProcedureDetailResponse(ClientProcedureResponse):
-    prompt_overlay: str = ""
-    recommended_source_profiles: list[str] = Field(default_factory=list)
-    infer_keywords: list[str] = Field(default_factory=list)
-
-
-class ClientThreadProcedureContextResponse(BaseModel):
-    source: str = "none"
-    pinned_procedure: ClientProcedureDetailResponse | None = None
-    latest_inferred_procedure: ClientProcedureDetailResponse | None = None
-    effective_procedure: ClientProcedureDetailResponse | None = None
-    latest_inferred_reason: str = ""
-    latest_inferred_score: int = 0
-    latest_inferred_at: str = ""
-
-
-class ClientThreadPinnedProcedureRequest(BaseModel):
-    procedure_id: str
-
-
 class ClientThreadResponse(BaseModel):
     thread_id: str
     home_workspace_id: str
@@ -411,7 +355,6 @@ class ClientThreadResponse(BaseModel):
     title: str = ""
     status: str = "active"
     summary: str = ""
-    pinned_procedure_id: str | None = None
 
 
 class ClientSessionCreateRequest(BaseModel):
@@ -782,10 +725,11 @@ class ClientDanxiSummaryResponse(BaseModel):
     generated_at: str = ""
 
 
-class ClientAvailableClientResponse(BaseModel):
-    client_id: str
+class EndpointAvailableResponse(BaseModel):
+    endpoint_id: str
     display_name: str
-    client_type: str
+    endpoint_type: str = ""
+    provider_type: str
     status: str
     workspace_ids: list[str] = Field(default_factory=list)
     transport_profile: str = ""
@@ -891,17 +835,6 @@ class OperatorWorkspaceResponse(BaseModel):
         return normalize_execution_target(value)
 
 
-class OperatorClientResponse(BaseModel):
-    client_id: str
-    client_type: str
-    display_name: str
-    transport_profile: str
-    status: str
-    last_seen_at: str = ""
-    owner_client_id: str = ""
-    workspace_ids: list[str] = Field(default_factory=list)
-
-
 class OperatorEndpointResponse(BaseModel):
     endpoint_id: str
     endpoint_type: str
@@ -918,7 +851,7 @@ class OperatorEndpointResponse(BaseModel):
 
 class OperatorScheduledJobCreateRequest(BaseModel):
     job_id: str | None = None
-    kind: str = "scheduled_task"
+    kind: str = "workflow"
     name: str = ""
     workspace_id: str | None = None
     singleton_key: str | None = None
@@ -927,7 +860,7 @@ class OperatorScheduledJobCreateRequest(BaseModel):
     trigger_config: dict[str, Any] = Field(default_factory=dict)
     interval_seconds: int | None = None
     timezone: str = "UTC"
-    action_ref: str = ""
+    action_ref: str = "core.workflow.assistant_turn"
     run_template: dict[str, Any] = Field(default_factory=dict)
     execution_policy: dict[str, Any] = Field(default_factory=dict)
     delivery_policy: dict[str, Any] = Field(default_factory=dict)

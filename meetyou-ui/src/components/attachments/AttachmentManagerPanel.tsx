@@ -58,7 +58,7 @@ export default function AttachmentManagerPanel({
     <div className={styles.page}>
       <div className={styles.heroCard}>
         <div>
-          <div className={styles.kicker}>Attachment Center</div>
+          <div className={styles.kicker}>附件中心</div>
           <div className={styles.title}>附件管理</div>
           <div className={styles.subtitle}>
             {workspaceTitle ? `${workspaceTitle} 的当前会话附件列表。` : '查看当前会话附件并执行下载或删除。'}
@@ -85,8 +85,8 @@ export default function AttachmentManagerPanel({
                 <div className={styles.mainInfo}>
                   <div className={styles.fileName}>{attachment.fileName}</div>
                   <div className={styles.metaRow}>
-                    <span className={styles.metaChip}>{attachment.kind || 'file'}</span>
-                    <span className={styles.metaChip}>{attachment.status || 'unknown'}</span>
+                    <span className={styles.metaChip}>{attachment.kind || '文件'}</span>
+                    <span className={styles.metaChip}>{attachment.status || '未知'}</span>
                     <span className={styles.metaChip}>{formatSize(attachment.sizeBytes)}</span>
                   </div>
                   <div className={styles.timeline}>

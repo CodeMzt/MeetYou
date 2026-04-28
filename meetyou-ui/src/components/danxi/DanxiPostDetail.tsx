@@ -54,8 +54,8 @@ export default function DanxiPostDetail({
       <div className={styles.detailPanel}>
         <div className={styles.emptyState}>
           <BookOpenText size={48} className={styles.emptyIcon} />
-          <span className={styles.emptyTitle}>Danxi 工作台</span>
-          <span className={styles.emptyDesc}>请在左侧选择一个帖子以查看、回复、编辑、删除和获取 AI 摘要。</span>
+          <span className={styles.emptyTitle}>旦夕工作台</span>
+          <span className={styles.emptyDesc}>请在左侧选择一个帖子以查看、回复、编辑、删除和获取智能摘要。</span>
         </div>
       </div>
     )
@@ -87,7 +87,7 @@ export default function DanxiPostDetail({
         <div className={styles.headerActions}>
           <button className={styles.aiBtn} onClick={onSummarize} disabled={summaryBusy || actionBusy}>
             <Sparkles size={14} />
-            {summaryBusy ? '生成中...' : 'AI 摘要'}
+            {summaryBusy ? '生成中...' : '智能摘要'}
           </button>
         </div>
       </div>
@@ -112,7 +112,7 @@ export default function DanxiPostDetail({
             <button className={styles.summaryHeader} onClick={() => setSummaryExpanded((value) => !value)}>
               <div className={styles.summaryHeading}>
                 <Sparkles size={16} className={styles.summaryIcon} />
-                <span className={styles.summaryTitle}>AI 摘要</span>
+                <span className={styles.summaryTitle}>智能摘要</span>
               </div>
               <ChevronDown size={16} className={`${styles.summaryToggle} ${summaryExpanded ? styles.summaryToggleExpanded : ''}`} />
             </button>

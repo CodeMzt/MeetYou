@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { triggerAttachmentDownload } from '../attachmentTransfers'
-import type { ClientThreadProcedureContext, StatusFeedback } from '../types'
+import type { StatusFeedback } from '../types'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
 import {
   DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS,
@@ -8,65 +8,18 @@ import {
   useMeetYouSocket,
   useChatSession,
   useOperations,
-  useProcedures,
 } from './core'
 import { parseClientWsPayload } from '../protocolClient'
 import {
   completeClientAttachment,
-  getClientThreadProcedureContext,
   createClientAttachmentUploadTicket,
   uploadClientAttachmentContent
 } from '../clientApi'
 
 const STATUS_FEEDBACK_TTL_MS = 6000
 
-function procedureDetailSignature(procedure: ClientThreadProcedureContext['effective_procedure']): string {
-  if (!procedure) {
-    return ''
-  }
-  return JSON.stringify({
-    procedure_id: procedure.procedure_id,
-    title: procedure.title,
-    description: procedure.description,
-    applicable_modes: procedure.applicable_modes,
-    recommended_tools: procedure.recommended_tools,
-    preferred_tool_key: procedure.preferred_tool_key,
-    preferred_target_endpoint_ids: procedure.preferred_target_endpoint_ids,
-    preferred_endpoint_provider_types: procedure.preferred_endpoint_provider_types,
-    tool_target_routing_policy: procedure.tool_target_routing_policy,
-    default_execution_target: procedure.default_execution_target,
-    risk_profile: procedure.risk_profile,
-    status: procedure.status,
-    prompt_overlay: procedure.prompt_overlay,
-    recommended_source_profiles: procedure.recommended_source_profiles,
-    infer_keywords: procedure.infer_keywords,
-  })
-}
-
-function sameProcedureContext(
-  current: ClientThreadProcedureContext | null,
-  next: ClientThreadProcedureContext | null,
-): boolean {
-  if (current === next) {
-    return true
-  }
-  if (!current || !next) {
-    return false
-  }
-  return (
-    current.source === next.source &&
-    current.latest_inferred_reason === next.latest_inferred_reason &&
-    current.latest_inferred_score === next.latest_inferred_score &&
-    current.latest_inferred_at === next.latest_inferred_at &&
-    procedureDetailSignature(current.pinned_procedure) === procedureDetailSignature(next.pinned_procedure) &&
-    procedureDetailSignature(current.latest_inferred_procedure) === procedureDetailSignature(next.latest_inferred_procedure) &&
-    procedureDetailSignature(current.effective_procedure) === procedureDetailSignature(next.effective_procedure)
-  )
-}
-
 export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const autoInitializeAttemptedRef = useRef(false)
-  const [procedureContext, setProcedureContext] = useState<ClientThreadProcedureContext | null>(null)
   const [statusFeedback, setStatusFeedback] = useState<StatusFeedback | null>(null)
   const [attachmentInventoryVersion, setAttachmentInventoryVersion] = useState(0)
 
@@ -130,39 +83,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     dispatchChat
   )
 
-  const {
-    procedures,
-    executeProcedure,
-    reloadProcedures,
-  } = useProcedures(
-    baseUrl,
-    clientContext,
-    desktopToolClientId,
-    dispatchTransport,
-    dispatchChat
-  )
-
-  const reloadProcedureContext = useCallback(async (threadIdOverride?: string) => {
-    const threadId = String(threadIdOverride || clientContext?.threadId || '').trim()
-    if (!threadId) {
-      setProcedureContext(null)
-      return null
-    }
-    try {
-      const nextContext = await getClientThreadProcedureContext(baseUrl, threadId)
-      setProcedureContext((current) => {
-        if (sameProcedureContext(current, nextContext)) {
-          return current
-        }
-        return nextContext
-      })
-      return nextContext
-    } catch (error) {
-      console.warn('Failed to load thread procedure context:', error)
-      return null
-    }
-  }, [baseUrl, clientContext?.threadId])
-
   useEffect(() => {
     if (!statusFeedback) {
       return
@@ -211,9 +131,9 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       update.kind === 'confirm_resolved' ||
       update.kind === 'operation_updated'
     ) {
-      void reloadProcedureContext()
+      return
     }
-  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, refreshDesktopToolClient, refreshWorkspace, reloadProcedureContext])
+  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, refreshDesktopToolClient, refreshWorkspace])
 
   useEffect(() => {
     if (autoInitializeAttemptedRef.current) {
@@ -235,12 +155,11 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       return
     }
     void refreshDesktopToolClient(clientContext)
-    void reloadProcedureContext(clientContext.threadId)
     const timer = window.setInterval(() => {
       void refreshDesktopToolClient(clientContext)
     }, DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [clientContext, refreshDesktopToolClient, reloadProcedureContext])
+  }, [clientContext, refreshDesktopToolClient])
 
   const effectiveConnectionState = useMemo(() => {
     if (!clientContext || clientConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
@@ -271,10 +190,10 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
         size_bytes: uploadResult.size_bytes,
       })
       setAttachmentInventoryVersion((current) => current + 1)
-      publishStatusFeedback(`闄勪欢涓婁紶鎴愬姛锛?{file.name}`, 'success')
+      publishStatusFeedback(`附件上传成功：${file.name}`, 'success')
       return attachment
     } catch (error) {
-      publishStatusFeedback(`闄勪欢涓婁紶澶辫触锛?{error instanceof Error ? error.message : 'unknown error'}`, 'error')
+      publishStatusFeedback(`附件上传失败：${error instanceof Error ? error.message : '未知错误'}`, 'error')
       return null
     }
   }, [baseUrl, clientContext, initializeClientContext, publishStatusFeedback])
@@ -285,7 +204,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       await triggerAttachmentDownload(baseUrl, attachmentId, context.clientId)
       return true
     } catch (error) {
-      publishStatusFeedback(`闄勪欢涓嬭浇澶辫触锛?{error instanceof Error ? error.message : 'unknown error'}`, 'error')
+      publishStatusFeedback(`附件下载失败：${error instanceof Error ? error.message : '未知错误'}`, 'error')
       return null
     }
   }, [baseUrl, clientContext, initializeClientContext, publishStatusFeedback])
@@ -305,7 +224,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       baseUrl,
       threadId: clientContext?.threadId || '',
       workspace: clientContext?.workspace || null,
-      procedureContext,
       connectionState: effectiveConnectionState,
       desktopToolsAvailable: Boolean(desktopToolClientId),
       operations,
@@ -321,7 +239,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     effectiveConnectionState,
     operations,
     pendingHumanInput,
-    procedureContext,
   ])
 
   useEffect(() => {
@@ -337,8 +254,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   return {
     messages: chatState.messages,
     operations,
-    procedures,
-    procedureContext,
     workspace: clientContext?.workspace || null,
     threadId: clientContext?.threadId || '',
     sessionId,
@@ -360,9 +275,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     attachmentInventoryVersion,
     sendMessage,
     decideOperationApproval,
-    executeProcedure,
-    reloadProcedures,
-    reloadProcedureContext,
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,

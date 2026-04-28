@@ -130,7 +130,7 @@ class EndpointTools:
         }
         return payload
 
-    async def list_active_clients(
+    async def list_active_endpoints(
         self,
         workspace_id: str = "",
         thread_id: str = "",
@@ -173,7 +173,7 @@ class EndpointTools:
         results.sort(key=lambda item: (str(item.get("display_name") or "").lower(), str(item.get("endpoint_id") or "")))
         return {"ok": True, "count": len(results), "endpoints": results}
 
-    async def list_client_tool_targets(
+    async def list_endpoint_tool_targets(
         self,
         workspace_id: str = "",
         tool_key: str = "",
@@ -309,7 +309,7 @@ class EndpointTools:
             raise _tool_error("tool_key_required", "tool_key is required for tool_call delivery.")
 
         try:
-            result = await dispatcher.dispatch_directed_tool(
+            result = await dispatcher.dispatch_tool_call(
                 tool_key=normalized_tool_key,
                 arguments=dict(arguments or {}),
                 target_endpoint_id=normalized_target_id,

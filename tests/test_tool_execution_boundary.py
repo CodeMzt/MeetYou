@@ -37,7 +37,7 @@ class _RecordingDispatcher:
     def __init__(self):
         self.calls = []
 
-    async def dispatch_directed_tool(self, **kwargs):
+    async def dispatch_tool_call(self, **kwargs):
         self.calls.append(dict(kwargs))
         tool_key = kwargs.get("tool_key")
         if tool_key == "file.read":
@@ -74,7 +74,7 @@ class ToolExecutionBoundaryTests(unittest.IsolatedAsyncioTestCase):
             real_system_tools.set_tool_router(None)
             self.addCleanup(real_system_tools.set_tool_router, None)
             self.addCleanup(real_system_tools.set_local_fallback_enabled, True)
-            route_context = {"tool_bundle": ["read_local_documents"], "mcp_servers": [], "current_mode": "documents"}
+            route_context = {"tool_bundle": ["read_local_documents"], "mcp_servers": [], "current_mode": "general"}
 
             result = await manager.call_tool(
                 "read_local_documents",
@@ -82,7 +82,7 @@ class ToolExecutionBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 route_context=route_context,
             )
             self.assertFalse(result.ok)
-            self.assertEqual(result.error.code, "local_client_required")
+            self.assertEqual(result.error.code, "local_endpoint_required")
             self.assertEqual(result.error.details["tool_key"], "file.read")
 
             dispatcher = _RecordingDispatcher()
@@ -105,17 +105,17 @@ class ToolExecutionBoundaryTests(unittest.IsolatedAsyncioTestCase):
             blocked = await manager.call_tool(
                 "compile_report",
                 {"inputs": [str(local_path)], "format": "markdown"},
-                route_context={"tool_bundle": ["compile_report"], "current_mode": "documents"},
+                route_context={"tool_bundle": ["compile_report"], "current_mode": "general"},
             )
             self.assertFalse(blocked.ok)
-            self.assertEqual(blocked.error.code, "local_client_required")
+            self.assertEqual(blocked.error.code, "local_endpoint_required")
 
             dispatcher = _RecordingDispatcher()
             manager.set_capability_dispatcher(dispatcher)
             dispatched = await manager.call_tool(
                 "compile_report",
                 {"inputs": [str(local_path)], "format": "markdown"},
-                route_context={"tool_bundle": ["compile_report"], "current_mode": "documents"},
+                route_context={"tool_bundle": ["compile_report"], "current_mode": "general"},
             )
             self.assertTrue(dispatched.ok)
             self.assertEqual(dispatcher.calls[0]["tool_key"], "file.read")

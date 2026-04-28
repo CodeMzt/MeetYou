@@ -16,6 +16,21 @@ class FakeConfig:
         return self._values.get(key)
 
 
+class FakeGatewayClient:
+    def __init__(self):
+        self.messages = []
+        self.commands = []
+
+    async def start(self):
+        return None
+
+    async def send_message(self, text: str, **kwargs):
+        self.messages.append((text, kwargs))
+
+    async def send_command(self, action: str, **kwargs):
+        self.commands.append((action, kwargs))
+
+
 class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
@@ -33,11 +48,17 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
+        self.fake_client = FakeGatewayClient()
+
+        async def _fake_get_client(chat_id: str):
+            return self.fake_client
+
+        self.adapter._get_gateway_client = _fake_get_client  # type: ignore[assignment]
 
     async def asyncTearDown(self):
         self.tmpdir.cleanup()
 
-    async def test_handle_event_enqueues_message(self):
+    async def test_handle_event_sends_message_over_endpoint_chain(self):
         payload = {
             "event": {
                 "message": {
@@ -56,12 +77,10 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         await self.adapter.handle_event(payload)
 
-        event = self.event_bus.inbound_queue.get_nowait()
-        self.assertEqual(event.session_id, "feishu:chat:oc_test")
-        self.assertEqual(event.content, "hello from feishu")
-        self.assertEqual(event.source.kind, "feishu")
-        self.assertEqual(event.source.id, "oc_test")
-        self.assertEqual(event.target.kind, "current_session")
+        self.assertEqual(self.fake_client.messages[0][0], "hello from feishu")
+        self.assertEqual(self.fake_client.messages[0][1]["metadata"]["transport"], "feishu")
+        self.assertEqual(self.fake_client.messages[0][1]["metadata"]["chat_id"], "oc_test")
+        self.assertTrue(self.event_bus.inbound_queue.empty())
         self.assertTrue(self.registry_path.exists())
 
     async def test_ignores_self_message_from_bot_sender(self):
@@ -85,6 +104,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter.handle_event(payload)
 
         self.assertTrue(self.event_bus.inbound_queue.empty())
+        self.assertEqual(self.fake_client.messages, [])
 
     async def test_ignores_duplicate_message_id(self):
         payload = {
@@ -106,8 +126,8 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter.handle_event(payload)
         await self.adapter.handle_event(payload)
 
-        event = self.event_bus.inbound_queue.get_nowait()
-        self.assertEqual(event.content, "hello twice")
+        self.assertEqual(len(self.fake_client.messages), 1)
+        self.assertEqual(self.fake_client.messages[0][0], "hello twice")
         self.assertTrue(self.event_bus.inbound_queue.empty())
 
     async def test_handle_event_uses_gateway_client_when_output_adapter_present(self):

@@ -4,16 +4,16 @@ import platform
 import socket
 from typing import Any
 
-from client_tool_sdk.protocol import (
-    build_client_heartbeat,
-    build_client_hello,
-    build_client_tools_snapshot,
+from endpoint_tool_sdk.protocol import (
+    build_endpoint_capabilities_snapshot,
+    build_endpoint_heartbeat,
+    build_endpoint_hello,
     build_tool_call_accepted_message,
     build_tool_call_error_message,
     build_tool_call_progress_message,
     build_tool_call_result_message,
 )
-from client_tool_sdk.tool_ids import build_endpoint_tool_id
+from endpoint_tool_sdk.tool_ids import build_endpoint_tool_id
 from edge_client.config import EdgeClientConfig
 from platform_layer.detector import normalize_platform_system
 
@@ -125,9 +125,9 @@ def build_static_tools(config: EdgeClientConfig, *, extra_tools: list[dict[str, 
 
 def build_hello(config: EdgeClientConfig) -> dict[str, Any]:
     host_os = normalize_platform_system(platform.system())
-    return build_client_hello(
-        client_id=config.client_id,
-        client_type=config.client_type,
+    return build_endpoint_hello(
+        provider_id=config.client_id,
+        provider_type=config.client_type,
         display_name=config.display_name,
         transport_profile=config.transport_profile,
         workspace_ids=config.workspace_ids,
@@ -141,25 +141,25 @@ def build_hello(config: EdgeClientConfig) -> dict[str, Any]:
 
 
 def build_tools_snapshot(config: EdgeClientConfig, *, revision: int = 1, extra_tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    return build_client_tools_snapshot(
-        client_id=config.client_id,
+    return build_endpoint_capabilities_snapshot(
+        provider_id=config.client_id,
         revision=revision,
-        tools=build_static_tools(config, extra_tools=extra_tools),
+        capabilities=build_static_tools(config, extra_tools=extra_tools),
         provider_type=config.client_type,
     )
 
 
 def build_heartbeat(config: EdgeClientConfig, *, status: str = "ready", metrics: dict[str, Any] | None = None) -> dict[str, Any]:
-    return build_client_heartbeat(client_id=config.client_id, status=status, metrics=metrics, provider_type=config.client_type)
+    return build_endpoint_heartbeat(provider_id=config.client_id, status=status, metrics=metrics, provider_type=config.client_type)
 
 
 def build_call_accepted(config: EdgeClientConfig, *, call_id: str, correlation_id: str) -> dict[str, Any]:
-    return build_tool_call_accepted_message(client_id=config.client_id, call_id=call_id, correlation_id=correlation_id, provider_type=config.client_type)
+    return build_tool_call_accepted_message(provider_id=config.client_id, call_id=call_id, correlation_id=correlation_id, provider_type=config.client_type)
 
 
 def build_call_progress(config: EdgeClientConfig, *, call_id: str, correlation_id: str, phase: str, detail: str) -> dict[str, Any]:
     return build_tool_call_progress_message(
-        client_id=config.client_id,
+        provider_id=config.client_id,
         call_id=call_id,
         correlation_id=correlation_id,
         phase=phase,
@@ -169,12 +169,12 @@ def build_call_progress(config: EdgeClientConfig, *, call_id: str, correlation_i
 
 
 def build_call_result(config: EdgeClientConfig, *, call_id: str, correlation_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    return build_tool_call_result_message(client_id=config.client_id, call_id=call_id, correlation_id=correlation_id, result=result, provider_type=config.client_type)
+    return build_tool_call_result_message(provider_id=config.client_id, call_id=call_id, correlation_id=correlation_id, result=result, provider_type=config.client_type)
 
 
 def build_call_error(config: EdgeClientConfig, *, call_id: str, correlation_id: str, code: str, message: str, retryable: bool = False) -> dict[str, Any]:
     return build_tool_call_error_message(
-        client_id=config.client_id,
+        provider_id=config.client_id,
         call_id=call_id,
         correlation_id=correlation_id,
         code=code,

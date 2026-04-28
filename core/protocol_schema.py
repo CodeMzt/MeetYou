@@ -150,7 +150,7 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "advanced": True,
     },
     "client_access_token": {
-        "title": "Client 访问令牌",
+        "title": "Endpoint Provider 访问令牌",
         "description": "Desktop Provider 与 Edge Provider 连接 Core `/endpoint/ws` 时使用的令牌；正式主来源优先取环境变量。",
         "group": "secrets",
         "input": "password",
@@ -398,14 +398,14 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "placeholder": "research@example.com",
     },
     "enable_feishu_bot": {
-        "title": "启用飞书机器人",
-        "description": "启用飞书长连接输入输出适配器。",
+        "title": "启用飞书 Endpoint Provider",
+        "description": "启用飞书外部 Endpoint Provider，通过 Thread / Run / Delivery 主链接入 Core。",
         "group": "advanced",
         "input": "boolean",
         "advanced": True,
     },
     "enable_meetwechat_client": {
-        "title": "启用 MeetWeChat Client",
+        "title": "启用 MeetWeChat Endpoint Provider",
         "description": "启用 MeetWeChat 本地服务代理真实微信账号，并通过正式 Endpoint API 与 /endpoint/ws 接入 Core。",
         "group": "advanced",
         "input": "boolean",

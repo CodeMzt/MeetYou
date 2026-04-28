@@ -17,6 +17,9 @@
 - Tool dispatch must flow through ToolRouter plus ExecutionTarget.
 - Permissions live on Actor / Workspace / RunPolicy. Execution ability lives on EndpointCapability.
 - Do not keep `/client/ws`, `source_client_id`, `target_client_id`, or `ClientToolDispatchService` compatibility paths.
+- Runtime assistant modes are limited to `general`, `automation`, and `danxi`. Legacy `normal` / `auto` / `documents` / `research` / `study` inputs normalize to `general`; legacy `office` normalizes to `automation`. Do not persist or expose `normal` / `office` as runtime modes.
+- Procedure is removed in V4. Do not reintroduce Procedure API, table, tool, prompt layer, pinned Procedure fields, or UI. Reusable workflow guidance must use SKILL.
+- SKILL is the only reusable workflow guide layer. Public workflow discovery and authoring go through `list_skills`, `load_skill`, and `create_skill`; capability exposure flows through `CapabilityRegistry`, semantic routing, ToolRouter, and ExecutionTarget.
 
 ## Runtime Shape
 
@@ -75,7 +78,7 @@
 
 - `core/app.py`, `core/app_lifecycle.py`: Core assembly and lifecycle.
 - `gateway/routes/client.py`, `gateway/client_ws.py`: old Client protocol surface that must be replaced by Endpoint V4.
-- `core/services/client_tool_dispatch_service.py`: old directed tool dispatch path that must be replaced by ToolRouter.
+- `core/services/tool_router_service.py`: V4 ToolRouter / ExecutionTarget dispatch path.
 - `core/db/*`, `alembic/versions/*`: persistence and migration surface.
 - `desktop_client/runtime.py`, `edge_client/runtime.py`: provider execution and protocol connection paths.
 - `meetyou-ui/src/hooks/useMeetYou.ts`: UI API and WebSocket main chain.
@@ -89,6 +92,7 @@
 - Do not modify real runtime files unless explicitly required: `.env`, `user/*.json`, `user/*.db`, `logs/`, `.venv/`, `.git/`.
 - Do not modify lockfiles unless the task requires dependency changes. This repository normally only touches `meetyou-ui/package-lock.json`.
 - Schema work may create Alembic migration files only when the task explicitly requires schema changes.
+- Schema work must not recreate Procedure. V4 workflows belong in SKILL files and capability manifests.
 - For Danxi changes, do not expose plaintext email, password, cookie, or token anywhere.
 
 ## Common Commands

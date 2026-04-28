@@ -42,6 +42,75 @@ def _public_run_event(row) -> dict[str, Any]:
     }
 
 
+def _operation_update_payload(domain, call_row, *, phase: str = "", detail: str = "", result: dict | None = None, error: dict | None = None) -> tuple[str, str, dict[str, Any]]:
+    if call_row is None:
+        return "", "", {}
+    operation_service = getattr(domain.services, "operation", None)
+    get_operation = getattr(operation_service, "get_by_id", None)
+    operation = get_operation(getattr(call_row, "operation_id", None)) if callable(get_operation) else None
+    if operation is None:
+        return "", "", {}
+    thread_service = getattr(domain.services, "thread", None)
+    get_thread = getattr(thread_service, "get_by_id", None)
+    thread = get_thread(getattr(operation, "thread_id", None)) if callable(get_thread) else None
+    metadata = dict(getattr(operation, "meta", {}) or {})
+    payload = {
+        "thread_id": str(getattr(thread, "thread_id", "") or ""),
+        "workspace_id": str(metadata.get("workspace_id") or ""),
+        "operation_id": str(getattr(operation, "operation_id", "") or ""),
+        "title": str(getattr(operation, "title", "") or ""),
+        "operation_type": str(getattr(operation, "operation_type", "") or ""),
+        "execution_target": str(getattr(operation, "execution_target", "") or ""),
+        "execution_target_id": str(getattr(operation, "execution_target_id", "") or metadata.get("execution_target_id") or ""),
+        "target_endpoint_id": str(
+            metadata.get("target_endpoint_id")
+            or metadata.get("execution_target_id")
+            or getattr(operation, "execution_target_id", "")
+            or ""
+        ),
+        "tool_key": str(metadata.get("preferred_tool_key") or metadata.get("tool_key") or ""),
+        "tool_id": str(metadata.get("tool_id") or metadata.get("capability_id") or ""),
+        "call_id": str(getattr(call_row, "call_id", "") or ""),
+        "status": str(getattr(operation, "status", "") or getattr(call_row, "status", "") or ""),
+        "phase": str(phase or ""),
+        "detail": str(detail or ""),
+        "routing_reason": str(metadata.get("routing_reason") or ""),
+        "approval_id": str(metadata.get("approval_id") or ""),
+        "approval_status": str(metadata.get("approval_status") or ""),
+        "approval_required": bool(metadata.get("approval_required", False)),
+    }
+    if isinstance(result, dict):
+        payload["result"] = dict(result)
+    if isinstance(error, dict):
+        payload["error"] = dict(error)
+    return payload["thread_id"], payload["operation_id"], payload
+
+
+async def _publish_operation_update(
+    gateway,
+    domain,
+    call_row,
+    *,
+    phase: str = "",
+    detail: str = "",
+    result: dict | None = None,
+    error: dict | None = None,
+) -> None:
+    thread_id, operation_id, payload = _operation_update_payload(
+        domain,
+        call_row,
+        phase=phase,
+        detail=detail,
+        result=result,
+        error=error,
+    )
+    if not operation_id:
+        return
+    publisher = getattr(gateway, "publish_endpoint_operation_update", None)
+    if callable(publisher):
+        await publisher(thread_id=thread_id, operation_id=operation_id, payload=payload)
+
+
 async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str, Any], state: dict[str, Any]) -> None:
     if str(frame.get("schema") or "") != ENDPOINT_WS_SCHEMA:
         await _send_error(gateway, websocket, code="invalid_schema", message="expected meetyou.endpoint.ws.v4")
@@ -183,36 +252,44 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
     if frame_type == "tool.call.result":
         call_id = str(payload.get("call_id") or "").strip()
         if call_id:
-            domain.services.operation_call.mark_succeeded(call_id=call_id, result=payload.get("result") if isinstance(payload.get("result"), dict) else {})
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            call_row = domain.services.operation_call.mark_succeeded(call_id=call_id, result=result)
+            await _publish_operation_update(gateway, domain, call_row, phase="completed", result=result)
             await domain.services.tool_router.notify_call_result(
                 call_id,
-                payload.get("result") if isinstance(payload.get("result"), dict) else {},
+                result,
             )
         return
 
     if frame_type == "tool.call.accepted":
         call_id = str(payload.get("call_id") or "").strip()
         if call_id:
-            domain.services.operation_call.mark_accepted(call_id=call_id)
+            call_row = domain.services.operation_call.mark_accepted(call_id=call_id)
+            await _publish_operation_update(gateway, domain, call_row, phase="accepted")
         return
 
     if frame_type == "tool.call.progress":
         call_id = str(payload.get("call_id") or "").strip()
         if call_id:
-            domain.services.operation_call.mark_progress(
+            detail = str(payload.get("detail") or "")
+            phase = str(payload.get("phase") or "running")
+            call_row = domain.services.operation_call.mark_progress(
                 call_id=call_id,
-                detail=str(payload.get("detail") or ""),
-                metadata={"phase": str(payload.get("phase") or "running")},
+                detail=detail,
+                metadata={"phase": phase},
             )
+            await _publish_operation_update(gateway, domain, call_row, phase=phase, detail=detail)
         return
 
     if frame_type == "tool.call.error":
         call_id = str(payload.get("call_id") or "").strip()
         if call_id:
-            domain.services.operation_call.mark_failed(call_id=call_id, error=payload.get("error") if isinstance(payload.get("error"), dict) else {})
+            error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+            call_row = domain.services.operation_call.mark_failed(call_id=call_id, error=error)
+            await _publish_operation_update(gateway, domain, call_row, phase="failed", error=error)
             await domain.services.tool_router.notify_call_error(
                 call_id,
-                payload.get("error") if isinstance(payload.get("error"), dict) else {},
+                error,
             )
         return
 

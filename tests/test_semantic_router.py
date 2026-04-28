@@ -82,7 +82,7 @@ class SemanticRouterAgentTests(unittest.TestCase):
                 value="research",
                 confidence="high",
                 score=0.95,
-                reason="Stub selected research.",
+                reason="Stub selected retired research mode.",
                 signals=["stub_research"],
                 adapter_name="stub_semantic_adapter",
             ),
@@ -91,18 +91,19 @@ class SemanticRouterAgentTests(unittest.TestCase):
         )
         agent = SemanticRouterAgent(route_adapters=[adapter], fallback_adapter=KeywordFallbackAdapter())
 
-        result = agent.analyze("Analyze E:/demo/report.md and explain the repo tree.")
+        result = agent.analyze("Create a research report about finance policy and cite official sources.")
 
-        self.assertEqual(result.mode, "research")
+        self.assertEqual(result.mode, "general")
         self.assertEqual(result.source_profile, "finance_macro")
         self.assertTrue(result.prefer_live_web)
         self.assertFalse(result.used_keyword_fallback)
         self.assertEqual(result.adapter_name, "stub_semantic_adapter")
+        self.assertIn("Stub selected retired research mode.", result.reason)
 
     def test_uses_keyword_fallback_when_semantic_signal_is_low(self):
         adapter = _StubSemanticAdapter(
             route_decision=SemanticDecisionResult(
-                value="normal",
+                value="general",
                 confidence="low",
                 score=0.05,
                 reason="Stub had weak routing confidence.",
@@ -114,9 +115,9 @@ class SemanticRouterAgentTests(unittest.TestCase):
 
         result = agent.analyze("Analyze E:/demo/report.md and explain the repo directory tree.")
 
-        self.assertEqual(result.mode, "documents")
+        self.assertEqual(result.mode, "general")
         self.assertTrue(result.used_keyword_fallback)
-        self.assertIn("Keyword fallback selected documents", result.reason)
+        self.assertIn("Keyword fallback selected general", result.reason)
         self.assertEqual(result.adapter_name, "keyword_fallback_adapter")
 
     def test_default_agent_routes_profiles_context_and_skills(self):
@@ -126,7 +127,7 @@ class SemanticRouterAgentTests(unittest.TestCase):
             "Create a research report with citations and track source updates for OpenAI policy changes."
         )
 
-        self.assertEqual(result.mode, "research")
+        self.assertEqual(result.mode, "general")
         self.assertEqual(result.source_profile, "policy_global")
         self.assertIn("research_grounding", result.active_skills)
         self.assertFalse(result.used_keyword_fallback)
@@ -152,7 +153,7 @@ class SemanticRouterAgentTests(unittest.TestCase):
         decision = agent.evaluate_skill_activation(
             "knowledge_synthesis",
             "Please summarize these notes, organize the outline, and extract action items.",
-            mode="office",
+            mode="automation",
         )
 
         self.assertTrue(decision.value)

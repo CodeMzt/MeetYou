@@ -24,9 +24,9 @@ class _WorkspaceService:
             id="workspace-row-study",
             workspace_id="study",
             title="Study",
-            base_mode="study",
+            base_mode="general",
             description="Study zone",
-            default_execution_target="specific_client",
+            default_execution_target="specific_endpoint",
             meta={"memory_ranking_policy": "workspace_first"},
         )
 
@@ -96,6 +96,28 @@ class _ClientService:
         return []
 
 
+class _EndpointService:
+    def list_all(self):
+        return [
+            SimpleNamespace(
+                endpoint_id="desktop-app",
+                endpoint_type="desktop_executor",
+                provider_type="desktop",
+                workspace_scope=["personal"],
+                status="online",
+                meta={"display_name": "Desktop"},
+            ),
+            SimpleNamespace(
+                endpoint_id="study-endpoint",
+                endpoint_type="desktop_executor",
+                provider_type="desktop",
+                workspace_scope=["study"],
+                status="online",
+                meta={"display_name": "Study Endpoint"},
+            ),
+        ]
+
+
 class _Gateway:
     def __init__(self):
         self.events: list[dict] = []
@@ -120,6 +142,7 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
                     session=session_service,
                     thread=_ThreadService(),
                     client=client_service,
+                    endpoint=_EndpointService(),
                 )
             )
         )
@@ -152,13 +175,14 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
                     session=_SessionService(),
                     thread=_ThreadService(),
                     client=_ClientService(),
+                    endpoint=_EndpointService(),
                 )
             )
         )
 
         token = bind_event_context(session_id="sess_1", active_workspace_id="study")
         try:
-            result = await tools.list_workspaces(include_clients=True)
+            result = await tools.list_workspaces(include_endpoints=True)
         finally:
             reset_event_context(token)
 
@@ -167,8 +191,8 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
         rows = {item["workspace_id"]: item for item in result["workspaces"]}
         self.assertTrue(rows["study"]["active"])
         self.assertFalse(rows["personal"]["active"])
-        self.assertEqual(rows["study"]["clients"][0]["client_id"], "study-client")
-        self.assertEqual(rows["personal"]["clients"][0]["client_id"], "desktop-app")
+        self.assertEqual(rows["study"]["endpoints"][0]["endpoint_id"], "study-endpoint")
+        self.assertEqual(rows["personal"]["endpoints"][0]["endpoint_id"], "desktop-app")
 
 
 if __name__ == "__main__":

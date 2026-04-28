@@ -188,13 +188,13 @@ EndpointTransportService
 删除 / 替换：
 
 ```text
-ClientService as runtime identity owner
-Client connection manager
-/client/ws gateway handler
-client_tool_sdk frame names
+EndpointService as runtime identity owner
+Endpoint connection manager
+/endpoint/ws gateway handler
+endpoint_tool_sdk frame names
 ```
 
-可以保留 `client_tool_sdk` 目录名直到重命名完成，但内部协议必须是 Endpoint V4。更推荐重命名：
+`endpoint_tool_sdk` 是新的 Endpoint protocol / runtime SDK 入口。V4 不保留 `client_tool_sdk` / `client_tool_protocol.py` 作为运行时兼容层。
 
 ```text
 endpoint_protocol_sdk

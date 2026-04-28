@@ -197,3 +197,23 @@ class ScheduledJobRunRepository(RepositoryBase):
         self.session.add(row)
         self.session.flush()
         return row
+
+    def update_status(self, *, job_run_id, status: str, error: dict | None = None, metadata: dict | None = None) -> ScheduledJobRun | None:
+        row = self.session.query(ScheduledJobRun).filter_by(id=job_run_id).one_or_none()
+        if row is None:
+            row = self.session.query(ScheduledJobRun).filter_by(job_run_id=str(job_run_id or "")).one_or_none()
+        if row is None:
+            return None
+        row.status = str(status or row.status)
+        if row.status == "running" and row.started_at is None:
+            row.started_at = utcnow()
+        if row.status in {"succeeded", "failed", "cancelled"}:
+            row.finished_at = utcnow()
+        if error is not None:
+            row.error = dict(error or {})
+        if metadata:
+            merged = dict(row.meta or {})
+            merged.update(dict(metadata or {}))
+            row.meta = merged
+        self.session.flush()
+        return row

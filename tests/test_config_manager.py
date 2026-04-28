@@ -17,6 +17,7 @@ class ConfigManagerTests(unittest.TestCase):
             "MEETYOU_HEARTBEAT_API_KEY": os.environ.get("MEETYOU_HEARTBEAT_API_KEY"),
             "MEETYOU_EMBEDDING_API_KEY": os.environ.get("MEETYOU_EMBEDDING_API_KEY"),
             "MEETYOU_DATABASE_URL": os.environ.get("MEETYOU_DATABASE_URL"),
+            "MEETYOU_FEISHU_ENABLE": os.environ.get("MEETYOU_FEISHU_ENABLE"),
             "MEETYOU_FEISHU_APP_ID": os.environ.get("MEETYOU_FEISHU_APP_ID"),
             "MEETYOU_FEISHU_APP_SECRET": os.environ.get("MEETYOU_FEISHU_APP_SECRET"),
             "MEETYOU_MEETWECHAT_ENABLE": os.environ.get("MEETYOU_MEETWECHAT_ENABLE"),
@@ -118,6 +119,20 @@ class ConfigManagerTests(unittest.TestCase):
 
         self.assertEqual(config.get("database_url"), "postgresql+psycopg://from-process-env")
 
+    def test_feishu_enable_can_be_overridden_by_process_env_for_local_acceptance(self):
+        (self.temp_root / "user" / "config.json").write_text(
+            json.dumps({"enable_feishu_bot": True}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.environ["MEETYOU_FEISHU_ENABLE"] = "false"
+
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        self.assertFalse(config.get_bool("enable_feishu_bot"))
+
     def test_missing_core_mcp_config_logs_boundary_message(self):
         with self.assertLogs("meetyou.config", level="INFO") as captured:
             config = ConfigManager(
@@ -129,7 +144,7 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(config.get_mcp_servers(), {})
         self.assertEqual(diagnostic["status"], "missing")
         self.assertIn("core_mcp_servers.json", diagnostic["path"])
-        self.assertIn("Desktop Client", diagnostic["message"])
+        self.assertIn("Desktop Endpoint Provider", diagnostic["message"])
         self.assertTrue(
             any("Core MCP 配置文件不存在" in message for message in captured.output),
             captured.output,

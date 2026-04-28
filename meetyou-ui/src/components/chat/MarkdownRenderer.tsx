@@ -26,7 +26,7 @@ const CodeBlock = ({ inline, className, children, ...props }: any) => {
       <div className={styles.codeBlockWrapper}>
         <div className={styles.codeHeader}>
           <span className={styles.codeLang}>{lang}</span>
-          <button className={styles.copyBtn} onClick={handleCopy} aria-label="Copy code">
+          <button className={styles.copyBtn} onClick={handleCopy} aria-label="复制代码">
             {copied ? <Check size={14} color="#34c759" /> : <Copy size={14} />}
             <span>{copied ? '已复制' : '复制代码'}</span>
           </button>

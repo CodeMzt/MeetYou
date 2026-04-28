@@ -15,7 +15,7 @@ class EdgeClientConfig:
     core_base_url: str = "http://127.0.0.1:8000"
     core_access_token: str = ""
     client_id: str = "edge-client"
-    display_name: str = "Edge Client"
+    display_name: str = "Edge Endpoint Provider"
     client_type: str = "edge"
     workspace_ids: list[str] = field(default_factory=lambda: ["home-lab"])
     enabled_endpoint_tools: list[str] = field(default_factory=list)
@@ -74,7 +74,7 @@ def load_edge_client_config(config_file_path: str | None = None) -> EdgeClientCo
         ).strip(),
         core_access_token=_resolve_core_access_token(payload),
         client_id=str(os.environ.get("MEETYOU_EDGE_CLIENT_ID") or payload.get("client_id") or "edge-client").strip(),
-        display_name=str(os.environ.get("MEETYOU_EDGE_DISPLAY_NAME") or payload.get("display_name") or "Edge Client").strip(),
+        display_name=str(os.environ.get("MEETYOU_EDGE_DISPLAY_NAME") or payload.get("display_name") or "Edge Endpoint Provider").strip(),
         client_type=str(os.environ.get("MEETYOU_EDGE_CLIENT_TYPE") or payload.get("client_type") or "edge").strip(),
         workspace_ids=[str(item).strip() for item in (payload.get("workspace_ids") if isinstance(payload.get("workspace_ids"), list) else ["home-lab"]) if str(item).strip()],
         enabled_endpoint_tools=_string_list(payload, "enabled_endpoint_tools", []),

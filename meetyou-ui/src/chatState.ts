@@ -103,7 +103,7 @@ function buildMessageError(status: string | undefined, role: ChatTurn['role']): 
   if (status !== 'failed') {
     return undefined
   }
-  return role === 'assistant' ? 'Assistant response failed.' : 'Message delivery failed.'
+  return role === 'assistant' ? '助手回复失败。' : '消息投递失败。'
 }
 
 function findTurnIndex(turns: ChatTurn[], streamId: string, turnId: string): number {

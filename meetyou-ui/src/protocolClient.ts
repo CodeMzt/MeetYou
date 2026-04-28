@@ -82,6 +82,30 @@ function resolveEventSessionId(event: Record<string, unknown>): string {
   return toString(event.session_id) || toString(toRecord(event.message).session_id)
 }
 
+function toOperationUpdatedEvent(event: Record<string, unknown>): ClientWsEvent {
+  return {
+    kind: 'operation_updated',
+    threadId: resolveEventThreadId(event),
+    operationId: toString(event.operation_id),
+    workspaceId: toString(event.workspace_id),
+    title: toString(event.title),
+    operationType: toString(event.operation_type),
+    executionTarget: toString(event.execution_target),
+    targetEndpointId: toString(event.target_endpoint_id),
+    toolKey: toString(event.tool_key),
+    toolId: toString(event.tool_id),
+    callId: toString(event.call_id),
+    status: toString(event.status),
+    phase: toString(event.phase),
+    detail: toString(event.detail),
+    result: toRecord(event.result),
+    error: toRecord(event.error),
+    approvalId: toString(event.approval_id),
+    approvalStatus: toString(event.approval_status),
+    approvalRequired: toBoolean(event.approval_required),
+  }
+}
+
 function toAckPayload(value: unknown): AckPayload | null {
   const record = toRecord(value)
   if (!record.action) {
@@ -613,7 +637,7 @@ export function parseWsPayload(payload: unknown, now: number = Date.now()): Prot
     const error = toRuntimeErrorPayload(rawEvent.content) ?? {
       code: 'runtime_event_error',
       category: 'runtime',
-      message: content || '鍙戠敓閿欒',
+      message: content || '运行事件发生错误。',
       retryable: false,
       details: metadata,
       occurred_at: '',
@@ -639,6 +663,9 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
     if (frameType === 'endpoint.error') {
       const error = toRuntimeErrorPayload(record.payload)
       return error ? { kind: 'error', error } : { kind: 'ignore' }
+    }
+    if (frameType === 'delivery.operation_update') {
+      return toOperationUpdatedEvent(toRecord(record.payload))
     }
     if (frameType !== 'delivery.run_event') {
       return { kind: 'ignore' }
@@ -759,27 +786,7 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
   }
 
   if (eventType === 'operation.updated') {
-    return {
-      kind: 'operation_updated',
-      threadId,
-      operationId: toString(event.operation_id),
-      workspaceId: toString(event.workspace_id),
-      title: toString(event.title),
-      operationType: toString(event.operation_type),
-      executionTarget: toString(event.execution_target),
-      targetEndpointId: toString(event.target_endpoint_id),
-      toolKey: toString(event.tool_key),
-      toolId: toString(event.tool_id),
-      callId: toString(event.call_id),
-      status: toString(event.status),
-      phase: toString(event.phase),
-      detail: toString(event.detail),
-      result: toRecord(event.result),
-      error: toRecord(event.error),
-      approvalId: toString(event.approval_id),
-      approvalStatus: toString(event.approval_status),
-      approvalRequired: toBoolean(event.approval_required),
-    }
+    return toOperationUpdatedEvent(event)
   }
 
   if (eventType === 'runtime.state') {

@@ -94,7 +94,7 @@ class BackgroundAgentRunner:
             last_tool_names = [tc.name for tc in tool_calls]
             for tool_call in tool_calls:
                 tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-                if tool_call.name in {"manage_tasks", "manage_scheduled_tasks"}:
+                if tool_call.name == "manage_tasks":
                     action = str(tool_args.get("action") or "").strip().lower()
                     task_key = str(tool_args.get("task_key") or "").strip()
                     manage_task_actions.append(

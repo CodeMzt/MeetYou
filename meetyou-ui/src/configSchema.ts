@@ -17,12 +17,12 @@ const DEFAULT_CONFIG_GROUPS: ConfigGroupDefinition[] = [
   {
     key: 'secrets',
     title: '密钥',
-    description: 'API Key 与其他敏感集成凭证。',
+    description: '接口密钥与其他敏感集成凭证。',
   },
   {
     key: 'memory',
     title: '记忆',
-    description: 'Embedding、记忆持久化与相关配置。',
+    description: '向量嵌入、记忆持久化与相关配置。',
   },
   {
     key: 'heartbeat',
@@ -32,12 +32,12 @@ const DEFAULT_CONFIG_GROUPS: ConfigGroupDefinition[] = [
   {
     key: 'modes',
     title: '模式',
-    description: '助手模式路由、可信写入目录与 JSON 配置包。',
+    description: '助手模式路由、可信写入目录与结构化配置包。',
   },
   {
     key: 'advanced',
     title: '高级',
-    description: 'Gateway、飞书、MCP 等集成配置。',
+    description: '网关、飞书、MCP 等集成配置。',
   },
 ]
 

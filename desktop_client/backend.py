@@ -38,8 +38,7 @@ class DesktopClientBackend:
     async def run(self) -> None:
         if self.api_server is not None:
             await self.api_server.start()
-        else:
-            await self.ensure_runtime_started()
+        await self.ensure_runtime_started()
         try:
             await asyncio.Future()
         finally:

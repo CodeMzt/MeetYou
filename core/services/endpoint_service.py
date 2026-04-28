@@ -134,10 +134,13 @@ class EndpointCapabilityService(ServiceBase):
                 tool_key = str(item.get("tool_key") or item.get("name") or "").strip()
                 if not tool_key:
                     continue
+                raw_capability_id = str(item.get("capability_id") or item.get("tool_id") or "").strip()
+                if raw_capability_id and not raw_capability_id.startswith("endpoint."):
+                    raw_capability_id = ""
                 repo.upsert(
                     endpoint_id=endpoint_row_id,
                     tool_key=tool_key,
-                    capability_id=str(item.get("capability_id") or item.get("tool_id") or f"endpoint.{endpoint_public_id}.{tool_key}"),
+                    capability_id=raw_capability_id or f"endpoint.{endpoint_public_id}.{tool_key}",
                     schema=item.get("schema") if isinstance(item.get("schema"), dict) else item.get("input_schema") if isinstance(item.get("input_schema"), dict) else {},
                     risk_level=str(item.get("risk_level") or "read"),
                     requires_confirmation=bool(item.get("requires_confirmation", False)),

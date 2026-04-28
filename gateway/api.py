@@ -282,6 +282,12 @@ class FastAPIGateway:
     async def publish_endpoint_run_event(self, *, thread_id: str = "", run_id: str = "", event: dict) -> int:
         return await self.endpoint_ws_manager.publish_run_event(thread_id=thread_id, run_id=run_id, event=event)
 
+    async def publish_endpoint_message(self, *, thread_id: str = "", message: dict) -> int:
+        return await self.endpoint_ws_manager.publish_message(thread_id=thread_id, payload=message)
+
+    async def publish_endpoint_operation_update(self, *, thread_id: str = "", operation_id: str = "", payload: dict) -> int:
+        return await self.endpoint_ws_manager.publish_operation_update(thread_id=thread_id, operation_id=operation_id, payload=payload)
+
     async def dispatch_endpoint_call(self, *, endpoint_id: str, payload: dict) -> bool:
         return bool(await self.endpoint_ws_manager.send_to_endpoint(endpoint_id, payload))
 

@@ -18,7 +18,6 @@ from core.db.repositories.message import MessageRepository
 from core.db.repositories.operation import OperationRepository
 from core.db.repositories.operation_call import OperationCallRepository
 from core.db.repositories.principal import PrincipalRepository
-from core.db.repositories.procedure import ProcedureRepository
 from core.db.repositories.run import RunEventRepository, RunRepository
 from core.db.repositories.scheduler import ScheduledJobRepository, ScheduledJobRunRepository
 from core.db.repositories.session import SessionRepository
@@ -46,7 +45,6 @@ __all__ = [
     "OperationRepository",
     "OperationCallRepository",
     "PrincipalRepository",
-    "ProcedureRepository",
     "RunEventRepository",
     "RunRepository",
     "ScheduledJobRepository",

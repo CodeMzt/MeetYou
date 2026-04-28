@@ -19,10 +19,12 @@ from core.semantic_router import SemanticRouterAgent
 from core.skill_registry import SkillRegistryManager
 from core.source_catalog import SourceCatalogManager
 
-ASSISTANT_MODE_NORMAL = "normal"
+ASSISTANT_MODE_NORMAL = "general"
+ASSISTANT_MODE_GENERAL = ASSISTANT_MODE_NORMAL
 ASSISTANT_MODE_AUTO = "auto"
+ASSISTANT_MODE_AUTOMATION = "automation"
 ASSISTANT_MODE_DANXI = "danxi"
-ASSISTANT_SPECIALIZED_MODES = ("documents", "research", "office", "study", "danxi")
+ASSISTANT_SPECIALIZED_MODES = (ASSISTANT_MODE_AUTOMATION, ASSISTANT_MODE_DANXI)
 ASSISTANT_MODES = (ASSISTANT_MODE_NORMAL, *ASSISTANT_SPECIALIZED_MODES)
 VALID_ASSISTANT_MODES = (ASSISTANT_MODE_AUTO, *ASSISTANT_MODES)
 
@@ -35,7 +37,7 @@ _PATH_RE = re.compile(
 )
 
 _MODE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "documents": (
+    ASSISTANT_MODE_GENERAL: (
         "document",
         "docs",
         "file",
@@ -75,8 +77,6 @@ _MODE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "改写文档",
         "写入文档",
         "分析目录",
-    ),
-    "research": (
         "latest",
         "recent",
         "today",
@@ -111,8 +111,31 @@ _MODE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "价格",
         "政策",
         "法规",
+        "study",
+        "learn",
+        "learning",
+        "course",
+        "exam",
+        "quiz",
+        "flashcard",
+        "mastery",
+        "practice",
+        "syllabus",
+        "lesson",
+        "学习",
+        "复习",
+        "课程",
+        "考试",
+        "测验",
+        "题目",
+        "知识点",
+        "闪卡",
+        "掌握度",
+        "练习",
+        "讲义",
+        "教案",
     ),
-    "office": (
+    ASSISTANT_MODE_AUTOMATION: (
         "meeting",
         "agenda",
         "minutes",
@@ -143,32 +166,6 @@ _MODE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "同步笔记",
         "待办",
         "任务",
-    ),
-    "study": (
-        "study",
-        "learn",
-        "learning",
-        "course",
-        "exam",
-        "quiz",
-        "flashcard",
-        "mastery",
-        "review",
-        "practice",
-        "syllabus",
-        "lesson",
-        "学习",
-        "复习",
-        "课程",
-        "考试",
-        "测验",
-        "题目",
-        "知识点",
-        "闪卡",
-        "掌握度",
-        "练习",
-        "讲义",
-        "教案",
     ),
 }
 
@@ -306,22 +303,22 @@ _PRIMARY_SOURCE_DOMAINS = {
 
 _DEFAULT_SOURCE_PROFILES = {
     "workspace_local": {
-        "label": "Workspace / Local Knowledge",
-        "description": "Prefer local files, project notes, memory, and trusted private sources.",
+        "label": "工作区与本地知识",
+        "description": "优先使用本地文件、项目笔记、记忆和可信私有来源。",
         "primary_domains": [],
         "source_order": ["local", "memory", "notion"],
         "freshness": "workspace",
     },
     "study_materials": {
-        "label": "Study Materials",
-        "description": "Prefer local learning materials, notes, and explicit references from the user.",
+        "label": "学习资料",
+        "description": "优先使用本地学习资料、笔记和用户明确给出的引用。",
         "primary_domains": [],
         "source_order": ["local", "memory", "notion", "academic"],
         "freshness": "coursework",
     },
     "tech_global": {
-        "label": "Tech Global",
-        "description": "Official docs, GitHub releases, standards, and vendor changelogs first.",
+        "label": "国际技术",
+        "description": "优先使用官方文档、GitHub 发布、标准和供应商变更日志。",
         "primary_domains": [
             "github.com",
             "docs.python.org",
@@ -334,8 +331,8 @@ _DEFAULT_SOURCE_PROFILES = {
         "freshness": "high",
     },
     "tech_cn": {
-        "label": "Tech China",
-        "description": "Chinese-language official docs, cloud vendor docs, and official repositories first.",
+        "label": "国内技术",
+        "description": "优先使用中文官方文档、云厂商文档和官方仓库。",
         "primary_domains": [
             "help.aliyun.com",
             "cloud.tencent.com",
@@ -347,8 +344,8 @@ _DEFAULT_SOURCE_PROFILES = {
         "freshness": "high",
     },
     "academic": {
-        "label": "Academic",
-        "description": "Papers, DOI records, PubMed, and preprint indexes first.",
+        "label": "学术资料",
+        "description": "优先使用论文、DOI 记录、PubMed 和预印本索引。",
         "primary_domains": [
             "arxiv.org",
             "pubmed.ncbi.nlm.nih.gov",
@@ -359,8 +356,8 @@ _DEFAULT_SOURCE_PROFILES = {
         "freshness": "medium",
     },
     "policy": {
-        "label": "Policy / Regulation",
-        "description": "Government and regulator sources first.",
+        "label": "政策与监管",
+        "description": "优先使用政府和监管机构资料。",
         "primary_domains": [
             "gov.cn",
             "stats.gov.cn",
@@ -373,8 +370,8 @@ _DEFAULT_SOURCE_PROFILES = {
         "freshness": "high",
     },
     "finance": {
-        "label": "Finance",
-        "description": "Exchange filings, official IR, and regulator disclosures first.",
+        "label": "金融资料",
+        "description": "优先使用交易所申报、官方投资者关系和监管披露资料。",
         "primary_domains": [
             "sec.gov",
             "edgar.sec.gov",
@@ -385,8 +382,8 @@ _DEFAULT_SOURCE_PROFILES = {
         "freshness": "high",
     },
     "campus_forum": {
-        "label": "Campus Forum",
-        "description": "Campus forum threads, replies, subscriptions, and private workspace context first.",
+        "label": "校园论坛",
+        "description": "优先使用校园论坛帖子、回复、订阅和私有工作区上下文。",
         "primary_domains": [
             "forum.fduhole.com",
             "auth.fduhole.com",
@@ -398,36 +395,26 @@ _DEFAULT_SOURCE_PROFILES = {
 }
 
 _DEFAULT_MODE_TOOL_BUNDLES = {
-    "normal": {
+    ASSISTANT_MODE_GENERAL: {
         "tools": [
-            "get_sys_vitals",
-            "research_topic",
-            "inspect_page",
-        ],
-        "mcp_servers": [],
-    },
-    "documents": {
-        "tools": [
-            "exec_sys_cmd",
             "get_sys_vitals",
             "analyze_workspace",
             "read_local_documents",
             "write_local_document",
             "rewrite_local_document",
-            "compile_report",
-        ],
-        "mcp_servers": ["filesystem_tools"],
-    },
-    "research": {
-        "tools": [
             "research_topic",
             "inspect_page",
             "track_source_updates",
             "compile_report",
+            "build_study_plan",
+            "extract_learning_points",
+            "quiz_me",
+            "generate_flashcards",
+            "track_mastery",
         ],
-        "mcp_servers": [],
+        "mcp_servers": ["filesystem_tools"],
     },
-    "office": {
+    ASSISTANT_MODE_AUTOMATION: {
         "tools": [
             "read_local_documents",
             "write_local_document",
@@ -439,19 +426,7 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
         ],
         "mcp_servers": ["filesystem_tools"],
     },
-    "study": {
-        "tools": [
-            "read_local_documents",
-            "compile_report",
-            "build_study_plan",
-            "extract_learning_points",
-            "quiz_me",
-            "generate_flashcards",
-            "track_mastery",
-        ],
-        "mcp_servers": ["filesystem_tools"],
-    },
-    "danxi": {
+    ASSISTANT_MODE_DANXI: {
         "tools": [
             "danxi_login",
             "danxi_logout",
@@ -482,11 +457,10 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "list_skills",
     "load_skill",
     "create_skill",
-    "manage_procedures",
     "list_workspaces",
     "switch_workspace",
-    "list_active_clients",
-    "list_client_tool_targets",
+    "list_active_endpoints",
+    "list_endpoint_tool_targets",
     "send_endpoint_message",
     "emit_progress_notice",
     "restart_core",
@@ -531,7 +505,7 @@ _TASK_RECOGNITION_HINTS = (
 )
 
 _DEFAULT_ROUTER_CONFIG = {
-    "default_mode": ASSISTANT_MODE_NORMAL,
+    "default_mode": ASSISTANT_MODE_GENERAL,
     "sticky_current_mode": True,
     "allow_preferred_override": True,
     "allow_in_turn_switch": True,
@@ -561,57 +535,32 @@ _DEFAULT_OFFICE_INTEGRATIONS = {
 _MODE_PROMPT_FALLBACKS = {
     "auto-router": (
         "[Auto Router]\n"
-        "Choose the working mode that best matches the user's next immediate step.\n"
+        "Choose the smallest public mode that matches the user's next immediate step.\n"
         "Modes:\n"
-        "- normal: ordinary conversation, daily assistant work, private knowledge lookup, and lightweight web work with the shared basic tools first\n"
-        "- documents: local files, folders, workspace analysis, document writing, report generation, then document-specific tools when the shared basic tools are not enough\n"
-        "- research: deep research, source tracking, evidence-heavy analysis, research-style reports, and the research_grounding skill layered on top of the shared basic tools\n"
-        "- office: schedules, meeting briefs, drafts, notes sync, and coordination, with task_recognition available when task signals appear and the shared basic tools used for grounding\n"
-        "- study: study plans, learning points, quizzes, flashcards, mastery tracking, and the study_coaching skill combined with the shared basic tools\n"
+        "- general: ordinary conversation, local/workspace work, web/page reading, research-style evidence gathering, study help, and private knowledge lookup\n"
+        "- automation: schedules, meeting briefs, drafts, notes sync, endpoint messaging, action items, and coordination artifacts\n"
         "- danxi: FDU campus-forum browsing, thread search, favorites or subscriptions, messages, and normal-user post or reply actions through the Danxi tool suite\n"
         "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
-        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, directed Client tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
-        "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled work.\n"
-        "If signals are mixed, prefer the smallest mode that directly matches the user's next job."
+        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, endpoint tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
+        "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_jobs for Scheduler-owned work.\n"
+        "Legacy documents/research/study requests remain in general and should use skills/tools instead of switching modes."
     ),
-    "normal": (
-        "[Normal Mode]\n"
+    "general": (
+        "[General Mode]\n"
         "You are operating as a general daily assistant.\n"
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
         "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
-        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, directed Client tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
-        "When the user's message clearly contains user TODO or scheduled-task work, the task_recognition skill can activate manage_tasks or manage_scheduled_tasks.\n"
-        "Stay in normal mode unless the next immediate step clearly requires file tools, deep research constraints, office coordination tools, or study-specific tools."
+        "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, endpoint tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
+        "When the user's message clearly contains user TODO or scheduled-task work, the task_recognition skill can activate manage_tasks or manage_scheduled_jobs.\n"
+        "Stay in general mode unless the next immediate step clearly requires automation coordination or Danxi forum tools."
     ),
-    "documents": (
-        "[Documents Mode]\n"
-        "You are operating as a document and workspace specialist.\n"
-        "Prefer local files, directory analysis, structured document reading, and safe draft-first writing.\n"
-        "Start with the shared basic tools for knowledge lookup, memory lookup, and web/page reading when they help ground the document task, then move to document-specific tools for repository or file operations. Call emit_progress_notice before web/page reads, repository or file inspection, directed Client tool calls, endpoint messaging, or other slow I/O.\n"
-        "If the user also mixes in user TODO or scheduled-task work, task_recognition can activate the matching task tool without leaving this mode.\n"
-        "When editing documents, inspect first, summarize the current structure, and keep writes inside trusted roots unless the user explicitly confirms a broader target."
-    ),
-    "research": (
-        "[Research Mode]\n"
-        "You are operating as a research specialist.\n"
-        "Prioritize first-party and official sources, reason explicitly about freshness, and ground claims in evidence objects and citations.\n"
-        "Start with the shared basic tools such as search_web, read_web_page, search_memory, search_knowledge, and emit_progress_notice for focused evidence collection. Call emit_progress_notice before web/page reads, research chains, endpoint messaging, or other slow I/O, then use the research_grounding skill and heavier research flows when the task needs broader synthesis or source tracking.\n"
-        "Use this mode for source-heavy analysis, update tracking, and report-style research work where rigorous sourcing matters."
-    ),
-    "office": (
-        "[Office Mode]\n"
-        "You are operating as an office and coordination specialist.\n"
+    "automation": (
+        "[Automation Mode]\n"
+        "You are operating as an automation and coordination specialist.\n"
         "Favor schedules, drafts, task state, meeting notes, and note synchronization.\n"
-        "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted. Call emit_progress_notice before page reads, endpoint messaging, directed Client tool calls, or other slow I/O, then use office-specific tools when coordination artifacts must be produced.\n"
-        "Task-style requests can also activate the task_recognition skill so user TODO and scheduled-task tools stay available inside office workflows.\n"
+        "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted. Call emit_progress_notice before page reads, endpoint messaging, endpoint tool calls, or other slow I/O, then use automation-specific tools when coordination artifacts must be produced.\n"
+        "Task-style requests can also activate the task_recognition skill so user TODO and scheduled-task tools stay available inside automation workflows.\n"
         "External side effects stay draft-first. Do not pretend that a message or calendar entry has been sent unless the tool confirms it."
-    ),
-    "study": (
-        "[Study Mode]\n"
-        "You are operating as a study coach.\n"
-        "Favor plans, extracted learning points, quizzes, flashcards, and mastery tracking.\n"
-        "Start with the shared basic tools when you need memory lookup, private knowledge lookup, or lightweight page reading. Call emit_progress_notice before page reads, research, local file/workspace work, endpoint messaging, or other slow I/O, then use the study_coaching skill to turn the retrieved material into guided learning work.\n"
-        "If the user adds user TODOs or scheduled follow-ups, task_recognition can also activate the matching task tool."
     ),
     "danxi": (
         "[Danxi Mode]\n"
@@ -626,7 +575,7 @@ _SKILL_PROMPT_FALLBACKS = {
     "task-recognition": (
         "[Task Recognition Skill]\n"
         "Detect when the user is creating, listing, updating, blocking, rescheduling, or completing actionable tasks.\n"
-        "Use manage_tasks for user TODOs and manage_scheduled_tasks for assistant-owned scheduled tasks when task work is actually requested, instead of keeping task tracking only in free-form chat."
+        "Use manage_tasks for user TODOs and manage_scheduled_jobs for Scheduler-owned jobs when scheduled work is actually requested, instead of keeping task tracking only in free-form chat."
     ),
     "research-grounding": (
         "[Research Grounding Skill]\n"
@@ -669,11 +618,8 @@ _SKILL_PROMPT_FALLBACKS = {
 
 _DEFAULT_PROMPT_REGISTRY = {
     "auto-router": {"path": "prompt/modes/auto-router", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["auto-router"]},
-    "mode:normal": {"path": "prompt/modes/normal", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["normal"]},
-    "mode:documents": {"path": "prompt/modes/documents", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["documents"]},
-    "mode:research": {"path": "prompt/modes/research", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["research"]},
-    "mode:office": {"path": "prompt/modes/office", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["office"]},
-    "mode:study": {"path": "prompt/modes/study", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["study"]},
+    "mode:general": {"path": "prompt/modes/general", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["general"]},
+    "mode:automation": {"path": "prompt/modes/automation", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["automation"]},
     "mode:danxi": {"path": "prompt/modes/danxi", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["danxi"]},
     "skill:task-recognition": {
         "path": "prompt/SKILL/task-recognition",
@@ -720,7 +666,7 @@ _DEFAULT_PROMPT_REGISTRY = {
 _DEFAULT_SKILL_REGISTRY = {
     "task_recognition": {
         "prompts": ["skill:task-recognition"],
-        "tools": ["manage_tasks", "manage_scheduled_tasks"],
+        "tools": ["manage_tasks", "manage_scheduled_jobs"],
         "mcp_servers": [],
         "activation_keywords": list(_TASK_RECOGNITION_HINTS),
     },
@@ -796,9 +742,9 @@ _DEFAULT_SKILL_REGISTRY = {
 
 _DEFAULT_SCENE_DEFINITIONS = {
     "knowledge_synthesis": {
-        "title": "Knowledge Synthesis",
+        "title": "知识综合",
         "summary": "轻量总结、重组笔记与提炼行动项。",
-        "applicable_modes": ["normal", "documents", "research", "office", "study"],
+        "applicable_modes": [ASSISTANT_MODE_GENERAL, ASSISTANT_MODE_AUTOMATION, ASSISTANT_MODE_DANXI],
         "skills": ["knowledge_synthesis"],
         "tools": ["summarize_text", "organize_notes", "extract_action_items"],
         "mcp_servers": [],
@@ -806,9 +752,9 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "activation_keywords": ["summary", "outline", "整理", "提炼", "摘要", "结构化"],
     },
     "workspace_delivery": {
-        "title": "Workspace Delivery",
+        "title": "工作区交付",
         "summary": "处理工作区读取、报告整理与结构化交付。",
-        "applicable_modes": ["documents", "office"],
+        "applicable_modes": [ASSISTANT_MODE_GENERAL, ASSISTANT_MODE_AUTOMATION],
         "skills": ["knowledge_synthesis"],
         "tools": ["analyze_workspace", "read_local_documents", "compile_report", "organize_notes"],
         "mcp_servers": ["filesystem_tools"],
@@ -816,9 +762,9 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "activation_keywords": ["workspace", "repo", "目录", "工作区", "项目结构"],
     },
     "research_synthesis": {
-        "title": "Research Synthesis",
+        "title": "研究综合",
         "summary": "科研、资料核验与来源追踪。",
-        "applicable_modes": ["research", "normal"],
+        "applicable_modes": [ASSISTANT_MODE_GENERAL],
         "skills": ["research_grounding", "knowledge_synthesis"],
         "tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
         "mcp_servers": ["tavily_web", "browser_automation"],
@@ -827,9 +773,9 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "authorization": {"read_only": True},
     },
     "office_coordination": {
-        "title": "Office Coordination",
+        "title": "办公协作",
         "summary": "办公整理、会议纪要、跟进事项与沟通草稿。",
-        "applicable_modes": ["office", "documents"],
+        "applicable_modes": [ASSISTANT_MODE_AUTOMATION],
         "skills": ["office_coordination", "task_recognition"],
         "tools": ["meeting_brief", "draft_message", "sync_notes", "organize_notes", "extract_action_items"],
         "mcp_servers": ["filesystem_tools", "notion_knowledge"],
@@ -837,9 +783,9 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "activation_keywords": ["meeting", "agenda", "minutes", "纪要", "同步", "消息"],
     },
     "study_guidance": {
-        "title": "Study Guidance",
+        "title": "学习指导",
         "summary": "学习计划、知识提炼与复盘练习。",
-        "applicable_modes": ["study"],
+        "applicable_modes": [ASSISTANT_MODE_GENERAL],
         "skills": ["study_coaching", "knowledge_synthesis"],
         "tools": ["build_study_plan", "extract_learning_points", "quiz_me", "generate_flashcards", "summarize_text"],
         "mcp_servers": ["filesystem_tools"],
@@ -847,9 +793,9 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "activation_keywords": ["study", "quiz", "flashcard", "学习", "复习", "知识点"],
     },
     "hotspot_tracking": {
-        "title": "Hotspot Tracking",
+        "title": "热点追踪",
         "summary": "热点事件追踪、多源比对与摘要输出。",
-        "applicable_modes": ["normal", "research"],
+        "applicable_modes": [ASSISTANT_MODE_GENERAL],
         "skills": ["hotspot_tracking", "research_grounding"],
         "tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
         "mcp_servers": ["tavily_web", "browser_automation"],
@@ -858,9 +804,9 @@ _DEFAULT_SCENE_DEFINITIONS = {
         "authorization": {"read_only": True},
     },
     "danxi_forum_ops": {
-        "title": "Danxi Forum Ops",
+        "title": "旦夕论坛操作",
         "summary": "校内论坛浏览、信息整理与低风险普通用户操作。",
-        "applicable_modes": ["danxi"],
+        "applicable_modes": [ASSISTANT_MODE_DANXI],
         "skills": ["danxi_digest", "knowledge_synthesis"],
         "tools": [
             "danxi_list_posts",
@@ -880,21 +826,21 @@ _DEFAULT_SCENE_DEFINITIONS = {
 
 _DEFAULT_MCP_CATALOG = {
     "filesystem_tools": {
-        "title": "Filesystem Tools",
+        "title": "文件系统工具",
         "summary": "访问本地文件、目录与工作区元数据。",
-        "scenarios": ["documents", "workspace", "office sync", "study materials"],
+        "scenarios": ["文档", "工作区", "办公同步", "学习资料"],
         "risk_level": "read",
         "auth_env": [],
         "fallback_tools": ["analyze_workspace", "read_local_documents"],
         "enabled_by_default": True,
-        "boundary": "client_local_mcp",
-        "managed_by": "desktop_or_edge_client",
-        "classification_reason": "本地文件、工作区与终端邻接能力由 Desktop Client / Edge Client 作为 tool 托管，不收口到 Core MCP。",
+        "boundary": "endpoint_local_mcp",
+        "managed_by": "desktop_or_edge_endpoint_provider",
+        "classification_reason": "本地文件、工作区与终端邻接能力由 Desktop / Edge Endpoint Provider 作为 tool 托管，不收口到 Core MCP。",
     },
     "tavily_web": {
-        "title": "Tavily Web Search",
+        "title": "Tavily 网页搜索",
         "summary": "为外部网页搜索与抽取提供更强的在线检索能力。",
-        "scenarios": ["research", "news", "hotspot tracking"],
+        "scenarios": ["研究", "新闻", "热点追踪"],
         "risk_level": "read",
         "auth_env": ["TAVILY_API_KEY"],
         "fallback_tools": ["search_web", "read_web_page", "research_topic"],
@@ -904,9 +850,9 @@ _DEFAULT_MCP_CATALOG = {
         "classification_reason": "服务端可安全托管的外部检索能力，应优先通过 Core MCP 暴露。",
     },
     "browser_automation": {
-        "title": "Browser Automation",
+        "title": "浏览器自动化",
         "summary": "浏览器导航与页面快照能力，用于复杂网页观察。",
-        "scenarios": ["research", "inspection", "hotspot tracking"],
+        "scenarios": ["研究", "检查", "热点追踪"],
         "risk_level": "read",
         "auth_env": [],
         "fallback_tools": ["inspect_page", "read_web_page"],
@@ -916,9 +862,9 @@ _DEFAULT_MCP_CATALOG = {
         "classification_reason": "非端侧网页观察能力可在服务端沙箱内运行，属于 Core MCP 收口范围。",
     },
     "notion_knowledge": {
-        "title": "Notion Knowledge",
+        "title": "Notion 知识库",
         "summary": "私有 Notion 知识库读取与检索。",
-        "scenarios": ["office", "knowledge base", "workspace memory"],
+        "scenarios": ["办公", "知识库", "工作区记忆"],
         "risk_level": "read",
         "auth_env": ["NOTION_TOKEN"],
         "fallback_tools": ["search_knowledge", "search_memory", "organize_notes"],
@@ -938,12 +884,12 @@ _DEFAULT_CORE_MCP_CLASSIFICATION_STANDARD = {
         ],
         "decision": "正式收口到 Core MCP。",
     },
-    "client_local_mcp": {
+    "endpoint_local_mcp": {
         "criteria": [
             "能力直接触达本地文件系统、终端或工作区运行时。",
             "能力需要随端侧会话、权限与本地 MCP 生命周期一起托管。",
         ],
-        "decision": "继续留在 Desktop Client / Edge Client，不纳入 Core MCP。",
+        "decision": "继续留在 Desktop / Edge Endpoint Provider，不纳入 Core MCP。",
     },
     "runtime_native_exception": {
         "criteria": [
@@ -976,69 +922,36 @@ _DEFAULT_RUNTIME_NATIVE_TOOL_EXCEPTIONS = [
         "reason": "直接管理 Core 自身任务状态，不是外部集成。",
     },
     {
-        "tool_name": "manage_scheduled_tasks",
+        "tool_name": "manage_scheduled_jobs",
         "category": "core_state",
-        "reason": "直接管理 Core 自身调度状态，不是外部集成。",
-    },
-    {
-        "tool_name": "manage_procedures",
-        "category": "core_state",
-        "reason": "直接管理 Core procedure 目录与审批，不是外部集成。",
+        "reason": "直接管理 V4 SchedulerService / scheduled_jobs，不是外部集成。",
     },
 ]
 
 _DEFAULT_MODE_DEFINITIONS = {
-    "normal": {
-        "prompts": ["mode:normal"],
-        "mode_skills": ["mode:normal"],
-        "tools": _DEFAULT_MODE_TOOL_BUNDLES["normal"]["tools"],
-        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["normal"]["mcp_servers"],
+    ASSISTANT_MODE_GENERAL: {
+        "prompts": ["mode:general"],
+        "mode_skills": ["mode:general"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES[ASSISTANT_MODE_GENERAL]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES[ASSISTANT_MODE_GENERAL]["mcp_servers"],
         "skills": [],
         "auto_skills": ["task_recognition"],
         "scenes": ["knowledge_synthesis"],
     },
-    "documents": {
-        "prompts": ["mode:documents"],
-        "mode_skills": ["mode:documents"],
-        "tools": _DEFAULT_MODE_TOOL_BUNDLES["documents"]["tools"],
-        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["documents"]["mcp_servers"],
-        "skills": [],
-        "auto_skills": ["task_recognition"],
-        "scenes": ["workspace_delivery", "knowledge_synthesis"],
-    },
-    "research": {
-        "prompts": ["mode:research"],
-        "mode_skills": ["mode:research"],
-        "tools": _DEFAULT_MODE_TOOL_BUNDLES["research"]["tools"],
-        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["research"]["mcp_servers"],
-        "skills": ["research_grounding"],
-        "auto_skills": ["task_recognition", "hotspot_tracking", "knowledge_synthesis"],
-        "scenes": ["research_synthesis", "hotspot_tracking"],
-        "authorization": {"read_only": True},
-    },
-    "office": {
-        "prompts": ["mode:office"],
-        "mode_skills": ["mode:office"],
-        "tools": _DEFAULT_MODE_TOOL_BUNDLES["office"]["tools"],
-        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["office"]["mcp_servers"],
+    ASSISTANT_MODE_AUTOMATION: {
+        "prompts": ["mode:automation"],
+        "mode_skills": ["mode:automation"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES[ASSISTANT_MODE_AUTOMATION]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES[ASSISTANT_MODE_AUTOMATION]["mcp_servers"],
         "skills": [],
         "auto_skills": ["task_recognition", "office_coordination", "knowledge_synthesis"],
         "scenes": ["office_coordination", "knowledge_synthesis"],
     },
-    "study": {
-        "prompts": ["mode:study"],
-        "mode_skills": ["mode:study"],
-        "tools": _DEFAULT_MODE_TOOL_BUNDLES["study"]["tools"],
-        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["study"]["mcp_servers"],
-        "skills": ["study_coaching"],
-        "auto_skills": ["task_recognition", "knowledge_synthesis"],
-        "scenes": ["study_guidance", "knowledge_synthesis"],
-    },
-    "danxi": {
+    ASSISTANT_MODE_DANXI: {
         "prompts": ["mode:danxi"],
         "mode_skills": ["mode:danxi"],
-        "tools": _DEFAULT_MODE_TOOL_BUNDLES["danxi"]["tools"],
-        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES["danxi"]["mcp_servers"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES[ASSISTANT_MODE_DANXI]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES[ASSISTANT_MODE_DANXI]["mcp_servers"],
         "skills": [],
         "auto_skills": ["danxi_digest", "knowledge_synthesis"],
         "scenes": ["danxi_forum_ops", "knowledge_synthesis"],
@@ -1354,7 +1267,12 @@ class AssistantModeManager:
         )
 
     def assemble_prompt_for_route(self, route_context: dict[str, Any] | None) -> str:
-        return self._prompt_assembler.assemble_for_route(route_context)
+        normalized_context = dict(route_context or {})
+        normalized_context["current_mode"] = _normalize_mode(
+            normalized_context.get("current_mode") or ASSISTANT_MODE_NORMAL,
+            fallback=ASSISTANT_MODE_NORMAL,
+        )
+        return self._prompt_assembler.assemble_for_route(normalized_context)
 
     def get_auto_router_prompt(self) -> str:
         return self.get_prompt_for_mode("auto-router")
@@ -1416,7 +1334,7 @@ class AssistantModeManager:
         client_managed_mcp_servers: list[dict[str, Any]] = []
         for item in diagnostics.get("mcp_servers", []):
             payload = dict(item or {})
-            if str(payload.get("boundary") or "core_mcp").strip() in {"client_local_mcp"}:
+            if str(payload.get("boundary") or "core_mcp").strip() in {"endpoint_local_mcp"}:
                 client_managed_mcp_servers.append(payload)
             else:
                 core_mcp_servers.append(payload)
@@ -1559,9 +1477,10 @@ class AssistantModeManager:
         triggers = {mode: [] for mode in ASSISTANT_MODES}
         lowered = content.lower()
 
-        for mode, keywords in _MODE_KEYWORDS.items():
-            if mode == "research":
-                continue
+        for keyword_mode, keywords in _MODE_KEYWORDS.items():
+            mode = _normalize_mode(keyword_mode, fallback=ASSISTANT_MODE_NORMAL)
+            if mode not in scores:
+                mode = ASSISTANT_MODE_NORMAL
             for keyword in keywords:
                 if keyword in lowered:
                     scores[mode] += 2
@@ -1576,9 +1495,9 @@ class AssistantModeManager:
 
         for keyword in _DEEP_RESEARCH_HINTS:
             if keyword in lowered:
-                scores["research"] += 3
-                if len(triggers["research"]) < 4:
-                    triggers["research"].append(keyword)
+                scores[ASSISTANT_MODE_NORMAL] += 3
+                if len(triggers[ASSISTANT_MODE_NORMAL]) < 4:
+                    triggers[ASSISTANT_MODE_NORMAL].append(keyword)
 
         if _URL_RE.search(content):
             scores[ASSISTANT_MODE_NORMAL] += 4
@@ -1586,9 +1505,9 @@ class AssistantModeManager:
                 triggers[ASSISTANT_MODE_NORMAL].append("direct_url")
 
         if _PATH_RE.search(content):
-            scores["documents"] += 4
-            if len(triggers["documents"]) < 4:
-                triggers["documents"].append("local_path")
+            scores[ASSISTANT_MODE_NORMAL] += 4
+            if len(triggers[ASSISTANT_MODE_NORMAL]) < 4:
+                triggers[ASSISTANT_MODE_NORMAL].append("local_path")
 
         if sticky_current_mode and current_mode in ASSISTANT_MODES:
             scores[current_mode] += 1
@@ -1601,7 +1520,7 @@ class AssistantModeManager:
             reason = (
                 f"No strong routing signal found; reusing current mode {best_mode}."
                 if current_mode in ASSISTANT_MODES
-                else "No strong routing signal found; defaulting to normal for ordinary conversation."
+                else "No strong routing signal found; defaulting to general for ordinary conversation."
             )
             return best_mode, reason
 
@@ -1649,7 +1568,7 @@ class AssistantModeManager:
             return self.build_route_for_mode(
                 ASSISTANT_MODE_NORMAL,
                 requested_mode=ASSISTANT_MODE_NORMAL,
-                reason="Preferred mode selected: normal",
+                reason="Preferred mode selected: general",
                 content=content,
                 loaded_skills=loaded_skills,
             )
@@ -1684,10 +1603,6 @@ class AssistantModeManager:
         )
 
     def _default_source_profile_for_mode(self, mode: str, content: str) -> str:
-        if mode == "research":
-            return self.classify_research_source_profile(content)
-        if mode == "study":
-            return "study_materials"
         if mode == ASSISTANT_MODE_DANXI:
             return "campus_forum"
         return "workspace_local"

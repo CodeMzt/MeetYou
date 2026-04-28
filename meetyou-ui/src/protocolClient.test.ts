@@ -42,7 +42,7 @@ describe('protocolClient', () => {
             status: 'thinking',
             detail: 'Calling model',
             active_tools: ['search_web'],
-            current_mode: 'research',
+            current_mode: 'general',
             route_reason: 'latest',
             action_risk: 'read',
             source_profile: 'tech_global',
@@ -400,6 +400,26 @@ describe('protocolClient', () => {
     expect(event.kind === 'operation_updated' ? event.status : '').toBe('running')
   })
 
+  it('parses operation update delivery frames from endpoint websocket', () => {
+    const event = parseClientWsPayload({
+      schema: 'meetyou.endpoint.ws.v4',
+      type: 'delivery.operation_update',
+      payload: {
+        thread_id: 'thr_1',
+        operation_id: 'op_1',
+        call_id: 'call_1',
+        status: 'running',
+        phase: 'accepted',
+        detail: 'Dispatching',
+      },
+    })
+
+    expect(event.kind).toBe('operation_updated')
+    expect(event.kind === 'operation_updated' ? event.operationId : '').toBe('op_1')
+    expect(event.kind === 'operation_updated' ? event.callId : '').toBe('call_1')
+    expect(event.kind === 'operation_updated' ? event.phase : '').toBe('accepted')
+  })
+
   it('parses runtime and activity events from endpoint websocket', () => {
     const runtimeState = parseClientWsPayload(endpointRunEvent({
         type: 'runtime.state',
@@ -408,7 +428,7 @@ describe('protocolClient', () => {
           status: 'thinking',
           detail: 'Working',
           active_tools: ['search_web'],
-          current_mode: 'research',
+          current_mode: 'general',
           route_reason: 'need_web',
           action_risk: 'read',
           source_profile: 'tech_updates',

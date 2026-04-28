@@ -96,12 +96,12 @@ Workspace 适合承载：
 
 - `capability_policy`
 - `allowed_capability_ids`
-- `preferred_agent_ids`
+- `preferred_target_endpoint_ids`
 
 当前已落地的第三批治理字段：
 
-- `preferred_agent_types`
-- `agent_routing_policy`
+- `preferred_endpoint_provider_types`
+- `tool_target_routing_policy`
 
 当前已生效的第二批治理行为：
 
@@ -112,9 +112,9 @@ Workspace 适合承载：
 
 当前已生效的第三批治理行为：
 
-- `agent_routing_policy=balanced` 时，优先看 `preferred_agent_ids`，再看 `preferred_agent_types`，最后看 owner affinity
-- `agent_routing_policy=prefer_owner_client` 时，owner affinity 会先于 workspace 首选 agent 列表生效
-- `agent_routing_policy=strict_preferred` 时，若配置了 `preferred_agent_ids`，系统不会退回非首选 agent
+- `tool_target_routing_policy=balanced` 时，优先看 `preferred_target_endpoint_ids`，再看 `preferred_endpoint_provider_types`，最后看 origin endpoint affinity
+- `tool_target_routing_policy=prefer_origin_endpoint` 时，origin endpoint affinity 会先于 workspace 首选 endpoint 列表生效
+- `tool_target_routing_policy=strict_preferred_endpoint` 时，若配置了 `preferred_target_endpoint_ids`，系统不会退回非首选 endpoint
 
 当前已落地的第四批能力收口：
 
@@ -132,9 +132,9 @@ Workspace 适合承载：
 
 当前已生效的第五批治理行为：
 
-- capability 级 routing override 可以覆写 workspace 全局 `preferred_agent_ids`
-- capability 级 routing override 可以覆写 workspace 全局 `preferred_agent_types`
-- capability 级 routing override 可以覆写 workspace 全局 `agent_routing_policy`
+- capability 级 routing override 可以覆写 workspace 全局 `preferred_target_endpoint_ids`
+- capability 级 routing override 可以覆写 workspace 全局 `preferred_endpoint_provider_types`
+- capability 级 routing override 可以覆写 workspace 全局 `tool_target_routing_policy`
 
 当前已落地的第六批衔接：
 
@@ -401,9 +401,9 @@ Procedure 应声明：
 - `default_execution_target`
 - `risk_profile`
 - `preferred_capability_ref`
-- `preferred_agent_ids`
-- `preferred_agent_types`
-- `agent_routing_policy`
+- `preferred_target_endpoint_ids`
+- `preferred_endpoint_provider_types`
+- `tool_target_routing_policy`
 
 ### 6.3 Procedure 推断与生命周期
 
@@ -525,7 +525,7 @@ V2 采用清晰的能力命名约定：
   "task_type": "automation",
   "workspace_id": "home-lab",
   "execution_target": "workspace_any_agent",
-  "preferred_agent_id": "raspi-home-lab-agent",
+  "preferred_target_endpoint_id": "raspi-home-lab-endpoint",
   "procedure_id": "daily_research_digest",
   "status": "active"
 }

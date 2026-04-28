@@ -1033,7 +1033,7 @@ class Heart:
             return None
         return payload if isinstance(payload, dict) else None
 
-    async def heartbeat_processor(self):
+    async def heartbeat_processor(self, *, once: bool = False):
         shutdown = self._event_bus.shutdown_event
 
         while True:
@@ -1217,6 +1217,8 @@ class Heart:
             else:
                 logger.warning("Heartbeat config incomplete (api_url or model missing), skipping heartbeat model call")
 
+            if once:
+                break
             try:
                 await asyncio.wait_for(shutdown.wait(), timeout=max(self._heartbeat_interval, 1))
                 break

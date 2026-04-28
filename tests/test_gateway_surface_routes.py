@@ -165,22 +165,102 @@ class _SchedulerService:
         return True
 
 
+class _ThreadService:
+    def __init__(self):
+        self.rows = {"thread-row": SimpleNamespace(id="thread-row", thread_id="thr-1")}
+
+    def get_by_thread_id(self, thread_id: str):
+        for row in self.rows.values():
+            if row.thread_id == thread_id:
+                return row
+        return None
+
+    def get_by_id(self, row_id):
+        return self.rows.get(row_id)
+
+
+class _OperationService:
+    def __init__(self):
+        self.rows = {
+            "operation-row": SimpleNamespace(
+                id="operation-row",
+                operation_id="op-1",
+                thread_id="thread-row",
+                workspace_id="workspace-row",
+                operation_type="tool_call",
+                execution_target="endpoint",
+                execution_target_id="desktop.main.executor",
+                title="Echo",
+                status="queued",
+                meta={
+                    "workspace_id": "desktop-main",
+                    "execution_target_id": "desktop.main.executor",
+                    "preferred_tool_key": "utility.echo",
+                    "tool_id": "endpoint.desktop.main.executor.utility.echo",
+                },
+            )
+        }
+
+    def get_by_id(self, row_id):
+        return self.rows.get(row_id)
+
+
+class _OperationCallService:
+    def __init__(self, operation_service: _OperationService):
+        self._operation_service = operation_service
+        self.calls = {
+            "call-1": SimpleNamespace(
+                id="call-row",
+                call_id="call-1",
+                operation_id="operation-row",
+                status="queued",
+                result={},
+                error={},
+            )
+        }
+
+    def _mark(self, *, call_id: str, status: str, result: dict | None = None, error: dict | None = None):
+        row = self.calls.get(call_id)
+        if row is None:
+            return None
+        row.status = status
+        if isinstance(result, dict):
+            row.result = dict(result)
+        if isinstance(error, dict):
+            row.error = dict(error)
+        operation = self._operation_service.get_by_id(row.operation_id)
+        if operation is not None:
+            operation.status = status
+        return row
+
+    def mark_succeeded(self, **kwargs):
+        return self._mark(call_id=kwargs["call_id"], status="succeeded", result=kwargs.get("result"))
+
+    def mark_accepted(self, **kwargs):
+        return self._mark(call_id=kwargs["call_id"], status="running")
+
+    def mark_progress(self, **kwargs):
+        return self._mark(call_id=kwargs["call_id"], status="running")
+
+    def mark_failed(self, **kwargs):
+        return self._mark(call_id=kwargs["call_id"], status="failed", error=kwargs.get("error"))
+
+
 class _FakeDomain:
     def __init__(self):
+        thread = _ThreadService()
+        operation = _OperationService()
+        operation_call = _OperationCallService(operation)
         self.services = SimpleNamespace(
             endpoint=_EndpointService(),
             endpoint_connection=_EndpointConnectionService(),
             endpoint_capability=_EndpointCapabilityService(),
             workspace=_WorkspaceService(),
             scheduler=_SchedulerService(),
-            thread=SimpleNamespace(get_by_thread_id=lambda thread_id: None),
+            thread=thread,
             run_event=SimpleNamespace(list_for_thread_after=lambda **kwargs: []),
-            operation_call=SimpleNamespace(
-                mark_succeeded=lambda **kwargs: None,
-                mark_accepted=lambda **kwargs: None,
-                mark_progress=lambda **kwargs: None,
-                mark_failed=lambda **kwargs: None,
-            ),
+            operation=operation,
+            operation_call=operation_call,
             tool_router=SimpleNamespace(
                 notify_call_result=lambda call_id, result: None,
                 notify_call_error=lambda call_id, error: None,
@@ -264,6 +344,25 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                 self.assertEqual(subscription_ack["payload"]["target_type"], "thread")
                 self.assertTrue(gateway.endpoint_ws_manager.has_subscription(target_type="thread", target_id="thr-1"))
 
+                websocket.send_json(
+                    {
+                        "schema": ENDPOINT_WS_SCHEMA,
+                        "type": "tool.call.progress",
+                        "endpoint_id": "desktop.main.executor",
+                        "payload": {
+                            "call_id": "call-1",
+                            "phase": "running",
+                            "detail": "Dispatching",
+                        },
+                    }
+                )
+                operation_update = websocket.receive_json()
+                self.assertEqual(operation_update["type"], "delivery.operation_update")
+                self.assertEqual(operation_update["payload"]["thread_id"], "thr-1")
+                self.assertEqual(operation_update["payload"]["operation_id"], "op-1")
+                self.assertEqual(operation_update["payload"]["call_id"], "call-1")
+                self.assertEqual(operation_update["payload"]["tool_key"], "utility.echo")
+
                 endpoints_resp = client.get(
                     "/operator/endpoints",
                     headers={"Authorization": "Bearer surface-token"},
@@ -274,6 +373,16 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                 self.assertEqual(endpoints["desktop.main.executor"]["connection_count"], 1)
                 self.assertTrue(endpoints["desktop.main.ui"]["connected"])
                 self.assertEqual(endpoints["desktop.main.ui"]["connection_count"], 1)
+
+                legacy_clients_resp = client.get(
+                    "/operator/clients",
+                    headers={"Authorization": "Bearer surface-token"},
+                )
+                self.assertEqual(legacy_clients_resp.status_code, 410)
+                self.assertEqual(
+                    legacy_clients_resp.json()["error"]["details"]["replacement_path"],
+                    "/operator/endpoints",
+                )
 
         self.assertIn("desktop.main.ui", domain.services.endpoint.rows)
         self.assertIn("desktop.main.executor", domain.services.endpoint.rows)

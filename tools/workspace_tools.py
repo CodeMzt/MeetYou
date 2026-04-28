@@ -20,12 +20,12 @@ class WorkspaceTools:
 
     async def list_workspaces(
         self,
-        include_clients: bool = False,
+        include_endpoints: bool = False,
         session_id: str = "",
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         del route_context
-        include_clients = bool(include_clients)
+        include_endpoints = bool(include_endpoints)
         domain = self._core_domain
         if domain is None:
             return {"ok": False, "code": "core_domain_unavailable", "message": "Core domain is not available."}
@@ -56,21 +56,29 @@ class WorkspaceTools:
                 "memory_ranking_policy": str(governance.get("memory_ranking_policy") or "workspace_first"),
                 "active": bool(active_workspace_id and workspace_id == active_workspace_id),
             }
-            if include_clients:
-                clients = []
-                client_service = getattr(domain.services, "client", None)
-                lister = getattr(client_service, "list_clients_for_workspace", None)
+            if include_endpoints:
+                endpoints = []
+                endpoint_service = getattr(domain.services, "endpoint", None)
+                lister = getattr(endpoint_service, "list_all", None)
                 if callable(lister):
-                    for row in lister(getattr(workspace, "id", None)):
-                        client = row[0] if isinstance(row, tuple) else row
-                        clients.append(
+                    for endpoint in lister():
+                        workspace_scope = [
+                            str(scope or "").strip()
+                            for scope in (getattr(endpoint, "workspace_scope", []) or [])
+                            if str(scope or "").strip()
+                        ]
+                        if workspace_id not in workspace_scope and "*" not in workspace_scope:
+                            continue
+                        endpoints.append(
                             {
-                                "client_id": str(getattr(client, "client_id", "") or ""),
-                                "client_type": str(getattr(client, "client_type", "") or ""),
-                                "display_name": str(getattr(client, "display_name", "") or ""),
+                                "endpoint_id": str(getattr(endpoint, "endpoint_id", "") or ""),
+                                "endpoint_type": str(getattr(endpoint, "endpoint_type", "") or ""),
+                                "provider_type": str(getattr(endpoint, "provider_type", "") or ""),
+                                "display_name": str((getattr(endpoint, "meta", {}) or {}).get("display_name") or getattr(endpoint, "endpoint_id", "") or ""),
+                                "status": str(getattr(endpoint, "status", "") or ""),
                             }
                         )
-                item["clients"] = clients
+                item["endpoints"] = endpoints
             items.append(item)
 
         return {

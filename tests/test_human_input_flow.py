@@ -13,12 +13,20 @@ from fastapi.testclient import TestClient
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-class _FakeClientSession:
-    async def close(self):
-        return None
+try:
+    import aiohttp  # noqa: F401
+except ImportError:
+    class _FakeClientSession:
+        async def close(self):
+            return None
 
-
-sys.modules.setdefault("aiohttp", types.SimpleNamespace(ClientSession=_FakeClientSession))
+    sys.modules.setdefault(
+        "aiohttp",
+        types.SimpleNamespace(
+            ClientSession=_FakeClientSession,
+            ClientTimeout=lambda **_kwargs: None,
+        ),
+    )
 
 from adapters.base import StreamEvent, ToolCallInfo
 from core.brain import Brain
@@ -271,12 +279,52 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
-    async def test_feishu_input_adapter_consumes_pending_human_input_reply(self):
+    async def test_feishu_input_adapter_submits_pending_human_input_over_endpoint_chain(self):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         registry_path = Path(tmpdir.name) / "feishu_chat_ids.json"
         event_bus = EventBus()
         session_manager = SessionManager()
+        case = self
+
+        class _FakeOutput:
+            def get_pending_confirm_request(self, chat_id: str):
+                return None
+
+            def resolve_human_input(self, chat_id: str, raw_text: str):
+                case.assertEqual(chat_id, "oc_test")
+                case.assertEqual(raw_text, "2")
+                return {
+                    "request_id": "req-human",
+                    "answer_text": "B",
+                    "selected_option": "B",
+                }
+
+            async def send_client_event(self, chat_id: str, payload: dict):
+                return None
+
+        class _FakeGatewayClient:
+            def __init__(self):
+                self.human_input_responses = []
+
+            async def start(self):
+                return None
+
+            async def submit_human_input_response(self, *, request_id: str, answer_text: str, selected_option: str | None = None):
+                self.human_input_responses.append(
+                    {
+                        "request_id": request_id,
+                        "answer_text": answer_text,
+                        "selected_option": selected_option,
+                    }
+                )
+                return {"request_id": request_id, "answer_text": answer_text, "selected_option": selected_option}
+
+            async def send_command(self, action: str, **kwargs):
+                raise AssertionError("send_command should not be used")
+
+        fake_output = _FakeOutput()
+        fake_client = _FakeGatewayClient()
         adapter = FeishuInputAdapter(
             event_bus,
             session_manager,
@@ -287,16 +335,13 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
                     "feishu_app_secret": "",
                 }
             ),
+            output_adapter=fake_output,
         )
 
-        wait_task = asyncio.create_task(
-            event_bus.request_human_input(
-                "Choose one",
-                options=["A", "B"],
-                session_id="feishu:chat:oc_test",
-            )
-        )
-        await asyncio.sleep(0)
+        async def _fake_get_gateway_client(chat_id: str):
+            return fake_client
+
+        adapter._get_gateway_client = _fake_get_gateway_client  # type: ignore[assignment]
 
         await adapter.handle_event(
             {
@@ -316,9 +361,10 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        payload = await wait_task
-        self.assertEqual(payload["selected_option"], "B")
-        self.assertEqual(payload["answer_text"], "B")
+        self.assertEqual(
+            fake_client.human_input_responses,
+            [{"request_id": "req-human", "answer_text": "B", "selected_option": "B"}],
+        )
         self.assertTrue(event_bus.inbound_queue.empty())
 
 

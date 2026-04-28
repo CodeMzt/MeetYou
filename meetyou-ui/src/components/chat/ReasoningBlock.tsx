@@ -21,7 +21,7 @@ export default function ReasoningBlock({ text, isStreaming }: ReasoningBlockProp
       >
         <div className={styles.reasoningTitle}>
           <BrainCircuit size={14} className={isStreaming ? styles.pulse : ''} />
-          <span>{isStreaming ? 'Thinking...' : 'Reasoning Process'}</span>
+          <span>{isStreaming ? '思考中...' : '思考过程'}</span>
         </div>
         <motion.div
           animate={{ rotate: expanded ? 180 : 0 }}

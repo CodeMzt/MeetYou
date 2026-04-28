@@ -33,7 +33,6 @@ export default function App() {
     uploadAttachment,
     downloadAttachment,
     refreshWorkspace,
-    reloadProcedureContext,
   } = useMeetYou(baseUrl)
 
   const [inputVal, setInputVal] = useState('')
@@ -59,14 +58,13 @@ export default function App() {
   useEffect(() => {
     const handleWorkspaceGovernanceUpdated = (_event: unknown, data: { workspace_id?: string } | null) => {
       void refreshWorkspace(data?.workspace_id)
-      void reloadProcedureContext()
     }
 
     window.ipcRenderer?.on(WINDOW_EVENT_CHANNEL.workspaceGovernanceUpdated, handleWorkspaceGovernanceUpdated)
     return () => {
       window.ipcRenderer?.off(WINDOW_EVENT_CHANNEL.workspaceGovernanceUpdated, handleWorkspaceGovernanceUpdated)
     }
-  }, [refreshWorkspace, reloadProcedureContext])
+  }, [refreshWorkspace])
 
   useEffect(() => {
     if (preferredMode !== 'danxi') {
@@ -79,7 +77,7 @@ export default function App() {
         if (!cancelled) {
           setDanxiStatusText(
             status.logged_in
-              ? `已连接 · ${status.transport || 'direct'}`
+              ? `已连接 · ${status.transport || '直连'}`
               : status.connection_error
                 ? '连接异常'
                 : '未连接',

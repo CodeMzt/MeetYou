@@ -59,7 +59,7 @@ export default function Titlebar({
           <button className={styles.iconBtn} onClick={handleOpenDashboard} title="记忆图谱">
             <Database size={15} />
           </button>
-          <button className={styles.iconBtn} onClick={handleOpenWorkspacePanel} title="工作区与规程">
+          <button className={styles.iconBtn} onClick={handleOpenWorkspacePanel} title="工作区">
             <LayoutTemplate size={15} />
           </button>
           <button className={styles.iconBtn} onClick={handleOpenAttachments} title="附件管理">

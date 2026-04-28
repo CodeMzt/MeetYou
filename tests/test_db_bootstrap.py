@@ -57,7 +57,7 @@ class DatabaseBootstrapTests(unittest.TestCase):
             tables = set(inspector.get_table_names())
             self.assertIn("config_entries", tables)
             self.assertIn("memory_records", tables)
-            self.assertIn("procedures", tables)
+            self.assertNotIn("procedures", tables)
             self.assertIn("tasks", tables)
             self.assertIn("actors", tables)
             self.assertIn("endpoints", tables)
@@ -69,10 +69,11 @@ class DatabaseBootstrapTests(unittest.TestCase):
             self.assertIn("endpoint_outbox", tables)
             self.assertNotIn("agents", tables)
             self.assertNotIn("workspace_agent_memberships", tables)
-            procedure = context.services.procedure.get_by_procedure_id("code_review")
-            self.assertIsNotNone(procedure)
             self.assertIsNotNone(context.services.actor.get_by_actor_id("system.scheduler"))
             self.assertIsNotNone(context.services.actor.get_by_actor_id("system.heartbeat"))
+            user_actor = context.services.actor.get_by_actor_id("user:self")
+            self.assertIsNotNone(user_actor)
+            self.assertEqual(user_actor.owner_user_id, "self")
             self.assertIsNotNone(context.services.endpoint.get_by_endpoint_id("core.local"))
             self.assertIsNotNone(context.services.endpoint.get_by_endpoint_id("core.scheduler"))
             heartbeat = context.services.scheduler.get_job("system.heartbeat")
@@ -95,7 +96,6 @@ class DatabaseBootstrapTests(unittest.TestCase):
                 principal_id=context.principal.id,
                 workspace_id=context.workspaces["personal"].id,
                 title="Bootstrap thread",
-                pinned_procedure_id="code_review",
             )
             session = context.services.session.create_session(
                 thread_id=thread.id,
@@ -134,7 +134,6 @@ class DatabaseBootstrapTests(unittest.TestCase):
             )
 
             self.assertIsNotNone(context.services.thread.get_by_thread_id(thread.thread_id))
-            self.assertEqual(context.services.thread.get_by_thread_id(thread.thread_id).pinned_procedure_id, "code_review")
             self.assertIsNotNone(context.services.session.get_by_session_id(session.session_id))
             self.assertIsNotNone(context.services.operation.get_by_operation_id(operation.operation_id))
             self.assertIsNotNone(context.services.approval.get_by_approval_id(approval.approval_id))
@@ -143,22 +142,6 @@ class DatabaseBootstrapTests(unittest.TestCase):
             self.assertEqual(context.services.scheduler.get_job("system.heartbeat").job_id, "system.heartbeat")
         finally:
             context.engine.dispose()
-
-    def test_procedure_service_can_infer_from_content(self):
-        context = bootstrap_core_domain(database_url=TEST_DATABASE_URL, run_migrations=True)
-        try:
-            inferred = context.services.procedure.infer_for_turn(
-                principal_id=context.principal.id,
-                content="Please review this patch for regressions and risky changes.",
-                preferred_mode="general",
-                workspace_id="personal",
-            )
-            self.assertTrue(inferred["matched"])
-            self.assertEqual(inferred["procedure_id"], "code_review")
-            self.assertGreater(inferred["score"], 0)
-        finally:
-            context.engine.dispose()
-
 
 if __name__ == "__main__":
     unittest.main()

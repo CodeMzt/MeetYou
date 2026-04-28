@@ -308,27 +308,26 @@ class ClientThreadBridge:
         if gateway is None or not thread_id:
             return
         metadata = dict(getattr(operation, "meta", {}) or {})
-        await self._publish_thread_event(
-            gateway,
-            thread_id,
-            event_type="operation.updated",
-            payload={
-                "thread_id": thread_id,
-                "workspace_id": str(metadata.get("workspace_id") or ""),
-                "operation_id": operation.operation_id,
-                "title": operation.title,
-                "operation_type": operation.operation_type,
-                "execution_target": operation.execution_target,
-                "target_endpoint_id": str(metadata.get("target_endpoint_id") or metadata.get("execution_target_id") or ""),
-                "tool_key": str(metadata.get("preferred_tool_key") or metadata.get("tool_key") or ""),
-                "tool_id": str(metadata.get("tool_id") or metadata.get("capability_id") or ""),
-                "status": operation.status,
-                "phase": phase,
-                "detail": detail,
-                "routing_reason": str(metadata.get("routing_reason") or ""),
-                **({"error": dict(error)} if isinstance(error, dict) else {}),
-            },
-        )
+        payload = {
+            "thread_id": thread_id,
+            "workspace_id": str(metadata.get("workspace_id") or ""),
+            "operation_id": operation.operation_id,
+            "title": operation.title,
+            "operation_type": operation.operation_type,
+            "execution_target": operation.execution_target,
+            "execution_target_id": str(getattr(operation, "execution_target_id", "") or metadata.get("execution_target_id") or ""),
+            "target_endpoint_id": str(metadata.get("target_endpoint_id") or metadata.get("execution_target_id") or ""),
+            "tool_key": str(metadata.get("preferred_tool_key") or metadata.get("tool_key") or ""),
+            "tool_id": str(metadata.get("tool_id") or metadata.get("capability_id") or ""),
+            "status": operation.status,
+            "phase": phase,
+            "detail": detail,
+            "routing_reason": str(metadata.get("routing_reason") or ""),
+            **({"error": dict(error)} if isinstance(error, dict) else {}),
+        }
+        publish_operation_update = getattr(gateway, "publish_endpoint_operation_update", None)
+        if callable(publish_operation_update):
+            await publish_operation_update(thread_id=thread_id, operation_id=operation.operation_id, payload=payload)
 
     async def publish_message_delta(self, session_id: str, *, stream_id: str, turn_id: str, delta: str) -> None:
         if not delta:
@@ -563,7 +562,17 @@ class ClientThreadBridge:
             finalize_run=True,
             run_output={"message_id": message_payload["message_id"], "finish_reason": "completed"},
         )
+        publish_endpoint_message = getattr(gateway, "publish_endpoint_message", None)
+        if callable(publish_endpoint_message):
+            await publish_endpoint_message(thread_id=thread_row.thread_id, message=message_payload)
+            return
         if persisted:
+            await self._publish_thread_event(
+                gateway,
+                thread_row.thread_id,
+                event_type="message",
+                payload=message_payload,
+            )
             return
         await self._publish_thread_event(
             gateway,

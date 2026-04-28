@@ -1018,63 +1018,6 @@ class ScenarioTools:
             source=source,
         )
 
-    async def manage_scheduled_tasks(
-        self,
-        action: str,
-        task_key: str = "",
-        task_keys: list[str] | None = None,
-        summary: str = "",
-        completion_summary: str = "",
-        project: str = "",
-        task_status: str = "",
-        deadline: str | None = None,
-        query: str = "",
-        limit: int = 8,
-        schedule_kind: str | None = None,
-        due_at: str | None = None,
-        timezone: str | None = None,
-        recurrence: Any = None,
-        auto_run: Any = None,
-        job_prompt: str | None = None,
-        notify_policy: str | None = None,
-        session_id: str = "",
-        source=None,
-        activity_callback: ActivityCallback | None = None,
-    ) -> str:
-        await self._emit_activity(
-            activity_callback,
-            "routing",
-            f"Routing scheduled-task request: {action}",
-            {"tool_name": "manage_scheduled_tasks"},
-        )
-        await self._emit_activity(
-            activity_callback,
-            "updating_tasks",
-            f"Updating scheduled tasks with action: {action}",
-            {"tool_name": "manage_scheduled_tasks"},
-        )
-        return await self._task_manager.manage_scheduled_tasks(
-            action=action,
-            task_key=task_key,
-            task_keys=task_keys,
-            summary=summary,
-            completion_summary=completion_summary,
-            project=project,
-            task_status=task_status,
-            deadline=deadline,
-            query=query,
-            limit=limit,
-            schedule_kind=schedule_kind,
-            due_at=due_at,
-            timezone=timezone,
-            recurrence=recurrence,
-            auto_run=auto_run,
-            job_prompt=job_prompt,
-            notify_policy=notify_policy,
-            session_id=session_id,
-            source=source,
-        )
-
     async def list_skills(
         self,
         query: str = "",

@@ -272,7 +272,7 @@ export default function DanxiWindow() {
       setProfile(null)
       setMessageCursor('')
       clearDetailState()
-      setFailure(sessionError instanceof Error ? sessionError.message : '读取 Danxi 会话失败')
+      setFailure(sessionError instanceof Error ? sessionError.message : '读取旦夕会话失败')
     }
   }, [clearDetailState, loadReadonlyData, payload.baseUrl, setFailure])
 
@@ -322,9 +322,9 @@ export default function DanxiWindow() {
         })
         setSession(nextSession)
         await loadReadonlyData(payload.baseUrl)
-        setSuccess('Danxi 已通过 WebVPN 登录并同步数据。')
+          setSuccess('旦夕已通过 WebVPN 登录并同步数据。')
       } catch (authError) {
-        setFailure(authError instanceof Error ? authError.message : 'Danxi WebVPN 登录处理失败')
+        setFailure(authError instanceof Error ? authError.message : '旦夕 WebVPN 登录处理失败')
       } finally {
         setBusy(false)
       }
@@ -347,9 +347,9 @@ export default function DanxiWindow() {
       })
       setSession(nextSession)
       await loadReadonlyData(payload.baseUrl)
-      setSuccess('Danxi 已直连登录并同步数据。')
+      setSuccess('旦夕已直连登录并同步数据。')
     } catch (loginError) {
-      setFailure(loginError instanceof Error ? loginError.message : 'Danxi 登录或初始化失败')
+      setFailure(loginError instanceof Error ? loginError.message : '旦夕登录或初始化失败')
     } finally {
       setBusy(false)
     }
@@ -383,7 +383,7 @@ export default function DanxiWindow() {
       setPosts(nextPosts)
       clearDetailState()
     } catch (loadError) {
-      setFailure(loadError instanceof Error ? loadError.message : '加载 Danxi 分区帖子失败')
+      setFailure(loadError instanceof Error ? loadError.message : '加载旦夕分区帖子失败')
     } finally {
       setBusy(false)
     }
@@ -398,7 +398,7 @@ export default function DanxiWindow() {
       setEditingDraft('')
       await refreshSelectedPost(holeId)
     } catch (loadError) {
-      setFailure(loadError instanceof Error ? loadError.message : '加载 Danxi 帖子详情失败')
+      setFailure(loadError instanceof Error ? loadError.message : '加载旦夕帖子详情失败')
     } finally {
       setBusy(false)
     }
@@ -435,7 +435,7 @@ export default function DanxiWindow() {
       const result = await searchDanxiPosts(payload.baseUrl, { query: searchQuery, length: DANXI_READ_LIMIT })
       setSearchResult(result)
     } catch (searchError) {
-      setFailure(searchError instanceof Error ? searchError.message : '搜索 Danxi 帖子失败')
+      setFailure(searchError instanceof Error ? searchError.message : '搜索旦夕帖子失败')
     } finally {
       setBusy(false)
     }
@@ -514,9 +514,9 @@ export default function DanxiWindow() {
       setSummaryBusy(true)
       const nextSummary = await getDanxiPostSummary(payload.baseUrl, selectedHoleId, { floor_limit: 50 })
       setSummary(nextSummary)
-      setSuccess('AI 摘要已生成。')
+      setSuccess('智能摘要已生成。')
     } catch (summaryError) {
-      setFailure(summaryError instanceof Error ? summaryError.message : '生成 AI 摘要失败')
+      setFailure(summaryError instanceof Error ? summaryError.message : '生成智能摘要失败')
     } finally {
       setSummaryBusy(false)
     }
@@ -530,7 +530,7 @@ export default function DanxiWindow() {
   }, [posts.items, searchResult])
 
   return (
-    <SubWindow title="Danxi / 旦夕" icon={<BookOpenText size={16} />} className={styles.windowOverride}>
+    <SubWindow title="旦夕" icon={<BookOpenText size={16} />} className={styles.windowOverride}>
       <div className={styles.layout}>
         <DanxiSidebar
           email={email}

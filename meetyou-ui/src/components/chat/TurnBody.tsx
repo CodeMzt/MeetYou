@@ -37,7 +37,7 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, o
       )}
       {turn.content ? (
         <div className={styles.content}>
-          {turn.temporary ? <span className={styles.temporaryBadge}>Temporary reply</span> : null}
+          {turn.temporary ? <span className={styles.temporaryBadge}>临时回复</span> : null}
           {turn.isStreaming ? <span className={styles.streamingText}>{turn.content}</span> : <MarkdownRenderer content={turn.content} />}
         </div>
       ) : placeholderText ? (

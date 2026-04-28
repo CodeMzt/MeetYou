@@ -23,7 +23,6 @@ from core.services.message_service import MessageService
 from core.services.operation_service import OperationService
 from core.services.operation_call_service import OperationCallService
 from core.services.principal_service import PrincipalService
-from core.services.procedure_service import ProcedureService
 from core.services.run_service import RunEventService, RunService
 from core.services.scheduler_service import ScheduledJobRunService, SchedulerService
 from core.services.session_service import SessionService
@@ -48,7 +47,6 @@ class CoreServices:
     delivery: DeliveryService
     capability: CapabilityService
     tool: CapabilityService
-    procedure: ProcedureService
     thread: ThreadService
     session: SessionService
     run: RunService
@@ -89,7 +87,6 @@ __all__ = [
     "OperationService",
     "OperationCallService",
     "PrincipalService",
-    "ProcedureService",
     "RunEventService",
     "RunService",
     "ScheduledJobRunService",
