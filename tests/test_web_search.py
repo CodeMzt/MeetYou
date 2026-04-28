@@ -32,20 +32,30 @@ class _FakeMCPManager:
         self.tool_map = tool_map or {}
         self.server_diagnostics = server_diagnostics or {}
         self.calls: list[tuple[str, dict]] = []
+        self.active_by_tool: dict[str, int] = {}
+        self.max_active_by_tool: dict[str, int] = {}
 
     async def call_mcp_tool(self, tool_name: str, arguments: dict):
         self.calls.append((tool_name, dict(arguments)))
-        queue = self.responses.get(tool_name, [])
-        if not queue:
-            raise RuntimeError(f"unexpected tool call: {tool_name}")
-        text = queue.pop(0)
-        if text.startswith("RAISE:"):
-            raise RuntimeError(text.split(":", 1)[1])
-        if text.startswith("SLEEP:"):
-            _, delay, payload = text.split(":", 2)
-            await asyncio.sleep(float(delay))
-            text = payload
-        return _FakeResult(text)
+        self.active_by_tool[tool_name] = self.active_by_tool.get(tool_name, 0) + 1
+        self.max_active_by_tool[tool_name] = max(
+            self.max_active_by_tool.get(tool_name, 0),
+            self.active_by_tool[tool_name],
+        )
+        try:
+            queue = self.responses.get(tool_name, [])
+            if not queue:
+                raise RuntimeError(f"unexpected tool call: {tool_name}")
+            text = queue.pop(0)
+            if text.startswith("RAISE:"):
+                raise RuntimeError(text.split(":", 1)[1])
+            if text.startswith("SLEEP:"):
+                _, delay, payload = text.split(":", 2)
+                await asyncio.sleep(float(delay))
+                text = payload
+            return _FakeResult(text)
+        finally:
+            self.active_by_tool[tool_name] = max(0, self.active_by_tool.get(tool_name, 1) - 1)
 
     def get_server_diagnostic(self, server_name: str):
         payload = self.server_diagnostics.get(server_name)
@@ -355,12 +365,10 @@ class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
         )
         tools = WebSearchTools(manager)
 
-        started_at = asyncio.get_running_loop().time()
         raw = await tools.search_web("research example", max_results=3, quality="deep")
-        elapsed = asyncio.get_running_loop().time() - started_at
         payload = json.loads(raw)
 
-        self.assertLess(elapsed, 0.25)
+        self.assertEqual(manager.max_active_by_tool.get("tavily-extract"), 3)
         self.assertEqual(len(payload["sources"]), 3)
         self.assertEqual([source["id"] for source in payload["sources"]], [1, 2, 3])
 

@@ -18,7 +18,7 @@ def _default_client_id() -> str:
 
 
 def _default_display_name() -> str:
-    return f"{socket.gethostname()} Desktop Client"
+    return f"{socket.gethostname()} Desktop Endpoint Provider"
 
 
 @dataclass(slots=True)

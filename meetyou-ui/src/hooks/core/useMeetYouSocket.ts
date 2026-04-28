@@ -36,7 +36,7 @@ export function buildEndpointHandshakeFrames(clientContext: ClientContext): Reco
         provider: {
           provider_type: 'desktop',
           provider_id: endpointSafeId(clientContext.clientId, 'desktop-app'),
-          display_name: 'Desktop App',
+          display_name: '桌面应用',
           transport_profile: 'desktop_ui_bridge',
         },
         endpoints: [
@@ -86,7 +86,7 @@ export function useMeetYouSocket(
       }
       dispatchTransport({ type: 'health', health })
     } catch (error) {
-      console.error('Failed to refresh health:', error)
+      console.error('刷新健康状态失败:', error)
     }
   }, [baseUrl, dispatchTransport])
 
@@ -119,7 +119,7 @@ export function useMeetYouSocket(
         sessionId: clientContext.session.session_id,
         workspaceId: clientContext.workspace.workspace_id,
         clientType: 'electron',
-        displayName: 'Desktop App',
+        displayName: '桌面应用',
       })
       if (clientWsRef.current?.readyState === WebSocket.OPEN || clientWsRef.current?.readyState === WebSocket.CONNECTING) {
         return

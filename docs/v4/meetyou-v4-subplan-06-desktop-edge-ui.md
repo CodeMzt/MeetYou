@@ -2,7 +2,7 @@
 
 ## 目标
 
-把 Desktop Client 和 Edge Client 改造成 Endpoint Provider。UI 不再依赖 client-bound session，而是通过 Core Thread / Message / Run / Delivery 工作。
+把 Desktop 和 Edge 改造成 Endpoint Provider。UI 不再依赖 client-bound session，而是通过 Core Thread / Message / Run / Delivery 工作。
 
 ---
 

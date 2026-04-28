@@ -2,33 +2,33 @@ from __future__ import annotations
 
 import unittest
 
-from client_tool_sdk.protocol import (
-    CLIENT_TOOL_PROTOCOL_SCHEMA,
-    build_client_heartbeat,
-    build_client_hello,
-    build_client_tools_snapshot,
+from endpoint_tool_sdk.protocol import (
+    ENDPOINT_TOOL_PROTOCOL_SCHEMA,
+    build_endpoint_capabilities_snapshot,
+    build_endpoint_heartbeat,
+    build_endpoint_hello,
     build_tool_call_request,
 )
 
 
-class ClientToolProtocolTests(unittest.TestCase):
+class EndpointToolProtocolTests(unittest.TestCase):
     def test_endpoint_lifecycle_frames_use_endpoint_schema(self):
-        hello = build_client_hello(
-            client_id="desktop-main",
-            client_type="desktop",
+        hello = build_endpoint_hello(
+            provider_id="desktop-main",
+            provider_type="desktop",
             display_name="Desktop Main",
             transport_profile="desktop_wss",
             workspace_ids=["desktop-main"],
         )
-        snapshot = build_client_tools_snapshot(
-            client_id="desktop-main",
-            tools=[{"tool_key": "file.read", "tool_id": "client.desktop-main.file.read"}],
+        snapshot = build_endpoint_capabilities_snapshot(
+            provider_id="desktop-main",
+            capabilities=[{"tool_key": "file.read", "tool_id": "endpoint.desktop.desktop-main.executor.file.read"}],
             revision=2,
         )
-        heartbeat = build_client_heartbeat(client_id="desktop-main", status="ready")
+        heartbeat = build_endpoint_heartbeat(provider_id="desktop-main", status="ready")
 
-        self.assertEqual(hello["schema"], CLIENT_TOOL_PROTOCOL_SCHEMA)
-        self.assertEqual(CLIENT_TOOL_PROTOCOL_SCHEMA, "meetyou.endpoint.ws.v4")
+        self.assertEqual(hello["schema"], ENDPOINT_TOOL_PROTOCOL_SCHEMA)
+        self.assertEqual(ENDPOINT_TOOL_PROTOCOL_SCHEMA, "meetyou.endpoint.ws.v4")
         self.assertEqual(hello["type"], "endpoint.hello")
         self.assertEqual(hello["endpoint_id"], "desktop.desktop-main.executor")
         self.assertEqual(hello["payload"]["provider"]["provider_id"], "desktop-main")
@@ -39,17 +39,17 @@ class ClientToolProtocolTests(unittest.TestCase):
 
     def test_tool_call_request_targets_endpoint_and_tool_key(self):
         payload = build_tool_call_request(
-            client_id="desktop.desktop-main.executor",
+            endpoint_id="desktop.desktop-main.executor",
             message_id="msg_1",
             operation_id="op_1",
             call_id="call_1",
             workspace_id="desktop-main",
-            tool_id="client.desktop-main.shell.exec",
+            tool_id="endpoint.desktop.desktop-main.executor.shell.exec",
             tool_key="shell.exec",
             arguments={"cmd": "echo ok"},
         )
 
-        self.assertEqual(payload["schema"], CLIENT_TOOL_PROTOCOL_SCHEMA)
+        self.assertEqual(payload["schema"], ENDPOINT_TOOL_PROTOCOL_SCHEMA)
         self.assertEqual(payload["type"], "tool.call.request")
         self.assertEqual(payload["endpoint_id"], "desktop.desktop-main.executor")
         self.assertEqual(payload["payload"]["tool_key"], "shell.exec")

@@ -19,7 +19,7 @@ class WorkspaceService(ServiceBase):
     @staticmethod
     def _normalize_routing_policy(value: Any) -> str:
         normalized = str(value or "").strip().lower()
-        if normalized not in {"balanced", "prefer_owner_client", "strict_preferred"}:
+        if normalized not in {"balanced", "prefer_origin_endpoint", "strict_preferred_endpoint"}:
             return "balanced"
         return normalized
 

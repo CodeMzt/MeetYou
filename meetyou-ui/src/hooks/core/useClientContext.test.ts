@@ -1,17 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ClientAvailableClient } from '../../types'
+import type { AvailableEndpoint } from '../../types'
 import {
-  chooseDesktopToolClient,
+  chooseDesktopToolEndpoint,
   DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS,
-  resolveDesktopToolClientId,
+  resolveDesktopToolEndpointId,
 } from './useClientContext'
 
 describe('useClientContext helpers', () => {
-  it('picks the online desktop tool client for the current workspace', () => {
-    const availableClients: ClientAvailableClient[] = [
+  it('picks the online desktop tool endpoint for the current workspace', () => {
+    const availableEndpoints: AvailableEndpoint[] = [
       {
-        client_id: 'desktop-other',
-        client_type: 'desktop',
+        endpoint_id: 'desktop-other',
+        endpoint_type: 'desktop_executor',
+        provider_type: 'desktop',
         display_name: 'Other Desktop',
         transport_profile: 'desktop_wss',
         status: 'online',
@@ -22,9 +23,10 @@ describe('useClientContext helpers', () => {
         enabled: true,
       },
       {
-        client_id: 'desktop-main-client',
-        client_type: 'desktop',
-        display_name: 'Desktop Main Client',
+        endpoint_id: 'desktop-main-endpoint',
+        endpoint_type: 'desktop_executor',
+        provider_type: 'desktop',
+        display_name: 'Desktop Main Endpoint',
         transport_profile: 'desktop_wss',
         status: 'online',
         workspace_ids: ['personal', 'desktop-main'],
@@ -35,16 +37,17 @@ describe('useClientContext helpers', () => {
       },
     ]
 
-    expect(chooseDesktopToolClient(availableClients, 'desktop-main', 'desktop-app')).toBe('desktop-main-client')
+    expect(chooseDesktopToolEndpoint(availableEndpoints, 'desktop-main', 'desktop-app')).toBe('desktop-main-endpoint')
     expect(DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS).toBe(10000)
   })
 
-  it('reloads available clients and returns the newly available desktop tool client', async () => {
-    const loadAvailableClients = vi.fn().mockResolvedValue([
+  it('reloads available endpoints and returns the newly available desktop tool endpoint', async () => {
+    const loadAvailableEndpoints = vi.fn().mockResolvedValue([
       {
-        client_id: 'desktop-main-client',
-        client_type: 'desktop',
-        display_name: 'Desktop Main Client',
+        endpoint_id: 'desktop-main-endpoint',
+        endpoint_type: 'desktop_executor',
+        provider_type: 'desktop',
+        display_name: 'Desktop Main Endpoint',
         transport_profile: 'desktop_wss',
         status: 'online',
         workspace_ids: ['personal'],
@@ -53,11 +56,11 @@ describe('useClientContext helpers', () => {
         membership_role: 'member',
         enabled: true,
       },
-    ] satisfies ClientAvailableClient[])
+    ] satisfies AvailableEndpoint[])
 
     await expect(
-      resolveDesktopToolClientId(loadAvailableClients, 'http://127.0.0.1:8000', 'personal', 'desktop-app'),
-    ).resolves.toBe('desktop-main-client')
-    expect(loadAvailableClients).toHaveBeenCalledWith('http://127.0.0.1:8000', 'personal')
+      resolveDesktopToolEndpointId(loadAvailableEndpoints, 'http://127.0.0.1:8000', 'personal', 'desktop-app'),
+    ).resolves.toBe('desktop-main-endpoint')
+    expect(loadAvailableEndpoints).toHaveBeenCalledWith('http://127.0.0.1:8000', 'personal')
   })
 })

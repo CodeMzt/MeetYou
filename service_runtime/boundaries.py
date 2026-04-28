@@ -67,12 +67,12 @@ class RuntimePlatformDependencyBoundary:
 @dataclass(slots=True)
 class RuntimePlatformBoundarySet:
     retained_in_core: tuple[RuntimePlatformDependencyBoundary, ...]
-    delegated_to_local_clients: tuple[RuntimePlatformDependencyBoundary, ...]
+    delegated_to_endpoint_providers: tuple[RuntimePlatformDependencyBoundary, ...]
 
     def to_dict(self) -> dict[str, list[dict[str, object]]]:
         return {
             "retained_in_core": [item.to_dict() for item in self.retained_in_core],
-            "delegated_to_local_clients": [item.to_dict() for item in self.delegated_to_local_clients],
+            "delegated_to_endpoint_providers": [item.to_dict() for item in self.delegated_to_endpoint_providers],
         }
 
 
@@ -147,7 +147,7 @@ def build_runtime_platform_boundaries() -> RuntimePlatformBoundarySet:
                 ),
             ),
         ),
-        delegated_to_local_clients=(
+        delegated_to_endpoint_providers=(
             RuntimePlatformDependencyBoundary(
                 name="terminal_shell_execution",
                 owner="desktop_client/local_backend",

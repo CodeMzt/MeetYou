@@ -272,12 +272,12 @@ class DocumentTools:
     ) -> dict[str, Any]:
         dispatcher = self._tool_router
         if dispatcher is None:
-            raise RuntimeError("Client tool dispatcher is not configured")
-        dispatch = getattr(dispatcher, "dispatch_directed_tool", None)
+            raise RuntimeError("Endpoint tool router is not configured")
+        dispatch = getattr(dispatcher, "dispatch_tool_call", None)
         if not callable(dispatch):
             dispatch = getattr(dispatcher, "dispatch_workspace_tool", None)
         if not callable(dispatch):
-            raise RuntimeError("Client tool dispatcher does not support directed tool dispatch")
+            raise RuntimeError("Endpoint tool router does not support tool dispatch")
         return await dispatch(
             tool_key=tool_key,
             arguments=arguments,
@@ -296,8 +296,8 @@ class DocumentTools:
         if self._tool_router is not None or self._allow_local_fallback:
             return
         error = RuntimeError("Core local fallback is disabled")
-        error.tool_error_code = "local_client_required"
-        error.tool_error_message = "当前 Core 不再直接执行本地文档能力，请连接具备本地文件工具的 Desktop Client 后重试。"
+        error.tool_error_code = "local_endpoint_required"
+        error.tool_error_message = "当前 Core 不再直接执行本地文档能力，请连接具备本地文件工具的 Desktop Endpoint Provider 后重试。"
         error.tool_error_details = {
             "tool_key": tool_key,
             "session_id": str(session_id or ""),
@@ -713,7 +713,7 @@ class DocumentTools:
             "path": target_path,
             "mode": normalized_mode,
             "trusted_root": trusted,
-            "execution_target": "desktop_client_tool" if client_managed else "core_local_fallback",
+            "execution_target": "desktop_endpoint_tool" if client_managed else "core_local_fallback",
             "action_risk": "local_write",
             "preview": bool(preview),
             "content_preview": _trim_text(content, 600),
@@ -860,7 +860,7 @@ class DocumentTools:
             "section_selector": _normalize_text(section_selector),
             "instructions": _normalize_text(instructions),
             "trusted_root": None if client_managed else self._mode_manager.is_trusted_write_path(str(target)),
-            "execution_target": "desktop_client_tool" if client_managed else "core_local_fallback",
+            "execution_target": "desktop_endpoint_tool" if client_managed else "core_local_fallback",
         }
 
         if not replacement_content:

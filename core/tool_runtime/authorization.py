@@ -237,19 +237,19 @@ class ToolAuthorizationGateway:
         preview = bool(tool_args.get("preview", True))
         confirmed = bool(tool_args.get("confirmed", False))
         resolved_path = self._normalize_path(path_value)
-        client_managed = self._local_capability_dispatcher_available
-        trusted_root = None if client_managed else self._is_trusted_write_path(resolved_path)
-        write_boundary = "preview" if preview else "client_tool_managed" if client_managed else "trusted_root" if trusted_root else "untrusted_path"
+        endpoint_managed = self._local_capability_dispatcher_available
+        trusted_root = None if endpoint_managed else self._is_trusted_write_path(resolved_path)
+        write_boundary = "preview" if preview else "endpoint_tool_managed" if endpoint_managed else "trusted_root" if trusted_root else "untrusted_path"
         details = {
             "tool_name": tool_name,
             "path": resolved_path,
             "preview": preview,
             "confirmed": confirmed,
             "trusted_root": trusted_root,
-            "execution_target": "desktop_client_tool" if client_managed else "core_local_fallback",
+            "execution_target": "desktop_endpoint_tool" if endpoint_managed else "core_local_fallback",
         }
-        if client_managed:
-            details["client_enforces_write_roots"] = True
+        if endpoint_managed:
+            details["endpoint_enforces_write_roots"] = True
         if not preview and not confirmed:
             return AuthorizationDecision(
                 tool_name=tool_name,
@@ -267,7 +267,7 @@ class ToolAuthorizationGateway:
                 reason_message="Tool call requires explicit confirmation before writing a local document.",
                 details=details,
             )
-        if not preview and not client_managed and not trusted_root:
+        if not preview and not endpoint_managed and not trusted_root:
             trusted_roots = []
             if self._mode_manager is not None and hasattr(self._mode_manager, "get_trusted_write_roots"):
                 trusted_roots = list(self._mode_manager.get_trusted_write_roots())

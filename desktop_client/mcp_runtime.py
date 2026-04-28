@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from client_tool_sdk.tool_ids import build_mcp_tool_id, slug_tool_segment
-from client_tool_sdk.risk import ToolRiskClassifier
+from endpoint_tool_sdk.tool_ids import build_endpoint_mcp_tool_id, slug_tool_segment
+from endpoint_tool_sdk.risk import ToolRiskClassifier
 from desktop_client.config import DesktopClientConfig
 from tools.mcp import MCPManager
 
@@ -81,7 +81,8 @@ class DesktopClientMCPRuntime:
                     continue
                 risk_level = self._risk_classifier.get_tool_action_risk(tool_name)
                 tool_key = f"mcp.{slug_tool_segment(server_name)}.{slug_tool_segment(tool_name)}"
-                tool_id = build_mcp_tool_id(self._config.client_id, server_name, tool_name)
+                executor_endpoint_id = f"desktop.{self._config.client_id}.executor"
+                tool_id = build_endpoint_mcp_tool_id(executor_endpoint_id, server_name, tool_name)
                 mapping[tool_key] = {
                     "tool_id": tool_id,
                     "tool_key": tool_key,

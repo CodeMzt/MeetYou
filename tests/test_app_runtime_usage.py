@@ -16,8 +16,8 @@ class _FakeBrain:
         self._debug_raises = debug_raises
         self._debug_snapshot = debug_snapshot or {
             "session_id": "desktop-1",
-            "route": {"current_mode": "research", "tool_bundle": ["research_topic"]},
-            "route_history": [{"round": 0, "mode": "research"}],
+            "route": {"current_mode": "general", "tool_bundle": ["research_topic"]},
+            "route_history": [{"round": 0, "mode": "general"}],
             "context_plan": {"layers": {"memory_recall": True}},
             "memory_scope": {"prefetched": True, "found": True},
             "authorization": {"recent_decisions": [{"tool_name": "research_topic", "ok": True}]},
@@ -280,7 +280,7 @@ class AppRuntimeUsageTests(unittest.IsolatedAsyncioTestCase):
         payload = await App.get_runtime_debug(app, "desktop-1")
 
         self.assertEqual(payload["session_id"], "desktop-1")
-        self.assertEqual(payload["route"]["current_mode"], "research")
+        self.assertEqual(payload["route"]["current_mode"], "general")
         self.assertEqual(payload["authorization"]["route_preview"]["visible_tools"], ["research_topic"])
         self.assertEqual(payload["task_state"]["background"]["schedule"]["due_task_count"], 1)
         self.assertEqual(payload["memory_scope"]["session_id"], "desktop-1")

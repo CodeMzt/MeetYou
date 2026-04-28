@@ -23,7 +23,7 @@ from tools.document_tools import DocumentTools
 from tools.endpoint_tools import EndpointTools
 from tools.lightweight_tools import LightweightTools
 from tools.office_tools import OfficeTools
-from tools.procedure_tools import ProcedureTools
+from tools.scheduler_tools import SchedulerTools
 from tools.scenario_tools import ScenarioTools
 from tools.study_tools import StudyTools
 from tools.web_search import WebSearchTools
@@ -41,7 +41,7 @@ _ORDER_REQUIRED_TOOLS = {
     "remember_knowledge",
     "manage_memories",
     "manage_tasks",
-    "manage_scheduled_tasks",
+    "manage_scheduled_jobs",
     "send_endpoint_message",
     "emit_progress_notice",
     "restart_core",
@@ -107,7 +107,7 @@ class ToolsManager:
         )
         self._endpoint_tools = EndpointTools()
         self._lightweight_tools = LightweightTools()
-        self._procedure_tools = ProcedureTools()
+        self._scheduler_tools = SchedulerTools()
         self._workspace_tools = WorkspaceTools()
         self._scenario_tools = ScenarioTools(
             memory,
@@ -135,8 +135,8 @@ class ToolsManager:
             "manage_heartbeat_settings": getattr(system_tools_module, "manage_heartbeat_settings", None),
             "restart_core": getattr(system_tools_module, "restart_core", None),
             "emit_progress_notice": getattr(system_tools_module, "emit_progress_notice", None),
-            "list_active_clients": self._endpoint_tools.list_active_clients,
-            "list_client_tool_targets": self._endpoint_tools.list_client_tool_targets,
+            "list_active_endpoints": self._endpoint_tools.list_active_endpoints,
+            "list_endpoint_tool_targets": self._endpoint_tools.list_endpoint_tool_targets,
             "send_endpoint_message": self._endpoint_tools.send_endpoint_message,
             "search_web": self._web_search_tools.search_web,
             "read_web_page": self._web_search_tools.read_web_page,
@@ -145,14 +145,13 @@ class ToolsManager:
             "track_source_updates": self._scenario_tools.track_source_updates,
             "search_knowledge": self._scenario_tools.search_knowledge,
             "manage_tasks": self._scenario_tools.manage_tasks,
-            "manage_scheduled_tasks": self._scenario_tools.manage_scheduled_tasks,
+            "manage_scheduled_jobs": self._scheduler_tools.manage_scheduled_jobs,
             "list_skills": self._scenario_tools.list_skills,
             "load_skill": self._scenario_tools.load_skill,
             "create_skill": self._scenario_tools.create_skill,
             "list_attachments": self._attachment_tools.list_attachments,
             "read_attachment": self._attachment_tools.read_attachment,
             "delete_attachment": self._attachment_tools.delete_attachment,
-            "manage_procedures": self._procedure_tools.manage_procedures,
             "list_workspaces": self._workspace_tools.list_workspaces,
             "switch_workspace": self._workspace_tools.switch_workspace,
             "summarize_text": self._lightweight_tools.summarize_text,
@@ -239,9 +238,12 @@ class ToolsManager:
 
     def set_core_domain(self, core_domain) -> None:
         self._attachment_tools.set_core_domain(core_domain)
-        self._procedure_tools.set_core_domain(core_domain)
+        self._scheduler_tools.set_core_domain(core_domain)
         self._workspace_tools.set_core_domain(core_domain)
         self._endpoint_tools.set_core_domain(core_domain)
+
+    def set_scheduler_job_trigger(self, callback) -> None:
+        self._scheduler_tools.set_trigger_job_callback(callback)
 
     def set_runtime_bridge(self, *, session_manager=None, gateway_getter=None) -> None:
         self._workspace_tools.set_runtime(session_manager=session_manager, gateway_getter=gateway_getter)

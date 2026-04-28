@@ -165,6 +165,9 @@ async def setup_app_runtime(app) -> None:
     capability_dispatcher = app.core_domain.tool_router
     system_tools.set_capability_dispatcher(capability_dispatcher)
     app.tools_manager.set_core_domain(app.core_domain)
+    scheduler_trigger_setter = getattr(app.tools_manager, "set_scheduler_job_trigger", None)
+    if callable(scheduler_trigger_setter):
+        scheduler_trigger_setter(app.trigger_scheduled_job)
     tools_manager_dispatch_setter = getattr(app.tools_manager, "set_capability_dispatcher", None)
     if callable(tools_manager_dispatch_setter):
         tools_manager_dispatch_setter(capability_dispatcher)
@@ -229,6 +232,41 @@ async def setup_app_runtime(app) -> None:
     app.speaker.register_adapter("web", app.gateway.output_adapter)
     await app.gateway.start(host=host, port=port)
 
+    await start_external_endpoint_providers(app)
+
+    app.status_manager.set_global(RuntimeStatus.IDLE.value, "")
+    logger.info("Service runtime initialized")
+
+
+async def start_external_endpoint_providers(app) -> None:
+    await _start_external_endpoint_provider(
+        app,
+        provider_name="feishu",
+        enabled_key="enable_feishu_bot",
+        starter=_start_feishu_endpoint_provider,
+    )
+    await _start_external_endpoint_provider(
+        app,
+        provider_name="meetwechat",
+        enabled_key="enable_meetwechat_client",
+        starter=_start_meetwechat_endpoint_provider,
+    )
+
+
+async def _start_external_endpoint_provider(app, *, provider_name: str, enabled_key: str, starter) -> None:
+    if not app.config.get_bool(enabled_key):
+        return
+    try:
+        await starter(app)
+    except Exception:
+        logger.exception(
+            "%s endpoint provider failed to start; Core will continue without this external endpoint.",
+            provider_name,
+        )
+        await _close_external_endpoint_provider(app, provider_name=provider_name)
+
+
+async def _start_feishu_endpoint_provider(app) -> None:
     if app.config.get_bool("enable_feishu_bot"):
         app.feishu_output = FeishuOutputAdapter(app.config)
         await app.feishu_output.init()
@@ -242,6 +280,8 @@ async def setup_app_runtime(app) -> None:
         await app.feishu_input.run()
         logger.info("Feishu Bot is connected through the V4 Endpoint/Delivery chain.")
 
+
+async def _start_meetwechat_endpoint_provider(app) -> None:
     if app.config.get_bool("enable_meetwechat_client"):
         wechat_client = MeetWeChatClient(
             base_url=str(app.config.get("meetwechat_base_url") or DEFAULT_MEETWECHAT_BASE_URL),
@@ -266,16 +306,37 @@ async def setup_app_runtime(app) -> None:
         await app.wechat_input.run()
         logger.info("MeetWeChat endpoint is connected through the V4 Endpoint/Delivery chain.")
 
-    app.status_manager.set_global(RuntimeStatus.IDLE.value, "")
-    logger.info("Service runtime initialized")
+
+async def _close_external_endpoint_provider(app, *, provider_name: str) -> None:
+    if provider_name == "feishu":
+        if app.feishu_input is not None:
+            await _close_external_endpoint_component(app.feishu_input, "feishu_input")
+            app.feishu_input = None
+        if app.feishu_output is not None:
+            await _close_external_endpoint_component(app.feishu_output, "feishu_output")
+            app.feishu_output = None
+        return
+    if provider_name == "meetwechat":
+        if app.wechat_input is not None:
+            await _close_external_endpoint_component(app.wechat_input, "wechat_input")
+            app.wechat_input = None
+        if app.wechat_output is not None:
+            await _close_external_endpoint_component(app.wechat_output, "wechat_output")
+            app.wechat_output = None
+
+
+async def _close_external_endpoint_component(component, label: str) -> None:
+    try:
+        await component.close()
+    except Exception:
+        logger.warning("Failed to close partial external endpoint component %s", label, exc_info=True)
 
 
 def build_runtime_processors(app) -> tuple[Any, ...]:
     return (
         app.brain_processor(),
-        app.heart.scheduler_processor(),
+        app.scheduler_processor(),
         app.heart.housekeeping_processor(),
-        app.heart.heartbeat_processor(),
         app.proprioceptor.run(),
     )
 

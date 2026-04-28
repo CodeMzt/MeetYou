@@ -7,8 +7,8 @@ from typing import Any
 
 import aiohttp
 
-from client_tool_sdk.protocol import CLIENT_TOOL_SCHEMA
-from client_tool_sdk.runtime import ClientToolRuntimeBase, ToolExecutionError, ToolExecutionOutcome
+from endpoint_tool_sdk.protocol import ENDPOINT_TOOL_SCHEMA
+from endpoint_tool_sdk.runtime import EndpointToolRuntimeBase, ToolExecutionError, ToolExecutionOutcome
 from desktop_client.config import DesktopClientConfig
 from desktop_client.execution import build_tool_handlers
 from desktop_client.mcp_runtime import DesktopClientMCPRuntime
@@ -31,7 +31,7 @@ except Exception:  # pragma: no cover
     psutil = None
 
 
-class DesktopClientRuntime(ClientToolRuntimeBase):
+class DesktopClientRuntime(EndpointToolRuntimeBase):
     def __init__(self, config: DesktopClientConfig):
         self._mcp_runtime = DesktopClientMCPRuntime(config)
         self._mcp_init_task: asyncio.Task | None = None
@@ -40,11 +40,11 @@ class DesktopClientRuntime(ClientToolRuntimeBase):
 
     @property
     def protocol_schema(self) -> str:
-        return CLIENT_TOOL_SCHEMA
+        return ENDPOINT_TOOL_SCHEMA
 
     @property
     def runtime_label(self) -> str:
-        return "Desktop Client"
+        return "Desktop Endpoint Provider"
 
     def core_access_token_source_hints(self) -> tuple[str, ...]:
         config_path = str(getattr(self.config, "config_file_path", "")).strip()
@@ -75,7 +75,7 @@ class DesktopClientRuntime(ClientToolRuntimeBase):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.exception("Desktop Client MCP initialization failed: %s", exc)
+            logger.exception("Desktop Endpoint Provider MCP initialization failed: %s", exc)
 
     @staticmethod
     def _split_result_payload(result: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:

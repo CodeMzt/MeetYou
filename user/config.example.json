@@ -42,12 +42,12 @@
     ],
     "skills": {
       "task_recognition": {
-        "tools": ["manage_tasks"]
+        "tools": ["manage_tasks", "manage_scheduled_jobs"]
       }
     }
   },
   "mode_router": {
-    "default_mode": "normal",
+    "default_mode": "general",
     "sticky_current_mode": true,
     "allow_preferred_override": true,
     "allow_in_turn_switch": true,

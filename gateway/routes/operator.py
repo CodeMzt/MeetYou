@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
+from starlette.responses import JSONResponse
 
 from core.config import ConfigManager
 from core.exceptions import ConfigError
@@ -19,7 +20,6 @@ from gateway.models import (
     MemoryRecordMutationResponse,
     MemoryRecordPatchRequest,
     MemorySnapshotResponse,
-    OperatorClientResponse,
     OperatorEndpointResponse,
     OperatorScheduledJobCreateRequest,
     OperatorScheduledJobDeleteResponse,
@@ -319,25 +319,24 @@ def build_operator_router(gateway) -> APIRouter:
             health_payload = HealthResponse(**payload)
         return HealthEnvelopeResponse(schema_name="meetyou.http.v1", health=health_payload)
 
-    @router.get("/clients", response_model=list[OperatorClientResponse])
+    @router.get("/clients")
     async def list_clients(request: Request):
         gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        rows = []
-        for client in domain.services.client.list_clients():
-            bindings = domain.services.client.list_workspace_bindings(client.client_id)
-            rows.append(
-                OperatorClientResponse(
-                    client_id=client.client_id,
-                    client_type=client.client_type,
-                    display_name=client.display_name,
-                    transport_profile=client.transport_profile,
-                    status=client.status,
-                    last_seen_at=client.last_seen_at.isoformat() if client.last_seen_at is not None else "",
-                    workspace_ids=[workspace.workspace_id for workspace, _membership in bindings],
-                )
-            )
-        return rows
+        return JSONResponse(
+            status_code=410,
+            content={
+                "schema": "meetyou.http.v1",
+                "kind": "error",
+                "error": {
+                    "code": "operator_clients_removed",
+                    "message": "Operator clients are removed in V4. Use operator endpoints.",
+                    "details": {
+                        "legacy_path": "/operator/clients",
+                        "replacement_path": "/operator/endpoints",
+                    },
+                },
+            },
+        )
 
     @router.get("/endpoints", response_model=list[OperatorEndpointResponse])
     async def list_endpoints(request: Request):

@@ -13,7 +13,6 @@ class ThreadRepository(RepositoryBase):
         home_workspace_id=None,
         workspace_id=None,
         title: str = "",
-        pinned_procedure_id: str | None = None,
     ) -> Thread:
         resolved_home_workspace_id = home_workspace_id if home_workspace_id is not None else workspace_id
         thread = Thread(
@@ -21,7 +20,6 @@ class ThreadRepository(RepositoryBase):
             principal_id=principal_id,
             home_workspace_id=resolved_home_workspace_id,
             title=title,
-            pinned_procedure_id=pinned_procedure_id,
         )
         self.session.add(thread)
         self.session.flush()
@@ -33,14 +31,6 @@ class ThreadRepository(RepositoryBase):
     def get_by_id(self, row_id) -> Thread | None:
         return self.session.query(Thread).filter_by(id=row_id).one_or_none()
 
-    def update_pinned_procedure(self, *, thread_id, pinned_procedure_id: str | None) -> Thread | None:
-        thread = self.get_by_id(thread_id)
-        if thread is None:
-            return None
-        thread.pinned_procedure_id = pinned_procedure_id
-        self.session.flush()
-        return thread
-
     def update_metadata(self, *, thread_id, metadata: dict) -> Thread | None:
         thread = self.get_by_id(thread_id)
         if thread is None:
@@ -50,11 +40,3 @@ class ThreadRepository(RepositoryBase):
         thread.meta = merged
         self.session.flush()
         return thread
-
-    def clear_pinned_procedure_for_procedure(self, *, procedure_id: str) -> int:
-        rows = list(self.session.query(Thread).filter_by(pinned_procedure_id=procedure_id).all())
-        for row in rows:
-            row.pinned_procedure_id = None
-        if rows:
-            self.session.flush()
-        return len(rows)

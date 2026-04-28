@@ -17,5 +17,8 @@ V4 non-negotiable rules:
 - Tool dispatch must flow through ToolRouter plus ExecutionTarget.
 - Permissions live on Actor / Workspace / RunPolicy. Execution ability lives on EndpointCapability.
 - Do not keep `/client/ws`, `source_client_id`, `target_client_id`, or `ClientToolDispatchService` compatibility paths.
+- Runtime assistant modes are limited to `general`, `automation`, and `danxi`. Legacy mode names normalize at the boundary only and must not be persisted as runtime modes.
+- Procedure is removed in V4. Do not reintroduce Procedure API, table, tool, pinned fields, prompt layer, or UI; reusable workflow guidance must use SKILL.
+- SKILL is the only reusable workflow guide layer. Use `list_skills`, `load_skill`, and `create_skill` plus the capability registry/semantic router path.
 
 Follow `AGENTS.md` for directory boundaries, verification order, and the V4 real-test ladder.

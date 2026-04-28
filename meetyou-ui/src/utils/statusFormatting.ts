@@ -97,11 +97,9 @@ export function getConnectionText(connectionState: ConnectionState): string {
 
 export function formatAssistantModeLabel(mode: string): string {
   const normalized = String(mode || '').trim().toLowerCase()
-  if (normalized === 'general') return '通用'
-  if (normalized === 'research') return '研究'
-  if (normalized === 'documents') return '文档'
-  if (normalized === 'study') return '学习'
+  if (normalized === 'general' || normalized === 'normal') return '通用'
   if (normalized === 'automation') return '自动化'
+  if (normalized === 'office') return '自动化'
   if (normalized === 'danxi') return '旦夕'
   return mode || '未设置'
 }
@@ -109,29 +107,10 @@ export function formatAssistantModeLabel(mode: string): string {
 export function formatExecutionTargetLabel(target: string): string {
   const normalized = String(target || '').trim().toLowerCase()
   if (normalized === 'core_only') return '仅核心服务'
-  if (normalized === 'specific_client') return '指定 Client'
-  if (normalized === 'workspace_any_client') return '工作区任意 Client'
-  if (normalized === 'prefer_client_fallback_core') return '优先 Client，失败回落核心服务'
+  if (normalized === 'specific_endpoint') return '指定端点'
+  if (normalized === 'workspace_any_endpoint') return '工作区任意端点'
+  if (normalized === 'prefer_endpoint_fallback_core') return '优先端点，失败回落核心服务'
   return target || '未设置'
-}
-
-export function formatProcedureSourceLabel(source: string): string {
-  const normalized = String(source || '').trim().toLowerCase()
-  if (normalized === 'pinned') return '已固定'
-  if (normalized === 'inferred') return '自动推断'
-  return '暂无'
-}
-
-export function formatRiskProfileLabel(value: string): string {
-  const normalized = String(value || '').trim().toLowerCase()
-  if (normalized === 'read') return '只读'
-  if (normalized === 'write') return '写入'
-  if (normalized === 'system') return '系统'
-  if (normalized === 'standard') return '标准'
-  if (normalized === 'low') return '低风险'
-  if (normalized === 'medium') return '中风险'
-  if (normalized === 'high') return '高风险'
-  return value || '未设置'
 }
 
 export function formatResourceStatusLabel(status: string): string {
@@ -153,8 +132,8 @@ export function formatCapabilityPolicyLabel(policy: string): string {
 export function formatRoutingPolicyLabel(policy: string): string {
   const normalized = String(policy || '').trim().toLowerCase()
   if (normalized === 'balanced') return '均衡'
-  if (normalized === 'prefer_owner_client') return '优先当前客户端'
-  if (normalized === 'strict_preferred') return '严格偏好代理'
+  if (normalized === 'prefer_origin_endpoint') return '优先来源端点'
+  if (normalized === 'strict_preferred_endpoint') return '严格偏好端点'
   return policy || '未设置'
 }
 
@@ -188,17 +167,6 @@ export function formatOperationStatusLabel(status: string): string {
   if (normalized === 'rejected') return '已拒绝'
   if (normalized === 'cancelled') return '已取消'
   return status || '未知'
-}
-
-export function formatInferenceReasonLabel(reason: string): string {
-  const normalized = String(reason || '').trim()
-  if (!normalized) {
-    return '已根据当前对话上下文自动推断'
-  }
-  return normalized
-    .replace(/\bmode:/gi, '模式：')
-    .replace(/\bworkspace:/gi, '工作区：')
-    .replace(/\bkeywords:/gi, '关键词：')
 }
 
 export function getLatestActivity(turnActivities: TurnActivity[]): TurnActivity | null {

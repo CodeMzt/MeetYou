@@ -5,14 +5,14 @@ from typing import Any
 import aiohttp
 
 
-def build_client_auth_headers(access_token: str = "") -> dict[str, str]:
+def build_endpoint_auth_headers(access_token: str = "") -> dict[str, str]:
     normalized_token = str(access_token or "").strip()
     if not normalized_token:
         return {}
     return {"Authorization": f"Bearer {normalized_token}"}
 
 
-def build_client_ws_timeout(*, connect_seconds: int = 15, total: Any = None) -> aiohttp.ClientTimeout:
+def build_endpoint_ws_timeout(*, connect_seconds: int = 15, total: Any = None) -> aiohttp.ClientTimeout:
     return aiohttp.ClientTimeout(total=total, connect=max(1, int(connect_seconds)))
 
 

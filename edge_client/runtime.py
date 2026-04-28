@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import logging
 
-from client_tool_sdk.protocol import CLIENT_TOOL_SCHEMA
-from client_tool_sdk.runtime import ClientToolRuntimeBase, ToolExecutionError, ToolExecutionOutcome
+from endpoint_tool_sdk.protocol import ENDPOINT_TOOL_SCHEMA
+from endpoint_tool_sdk.runtime import EndpointToolRuntimeBase, ToolExecutionError, ToolExecutionOutcome
 from edge_client.config import EdgeClientConfig
 from edge_client.execution import build_tool_handlers
 from edge_client.protocol import (
@@ -19,17 +19,17 @@ from edge_client.protocol import (
 logger = logging.getLogger("meetyou.edge_client")
 
 
-class EdgeClientRuntime(ClientToolRuntimeBase):
+class EdgeClientRuntime(EndpointToolRuntimeBase):
     def __init__(self, config: EdgeClientConfig):
         super().__init__(config, handlers=build_tool_handlers(), logger=logger)
 
     @property
     def protocol_schema(self) -> str:
-        return CLIENT_TOOL_SCHEMA
+        return ENDPOINT_TOOL_SCHEMA
 
     @property
     def runtime_label(self) -> str:
-        return "Edge Client"
+        return "Edge Endpoint Provider"
 
     def core_access_token_source_hints(self) -> tuple[str, ...]:
         config_path = str(getattr(self.config, "config_file_path", "")).strip()

@@ -67,7 +67,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
                     "status": "thinking",
                     "detail": "Calling model",
                     "active_tools": ["search_memory"],
-                    "current_mode": "research",
+                    "current_mode": "general",
                     "route_reason": "Matched research signals: latest, direct_url",
                     "action_risk": "read",
                     "source_profile": "tech_global",
@@ -113,13 +113,13 @@ class GatewayRuntimeApiTests(unittest.TestCase):
             runtime_debug_getter=lambda session_id: {
                 "session_id": session_id,
                 "route": {
-                    "requested_mode": "normal",
-                    "current_mode": "research",
+                    "requested_mode": "general",
+                    "current_mode": "general",
                     "route_reason": "Brain switched mode: Need citations and source tracking",
                     "source_profile": "tech_global",
                     "tool_bundle": ["research_tool", "research_topic"],
                     "mcp_servers": [],
-                    "prompt_bundle": "research",
+                    "prompt_bundle": "general+research_grounding",
                     "active_skills": [],
                     "loaded_skills": [],
                     "confidence": "high",
@@ -131,7 +131,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
                     "authorization_policy": {"read_only": True},
                     "disable_tools": False,
                 },
-                "route_history": [{"round": 0, "mode": "normal"}, {"round": 1, "mode": "research"}],
+                "route_history": [{"round": 0, "mode": "general"}, {"round": 1, "mode": "general"}],
                 "context_plan": {
                     "length_policy": {"target_input_tokens": 4096},
                     "layers": {"conversation_summary": True, "memory_recall": True},
@@ -278,7 +278,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(payload["runtime"]["state"]["global_state"]["status"], "idle")
         self.assertEqual(payload["runtime"]["state"]["heartbeat_state"]["status"], "heartbeat")
         self.assertEqual(payload["runtime"]["state"]["session_state"]["status"], "thinking")
-        self.assertEqual(payload["runtime"]["state"]["session_state"]["current_mode"], "research")
+        self.assertEqual(payload["runtime"]["state"]["session_state"]["current_mode"], "general")
         self.assertEqual(payload["runtime"]["state"]["session_state"]["source_profile"], "tech_global")
         self.assertEqual(payload["runtime"]["state"]["session_state"]["turn_id"], "turn-1")
 
@@ -313,7 +313,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["kind"], "runtime")
         self.assertEqual(payload["runtime"]["resource"], "debug")
-        self.assertEqual(payload["runtime"]["debug"]["route"]["current_mode"], "research")
+        self.assertEqual(payload["runtime"]["debug"]["route"]["current_mode"], "general")
         self.assertEqual(payload["runtime"]["debug"]["context_plan"]["layers"]["memory_recall"], True)
         self.assertEqual(payload["runtime"]["debug"]["authorization"]["route_preview"]["visible_tools"][0], "research_tool")
         self.assertEqual(payload["runtime"]["debug"]["task_state"]["background"]["schedule"]["due_task_count"], 1)
@@ -339,7 +339,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
             },
             runtime_debug_getter=lambda session_id: {
                 "session_id": session_id,
-                "route": {"current_mode": "office"},
+                "route": {"current_mode": "automation"},
                 "authorization": {
                     "route_preview": {
                         "visible_tools": ["read_local_documents"],

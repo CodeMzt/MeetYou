@@ -9,27 +9,12 @@
 }
 
 .container {
-  display: grid;
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   flex: 1;
   min-height: 0;
-  align-items: stretch;
-}
-
-.leftColumn {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 0;
   overflow-y: auto;
-}
-
-.rightColumn {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow-y: hidden;
 }
 
 @media (max-width: 900px) {
@@ -37,14 +22,7 @@
     overflow-y: auto;
   }
   .container {
-    display: flex;
-    flex-direction: column;
     height: auto;
     flex: none;
-  }
-  .leftColumn,
-  .rightColumn {
-    overflow-y: visible;
-    min-height: auto;
   }
 }

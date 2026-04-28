@@ -9,18 +9,13 @@ import {
   getDanxiProfile,
   resolveDanxiMessageTarget,
   getDanxiSessionStatus,
-  getClientProcedureDetail,
-  getClientThreadProcedureContext,
   listDanxiPosts,
   listOperatorSourceProfiles,
   loginDanxiSession,
-  listClientProcedures,
   resolveClientAttachmentDownloadPlan,
   updateDanxiReply,
   updateDanxiWebvpnCookie,
   updateOperatorWorkspaceGovernance,
-  pinClientThreadProcedure,
-  unpinClientThreadProcedure,
   updateDesktopMemoryRecordStatus,
 } from './clientApi'
 import { DEFAULT_BASE_URL } from './windowBridge'
@@ -172,191 +167,6 @@ describe('clientApi', () => {
     )
   })
 
-  it('loads procedures from client API', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify([
-          {
-            procedure_id: 'proc_focus',
-            title: '涓撴敞妯″紡',
-            description: '杩涘叆涓撴敞鎵ц娴佺▼',
-            applicable_modes: ['general'],
-            recommended_tools: ['manage_tasks'],
-            preferred_tool_key: 'manage_tasks',
-            preferred_target_endpoint_ids: [],
-            preferred_endpoint_provider_types: ['desktop'],
-            tool_target_routing_policy: 'balanced',
-            default_execution_target: 'specific_client',
-            risk_profile: 'low',
-            status: 'active',
-          },
-        ]),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      ),
-    ) as typeof fetch
-
-    const procedures = await listClientProcedures('http://127.0.0.1:8000')
-
-    expect(procedures).toHaveLength(1)
-    expect(procedures[0]?.procedure_id).toBe('proc_focus')
-    expect(procedures[0]?.default_execution_target).toBe('specific_client')
-    expect(procedures[0]?.preferred_tool_key).toBe('manage_tasks')
-  })
-
-  it('loads procedure detail and thread procedure context from client API', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            procedure_id: 'code_review',
-            title: 'Code Review',
-            description: 'Review code changes before merging.',
-            applicable_modes: ['general'],
-            recommended_tools: ['search_memory'],
-            preferred_tool_key: 'search_memory',
-            preferred_target_endpoint_ids: [],
-            preferred_endpoint_provider_types: [],
-            tool_target_routing_policy: 'balanced',
-            default_execution_target: 'core_only',
-            risk_profile: 'read',
-            status: 'active',
-            prompt_overlay: 'Focus on correctness first.',
-            recommended_source_profiles: ['workspace_local'],
-            infer_keywords: ['review', 'patch'],
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            source: 'inferred',
-            pinned_procedure: null,
-            latest_inferred_procedure: {
-              procedure_id: 'code_review',
-              title: 'Code Review',
-              description: 'Review code changes before merging.',
-              applicable_modes: ['general'],
-              recommended_tools: ['search_memory'],
-              preferred_tool_key: 'search_memory',
-              preferred_target_endpoint_ids: [],
-              preferred_endpoint_provider_types: [],
-              tool_target_routing_policy: 'balanced',
-              default_execution_target: 'core_only',
-              risk_profile: 'read',
-              status: 'active',
-              prompt_overlay: 'Focus on correctness first.',
-              recommended_source_profiles: ['workspace_local'],
-              infer_keywords: ['review', 'patch'],
-            },
-            effective_procedure: {
-              procedure_id: 'code_review',
-              title: 'Code Review',
-              description: 'Review code changes before merging.',
-              applicable_modes: ['general'],
-              recommended_tools: ['search_memory'],
-              preferred_tool_key: 'search_memory',
-              preferred_target_endpoint_ids: [],
-              preferred_endpoint_provider_types: [],
-              tool_target_routing_policy: 'balanced',
-              default_execution_target: 'core_only',
-              risk_profile: 'read',
-              status: 'active',
-              prompt_overlay: 'Focus on correctness first.',
-              recommended_source_profiles: ['workspace_local'],
-              infer_keywords: ['review', 'patch'],
-            },
-            latest_inferred_reason: 'keywords:review,patch',
-            latest_inferred_score: 7,
-            latest_inferred_at: '2026-04-12T00:00:00Z',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      ) as typeof fetch
-
-    const detail = await getClientProcedureDetail('http://127.0.0.1:8000', 'code_review')
-    const context = await getClientThreadProcedureContext('http://127.0.0.1:8000', 'thr_1')
-
-    expect(detail.prompt_overlay).toContain('Focus on correctness')
-    expect(detail.infer_keywords).toContain('review')
-    expect(context.source).toBe('inferred')
-    expect(context.effective_procedure?.procedure_id).toBe('code_review')
-    expect(context.latest_inferred_score).toBe(7)
-  })
-
-  it('pins and unpins thread procedure via client API', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            source: 'pinned',
-            pinned_procedure: {
-              procedure_id: 'code_review',
-              title: 'Code Review',
-              description: 'Review code changes before merging.',
-              applicable_modes: ['general'],
-              recommended_tools: ['search_memory'],
-              preferred_tool_key: 'search_memory',
-              preferred_target_endpoint_ids: [],
-              preferred_endpoint_provider_types: [],
-              tool_target_routing_policy: 'balanced',
-              default_execution_target: 'core_only',
-              risk_profile: 'read',
-              status: 'active',
-              prompt_overlay: 'Focus on correctness first.',
-              recommended_source_profiles: ['workspace_local'],
-              infer_keywords: ['review', 'patch'],
-            },
-            latest_inferred_procedure: null,
-            effective_procedure: {
-              procedure_id: 'code_review',
-              title: 'Code Review',
-              description: 'Review code changes before merging.',
-              applicable_modes: ['general'],
-              recommended_tools: ['search_memory'],
-              preferred_tool_key: 'search_memory',
-              preferred_target_endpoint_ids: [],
-              preferred_endpoint_provider_types: [],
-              tool_target_routing_policy: 'balanced',
-              default_execution_target: 'core_only',
-              risk_profile: 'read',
-              status: 'active',
-              prompt_overlay: 'Focus on correctness first.',
-              recommended_source_profiles: ['workspace_local'],
-              infer_keywords: ['review', 'patch'],
-            },
-            latest_inferred_reason: '',
-            latest_inferred_score: 0,
-            latest_inferred_at: '',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            source: 'none',
-            pinned_procedure: null,
-            latest_inferred_procedure: null,
-            effective_procedure: null,
-            latest_inferred_reason: '',
-            latest_inferred_score: 0,
-            latest_inferred_at: '',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      ) as typeof fetch
-
-    const pinned = await pinClientThreadProcedure('http://127.0.0.1:8000', 'thr_1', 'code_review')
-    const unpinned = await unpinClientThreadProcedure('http://127.0.0.1:8000', 'thr_1')
-
-    expect(pinned.source).toBe('pinned')
-    expect(pinned.pinned_procedure?.procedure_id).toBe('code_review')
-    expect(unpinned.source).toBe('none')
-  })
-
   it('updates workspace governance through operator API', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response(
@@ -364,7 +174,7 @@ describe('clientApi', () => {
           workspace_id: 'study',
           title: 'Study',
           status: 'active',
-          base_mode: 'study',
+          base_mode: 'general',
           description: 'Study workspace for focused learning.',
           prompt_overlay: '',
           default_execution_target: 'core_only',
@@ -532,13 +342,13 @@ describe('clientApi', () => {
         email: 'user@example.com',
         password: 'secret',
       }),
-    ).rejects.toThrow('Encrypted Danxi credential transport is only available in the Electron desktop app.')
+    ).rejects.toThrow('旦夕加密凭证传输仅在桌面端可用。')
 
     await expect(
       updateDanxiWebvpnCookie('http://127.0.0.1:8000', {
         cookie_header: 'vpn=ok',
       }),
-    ).rejects.toThrow('Encrypted Danxi credential transport is only available in the Electron desktop app.')
+    ).rejects.toThrow('旦夕加密凭证传输仅在桌面端可用。')
 
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
@@ -649,8 +459,8 @@ describe('clientApi', () => {
       ) as typeof fetch
 
     const profile = await getDanxiProfile('http://127.0.0.1:8000', { refresh: true })
-    const created = await createDanxiReply('http://127.0.0.1:8000', 101, { content: '鎴戜篃閬囧埌杩欎釜闂' })
-    const updated = await updateDanxiReply('http://127.0.0.1:8000', 9001, { content: '宸茶В鍐筹紝璋㈣阿' })
+    const created = await createDanxiReply('http://127.0.0.1:8000', 101, { content: '我也遇到这个问题' })
+    const updated = await updateDanxiReply('http://127.0.0.1:8000', 9001, { content: '已解决，谢谢' })
     const deleted = await deleteDanxiReply('http://127.0.0.1:8000', 9001, { confirm: true })
     const summary = await getDanxiPostSummary('http://127.0.0.1:8000', 101, { floor_limit: 20 })
 
@@ -711,15 +521,15 @@ describe('clientApi', () => {
         JSON.stringify([
           {
             profile_name: 'workspace_local',
-            label: 'Workspace / Local Knowledge',
-            description: 'Prefer local files, memory, and private workspace knowledge.',
+            label: '工作区与本地知识',
+            description: '优先使用本地文件、记忆和私有工作区知识。',
             official_only: false,
             default_freshness: 'workspace',
           },
           {
             profile_name: 'policy_global',
-            label: 'Policy Global',
-            description: 'Government and regulator sources outside China.',
+            label: '国际政策',
+            description: '中国以外的政府与监管机构资料。',
             official_only: true,
             default_freshness: 'high',
           },

@@ -3,7 +3,7 @@ import { parseRuntimeUsageEnvelope } from './protocolClient'
 import type {
   AssistantMode,
   ClientAttachmentRecord,
-  ClientAvailableClient,
+  AvailableEndpoint,
   ContextPoolQueryResponse,
   DanxiActionResponse,
   DanxiListResponse,
@@ -17,13 +17,10 @@ import type {
   ClientMessageCreatePayload,
   ClientOperation,
   OperatorSourceProfile,
-  ClientProcedureDetail,
-  ClientThreadProcedureContext,
   ClientSession,
   ClientThread,
   RuntimeUsageSnapshot,
   ClientWorkspace,
-  ClientProcedure,
 } from './types'
 
 export interface ClientAttachmentDownloadTicket {
@@ -91,7 +88,7 @@ async function encryptDanxiCredentials(
 ): Promise<Record<string, unknown>> {
   const encryptor = window?.ipcRenderer?.invoke
   if (typeof encryptor !== 'function') {
-    throw new Error('Encrypted Danxi credential transport is only available in the Electron desktop app.')
+    throw new Error('旦夕加密凭证传输仅在桌面端可用。')
   }
   return (await encryptor('encrypt-danxi-credentials', { purpose, data })) as Record<string, unknown>
 }
@@ -106,7 +103,7 @@ async function readJsonOrThrow<T>(response: Response, fallback: string): Promise
 
 export async function listClientWorkspaces(baseUrl: string): Promise<ClientWorkspace[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/workspaces'))
-  return readJsonOrThrow<ClientWorkspace[]>(response, '鍔犺浇宸ヤ綔绌洪棿澶辫触')
+  return readJsonOrThrow<ClientWorkspace[]>(response, '加载工作空间失败')
 }
 
 export async function loginDanxiSession(
@@ -128,14 +125,14 @@ export async function loginDanxiSession(
       encrypted_credentials: encryptedCredentials,
     }),
   })
-  return readJsonOrThrow<DanxiSessionStatus>(response, 'Danxi 鐧诲綍澶辫触')
+  return readJsonOrThrow<DanxiSessionStatus>(response, '旦夕登录失败')
 }
 
 export async function getDanxiSessionStatus(baseUrl: string, sessionKey = 'default'): Promise<DanxiSessionStatus> {
   const response = await fetchWithAuth(
     `${buildDesktopUrl(baseUrl, '/danxi/session')}?session_key=${encodeURIComponent(sessionKey)}`,
   )
-  return readJsonOrThrow<DanxiSessionStatus>(response, 'Failed to load Danxi session status')
+  return readJsonOrThrow<DanxiSessionStatus>(response, '读取旦夕登录状态失败')
 }
 
 export async function updateDanxiWebvpnCookie(
@@ -155,7 +152,7 @@ export async function updateDanxiWebvpnCookie(
       encrypted_credentials: encryptedCredentials,
     }),
   })
-  return readJsonOrThrow<DanxiSessionStatus>(response, 'Failed to update Danxi WebVPN login state')
+  return readJsonOrThrow<DanxiSessionStatus>(response, '更新旦夕 WebVPN 登录状态失败')
 }
 
 export async function getDanxiProfile(
@@ -172,14 +169,14 @@ export async function getDanxiProfile(
     }
   })
   const response = await fetchWithAuth(url.toString())
-  return readJsonOrThrow<DanxiUserProfileResponse>(response, '璇诲彇 Danxi 鐢ㄦ埛淇℃伅澶辫触')
+  return readJsonOrThrow<DanxiUserProfileResponse>(response, '读取旦夕用户信息失败')
 }
 
 export async function listDanxiDivisions(baseUrl: string, sessionKey = 'default'): Promise<DanxiListResponse> {
   const response = await fetchWithAuth(
     `${buildDesktopUrl(baseUrl, '/danxi/divisions')}?session_key=${encodeURIComponent(sessionKey)}`,
   )
-  return readJsonOrThrow<DanxiListResponse>(response, '鍔犺浇 Danxi 鍒嗗尯澶辫触')
+  return readJsonOrThrow<DanxiListResponse>(response, '加载旦夕分区失败')
 }
 
 export async function listDanxiPosts(
@@ -201,7 +198,7 @@ export async function listDanxiPosts(
     }
   })
   const response = await fetchWithAuth(url.toString())
-  return readJsonOrThrow<DanxiListResponse>(response, '鍔犺浇 Danxi 甯栧瓙澶辫触')
+  return readJsonOrThrow<DanxiListResponse>(response, '加载旦夕帖子失败')
 }
 
 export async function getDanxiPost(
@@ -212,7 +209,7 @@ export async function getDanxiPost(
   const response = await fetchWithAuth(
     `${buildDesktopUrl(baseUrl, `/danxi/posts/${holeId}`)}?session_key=${encodeURIComponent(sessionKey)}`,
   )
-  return readJsonOrThrow<DanxiPostResponse>(response, '鍔犺浇 Danxi 甯栧瓙璇︽儏澶辫触')
+  return readJsonOrThrow<DanxiPostResponse>(response, '加载旦夕帖子详情失败')
 }
 
 export async function listDanxiFloors(
@@ -232,7 +229,7 @@ export async function listDanxiFloors(
     }
   })
   const response = await fetchWithAuth(url.toString())
-  return readJsonOrThrow<DanxiListResponse>(response, '鍔犺浇 Danxi 妤煎眰澶辫触')
+  return readJsonOrThrow<DanxiListResponse>(response, '加载旦夕楼层失败')
 }
 
 export async function createDanxiReply(
@@ -248,7 +245,7 @@ export async function createDanxiReply(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<DanxiActionResponse>(response, '鍙戝竷 Danxi 鍥炲澶辫触')
+  return readJsonOrThrow<DanxiActionResponse>(response, '发布旦夕回复失败')
 }
 
 export async function updateDanxiReply(
@@ -264,7 +261,7 @@ export async function updateDanxiReply(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<DanxiActionResponse>(response, '缂栬緫 Danxi 鍥炲澶辫触')
+  return readJsonOrThrow<DanxiActionResponse>(response, '编辑旦夕回复失败')
 }
 
 export async function deleteDanxiReply(
@@ -283,7 +280,7 @@ export async function deleteDanxiReply(
   const response = await fetchWithAuth(url.toString(), {
     method: 'DELETE',
   })
-  return readJsonOrThrow<DanxiActionResponse>(response, '鍒犻櫎 Danxi 鍥炲澶辫触')
+  return readJsonOrThrow<DanxiActionResponse>(response, '删除旦夕回复失败')
 }
 
 export async function getDanxiPostSummary(
@@ -301,7 +298,7 @@ export async function getDanxiPostSummary(
     }
   })
   const response = await fetchWithAuth(url.toString())
-  return readJsonOrThrow<DanxiSummaryResponse>(response, '鐢熸垚 Danxi AI 鎽樿澶辫触')
+  return readJsonOrThrow<DanxiSummaryResponse>(response, '生成旦夕智能摘要失败')
 }
 
 export async function searchDanxiPosts(
@@ -323,7 +320,7 @@ export async function searchDanxiPosts(
     }
   })
   const response = await fetchWithAuth(url.toString())
-  return readJsonOrThrow<DanxiSearchResponse>(response, '鎼滅储 Danxi 甯栧瓙澶辫触')
+  return readJsonOrThrow<DanxiSearchResponse>(response, '搜索旦夕帖子失败')
 }
 
 export async function listDanxiMessages(
@@ -341,7 +338,7 @@ export async function listDanxiMessages(
     }
   })
   const response = await fetchWithAuth(url.toString())
-  return readJsonOrThrow<DanxiListResponse>(response, '鍔犺浇 Danxi 娑堟伅澶辫触')
+  return readJsonOrThrow<DanxiListResponse>(response, '加载旦夕消息失败')
 }
 
 export async function resolveDanxiMessageTarget(
@@ -352,7 +349,7 @@ export async function resolveDanxiMessageTarget(
   const response = await fetchWithAuth(
     `${buildDesktopUrl(baseUrl, `/danxi/floors/${floorId}/target`)}?session_key=${encodeURIComponent(sessionKey)}`,
   )
-  return readJsonOrThrow<DanxiMessageTargetResponse>(response, '瑙ｆ瀽 Danxi 娑堟伅璺宠浆鐩爣澶辫触')
+  return readJsonOrThrow<DanxiMessageTargetResponse>(response, '解析旦夕消息跳转目标失败')
 }
 
 export async function updateOperatorWorkspaceGovernance(
@@ -369,24 +366,24 @@ export async function updateOperatorWorkspaceGovernance(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientWorkspace>(response, 'Failed to update workspace governance')
+  return readJsonOrThrow<ClientWorkspace>(response, '更新工作区治理失败')
 }
 
 export async function listOperatorSourceProfiles(baseUrl: string): Promise<OperatorSourceProfile[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/source-profiles'))
-  return readJsonOrThrow<OperatorSourceProfile[]>(response, '鍔犺浇 source profile 鐩綍澶辫触')
+  return readJsonOrThrow<OperatorSourceProfile[]>(response, '加载来源档案目录失败')
 }
 
 export async function createClientThread(
   baseUrl: string,
-  payload: Pick<ClientThread, 'title'> & { home_workspace_id?: string; workspace_id?: string; mode?: string; pinned_procedure_id?: string | null },
+  payload: Pick<ClientThread, 'title'> & { home_workspace_id?: string; workspace_id?: string; mode?: string },
 ): Promise<ClientThread> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/threads'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientThread>(response, '鍒涘缓浼氳瘽绾跨▼澶辫触')
+  return readJsonOrThrow<ClientThread>(response, '创建会话线程失败')
 }
 
 export async function createClientSession(
@@ -405,7 +402,7 @@ export async function createClientSession(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientSession>(response, 'Failed to create endpoint session')
+  return readJsonOrThrow<ClientSession>(response, '创建端点会话失败')
 }
 
 export async function updateClientSessionActiveWorkspace(
@@ -418,7 +415,7 @@ export async function updateClientSessionActiveWorkspace(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientSession>(response, 'Failed to switch workspace')
+  return readJsonOrThrow<ClientSession>(response, '切换工作区失败')
 }
 
 export async function sendClientMessage(baseUrl: string, payload: ClientMessageCreatePayload): Promise<ClientMessage> {
@@ -427,12 +424,12 @@ export async function sendClientMessage(baseUrl: string, payload: ClientMessageC
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientMessage>(response, 'Failed to send message')
+  return readJsonOrThrow<ClientMessage>(response, '发送消息失败')
 }
 
 export async function listThreadMessages(baseUrl: string, threadId: string): Promise<ClientMessage[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/messages`))
-  return readJsonOrThrow<ClientMessage[]>(response, '鍔犺浇娑堟伅鍘嗗彶澶辫触')
+  return readJsonOrThrow<ClientMessage[]>(response, '加载消息历史失败')
 }
 
 export async function createClientOperation(
@@ -456,12 +453,12 @@ export async function createClientOperation(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientOperation>(response, '鍒涘缓鎿嶄綔澶辫触')
+  return readJsonOrThrow<ClientOperation>(response, '创建操作失败')
 }
 
-export async function listClientAvailableClients(baseUrl: string, workspaceId: string): Promise<ClientAvailableClient[]> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/clients?include_tools=true`))
-  return readJsonOrThrow<ClientAvailableClient[]>(response, '鍔犺浇鍙敤 Client 澶辫触')
+export async function listAvailableEndpoints(baseUrl: string, workspaceId: string): Promise<AvailableEndpoint[]> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/endpoints?include_tools=true`))
+  return readJsonOrThrow<AvailableEndpoint[]>(response, '加载可用端点失败')
 }
 
 export async function queryContextPool(
@@ -475,48 +472,7 @@ export async function queryContextPool(
     }
   })
   const response = await fetchWithAuth(url.toString())
-  return readJsonOrThrow<ContextPoolQueryResponse>(response, '鏌ヨ涓婁笅鏂囨睜澶辫触')
-}
-
-export async function listClientProcedures(baseUrl: string): Promise<ClientProcedure[]> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/procedures'))
-  return readJsonOrThrow<ClientProcedure[]>(response, '鍔犺浇 Procedure 鍒楄〃澶辫触')
-}
-
-export async function getClientProcedureDetail(baseUrl: string, procedureId: string): Promise<ClientProcedureDetail> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/procedures/${encodeURIComponent(procedureId)}`))
-  return readJsonOrThrow<ClientProcedureDetail>(response, '鍔犺浇 Procedure 璇︽儏澶辫触')
-}
-
-export async function getClientThreadProcedureContext(
-  baseUrl: string,
-  threadId: string,
-): Promise<ClientThreadProcedureContext> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/procedure-context`))
-  return readJsonOrThrow<ClientThreadProcedureContext>(response, 'Failed to load thread procedure context')
-}
-
-export async function pinClientThreadProcedure(
-  baseUrl: string,
-  threadId: string,
-  procedureId: string,
-): Promise<ClientThreadProcedureContext> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/pinned-procedure`), {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ procedure_id: procedureId }),
-  })
-  return readJsonOrThrow<ClientThreadProcedureContext>(response, '鍥哄畾绾跨▼瑙勭▼澶辫触')
-}
-
-export async function unpinClientThreadProcedure(
-  baseUrl: string,
-  threadId: string,
-): Promise<ClientThreadProcedureContext> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/pinned-procedure`), {
-    method: 'DELETE',
-  })
-  return readJsonOrThrow<ClientThreadProcedureContext>(response, '鍙栨秷鍥哄畾绾跨▼瑙勭▼澶辫触')
+  return readJsonOrThrow<ContextPoolQueryResponse>(response, '查询上下文池失败')
 }
 
 export async function decideClientApproval(
@@ -538,7 +494,7 @@ export async function decideClientApproval(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow(response, '鎻愪氦瀹℃壒缁撴灉澶辫触')
+  return readJsonOrThrow(response, '提交审批结果失败')
 }
 
 export async function submitClientConfirmResponse(
@@ -566,7 +522,7 @@ export async function submitClientConfirmResponse(
       body: JSON.stringify(payload),
     },
   )
-  return readJsonOrThrow(response, '鎻愪氦纭缁撴灉澶辫触')
+  return readJsonOrThrow(response, '提交确认结果失败')
 }
 
 export async function submitClientHumanInputResponse(
@@ -592,7 +548,7 @@ export async function submitClientHumanInputResponse(
       body: JSON.stringify(payload),
     },
   )
-  return readJsonOrThrow(response, '鎻愪氦琛ュ厖杈撳叆缁撴灉澶辫触')
+  return readJsonOrThrow(response, '提交补充输入结果失败')
 }
 
 export async function createClientAttachmentUploadTicket(
@@ -620,7 +576,7 @@ export async function createClientAttachmentUploadTicket(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow(response, '鍒涘缓闄勪欢涓婁紶绁ㄦ嵁澶辫触')
+  return readJsonOrThrow(response, '创建附件上传票据失败')
 }
 
 export async function uploadClientAttachmentContent(
@@ -637,7 +593,7 @@ export async function uploadClientAttachmentContent(
     method: 'PUT',
     body: file,
   })
-  return readJsonOrThrow(response, '涓婁紶闄勪欢鍐呭澶辫触')
+  return readJsonOrThrow(response, '上传附件内容失败')
 }
 
 export async function completeClientAttachment(
@@ -650,7 +606,7 @@ export async function completeClientAttachment(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientAttachmentRecord>(response, '瀹屾垚闄勪欢涓婁紶澶辫触')
+  return readJsonOrThrow<ClientAttachmentRecord>(response, '完成附件上传失败')
 }
 
 export async function listClientThreadAttachments(
@@ -658,7 +614,7 @@ export async function listClientThreadAttachments(
   threadId: string,
 ): Promise<ClientAttachmentRecord[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/attachments`))
-  return readJsonOrThrow<ClientAttachmentRecord[]>(response, '鍔犺浇闄勪欢鍒楄〃澶辫触')
+  return readJsonOrThrow<ClientAttachmentRecord[]>(response, '加载附件列表失败')
 }
 
 export async function deleteClientAttachment(
@@ -668,7 +624,7 @@ export async function deleteClientAttachment(
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}`), {
     method: 'DELETE',
   })
-  return readJsonOrThrow<ClientAttachmentRecord>(response, '鍒犻櫎闄勪欢澶辫触')
+  return readJsonOrThrow<ClientAttachmentRecord>(response, '删除附件失败')
 }
 
 export async function createClientAttachmentDownloadTicket(
@@ -678,7 +634,7 @@ export async function createClientAttachmentDownloadTicket(
 ): Promise<ClientAttachmentDownloadTicket> {
   const query = clientId ? `?client_id=${encodeURIComponent(clientId)}` : ''
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}/download-ticket${query}`))
-  return readJsonOrThrow(response, '鍒涘缓闄勪欢涓嬭浇绁ㄦ嵁澶辫触')
+  return readJsonOrThrow(response, '创建附件下载票据失败')
 }
 
 export function resolveClientAttachmentDownloadPlan(ticket: ClientAttachmentDownloadTicket): ClientAttachmentDownloadPlan {
@@ -710,7 +666,7 @@ export function resolveClientAttachmentDownloadPlan(ticket: ClientAttachmentDown
 export async function downloadClientAttachmentContent(downloadUrl: string): Promise<Blob> {
   const response = await fetchWithAuth(downloadUrl)
   if (!response.ok) {
-    const failure = await readErrorMessage(response, '涓嬭浇闄勪欢鍐呭澶辫触')
+    const failure = await readErrorMessage(response, '下载附件内容失败')
     throw new Error(failure.message)
   }
   return response.blob()
@@ -723,10 +679,10 @@ export async function fetchRuntimeUsageSnapshot(
   const response = await fetchWithAuth(
     `${buildDesktopUrl(baseUrl, '/runtime/usage')}?session_id=${encodeURIComponent(sessionId)}`,
   )
-  const payload = await readJsonOrThrow<unknown>(response, '鍔犺浇 token / context 蹇収澶辫触')
+  const payload = await readJsonOrThrow<unknown>(response, '加载令牌与上下文快照失败')
   const snapshot = parseRuntimeUsageEnvelope(payload)
   if (!snapshot) {
-    throw new Error('瑙ｆ瀽 token / context 蹇収澶辫触')
+    throw new Error('解析令牌与上下文快照失败')
   }
   return snapshot
 }
@@ -735,7 +691,7 @@ export async function clearDesktopMemory(baseUrl: string): Promise<MemoryClearRe
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/memory'), {
     method: 'DELETE',
   })
-  return readJsonOrThrow<MemoryClearResult>(response, 'Failed to clear memory')
+  return readJsonOrThrow<MemoryClearResult>(response, '清理记忆失败')
 }
 
 export async function updateDesktopMemoryRecordStatus(
@@ -748,7 +704,7 @@ export async function updateDesktopMemoryRecordStatus(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
   })
-  return readJsonOrThrow<MemoryRecordMutationResult>(response, 'Failed to update memory record')
+  return readJsonOrThrow<MemoryRecordMutationResult>(response, '更新记忆记录失败')
 }
 
 export async function deleteDesktopMemoryRecord(
@@ -758,7 +714,7 @@ export async function deleteDesktopMemoryRecord(
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/memory/records/${encodeURIComponent(memoryId)}`), {
     method: 'DELETE',
   })
-  return readJsonOrThrow<MemoryRecordMutationResult>(response, 'Failed to delete memory record')
+  return readJsonOrThrow<MemoryRecordMutationResult>(response, '删除记忆记录失败')
 }
 
 export async function createClientWsUrl(

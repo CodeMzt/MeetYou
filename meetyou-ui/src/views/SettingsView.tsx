@@ -27,7 +27,7 @@ function FieldStatus({
   if (!field.entry?.is_secret) {
     return (
       <div className="settings-field-meta">
-        <span>{field.entry?.source === 'env' ? '来源 env' : field.entry?.source === 'config' ? '来源 config' : '默认值'}</span>
+        <span>{field.entry?.source === 'env' ? '来源：环境变量' : field.entry?.source === 'config' ? '来源：配置文件' : '默认值'}</span>
       </div>
     )
   }
@@ -218,9 +218,9 @@ export default function SettingsView() {
 
       {runtimeBuildInfo ? (
         <div className="settings-version-card">
-          <div className="settings-version-row"><strong>UI</strong><span>{runtimeBuildInfo.ui.package_version} · {runtimeBuildInfo.ui.git_commit.slice(0, 12)}</span></div>
-          <div className="settings-version-row"><strong>Desktop Backend</strong><span>{runtimeBuildInfo.desktop_backend ? `${runtimeBuildInfo.desktop_backend.package_version} · ${runtimeBuildInfo.desktop_backend.git_commit.slice(0, 12)}` : '未读取到'}</span></div>
-          <div className="settings-version-row"><strong>Core</strong><span>{runtimeBuildInfo.core ? `${runtimeBuildInfo.core.package_version} · ${runtimeBuildInfo.core.git_commit.slice(0, 12)}` : '未读取到'}</span></div>
+          <div className="settings-version-row"><strong>界面</strong><span>{runtimeBuildInfo.ui.package_version} · {runtimeBuildInfo.ui.git_commit.slice(0, 12)}</span></div>
+          <div className="settings-version-row"><strong>桌面后端</strong><span>{runtimeBuildInfo.desktop_backend ? `${runtimeBuildInfo.desktop_backend.package_version} · ${runtimeBuildInfo.desktop_backend.git_commit.slice(0, 12)}` : '未读取到'}</span></div>
+          <div className="settings-version-row"><strong>核心服务</strong><span>{runtimeBuildInfo.core ? `${runtimeBuildInfo.core.package_version} · ${runtimeBuildInfo.core.git_commit.slice(0, 12)}` : '未读取到'}</span></div>
         </div>
       ) : null}
 

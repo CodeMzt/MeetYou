@@ -29,7 +29,6 @@ from core.services import (
     OperationService,
     OperationCallService,
     PrincipalService,
-    ProcedureService,
     RunEventService,
     RunService,
     ScheduledJobRunService,
@@ -84,10 +83,10 @@ DEFAULT_WORKSPACES = (
     },
     {
         "workspace_id": "study",
-        "title": "Study",
-        "description": "Study materials, notes, and review workspace.",
-        "base_mode": "study",
-        "prompt_overlay": "Use teaching-style explanations, structured notes, and review questions for study tasks.",
+        "title": "学习",
+        "description": "学习资料、笔记和复习工作区。",
+        "base_mode": "general",
+        "prompt_overlay": "学习任务使用教学式解释、结构化笔记和复习问题。",
         "default_execution_target": "core.local",
         "metadata": {
             "tool_policy": "allow_all",
@@ -119,82 +118,6 @@ DEFAULT_WORKSPACES = (
         },
     },
 )
-DEFAULT_PROCEDURES = (
-    {
-        "procedure_id": "daily_research_digest",
-        "title": "Daily Research Digest",
-        "description": "Summarize recent progress, sources, and conclusions for a specified topic.",
-        "prompt_overlay": "Prioritize recent developments, cite sources clearly, and return a concise digest.",
-        "applicable_modes": ["research", "general"],
-        "recommended_capabilities": ["search_web", "read_web_page", "search_memory", "summarize_text"],
-        "recommended_source_profiles": ["policy_global", "workspace_local"],
-        "default_execution_target": "core.local",
-        "risk_profile": "read",
-        "meta": {
-            "preferred_tool_key": "search_web",
-            "preferred_target_endpoint_ids": [],
-            "preferred_endpoint_provider_types": [],
-            "tool_target_routing_policy": "balanced",
-            "infer_keywords": ["research", "digest", "latest", "news", "updates", "monitor"],
-        },
-    },
-    {
-        "procedure_id": "code_review",
-        "title": "Code Review",
-        "description": "Review code changes for correctness, regressions, risk, and missing tests.",
-        "prompt_overlay": "Focus on correctness, regression risk, test coverage, and clear next actions.",
-        "applicable_modes": ["documents", "general", "research"],
-        "recommended_capabilities": ["search_memory", "summarize_text"],
-        "recommended_source_profiles": ["workspace_local"],
-        "default_execution_target": "core.local",
-        "risk_profile": "read",
-        "meta": {
-            "preferred_tool_key": "search_memory",
-            "preferred_target_endpoint_ids": [],
-            "preferred_endpoint_provider_types": [],
-            "tool_target_routing_policy": "balanced",
-            "infer_keywords": ["code review", "review", "patch", "diff", "regression", "bug"],
-        },
-    },
-    {
-        "procedure_id": "desktop_fix_loop",
-        "title": "Desktop Fix Loop",
-        "description": "Diagnose, verify, and repair desktop environment issues.",
-        "prompt_overlay": "Move through diagnosis, verification, and repair. Ask before risky writes.",
-        "applicable_modes": ["automation", "general"],
-        "recommended_capabilities": ["search_memory", "manage_tasks"],
-        "recommended_source_profiles": ["workspace_local"],
-        "default_execution_target": "specific_endpoint",
-        "risk_profile": "write",
-        "meta": {
-            "preferred_tool_key": "manage_tasks",
-            "preferred_target_endpoint_ids": [],
-            "preferred_endpoint_provider_types": ["desktop"],
-            "tool_target_routing_policy": "balanced",
-            "infer_keywords": ["desktop", "endpoint", "fix", "repair", "shell", "command"],
-        },
-    },
-    {
-        "procedure_id": "study_note_synthesis",
-        "title": "Study Note Synthesis",
-        "description": "Organize study materials into structured notes, questions, and review items.",
-        "prompt_overlay": "Extract key ideas, organize concise notes, and end with review prompts or next steps.",
-        "applicable_modes": ["study", "documents"],
-        "recommended_capabilities": ["search_memory", "summarize_text", "manage_tasks"],
-        "recommended_source_profiles": ["workspace_local"],
-        "default_execution_target": "core.local",
-        "risk_profile": "read",
-        "meta": {
-            "preferred_tool_key": "summarize_text",
-            "preferred_target_endpoint_ids": [],
-            "preferred_endpoint_provider_types": [],
-            "tool_target_routing_policy": "balanced",
-            "infer_keywords": ["study", "note", "notes", "synthesis", "review question"],
-        },
-    },
-)
-
-
 @dataclass(slots=True)
 class CoreDomainContext:
     database_url: str
@@ -240,7 +163,6 @@ def build_core_services(session_factory) -> CoreServices:
         delivery=DeliveryService(outbox_service=endpoint_outbox, attempt_service=delivery_attempt),
         capability=CapabilityService(session_factory),
         tool=CapabilityService(session_factory),
-        procedure=ProcedureService(session_factory),
         thread=ThreadService(session_factory),
         session=SessionService(session_factory),
         run=RunService(session_factory),
@@ -333,6 +255,18 @@ def _ensure_v4_system_records(services: CoreServices) -> None:
     services.scheduler.ensure_system_heartbeat(interval_seconds=600)
 
 
+def _ensure_default_user_actor(services: CoreServices, principal) -> object:
+    principal_key = str(getattr(principal, "principal_key", "") or DEFAULT_PRINCIPAL_KEY).strip() or DEFAULT_PRINCIPAL_KEY
+    return services.actor.ensure_actor(
+        actor_id=f"user:{principal_key}",
+        actor_type="user",
+        owner_user_id=principal_key,
+        display_name=str(getattr(principal, "display_name", "") or DEFAULT_PRINCIPAL_NAME),
+        permission_profile_id="profile.default_user",
+        metadata={"principal_key": principal_key},
+    )
+
+
 def bootstrap_core_domain(
     config: ConfigManager | None = None,
     *,
@@ -356,6 +290,7 @@ def bootstrap_core_domain(
         principal_key=DEFAULT_PRINCIPAL_KEY,
         display_name=DEFAULT_PRINCIPAL_NAME,
     )
+    _ensure_default_user_actor(services, principal)
     workspaces: dict[str, object] = {}
     for item in DEFAULT_WORKSPACES:
         workspace = services.workspace.ensure_workspace(
@@ -369,21 +304,6 @@ def bootstrap_core_domain(
             metadata=item.get("metadata"),
         )
         workspaces[item["workspace_id"]] = workspace
-    for item in DEFAULT_PROCEDURES:
-        services.procedure.ensure_procedure(
-            procedure_id=item["procedure_id"],
-            principal_id=principal.id,
-            title=item["title"],
-            description=item["description"],
-            prompt_overlay=item["prompt_overlay"],
-            applicable_modes=item["applicable_modes"],
-            recommended_capabilities=item["recommended_capabilities"],
-            recommended_source_profiles=item["recommended_source_profiles"],
-            default_execution_target=item["default_execution_target"],
-            risk_profile=item["risk_profile"],
-            meta=item.get("meta"),
-        )
-
     return CoreDomainContext(
         database_url=resolved_database_url,
         engine=engine,

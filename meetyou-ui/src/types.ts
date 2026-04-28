@@ -2,7 +2,7 @@ export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
-export type AssistantMode = 'general' | 'research' | 'documents' | 'study' | 'automation' | 'danxi'
+export type AssistantMode = 'general' | 'automation' | 'danxi'
 
 export type RuntimeStatus = string
 
@@ -43,37 +43,6 @@ export interface ClientWorkspace {
   tool_routing_overrides: Record<string, unknown>
 }
 
-export interface ClientProcedure {
-  procedure_id: string
-  title: string
-  description: string
-  applicable_modes: string[]
-  recommended_tools: string[]
-  preferred_tool_key: string
-  preferred_target_endpoint_ids: string[]
-  preferred_endpoint_provider_types: string[]
-  tool_target_routing_policy: string
-  default_execution_target: string
-  risk_profile: string
-  status: string
-}
-
-export interface ClientProcedureDetail extends ClientProcedure {
-  prompt_overlay: string
-  recommended_source_profiles: string[]
-  infer_keywords: string[]
-}
-
-export interface ClientThreadProcedureContext {
-  source: 'none' | 'pinned' | 'inferred' | string
-  pinned_procedure: ClientProcedureDetail | null
-  latest_inferred_procedure: ClientProcedureDetail | null
-  effective_procedure: ClientProcedureDetail | null
-  latest_inferred_reason: string
-  latest_inferred_score: number
-  latest_inferred_at: string
-}
-
 export interface ClientThread {
   thread_id: string
   home_workspace_id: string
@@ -81,7 +50,6 @@ export interface ClientThread {
   title: string
   status: string
   summary: string
-  pinned_procedure_id?: string | null
 }
 
 export interface ClientSession {
@@ -134,9 +102,10 @@ export interface OperatorClient {
   workspace_ids: string[]
 }
 
-export interface ClientAvailableClient {
-  client_id: string
-  client_type: string
+export interface AvailableEndpoint {
+  endpoint_id: string
+  endpoint_type: string
+  provider_type: string
   display_name: string
   transport_profile: string
   status: string

@@ -61,7 +61,7 @@ function applyOperationEvent(
     workspace_id: event.workspaceId || existing?.workspace_id || '',
     title: event.title || existing?.title || event.operationId,
     operation_type: event.operationType || existing?.operation_type || 'tool_call',
-    execution_target: event.executionTarget || existing?.execution_target || 'specific_client',
+    execution_target: event.executionTarget || existing?.execution_target || 'specific_endpoint',
     target_endpoint_id: event.targetEndpointId || existing?.target_endpoint_id || '',
     tool_key: event.toolKey || existing?.tool_key || '',
     tool_id: event.toolId || existing?.tool_id || '',
@@ -100,7 +100,7 @@ export function useOperations(
       startTransition(() => {
         dispatchChat({
           type: 'append_system_turn',
-          turn: createSystemTurn(decision === 'approve' ? 'Operation approved.' : 'Operation rejected.'),
+          turn: createSystemTurn(decision === 'approve' ? '操作已允许。' : '操作已拒绝。'),
         })
         setOperations((current) =>
           current.map((item) =>
@@ -110,7 +110,7 @@ export function useOperations(
                   approval_status: decision === 'approve' ? 'approved' : 'rejected',
                   status: decision === 'approve' ? 'queued' : 'rejected',
                   tone: decision === 'approve' ? 'pending' : 'failed',
-                  summary: decision === 'approve' ? 'Approval granted; waiting for execution.' : 'Approval rejected.',
+                  summary: decision === 'approve' ? '已允许，等待执行。' : '已拒绝。',
                 }
               : item,
           ),

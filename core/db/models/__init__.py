@@ -10,7 +10,6 @@ from core.db.models.memory_record import MemoryRecordModel, MemoryWorkspaceTag
 from core.db.models.message import Message
 from core.db.models.operation import Operation, OperationCall
 from core.db.models.principal import Principal
-from core.db.models.procedure import Procedure
 from core.db.models.run import Run, RunEvent
 from core.db.models.scheduler import ScheduledJob, ScheduledJobRun
 from core.db.models.session import Session
@@ -41,7 +40,6 @@ __all__ = [
     "Operation",
     "OperationCall",
     "Principal",
-    "Procedure",
     "Run",
     "RunEvent",
     "ScheduledJob",

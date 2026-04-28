@@ -24,7 +24,7 @@ export default function UsagePanel({
           <span>模型用量 / 上下文</span>
         </div>
         <div className={styles.empty}>
-          {isCompact ? '正在同步本会话 token / context 快照。' : '暂无本会话的 token 或上下文统计。'}
+          {isCompact ? '正在同步本会话令牌与上下文快照。' : '暂无本会话的令牌或上下文统计。'}
         </div>
       </div>
     )
@@ -36,7 +36,7 @@ export default function UsagePanel({
   const lastFailure = runtimeDebugSnapshot?.last_failure
   const usageHint = usageSnapshot.usage_ready
     ? null
-    : 'Token 统计将在首轮模型交互后显示，上下文上限已初始化。'
+    : '令牌统计将在首轮模型交互后显示，上下文上限已初始化。'
   const pressurePercent = requestSnapshot ? `${Math.round(requestSnapshot.pressure_ratio * 100)}%` : ''
   const pressureRatio = usageSnapshot.context_limit_tokens > 0
     ? Math.min(100, Math.round((usageSnapshot.current_context_tokens_estimated / usageSnapshot.context_limit_tokens) * 100))
@@ -73,7 +73,7 @@ export default function UsagePanel({
           <span>{pressureRatio}% 已占用</span>
           <span>{usageSnapshot.context_limit_model || '未知模型'}</span>
         </div>
-        <div className={styles.progressBar} aria-label="context usage progress">
+        <div className={styles.progressBar} aria-label="上下文占用进度">
           <div className={`${styles.progressChunk} ${styles.system}`} style={{ width: `${(contextBreakdown.system / usageSnapshot.context_limit_tokens) * 100}%` }} />
           <div className={`${styles.progressChunk} ${styles.history}`} style={{ width: `${(contextBreakdown.history / usageSnapshot.context_limit_tokens) * 100}%` }} />
           <div className={`${styles.progressChunk} ${styles.memory}`} style={{ width: `${(contextBreakdown.memory_context / usageSnapshot.context_limit_tokens) * 100}%` }} />
@@ -154,7 +154,7 @@ export default function UsagePanel({
           <span>{pressureRatio}% 已占用</span>
           <span>{usageSnapshot.context_limit_model || '未知模型'}</span>
         </div>
-        <div className={styles.progressBar} aria-label="context usage progress">
+        <div className={styles.progressBar} aria-label="上下文占用进度">
           <div className={`${styles.progressChunk} ${styles.system}`} style={{ width: `${(contextBreakdown.system / usageSnapshot.context_limit_tokens) * 100}%` }} />
           <div className={`${styles.progressChunk} ${styles.history}`} style={{ width: `${(contextBreakdown.history / usageSnapshot.context_limit_tokens) * 100}%` }} />
           <div className={`${styles.progressChunk} ${styles.memory}`} style={{ width: `${(contextBreakdown.memory_context / usageSnapshot.context_limit_tokens) * 100}%` }} />

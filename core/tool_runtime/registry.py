@@ -15,9 +15,9 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "include_clients": {
+                    "include_endpoints": {
                         "type": "boolean",
-                        "description": "Include clients registered in each workspace.",
+                        "description": "Include endpoint providers registered in each workspace.",
                         "default": False,
                     },
                     "session_id": {
@@ -34,34 +34,34 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    "list_client_tool_targets": {
+    "list_endpoint_tool_targets": {
         "type": "function",
         "function": {
-            "name": "list_client_tool_targets",
-            "description": "List online Client connections that can execute directed tools, optionally scoped to a workspace and tool key.",
+            "name": "list_endpoint_tool_targets",
+            "description": "List online Endpoint execution targets that can execute tools, optionally scoped to a workspace and tool key.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
-                    "tool_key": {"type": "string", "description": "Optional directed tool key, such as file.read or shell.exec.", "default": ""},
-                    "include_tools": {"type": "boolean", "description": "Include each client's available/executable tool lists.", "default": True},
+                    "tool_key": {"type": "string", "description": "Optional endpoint capability tool key, such as file.read or shell.exec.", "default": ""},
+                    "include_tools": {"type": "boolean", "description": "Include each endpoint's capability list.", "default": True},
                 },
                 "required": [],
             },
             "metadata": {"action_risk": "read", "safe_parallel": True},
         },
     },
-    "list_active_clients": {
+    "list_active_endpoints": {
         "type": "function",
         "function": {
-            "name": "list_active_clients",
-            "description": "List currently online Client websocket connections, optionally scoped to a workspace or thread.",
+            "name": "list_active_endpoints",
+            "description": "List currently online Endpoint websocket connections, optionally scoped to a workspace or thread.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
                     "thread_id": {"type": "string", "description": "Optional thread id.", "default": ""},
-                    "include_tools": {"type": "boolean", "description": "Include each client's available/executable tool lists.", "default": True},
+                    "include_tools": {"type": "boolean", "description": "Include each endpoint's capability list.", "default": True},
                 },
                 "required": [],
             },
@@ -73,7 +73,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "function": {
             "name": "send_endpoint_message",
             "description": (
-                "Send a realtime notice or dispatch a directed tool call to a target Endpoint other than the "
+                "Send a realtime notice or dispatch an Endpoint tool call to a target Endpoint other than the "
                 "normal current-session reply path. Do not use this to answer the originating user or to send "
                 "progress updates to the same endpoint; use emit_progress_notice for progress and the final assistant "
                 "answer for the actual reply. Use only when the user explicitly asks to notify or call a "
@@ -105,8 +105,8 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "description": (
                 "Send a brief standalone assistant reply to the current session while the current turn is still "
                 "thinking or tool-calling. You must call this before any potentially time-consuming operation, "
-                "including web/page reading, research, local file or workspace work, directed Client tool calls, "
-                "endpoint messaging, or other slow I/O. For non-streaming external clients such as Feishu or "
+                "including web/page reading, research, local file or workspace work, endpoint tool calls, "
+                "endpoint messaging, or other slow I/O. For non-streaming external endpoints such as Feishu or "
                 "WeChat/MeetWeChat, call this before a nontrivial or multi-sentence final answer unless the answer "
                 "is immediate and very short. May be called multiple times."
             ),
@@ -116,6 +116,136 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "content": {"type": "string", "description": "A short standalone reply, ideally one sentence."}
                 },
                 "required": ["content"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
+    "manage_heartbeat_settings": {
+        "type": "function",
+        "function": {
+            "name": "manage_heartbeat_settings",
+            "description": "Read or update Scheduler-owned system.heartbeat settings and idle proactive-poke settings.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["get", "update"],
+                        "description": "Use get to inspect system.heartbeat plus idle settings, or update to change allowed fields.",
+                    },
+                    "updates": {
+                        "type": "object",
+                        "description": (
+                            "Allowed keys: system_heartbeat_enabled, system_heartbeat_interval_seconds, "
+                            "heartbeat_idle_poke_enabled, heartbeat_idle_poke_after_seconds, "
+                            "heartbeat_idle_poke_cooldown_seconds, heartbeat_idle_context_compaction_enabled."
+                        ),
+                        "properties": {
+                            "system_heartbeat_enabled": {"type": "boolean"},
+                            "system_heartbeat_interval_seconds": {"type": "integer", "minimum": 1},
+                            "heartbeat_idle_poke_enabled": {"type": "boolean"},
+                            "heartbeat_idle_poke_after_seconds": {"type": "integer", "minimum": 1},
+                            "heartbeat_idle_poke_cooldown_seconds": {"type": "integer", "minimum": 1},
+                            "heartbeat_idle_context_compaction_enabled": {"type": "boolean"},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "required": ["action"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
+    "manage_scheduled_jobs": {
+        "type": "function",
+        "function": {
+            "name": "manage_scheduled_jobs",
+            "description": (
+                "Manage V4 Scheduler jobs backed by scheduled_jobs. Use this for system.heartbeat inspection, "
+                "ordinary scheduled job CRUD, enable/disable, interval updates, and manual triggers."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "detail", "create", "update", "enable", "disable", "delete", "trigger"],
+                        "description": "Scheduler job action.",
+                    },
+                    "job_id": {"type": "string", "description": "Stable Scheduler job id, for example system.heartbeat."},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["workflow", "user_task", "maintenance"],
+                        "description": "Job kind for create. system.heartbeat is a built-in Scheduler preset and cannot be created here.",
+                        "default": "workflow",
+                    },
+                    "name": {"type": "string", "description": "Human-readable job name.", "default": ""},
+                    "workspace_id": {"type": "string", "description": "Workspace public id when the job is workspace scoped.", "default": ""},
+                    "singleton_key": {"type": "string", "description": "Optional singleton key.", "default": ""},
+                    "enabled": {"type": "boolean", "description": "Enabled state for create/update."},
+                    "trigger_type": {
+                        "type": "string",
+                        "enum": ["interval", "cron", "manual", "event"],
+                        "default": "interval",
+                    },
+                    "trigger_config": {"type": "object", "description": "Structured trigger config.", "default": {}},
+                    "interval_seconds": {
+                        "type": "integer",
+                        "description": "Shortcut for trigger_config.interval_seconds on interval jobs.",
+                        "minimum": 1,
+                    },
+                    "timezone": {"type": "string", "description": "IANA timezone name.", "default": "UTC"},
+                    "action_ref": {
+                        "type": "string",
+                        "enum": ["core.workflow.assistant_turn", "core.workflow.noop", ""],
+                        "description": "Core workflow/action reference. system.heartbeat owns core.workflow.heartbeat and ordinary jobs cannot select it.",
+                        "default": "core.workflow.assistant_turn",
+                    },
+                    "run_template": {
+                        "type": "object",
+                        "description": "Assistant turn template for core.workflow.assistant_turn jobs.",
+                        "properties": {
+                            "prompt": {"type": "string", "description": "User-facing instruction for the scheduled assistant turn."},
+                            "messages": {"type": "array", "description": "Optional full message list; overrides prompt when provided.", "items": {"type": "object"}},
+                            "thread_id": {"type": "string", "description": "Existing Thread id for persisted output, or empty to create/reuse the job thread."},
+                            "create_thread": {"type": "boolean", "description": "Create a Core-owned Thread when no thread_id/session_id is supplied.", "default": True},
+                            "tool_bundle": {"type": "array", "items": {"type": "string"}, "description": "Optional allowlist from Scheduler job tools."},
+                            "mcp_servers": {"type": "array", "items": {"type": "string"}, "description": "Optional Core-side MCP server ids."},
+                            "preferred_tool_key": {"type": "string", "description": "Preferred EndpointCapability tool key for routed endpoint work."},
+                            "preferred_target_endpoint_ids": {"type": "array", "items": {"type": "string"}},
+                            "preferred_endpoint_provider_types": {"type": "array", "items": {"type": "string"}},
+                            "tool_target_routing_policy": {"type": "string", "enum": ["balanced", "prefer_origin_endpoint", "strict_preferred_endpoint"], "default": "balanced"},
+                            "max_rounds": {"type": "integer", "minimum": 1, "default": 6},
+                        },
+                        "default": {},
+                    },
+                    "execution_policy": {"type": "object", "description": "Run execution policy.", "default": {}},
+                    "delivery_policy": {
+                        "type": "object",
+                        "description": "Delivery policy for produced messages and run events.",
+                        "properties": {
+                            "thread_id": {"type": "string", "description": "Thread subscription target for RunEvent fan-out."},
+                            "session_id": {"type": "string", "description": "Existing session to attach output to."},
+                            "targets": {
+                                "type": "array",
+                                "description": "Optional endpoint outbox targets for DeliveryService.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "endpoint_id": {"type": "string"},
+                                        "message_type": {"type": "string", "enum": ["message", "notice", "run_event", "operation_update"], "default": "message"},
+                                        "offline_policy": {"type": "string", "enum": ["store_and_retry", "store_in_outbox", "queue_until_online", "drop"], "default": "store_and_retry"},
+                                    },
+                                },
+                            },
+                        },
+                        "default": {},
+                    },
+                    "concurrency_policy": {"type": "object", "description": "Concurrency policy, e.g. {\"mode\":\"skip_if_running\"}.", "default": {}},
+                    "misfire_policy": {"type": "object", "description": "Misfire policy, e.g. {\"mode\":\"run_once\"}.", "default": {}},
+                    "metadata": {"type": "object", "description": "Additional metadata.", "default": {}},
+                },
+                "required": ["action"],
             },
             "metadata": {"action_risk": "local_write", "safe_parallel": False},
         },
@@ -241,8 +371,28 @@ class ToolRegistry:
             function = tool.get("function") if isinstance(tool, dict) else None
             if not isinstance(function, dict):
                 continue
-            if function.get("name") == "emit_progress_notice":
-                function["description"] = _BUILTIN_FALLBACK_TOOL_SCHEMAS["emit_progress_notice"]["function"]["description"]
+            fallback = _BUILTIN_FALLBACK_TOOL_SCHEMAS.get(str(function.get("name") or ""))
+            if not isinstance(fallback, dict):
+                continue
+            fallback_function = fallback.get("function")
+            if not isinstance(fallback_function, dict):
+                continue
+            for key in ("description", "parameters", "metadata"):
+                if key in fallback_function:
+                    function[key] = fallback_function[key]
+        for tool in self.tools_schema_dict.get("chain_tools", []):
+            function = tool.get("function") if isinstance(tool, dict) else None
+            if not isinstance(function, dict):
+                continue
+            fallback = _BUILTIN_FALLBACK_TOOL_SCHEMAS.get(str(function.get("name") or ""))
+            if not isinstance(fallback, dict):
+                continue
+            fallback_function = fallback.get("function")
+            if not isinstance(fallback_function, dict):
+                continue
+            for key in ("description", "parameters", "metadata"):
+                if key in fallback_function:
+                    function[key] = fallback_function[key]
 
     def has_builtin(self, tool_name: str) -> bool:
         return tool_name in self.supported_funcs
@@ -374,7 +524,7 @@ class ToolRegistry:
         allowlist = (
             "research_topic",
             "track_source_updates",
-            "manage_scheduled_tasks",
+            "manage_scheduled_jobs",
             "get_current_system_time",
             "remember_knowledge",
             "analyze_workspace",

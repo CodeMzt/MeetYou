@@ -103,3 +103,12 @@ class ScheduledJobRunService(ServiceBase):
                 status=status,
                 metadata=metadata,
             )
+
+    def update_status(self, *, job_run_id, status: str, error: dict | None = None, metadata: dict | None = None):
+        with self.session_scope() as session:
+            return ScheduledJobRunRepository(session).update_status(
+                job_run_id=job_run_id,
+                status=status,
+                error=error,
+                metadata=metadata,
+            )

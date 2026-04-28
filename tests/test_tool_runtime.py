@@ -70,8 +70,8 @@ class _FakeModeManager:
         return False
 
 
-class _FakeClientToolDispatcher:
-    async def dispatch_directed_tool(
+class _FakeEndpointToolDispatcher:
+    async def dispatch_tool_call(
         self,
         *,
         tool_key: str,
@@ -95,11 +95,11 @@ class _FakeClientToolDispatcher:
         raise AssertionError(f"Unexpected tool: {tool_key}")
 
 
-class _RecordingClientToolDispatcher:
+class _RecordingEndpointToolDispatcher:
     def __init__(self):
         self.calls = []
 
-    async def dispatch_directed_tool(self, **kwargs):
+    async def dispatch_tool_call(self, **kwargs):
         self.calls.append(dict(kwargs))
         if kwargs["tool_key"] == "file.write":
             content = str(kwargs.get("arguments", {}).get("content") or "")
@@ -214,7 +214,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         result = await manager.call_tool(
             "exec_sys_cmd",
             {"cmd": "git reset --hard HEAD"},
-            route_context={"tool_bundle": ["exec_sys_cmd"], "mcp_servers": [], "current_mode": "documents"},
+            route_context={"tool_bundle": ["exec_sys_cmd"], "mcp_servers": [], "current_mode": "general"},
         )
 
         self.assertFalse(result.ok)
@@ -224,7 +224,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         confirmed_result = await manager.call_tool(
             "exec_sys_cmd",
             {"cmd": "git reset --hard HEAD", "confirmed": True},
-            route_context={"tool_bundle": ["exec_sys_cmd"], "mcp_servers": [], "current_mode": "documents"},
+            route_context={"tool_bundle": ["exec_sys_cmd"], "mcp_servers": [], "current_mode": "general"},
         )
 
         self.assertTrue(confirmed_result.ok)
@@ -237,13 +237,13 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_authorization_gateway_enforces_document_confirmation_and_write_boundary(self):
         with tempfile.TemporaryDirectory() as trusted_dir, tempfile.TemporaryDirectory() as other_dir:
             manager = self._build_manager(mode_manager=_FakeModeManager([trusted_dir]))
-            manager.set_capability_dispatcher(_FakeClientToolDispatcher())
+            manager.set_capability_dispatcher(_FakeEndpointToolDispatcher())
             trusted_path = str(Path(trusted_dir) / "report.md")
             outside_path = str(Path(other_dir) / "report.md")
             route_context = {
                 "tool_bundle": ["write_local_document"],
                 "mcp_servers": [],
-                "current_mode": "documents",
+                "current_mode": "general",
             }
 
             previewless = await manager.call_tool(
@@ -272,27 +272,27 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(Path(trusted_path).read_text(encoding="utf-8"), "# Final\n")
             self.assertEqual(
                 written.metadata["authorization"]["write_boundary"],
-                "client_tool_managed",
+                "endpoint_tool_managed",
             )
 
-    async def test_client_tool_document_write_preserves_windows_path_on_core(self):
+    async def test_endpoint_tool_document_write_preserves_windows_path_on_core(self):
         manager = self._build_manager(mode_manager=_FakeModeManager([]))
-        dispatcher = _RecordingClientToolDispatcher()
+        dispatcher = _RecordingEndpointToolDispatcher()
         manager.set_capability_dispatcher(dispatcher)
         windows_path = r"E:\Documents\test_write_confirm.md"
 
         result = await manager.call_tool(
             "write_local_document",
             {"path": windows_path, "content": "ok", "preview": False, "confirmed": True},
-            route_context={"tool_bundle": ["write_local_document"], "mcp_servers": [], "current_mode": "documents"},
+            route_context={"tool_bundle": ["write_local_document"], "mcp_servers": [], "current_mode": "general"},
         )
 
         self.assertTrue(result.ok)
         self.assertEqual(result.content.data["path"], windows_path)
-        self.assertEqual(result.content.data["execution_target"], "desktop_client_tool")
+        self.assertEqual(result.content.data["execution_target"], "desktop_endpoint_tool")
         self.assertEqual(dispatcher.calls[0]["arguments"]["path"], windows_path)
         self.assertEqual(result.metadata["authorization"]["write_path"], windows_path)
-        self.assertEqual(result.metadata["authorization"]["write_boundary"], "client_tool_managed")
+        self.assertEqual(result.metadata["authorization"]["write_boundary"], "endpoint_tool_managed")
         self.assertIsNone(result.metadata["authorization"]["trusted_root"])
 
     async def test_readonly_authorization_hides_write_tools_and_blocks_write_calls(self):
@@ -303,8 +303,8 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             route_context = {
                 "tool_bundle": ["search_memory", "remember_knowledge", "create_skill"],
                 "mcp_servers": [],
-                "current_mode": "research",
-                "authorization_policy": {"read_only": True, "policy_sources": ["mode:research"]},
+                "current_mode": "general",
+                "authorization_policy": {"read_only": True, "policy_sources": ["mode:general"]},
             }
 
             visible_names = {
@@ -341,6 +341,29 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("time-consuming", description)
         self.assertIn("May be called multiple times", description)
 
+    async def test_v4_scheduler_job_tool_hides_configured_tools_without_runtime_implementation(self):
+        manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
+        tools_path = Path(__file__).resolve().parent.parent / "user" / "tools.example.json"
+
+        await manager.init_tools(str(tools_path), {})
+        manager.tools_schema_dict["chain_tools"].append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "configured_without_runtime_impl",
+                    "description": "Configured tool without a runtime implementation.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        )
+
+        visible_names = {
+            tool["function"]["name"]
+            for tool in manager.get_all_tools()
+        }
+        self.assertIn("manage_scheduled_jobs", visible_names)
+        self.assertNotIn("configured_without_runtime_impl", visible_names)
+
     async def test_core_local_tools_fail_without_tool_router(self):
         with tempfile.TemporaryDirectory() as trusted_dir:
             manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([trusted_dir]))
@@ -352,19 +375,19 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             command_result = await manager.call_tool(
                 "exec_sys_cmd",
                 {"cmd": 'python -c "print(123)"'},
-                route_context={"tool_bundle": ["exec_sys_cmd"], "mcp_servers": [], "current_mode": "documents"},
+                route_context={"tool_bundle": ["exec_sys_cmd"], "mcp_servers": [], "current_mode": "general"},
             )
             read_result = await manager.call_tool(
                 "read_local_documents",
                 {"paths": [str(Path(trusted_dir) / "notes.md")]},
-                route_context={"tool_bundle": ["read_local_documents"], "mcp_servers": [], "current_mode": "documents"},
+                route_context={"tool_bundle": ["read_local_documents"], "mcp_servers": [], "current_mode": "general"},
             )
 
             self.assertFalse(command_result.ok)
-            self.assertEqual(command_result.error.code, "local_client_required")
+            self.assertEqual(command_result.error.code, "local_endpoint_required")
             self.assertEqual(command_result.error.details["tool_key"], "shell.exec")
             self.assertFalse(read_result.ok)
-            self.assertEqual(read_result.error.code, "local_client_required")
+            self.assertEqual(read_result.error.code, "local_endpoint_required")
             self.assertEqual(read_result.error.details["tool_key"], "file.read")
 
     async def test_brain_route_call_normalizes_structured_result(self):
@@ -383,7 +406,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             session_id="session-1",
             source=None,
             tool_activity_callback=None,
-            route_context={"current_mode": "normal"},
+            route_context={"current_mode": "general"},
         )
 
         self.assertTrue(result.ok)

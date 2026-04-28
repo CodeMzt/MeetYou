@@ -217,7 +217,7 @@ class _FakeBrain:
 class _FakeToolsManager:
     def get_scheduled_job_tools(self):
         return [
-            {"type": "function", "function": {"name": "manage_scheduled_tasks"}},
+            {"type": "function", "function": {"name": "manage_scheduled_jobs"}},
             {"type": "function", "function": {"name": "get_current_system_time"}},
             {"type": "function", "function": {"name": "compile_report"}},
         ]
@@ -252,6 +252,36 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         app._runtime_source = make_source(SourceKind.SYSTEM.value, "runtime")
         return app
 
+    async def test_legacy_scheduled_control_event_is_consumed_without_taskmanager_execution(self):
+        task_record = {
+            "task_key": "daily-review",
+            "content": "Review the daily digest",
+            "active_claim_token": "claim-1",
+            "scope": {"user_id": "user-1"},
+        }
+        app = self._make_app(task_record, {"status": "ok", "content": "unused"})
+
+        handled = await App._handle_control_event(
+            app,
+            InboundEvent(
+                session_id="system:task:daily-review",
+                type=EventType.CONTROL.value,
+                role="system",
+                content={"task_key": "daily-review", "claim_token": "claim-1"},
+                source=make_source(SourceKind.SYSTEM.value, "scheduler"),
+                target=EventTarget(kind=TargetKind.INTERNAL.value),
+                metadata={"control_kind": "scheduled_task"},
+            ),
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(app.task_manager.checked_claims, [])
+        self.assertIsNone(app.task_manager.completed_due)
+        self.assertIsNone(app.task_manager.completed_run)
+        self.assertEqual(app.brain.calls, [])
+        self.assertEqual(app.core_services.operation.rows, [])
+
+    @unittest.skip("V4 removed legacy TaskManager scheduler control events; Scheduler jobs cover this path.")
     async def test_scheduled_reminder_control_marks_notification_pending_when_not_delivered(self):
         task_record = {
             "task_key": "daily-review",
@@ -367,6 +397,7 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(app.core_services.message.created[0]["session_id"], "session-row-1")
 
+    @unittest.skip("V4 removed legacy TaskManager scheduler control events; Scheduler jobs cover this path.")
     async def test_scheduled_task_control_uses_allowlisted_tools_and_reports_brain_completion(self):
         task_record = {
             "task_key": "daily-news",
@@ -377,7 +408,7 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
             "preferred_tool_key": "manage_tasks",
             "preferred_target_endpoint_ids": ["desktop-main-client"],
             "preferred_endpoint_provider_types": ["desktop"],
-            "tool_target_routing_policy": "strict_preferred",
+            "tool_target_routing_policy": "strict_preferred_endpoint",
             "notify_policy": "on_completion",
             "delivery_target": {
                 "kind": "current_session",
@@ -424,13 +455,13 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         call = app.brain.calls[0]
         self.assertEqual(call["session_id"], "web:session-1")
         self.assertEqual(call["route_context"]["current_mode"], "scheduled_task")
-        self.assertEqual(call["route_context"]["tool_bundle"], ["manage_scheduled_tasks", "get_current_system_time", "compile_report"])
+        self.assertEqual(call["route_context"]["tool_bundle"], ["manage_scheduled_jobs", "get_current_system_time", "compile_report"])
         self.assertEqual(call["route_context"]["task_routing"]["preferred_tool_key"], "manage_tasks")
         self.assertEqual(call["route_context"]["task_routing"]["preferred_target_endpoint_ids"], ["desktop-main-client"])
-        self.assertEqual(call["route_context"]["task_routing"]["tool_target_routing_policy"], "strict_preferred")
+        self.assertEqual(call["route_context"]["task_routing"]["tool_target_routing_policy"], "strict_preferred_endpoint")
         self.assertEqual(
             [tool["function"]["name"] for tool in call["tools"]],
-            ["manage_scheduled_tasks", "get_current_system_time", "compile_report"],
+            ["manage_scheduled_jobs", "get_current_system_time", "compile_report"],
         )
         self.assertNotIn("manage_tasks", call["route_context"]["tool_bundle"])
         payload = json.loads(call["messages"][1]["content"])
@@ -447,6 +478,7 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(delivered_messages), 1)
         self.assertIn("Wrote the daily summary report.", delivered_messages[0]["message"])
 
+    @unittest.skip("V4 removed legacy TaskManager scheduler control events; Scheduler jobs cover this path.")
     async def test_scheduled_task_control_keeps_successful_run_waiting_for_completion(self):
         task_record = {
             "task_key": "daily-audit",
@@ -495,6 +527,7 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(delivered_messages), 1)
         self.assertIn("awaiting completion confirmation", delivered_messages[0]["message"])
 
+    @unittest.skip("V4 removed legacy TaskManager scheduler control events; Scheduler jobs cover this path.")
     async def test_scheduled_task_control_reports_failure_through_task_run_state(self):
         task_record = {
             "task_key": "daily-sync",
@@ -559,6 +592,7 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(delivered_messages), 1)
         self.assertIn("Digest sync failed.", delivered_messages[0]["message"])
 
+    @unittest.skip("V4 removed legacy TaskManager scheduler control events; Scheduler jobs cover this path.")
     async def test_scheduled_task_control_reuses_scheduler_precreated_operation(self):
         task_record = {
             "task_key": "daily-precreated",
@@ -610,6 +644,7 @@ class ScheduledControlFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(app.core_services.operation.rows), 1)
         self.assertEqual(app.core_services.operation.rows[0].status, "succeeded")
 
+    @unittest.skip("V4 removed legacy TaskManager scheduler control events; Scheduler jobs cover this path.")
     async def test_scheduled_control_ignores_stale_claim_token(self):
         task_record = {
             "task_key": "daily-review",

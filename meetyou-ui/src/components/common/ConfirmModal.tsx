@@ -21,10 +21,10 @@ export default function ConfirmModal({
   isOpen,
   title,
   message,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
+  confirmText = '确认',
+  cancelText = '取消',
   isDestructive = false,
-  confirmationLabel = 'Confirmation text',
+  confirmationLabel = '确认文本',
   confirmationHint = '',
   confirmationText = '',
   onConfirm,
@@ -70,7 +70,7 @@ export default function ConfirmModal({
                 <AlertTriangle size={18} />
               </div>
               <h3 className={styles.title}>{title}</h3>
-              <button className={styles.closeBtn} onClick={onCancel} title="Close">
+              <button className={styles.closeBtn} onClick={onCancel} title="关闭">
                 <X size={16} />
               </button>
             </div>

@@ -1,21 +1,20 @@
-﻿"""Shared tool bundles for external client adapters."""
+﻿"""Shared tool bundles for external endpoint adapters."""
 
 from typing import Any
 
 
-CLIENT_ALWAYS_AVAILABLE_TOOLS = ("emit_progress_notice",)
+ENDPOINT_ALWAYS_AVAILABLE_TOOLS = ("emit_progress_notice",)
 
-EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE = [
+EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE = [
     "ask_human",
     "get_current_system_time",
     "list_skills",
     "load_skill",
     "create_skill",
-    "manage_procedures",
     "list_workspaces",
     "switch_workspace",
-    "list_active_clients",
-    "list_client_tool_targets",
+    "list_active_endpoints",
+    "list_endpoint_tool_targets",
     "emit_progress_notice",
     "restart_core",
     "search_knowledge",
@@ -30,7 +29,7 @@ EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE = [
 ]
 
 
-def ensure_client_always_available_tools(metadata: dict[str, Any] | None) -> dict[str, Any]:
+def ensure_endpoint_always_available_tools(metadata: dict[str, Any] | None) -> dict[str, Any]:
     normalized = dict(metadata or {})
     allowed_tool_bundle = normalized.get("allowed_tool_bundle")
     if not isinstance(allowed_tool_bundle, list):
@@ -43,7 +42,7 @@ def ensure_client_always_available_tools(metadata: dict[str, Any] | None) -> dic
             continue
         seen.add(tool_name)
         cleaned.append(tool_name)
-    for tool_name in CLIENT_ALWAYS_AVAILABLE_TOOLS:
+    for tool_name in ENDPOINT_ALWAYS_AVAILABLE_TOOLS:
         if tool_name not in seen:
             cleaned.append(tool_name)
             seen.add(tool_name)

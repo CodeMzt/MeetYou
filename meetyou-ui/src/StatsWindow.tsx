@@ -146,7 +146,7 @@ export default function RuntimeDebugWindow() {
                 <strong className={styles.cardValue}>{String(route.requested_mode || 'unknown')}</strong>
               </div>
               <div className={styles.card}>
-                <span className={styles.cardLabel}>Source Profile</span>
+                <span className={styles.cardLabel}>来源档案</span>
                 <strong className={styles.cardValue}>{String(route.source_profile || 'unknown')}</strong>
               </div>
               <div className={styles.card}>

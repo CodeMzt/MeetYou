@@ -179,6 +179,18 @@ class EndpointWebSocketManager:
             delivered += await self.publish_subscription(target_type="run", target_id=run_id, frame=frame)
         return delivered
 
+    async def publish_message(self, *, thread_id: str = "", payload: dict[str, Any]) -> int:
+        frame = {
+            "schema": ENDPOINT_WS_SCHEMA,
+            "type": "delivery.message",
+            "payload": dict(payload or {}),
+        }
+        if not thread_id:
+            thread_id = str((payload or {}).get("thread_id") or "").strip()
+        if not thread_id:
+            return 0
+        return await self.publish_subscription(target_type="thread", target_id=thread_id, frame=frame)
+
     async def publish_notice(self, *, target_endpoint_id: str, payload: dict[str, Any]) -> int:
         frame = {
             "schema": ENDPOINT_WS_SCHEMA,

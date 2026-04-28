@@ -94,11 +94,11 @@ export function useMemory(baseUrl: string = DEFAULT_BASE_URL) {
         fetchWithAuth(`${baseUrl}/desktop/memory/graph?include_invalidated=${includeInvalidated}`),
       ])
       if (!resSnapshot.ok) {
-        const failure = await readErrorMessage(resSnapshot, 'Failed to fetch memory snapshot')
+        const failure = await readErrorMessage(resSnapshot, '读取记忆快照失败')
         throw new Error(failure.message)
       }
       if (!resGraph.ok) {
-        const failure = await readErrorMessage(resGraph, 'Failed to fetch memory graph')
+        const failure = await readErrorMessage(resGraph, '读取记忆图谱失败')
         throw new Error(failure.message)
       }
       const [dataSnapshot, dataGraph] = await Promise.all([resSnapshot.json(), resGraph.json()])
@@ -119,7 +119,7 @@ export function useMemory(baseUrl: string = DEFAULT_BASE_URL) {
       const result = await clearDesktopMemory(baseUrl)
       setClearFeedback({
         ok: result.ok,
-        message: `Cleared ${result.cleared_record_count} records, ${result.cleared_edge_count} edges, and ${result.cleared_session_summary_count} session summaries.`,
+        message: `已清理 ${result.cleared_record_count} 条记忆、${result.cleared_edge_count} 条关系和 ${result.cleared_session_summary_count} 条会话摘要。`,
         updatedAt: result.updated_at,
         clearedRecordCount: result.cleared_record_count,
         clearedEdgeCount: result.cleared_edge_count,

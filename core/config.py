@@ -149,6 +149,7 @@ _ENV_KEY_MAP = {
     "tavily_api_key": "TAVILY_API_KEY",
 }
 _ENV_OVERRIDE_KEY_MAP = {
+    "enable_feishu_bot": "MEETYOU_FEISHU_ENABLE",
     "enable_meetwechat_client": "MEETYOU_MEETWECHAT_ENABLE",
     "meetwechat_base_url": "MEETYOU_MEETWECHAT_BASE_URL",
     "meetwechat_error_backoff_seconds": "MEETYOU_MEETWECHAT_ERROR_BACKOFF_SECONDS",
@@ -297,7 +298,7 @@ class ConfigManager(ConfigRepository):
                 status="missing",
                 message=(
                     f"Core MCP 配置文件不存在: {self._mcp_server_config_path}。"
-                    "这只表示服务端 Core 级 MCP 未配置；客户端本地 MCP 仍由 Desktop Client 的 user/mcp_servers.json 托管。"
+                    "这只表示服务端 Core 级 MCP 未配置；端侧本地 MCP 仍由 Desktop Endpoint Provider 的 user/mcp_servers.json 托管。"
                 ),
             )
             logger.info(self._mcp_server_config_diagnostic["message"])

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
-from client_tool_sdk.protocol import CLIENT_TOOL_ARGUMENTS_PURPOSE
+from endpoint_tool_sdk.protocol import ENDPOINT_TOOL_ARGUMENTS_PURPOSE
 from core.credential_transport import CredentialTransportError, protect_sensitive_arguments
 
 
@@ -81,9 +81,9 @@ class ToolRouterService:
         self._core_executor.register(tool_key, handler)
 
     async def dispatch_workspace_tool(self, **kwargs) -> dict[str, Any]:
-        return await self.dispatch_directed_tool(**kwargs)
+        return await self.dispatch_tool_call(**kwargs)
 
-    async def dispatch_directed_tool(self, **kwargs) -> dict[str, Any]:
+    async def dispatch_tool_call(self, **kwargs) -> dict[str, Any]:
         session_id = str(kwargs.get("session_id") or "").strip()
         workspace_id = str(kwargs.get("workspace_id") or "").strip()
         thread_row_id = kwargs.get("thread_row_id")
@@ -116,6 +116,7 @@ class ToolRouterService:
             timeout_seconds=int(kwargs.get("timeout_seconds") or 120),
             confirmed=bool(kwargs.get("confirmed", False)),
             offline_policy=str(kwargs.get("offline_policy") or "fail_fast"),
+            return_operation=bool(kwargs.get("return_operation", False)),
         )
 
     def resolve_execution_target(
@@ -190,6 +191,7 @@ class ToolRouterService:
         timeout_seconds: int = 120,
         confirmed: bool = False,
         offline_policy: str = "fail_fast",
+        return_operation: bool = False,
     ) -> dict[str, Any]:
         target = self.resolve_execution_target(
             tool_key=tool_key,
@@ -211,6 +213,7 @@ class ToolRouterService:
             title=title,
             timeout_seconds=timeout_seconds,
             confirmed=confirmed,
+            return_operation=return_operation,
         )
 
     async def _dispatch_target(
@@ -226,6 +229,7 @@ class ToolRouterService:
         title: str = "",
         timeout_seconds: int = 120,
         confirmed: bool = False,
+        return_operation: bool = False,
     ) -> dict[str, Any]:
         workspace = self._workspace_service.get_by_workspace_id(workspace_id)
         if workspace is None:
@@ -242,7 +246,7 @@ class ToolRouterService:
                 },
             )
         try:
-            protected_arguments = protect_sensitive_arguments(arguments, purpose=CLIENT_TOOL_ARGUMENTS_PURPOSE)
+            protected_arguments = protect_sensitive_arguments(arguments, purpose=ENDPOINT_TOOL_ARGUMENTS_PURPOSE)
         except CredentialTransportError as exc:
             raise ToolRouterError(exc.code, exc.message) from exc
         operation = self._operation_service.create_operation(
@@ -296,7 +300,16 @@ class ToolRouterService:
         if target.target_type == "external":
             if self._external_transport is None:
                 raise ToolRouterError("external_executor_unavailable", "External executor is unavailable", retryable=True)
-            return dict(await self._external_transport(endpoint_id=target.target_id, frame=frame) or {})
+            result = dict(await self._external_transport(endpoint_id=target.target_id, frame=frame) or {})
+            if return_operation:
+                return {
+                    "status": "succeeded",
+                    "operation_id": operation.operation_id,
+                    "call_id": call.call_id,
+                    "execution_target_id": target.target_id,
+                    "result": result,
+                }
+            return result
         if self._endpoint_transport is None:
             self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "endpoint_transport_unavailable"})
             raise ToolRouterError("endpoint_transport_unavailable", "Endpoint transport is unavailable", retryable=True)
@@ -316,7 +329,16 @@ class ToolRouterService:
             raise ToolRouterError("target_endpoint_unavailable", f"Endpoint is unavailable: {target.target_id}", retryable=True)
         self._operation_call_service.mark_dispatched(call_id=call.call_id)
         try:
-            return await asyncio.wait_for(future, timeout=max(5, timeout_seconds))
+            result = await asyncio.wait_for(future, timeout=max(5, timeout_seconds))
+            if return_operation:
+                return {
+                    "status": "succeeded",
+                    "operation_id": operation.operation_id,
+                    "call_id": call.call_id,
+                    "execution_target_id": target.target_id,
+                    "result": dict(result or {}),
+                }
+            return result
         except asyncio.TimeoutError as exc:
             self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "endpoint_tool_timeout"})
             raise ToolRouterError("endpoint_tool_timeout", f"Endpoint tool call timed out after {timeout_seconds} seconds", retryable=True) from exc

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -10,15 +10,15 @@ from typing import Any, Awaitable, Callable
 
 import aiohttp
 
-from client_tool_sdk.protocol import (
-    CLIENT_TOOL_ARGUMENTS_PURPOSE,
-    CLIENT_TOOL_PROTOCOL_VERSION,
-    CLIENT_TOOL_SCHEMA,
-    LEGACY_CLIENT_TOOL_PROTOCOL_FEATURES,
-    build_client_tool_protocol_selection,
+from endpoint_tool_sdk.protocol import (
+    ENDPOINT_TOOL_ARGUMENTS_PURPOSE,
+    ENDPOINT_TOOL_PROTOCOL_VERSION,
+    ENDPOINT_TOOL_SCHEMA,
+    LEGACY_ENDPOINT_TOOL_PROTOCOL_FEATURES,
+    build_endpoint_protocol_selection,
 )
-from client_tool_sdk.security import CredentialTransportError, decrypt_json_payload
-from client_tool_sdk.transport import build_client_auth_headers, build_client_ws_timeout, normalize_heartbeat_interval
+from endpoint_tool_sdk.security import CredentialTransportError, decrypt_json_payload
+from endpoint_tool_sdk.transport import build_endpoint_auth_headers, build_endpoint_ws_timeout, normalize_heartbeat_interval
 
 
 Handler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -38,7 +38,7 @@ class ToolExecutionError(RuntimeError):
         self.retryable = retryable
 
 
-class ClientHandshakeRejected(RuntimeError):
+class EndpointHandshakeRejected(RuntimeError):
     def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
@@ -46,10 +46,10 @@ class ClientHandshakeRejected(RuntimeError):
         self.details = dict(details or {})
 
 
-class ClientToolRuntimeBase(ABC):
+class EndpointToolRuntimeBase(ABC):
     def __init__(self, config: Any, *, handlers: dict[str, Handler], logger: logging.Logger | None = None):
         self.config = config
-        self._logger = logger or logging.getLogger("meetyou.client_tool_runtime")
+        self._logger = logger or logging.getLogger("meetyou.endpoint_tool_runtime")
         self._stop_event = asyncio.Event()
         self._tool_revision = 1
         self._handlers = dict(handlers or {})
@@ -72,7 +72,7 @@ class ClientToolRuntimeBase(ABC):
 
     @property
     def protocol_schema(self) -> str:
-        return CLIENT_TOOL_SCHEMA
+        return ENDPOINT_TOOL_SCHEMA
 
     @property
     @abstractmethod
@@ -125,7 +125,7 @@ class ClientToolRuntimeBase(ABC):
                     await self._run_connection()
                 except asyncio.CancelledError:
                     raise
-                except ClientHandshakeRejected as exc:
+                except EndpointHandshakeRejected as exc:
                     self._logger.error(
                         "%s connection rejected: [%s] %s",
                         self.runtime_label,
@@ -148,8 +148,8 @@ class ClientToolRuntimeBase(ABC):
             await self.shutdown()
 
     async def _run_connection(self) -> None:
-        timeout = build_client_ws_timeout(connect_seconds=15, total=None)
-        headers = build_client_auth_headers(getattr(self.config, "core_access_token", ""))
+        timeout = build_endpoint_ws_timeout(connect_seconds=15, total=None)
+        headers = build_endpoint_auth_headers(getattr(self.config, "core_access_token", ""))
         async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             async with session.ws_connect(getattr(self.config, "websocket_url")) as ws:
                 self._active_ws = ws
@@ -236,8 +236,8 @@ class ClientToolRuntimeBase(ABC):
     async def _handle_server_message(self, payload: dict[str, Any], ready_received: bool, ws, session=None) -> bool:
         if str(payload.get("kind") or "").strip() == "error":
             error_payload = payload.get("error") if isinstance(payload.get("error"), dict) else {}
-            raise ClientHandshakeRejected(
-                str(error_payload.get("code") or "client_runtime_error"),
+            raise EndpointHandshakeRejected(
+                str(error_payload.get("code") or "endpoint_runtime_error"),
                 str(error_payload.get("message") or f"{self.runtime_label} runtime error"),
                 details=error_payload.get("details") if isinstance(error_payload.get("details"), dict) else {},
             )
@@ -249,9 +249,9 @@ class ClientToolRuntimeBase(ABC):
             ack_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
             if ack_payload.get("accepted") is False:
                 reject_reason = ack_payload.get("reject_reason") if isinstance(ack_payload.get("reject_reason"), dict) else {}
-                raise ClientHandshakeRejected(
-                    str(reject_reason.get("code") or "client_handshake_rejected"),
-                    str(reject_reason.get("message") or "client handshake rejected"),
+                raise EndpointHandshakeRejected(
+                    str(reject_reason.get("code") or "endpoint_handshake_rejected"),
+                    str(reject_reason.get("message") or "endpoint handshake rejected"),
                     details=reject_reason.get("details") if isinstance(reject_reason.get("details"), dict) else {},
                 )
             next_interval = int(ack_payload.get("heartbeat_interval_seconds") or self._heartbeat_interval_seconds)
@@ -265,7 +265,7 @@ class ClientToolRuntimeBase(ABC):
                 self._logger.info(
                     "%s received connection prompt %s",
                     self.runtime_label,
-                    connection_prompt.get("prompt_name") or "client_connected",
+                    connection_prompt.get("prompt_name") or "endpoint_connected",
                 )
             disabled_features = self._negotiated_protocol.get("disabled_features")
             if isinstance(disabled_features, list) and disabled_features:
@@ -273,7 +273,7 @@ class ClientToolRuntimeBase(ABC):
             self._logger.info("%s hello acknowledged: %s", self.runtime_label, ack_payload)
             return ready_received
         if message_type in {"delivery.message", "delivery.run_event", "delivery.notice", "delivery.operation_update"}:
-            await self.handle_client_message(payload=payload, ws=ws, session=session)
+            await self.handle_delivery_message(payload=payload, ws=ws, session=session)
             return ready_received
         if message_type == "endpoint.ready":
             self._logger.info("%s ready: %s", self.runtime_label, payload.get("payload", {}))
@@ -285,21 +285,21 @@ class ClientToolRuntimeBase(ABC):
             return ready_received
         return ready_received
 
-    async def handle_client_message(self, *, payload: dict[str, Any], ws, session) -> None:
+    async def handle_delivery_message(self, *, payload: dict[str, Any], ws, session) -> None:
         del ws, session
-        client_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-        metadata = client_payload.get("metadata") if isinstance(client_payload.get("metadata"), dict) else {}
+        delivery_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        metadata = delivery_payload.get("metadata") if isinstance(delivery_payload.get("metadata"), dict) else {}
         stream_event = str(metadata.get("stream_event") or "").strip().lower()
         if stream_event in {"start", "chunk", "end"}:
             return
-        content = str(client_payload.get("content") or "")
+        content = str(delivery_payload.get("content") or "")
         preview = content[:120] + ("..." if len(content) > 120 else "")
         self._logger.info(
             "%s received Core reply event_type=%s role=%s session_id=%s preview=%r",
             self.runtime_label,
-            str(client_payload.get("event_type") or ""),
-            str(client_payload.get("role") or ""),
-            str(client_payload.get("session_id") or ""),
+            str(delivery_payload.get("event_type") or ""),
+            str(delivery_payload.get("role") or ""),
+            str(delivery_payload.get("session_id") or ""),
             preview,
         )
 
@@ -401,7 +401,7 @@ class ClientToolRuntimeBase(ABC):
             return dict(arguments or {})
         return decrypt_json_payload(
             encrypted_arguments,
-            purpose=CLIENT_TOOL_ARGUMENTS_PURPOSE,
+            purpose=ENDPOINT_TOOL_ARGUMENTS_PURPOSE,
         )
 
     def collect_metrics(self) -> dict[str, Any]:
@@ -412,10 +412,10 @@ class ClientToolRuntimeBase(ABC):
         return False
 
     def _legacy_protocol_selection(self) -> dict[str, Any]:
-        return build_client_tool_protocol_selection(
+        return build_endpoint_protocol_selection(
             selected_schema=self.protocol_schema,
-            selected_version=CLIENT_TOOL_PROTOCOL_VERSION,
-            enabled_features=LEGACY_CLIENT_TOOL_PROTOCOL_FEATURES,
+            selected_version=ENDPOINT_TOOL_PROTOCOL_VERSION,
+            enabled_features=LEGACY_ENDPOINT_TOOL_PROTOCOL_FEATURES,
             compatibility_mode="legacy_defaults",
         )
 
@@ -470,3 +470,4 @@ class ClientToolRuntimeBase(ABC):
         session,
     ) -> ToolExecutionOutcome:
         raise NotImplementedError
+

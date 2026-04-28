@@ -50,7 +50,7 @@ jobs:
           python -m unittest \
             tests.test_runtime_entrypoints \
             tests.test_config_manager \
-            tests.test_client_tool_protocol \
+            tests.test_endpoint_tool_protocol \
             tests.test_endpoint_protocol_v4 \
             tests.test_tool_router_v4 \
             tests.test_delivery_v4 \

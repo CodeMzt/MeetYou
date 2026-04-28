@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from desktop_client.config import DesktopClientConfig
 from desktop_client.config import load_desktop_client_config
+from desktop_client.mcp_runtime import DesktopClientMCPRuntime
 from desktop_client.protocol import build_hello as build_desktop_hello
 from desktop_client.protocol import build_tools_snapshot as build_desktop_tools_snapshot
 from edge_client.config import EdgeClientConfig
@@ -41,6 +42,39 @@ class EndpointProviderProtocolTests(unittest.TestCase):
         self.assertEqual(hello["payload"]["endpoints"][0]["endpoint_id"], "edge.edge-one.executor")
         self.assertEqual(snapshot["endpoint_id"], "edge.edge-one.executor")
         self.assertEqual({item["tool_key"] for item in snapshot["payload"]["capabilities"]}, {"utility.echo", "math.add", "math.divide"})
+
+    def test_desktop_local_mcp_capability_ids_use_executor_endpoint_prefix(self):
+        manager = type(
+            "_FakeMCPManager",
+            (),
+            {
+                "mcp_tools": {
+                    "filesystem": [
+                        {
+                            "function": {
+                                "name": "read_file",
+                                "description": "Read file",
+                                "parameters": {"type": "object"},
+                            }
+                        }
+                    ]
+                }
+            },
+        )()
+        runtime = DesktopClientMCPRuntime(
+            DesktopClientConfig(client_id="desktop-main", workspace_ids=["desktop-main"]),
+            manager=manager,
+        )
+
+        runtime._rebuild_tool_map()  # noqa: SLF001
+        tools = runtime.tool_definitions()
+
+        self.assertEqual(len(tools), 1)
+        self.assertEqual(
+            tools[0]["tool_id"],
+            "endpoint.desktop.desktop-main.executor.mcp.filesystem.read_file",
+        )
+        self.assertEqual(tools[0]["tool_key"], "mcp.filesystem.read_file")
 
     def test_desktop_process_env_overrides_repository_env_for_local_acceptance(self):
         with TemporaryDirectory() as tmp:

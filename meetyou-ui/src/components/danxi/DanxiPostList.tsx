@@ -67,7 +67,7 @@ export default function DanxiPostList({
       <div className={styles.listHeader}>
         <div className={styles.titleRow}>
           <div>
-            <div className={styles.kicker}>Danxi Feed</div>
+            <div className={styles.kicker}>旦夕帖子流</div>
             <div className={styles.title}>帖子流</div>
           </div>
           <div className={styles.listHint}>
@@ -80,7 +80,7 @@ export default function DanxiPostList({
             <Search size={14} className={styles.searchIcon} />
             <input
               className={styles.searchInput}
-              placeholder="搜索 Danxi 帖子..."
+              placeholder="搜索旦夕帖子..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => {

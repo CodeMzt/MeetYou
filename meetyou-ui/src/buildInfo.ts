@@ -60,7 +60,7 @@ export function detectBuildDriftWarning(ui: BuildInfo, desktopBackend: BuildInfo
     return null
   }
   if (ui.git_commit !== desktopBackend.git_commit) {
-    return '检测到 UI 与 desktop backend 构建提交不一致。请先重启应用；若仍存在，请重新安装同一版本安装包。'
+    return '检测到界面与桌面后端构建提交不一致。请先重启应用；若仍存在，请重新安装同一版本安装包。'
   }
   return null
 }

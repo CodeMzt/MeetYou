@@ -1,7 +1,6 @@
-import { Activity, Bot, LayoutTemplate, Pin, ShieldCheck, Sparkles, Wrench } from 'lucide-react'
+import { Activity, Bot, LayoutTemplate, ShieldCheck, Sparkles, Wrench } from 'lucide-react'
 import type {
   ApprovalDisplayModel,
-  ClientThreadProcedureContext,
   ClientWorkspace,
   ConnectionState,
   HumanInputRequestPayload,
@@ -11,10 +10,7 @@ import {
   formatAssistantModeLabel,
   formatCapabilityPolicyLabel,
   formatExecutionTargetLabel,
-  formatInferenceReasonLabel,
   formatMemoryRankingPolicyLabel,
-  formatProcedureSourceLabel,
-  formatRiskProfileLabel,
   formatResourceStatusLabel,
   formatRoutingPolicyLabel,
   formatSourceProfileLabel,
@@ -24,7 +20,6 @@ import styles from './WorkspacePanel.module.css'
 
 interface WorkspacePanelProps {
   workspace: ClientWorkspace | null
-  procedureContext: ClientThreadProcedureContext | null
   connectionState: ConnectionState
   desktopToolsAvailable: boolean
   operations: OperationView[]
@@ -39,16 +34,15 @@ function countRunningOperations(operations: OperationView[]): number {
 }
 
 function formatOperationTone(tone: string): string {
-  if (tone === 'running') return 'Running'
-  if (tone === 'pending') return 'Pending'
-  if (tone === 'success') return 'Succeeded'
-  if (tone === 'failed') return 'Failed'
-  return 'Unknown'
+  if (tone === 'running') return '运行中'
+  if (tone === 'pending') return '等待中'
+  if (tone === 'success') return '已完成'
+  if (tone === 'failed') return '失败'
+  return '未知'
 }
 
 export default function WorkspacePanel({
   workspace,
-  procedureContext,
   connectionState,
   desktopToolsAvailable,
   operations,
@@ -67,16 +61,13 @@ export default function WorkspacePanel({
   ).length
   const pendingApprovals = pendingOperationApprovals + (approvalDisplay ? 1 : 0)
   const pendingInputs = pendingHumanInput ? 1 : 0
-  const effectiveProcedure = procedureContext?.effective_procedure ?? null
-  const procedureSource = procedureContext?.source ?? 'none'
-  const latestInferenceVisible = procedureSource === 'inferred' && procedureContext?.latest_inferred_reason
   const recentOperations = operations.slice(0, 3)
 
   return (
     <section className={styles.panel}>
       <div className={styles.header}>
         <div>
-          <div className={styles.kicker}>Current Workspace</div>
+          <div className={styles.kicker}>当前工作区</div>
           <h2 className={styles.title}>{workspace.title || workspace.workspace_id}</h2>
           {workspace.description && <p className={styles.description}>{workspace.description}</p>}
         </div>
@@ -84,15 +75,15 @@ export default function WorkspacePanel({
 
       <div className={styles.statusGrid}>
         <div className={styles.statusCard}>
-          <span className={styles.statusLabel}>Core</span>
+          <span className={styles.statusLabel}>核心服务</span>
           <span className={styles.statusValue}>{getConnectionText(connectionState)}</span>
         </div>
         <div className={styles.statusCard}>
-          <span className={styles.statusLabel}>鏈湴宸ュ叿</span>
-          <span className={styles.statusValue}>{desktopToolsAvailable ? 'Online' : 'Offline'}</span>
+          <span className={styles.statusLabel}>本地工具</span>
+          <span className={styles.statusValue}>{desktopToolsAvailable ? '在线' : '离线'}</span>
         </div>
         <div className={styles.statusCard}>
-          <span className={styles.statusLabel}>Workspace</span>
+          <span className={styles.statusLabel}>工作区</span>
           <span className={styles.statusValue}>{formatResourceStatusLabel(workspace.status)}</span>
         </div>
       </div>
@@ -106,15 +97,15 @@ export default function WorkspacePanel({
 
       <div className={styles.activityRow}>
         <div className={styles.activityCard}>
-          <span className={styles.activityLabel}>Running Operations</span>
+          <span className={styles.activityLabel}>运行中操作</span>
           <span className={styles.activityValue}>{runningOperations}</span>
         </div>
         <div className={styles.activityCard}>
-          <span className={styles.activityLabel}>Pending Approvals</span>
+          <span className={styles.activityLabel}>待确认</span>
           <span className={styles.activityValue}>{pendingApprovals}</span>
         </div>
         <div className={styles.activityCard}>
-          <span className={styles.activityLabel}>Pending Input</span>
+          <span className={styles.activityLabel}>待补充输入</span>
           <span className={styles.activityValue}>{pendingInputs}</span>
         </div>
       </div>
@@ -122,31 +113,31 @@ export default function WorkspacePanel({
       <div className={styles.metaList}>
         <div className={styles.metaItem}>
           <Wrench size={12} />
-          <span>Allowed tools: {workspace.allowed_tool_ids.length || 'All'}</span>
+          <span>允许工具：{workspace.allowed_tool_ids.length || '全部'}</span>
         </div>
         <div className={styles.metaItem}>
           <Activity size={12} />
-          <span>Preferred endpoints: {workspace.preferred_target_endpoint_ids.length || 0}</span>
+          <span>偏好端点：{workspace.preferred_target_endpoint_ids.length || 0}</span>
         </div>
         <div className={styles.metaItem}>
           <Sparkles size={12} />
           <span>
-            Source preferences: {workspace.preferred_source_profiles.length > 0
+            来源偏好：{workspace.preferred_source_profiles.length > 0
               ? workspace.preferred_source_profiles.map((item) => formatSourceProfileLabel(item)).join(' / ')
-              : 'Unset'}
+              : '未设置'}
           </span>
         </div>
         <div className={styles.metaItem}>
           <LayoutTemplate size={12} />
-          <span>Memory ranking: {formatMemoryRankingPolicyLabel(workspace.memory_ranking_policy)}</span>
+          <span>记忆排序：{formatMemoryRankingPolicyLabel(workspace.memory_ranking_policy)}</span>
         </div>
       </div>
 
       {recentOperations.length > 0 ? (
         <div className={styles.operationsCard}>
           <div className={styles.operationsHeader}>
-            <span className={styles.kicker}>Recent Operations</span>
-            <span className={styles.operationsHint}>Latest 3 operations</span>
+            <span className={styles.kicker}>最近操作</span>
+            <span className={styles.operationsHint}>最近 3 条</span>
           </div>
           <div className={styles.operationsList}>
             {recentOperations.map((item) => (
@@ -163,7 +154,7 @@ export default function WorkspacePanel({
                       disabled={approvalSubmittingIds.includes(item.approval_id)}
                       onClick={() => onDecideOperationApproval?.(item.approval_id || '', 'approve')}
                     >
-                      Approve
+                      允许
                     </button>
                     <button
                       type="button"
@@ -171,7 +162,7 @@ export default function WorkspacePanel({
                       disabled={approvalSubmittingIds.includes(item.approval_id)}
                       onClick={() => onDecideOperationApproval?.(item.approval_id || '', 'reject')}
                     >
-                      Reject
+                      拒绝
                     </button>
                   </div>
                 ) : null}
@@ -181,53 +172,6 @@ export default function WorkspacePanel({
         </div>
       ) : null}
 
-      <div className={styles.procedureCard}>
-        <div className={styles.procedureHeader}>
-          <div className={styles.procedureTitleRow}>
-            <Pin size={13} />
-            <span className={styles.procedureKicker}>Current Procedure</span>
-          </div>
-          <span className={styles.procedureSource} data-source={procedureSource}>
-            {formatProcedureSourceLabel(procedureSource)}
-          </span>
-        </div>
-
-        {effectiveProcedure ? (
-          <>
-            <div className={styles.procedureNameRow}>
-              <strong>{effectiveProcedure.title || effectiveProcedure.procedure_id}</strong>
-              <span className={styles.procedureId}>{effectiveProcedure.procedure_id}</span>
-            </div>
-            {effectiveProcedure.description ? (
-              <p className={styles.procedureDescription}>{effectiveProcedure.description}</p>
-            ) : null}
-            {effectiveProcedure.prompt_overlay ? (
-              <p className={styles.procedureOverlay}>{effectiveProcedure.prompt_overlay}</p>
-            ) : null}
-            <div className={styles.procedureMetaRow}>
-              <span className={styles.infoChip}><Sparkles size={12} /> {formatRiskProfileLabel(effectiveProcedure.risk_profile)}</span>
-              <span className={styles.infoChip}><Bot size={12} /> {formatExecutionTargetLabel(effectiveProcedure.default_execution_target)}</span>
-              <span className={styles.infoChip}><LayoutTemplate size={12} /> {formatRoutingPolicyLabel(effectiveProcedure.tool_target_routing_policy)}</span>
-            </div>
-            {effectiveProcedure.recommended_tools.length > 0 ? (
-              <div className={styles.procedureTags}>
-                {effectiveProcedure.recommended_tools.map((item) => (
-                  <span key={item} className={styles.procedureTag}>{item}</span>
-                ))}
-              </div>
-            ) : null}
-            {latestInferenceVisible ? (
-              <div className={styles.procedureHint}>
-                Latest inference: {formatInferenceReasonLabel(procedureContext?.latest_inferred_reason || '')}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <p className={styles.procedureEmpty}>
-            This thread does not have a pinned or inferred procedure yet. Context will refresh during later turns.
-          </p>
-        )}
-      </div>
     </section>
   )
 }

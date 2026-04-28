@@ -31,7 +31,7 @@
 ### 3.2 工具执行侧判定标准
 
 - 必须出现 `execution_target: specific_agent` 与 `target_agent_id: desktop-agent-2`。
-- `/desktop/ws` 中必须出现 `operation.updated` 从 `dispatching` 到 `succeeded` 的链路。
+- `/endpoint/ws` 中必须出现 `delivery.operation_update` 从 `dispatching` 到 `succeeded` 的链路。
 - 成功结果必须读取/返回 Windows 本地路径或 Agent 本地 MCP 允许目录中的内容，而不是云端 Linux 容器路径。
 
 ## 4. 实际执行命令

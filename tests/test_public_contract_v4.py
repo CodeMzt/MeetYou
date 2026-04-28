@@ -1,0 +1,33 @@
+import unittest
+
+from core.public_contract import (
+    EXECUTION_TARGET_CORE_ONLY,
+    PUBLIC_ASSISTANT_MODES,
+    normalize_execution_target,
+    to_internal_assistant_mode,
+    to_public_assistant_mode,
+)
+
+
+class PublicContractV4Tests(unittest.TestCase):
+    def test_public_modes_are_reduced_to_general_automation_and_danxi(self):
+        self.assertEqual(PUBLIC_ASSISTANT_MODES, ("general", "automation", "danxi"))
+        for old_mode in ("normal", "auto"):
+            self.assertEqual(to_public_assistant_mode(old_mode), "general")
+            self.assertEqual(to_internal_assistant_mode(old_mode), "general")
+        for retired_mode in ("documents", "research", "study"):
+            self.assertEqual(to_public_assistant_mode(retired_mode), "general")
+            self.assertEqual(to_internal_assistant_mode(retired_mode), "general")
+            self.assertEqual(to_internal_assistant_mode(retired_mode, fallback="normal"), "general")
+        self.assertEqual(to_public_assistant_mode("office"), "automation")
+        self.assertEqual(to_internal_assistant_mode("office"), "automation")
+        self.assertEqual(to_internal_assistant_mode("automation"), "automation")
+        self.assertEqual(to_public_assistant_mode("danxi"), "danxi")
+        self.assertEqual(to_internal_assistant_mode("danxi"), "danxi")
+
+    def test_desktop_is_not_an_execution_target_alias(self):
+        self.assertEqual(normalize_execution_target("desktop"), EXECUTION_TARGET_CORE_ONLY)
+
+
+if __name__ == "__main__":
+    unittest.main()

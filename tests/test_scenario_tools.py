@@ -20,11 +20,9 @@ def _populate_skill_dir(target_dir: Path) -> None:
         "task-recognition",
         "research-grounding",
         "study-coaching",
-        "mode-normal",
-        "mode-documents",
-        "mode-research",
-        "mode-office",
-        "mode-study",
+        "mode-general",
+        "mode-automation",
+        "mode-danxi",
     ):
         (target_dir / skill_name).write_text((source_dir / skill_name).read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -440,7 +438,7 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed["tasks"][0]["task_status"], "done")
         self.assertEqual(completed["tasks"][0]["last_completion_summary"], "已确认修复完成")
 
-    async def test_manage_tasks_rejects_schedule_and_manage_scheduled_tasks_handles_it(self):
+    async def test_manage_tasks_rejects_schedule_and_v4_scheduler_facade_is_separate(self):
         memory = _FakeMemory()
         tools = ScenarioTools(memory, _FakeContextManager(), _FakeMCPManager())
 
@@ -455,19 +453,7 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(failed, ToolCallResult)
         self.assertFalse(failed.ok)
         self.assertIn("manage_tasks only manages user TODO items", failed.error.message)
-
-        created = json.loads(
-            await tools.manage_scheduled_tasks(
-                action="create",
-                summary="每天早上九点检查日报",
-                schedule_kind="recurring",
-                recurrence={"freq": "daily", "hour": 9, "minute": 0},
-                timezone="UTC",
-                source={"id": "desktop-user"},
-            )
-        )
-        self.assertEqual(created["tasks"][0]["task_domain"], "assistant_schedule")
-        self.assertEqual(created["tasks"][0]["schedule_kind"], "recurring")
+        self.assertIn("manage_scheduled_jobs", failed.error.message)
 
         todo = json.loads(
             await tools.manage_tasks(
@@ -495,16 +481,16 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             tools = ScenarioTools(_FakeMemory(), _FakeContextManager(), _FakeMCPManager(), mode_manager=mode_manager)
-            route_context = {"current_mode": "research", "loaded_skills": []}
+            route_context = {"current_mode": "general", "loaded_skills": []}
 
             listed = json.loads(await tools.list_skills(skill_type="all"))
             self.assertGreaterEqual(listed["skill_count"], 2)
             self.assertTrue(any(item["skill_type"] == "mode" for item in listed["skills"]))
 
-            loaded = json.loads(await tools.load_skill("mode:research", route_context=route_context))
+            loaded = json.loads(await tools.load_skill("mode:general", route_context=route_context))
             self.assertTrue(loaded["loaded"])
             self.assertTrue(loaded["injected_into_context"])
-            self.assertIn("mode:research", route_context["loaded_skills"])
+            self.assertIn("mode:general", route_context["loaded_skills"])
 
             created = json.loads(
                 await tools.create_skill(
@@ -513,7 +499,7 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
                     summary="Summarize release notes into actions.",
                     content="Extract breaking changes and concrete follow-up actions.",
                     recommended_tools=["research_topic"],
-                    applicable_modes=["research"],
+                    applicable_modes=["general"],
                     scenarios=["release notes"],
                     inject_context=True,
                     route_context=route_context,

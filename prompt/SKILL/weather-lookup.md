@@ -8,8 +8,7 @@
     "research_topic"
   ],
   "applicable_modes": [
-    "normal",
-    "research"
+    "general"
   ],
   "scenarios": [
     "日常出行",
@@ -24,8 +23,7 @@
 当用户询问某个地点的当前天气时，快速提供准确、及时的信息和实用的出行建议。
 
 **适用模式**
-- 主要在 normal 模式下使用
-- 也可在 research 模式中作为信息收集的一部分
+- 在 general 模式下使用；只有需要强证据引用时再激活 research_grounding skill。
 
 **典型场景**
 - 日常出行前查看天气

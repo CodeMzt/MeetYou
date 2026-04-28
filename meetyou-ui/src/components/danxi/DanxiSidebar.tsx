@@ -51,7 +51,7 @@ export default function DanxiSidebar({
     <div className={styles.sidebar}>
       <div className={styles.sidebarHeader}>
         <div className={styles.brandBlock}>
-          <div className={styles.kicker}>Danxi Workspace</div>
+          <div className={styles.kicker}>旦夕工作区</div>
           <div className={styles.sidebarTitleRow}>
             <div className={styles.sidebarTitle}>旦夕</div>
             <button className={styles.iconBtn} onClick={onRefreshSession} disabled={busy} title="刷新状态">
@@ -72,11 +72,11 @@ export default function DanxiSidebar({
                   {(profileRecord?.nickname as string) ||
                     (profileRecord?.name as string) ||
                     (profileRecord?.username as string) ||
-                    'Danxi 用户'}
+                    '旦夕用户'}
                 </div>
                 <div className={styles.statusRow}>
                   <span className={`${styles.statusDot} ${styles.online}`} />
-                  已登录 · {session?.transport || 'unknown'}
+                  已登录 · {session?.transport || '未知'}
                 </div>
               </div>
             </div>
@@ -97,7 +97,7 @@ export default function DanxiSidebar({
           </div>
         ) : (
           <div className={styles.loginCard}>
-            <div className={styles.cardTitle}>登录 Danxi</div>
+            <div className={styles.cardTitle}>登录旦夕</div>
             <input
               className={styles.input}
               placeholder="邮箱或账号"

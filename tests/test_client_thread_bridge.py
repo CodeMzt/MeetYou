@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 import unittest
 
-from core.app import App
+from core.app import App, _initial_progress_notice_content
 from core.client_thread_bridge import ClientThreadBridge
 from core.io_protocol import EventTarget, TargetKind
 from core.session_manager import SessionManager
@@ -112,9 +112,14 @@ class _GatewayRunEventStub(_GatewayStub):
     def __init__(self, session_manager: SessionManager):
         super().__init__(session_manager)
         self.run_events: list[dict] = []
+        self.messages: list[dict] = []
 
     async def publish_endpoint_run_event(self, *, thread_id: str = "", run_id: str = "", event: dict) -> int:
         self.run_events.append({"thread_id": thread_id, "run_id": run_id, "event": dict(event)})
+        return 1
+
+    async def publish_endpoint_message(self, *, thread_id: str = "", message: dict) -> int:
+        self.messages.append({"thread_id": thread_id, "message": dict(message)})
         return 1
 
 
@@ -335,6 +340,8 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway.run_events[0]["event"]["payload"]["delta"], "hello")
         self.assertEqual(gateway.run_events[1]["event"]["type"], "message.completed")
         self.assertEqual(gateway.run_events[1]["event"]["payload"]["message"]["content"], "hello persisted")
+        self.assertEqual(gateway.messages[0]["message"]["content"], "hello persisted")
+        self.assertEqual(gateway.messages[0]["message"]["role"], "assistant")
         self.assertEqual(run_service.statuses[0]["status"], "succeeded")
         self.assertEqual(len(message_service.created), 1)
 
@@ -405,6 +412,38 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bridge.calls[0]["content"], "checking")
         self.assertEqual(bridge.calls[0]["turn_id"], "turn-1")
         self.assertEqual(bridge.calls[0]["stream_id"], "stream-1")
+
+    def test_required_non_streaming_progress_notice_can_be_runtime_started(self):
+        self.assertEqual(
+            _initial_progress_notice_content(
+                {
+                    "supports_streaming_reply": False,
+                    "progress_notice_policy": "required_before_nontrivial_final",
+                    "progress_notice_content": "Working on it",
+                }
+            ),
+            "Working on it",
+        )
+        self.assertEqual(
+            _initial_progress_notice_content(
+                {
+                    "supports_streaming_reply": False,
+                    "progress_notice_policy": "prefer_before_nontrivial_final",
+                    "progress_notice_content": "Working on it",
+                }
+            ),
+            "",
+        )
+        self.assertEqual(
+            _initial_progress_notice_content(
+                {
+                    "supports_streaming_reply": True,
+                    "progress_notice_policy": "required_before_nontrivial_final",
+                    "progress_notice_content": "Working on it",
+                }
+            ),
+            "",
+        )
 
 
 if __name__ == "__main__":

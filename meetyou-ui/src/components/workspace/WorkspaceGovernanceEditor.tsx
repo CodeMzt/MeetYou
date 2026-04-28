@@ -6,17 +6,17 @@ import { formatAssistantModeLabel, formatMemoryRankingPolicyLabel, formatSourceP
 import styles from './WorkspaceGovernanceEditor.module.css'
 
 const FALLBACK_SOURCE_PROFILES: OperatorSourceProfile[] = [
-  { profile_name: 'workspace_local', label: 'Workspace / Local Knowledge', description: 'Prefer local files, memory, and private workspace knowledge.', official_only: false, default_freshness: 'workspace' },
-  { profile_name: 'study_materials', label: 'Study Materials', description: 'Prefer local learning materials and explicit references from the user.', official_only: false, default_freshness: 'coursework' },
-  { profile_name: 'tech_updates', label: 'Tech Updates', description: 'Official releases, changelogs, standards, and vendor updates.', official_only: true, default_freshness: 'high' },
-  { profile_name: 'policy_cn', label: 'Policy China', description: 'Chinese government policy, regulation, and statistics.', official_only: true, default_freshness: 'high' },
-  { profile_name: 'policy_global', label: 'Policy Global', description: 'Government and regulator sources outside China.', official_only: true, default_freshness: 'high' },
-  { profile_name: 'finance_macro', label: 'Finance / Macro', description: 'Official filings, macro indicators, and financial disclosures.', official_only: true, default_freshness: 'high' },
-  { profile_name: 'academic_biomed', label: 'Academic / Biomed', description: 'Papers, PubMed, DOI records, and biomedical literature.', official_only: true, default_freshness: 'medium' },
-  { profile_name: 'cyber_threat', label: 'Cyber Threat', description: 'Official vulnerability and exploit advisories.', official_only: true, default_freshness: 'high' },
+  { profile_name: 'workspace_local', label: '本地工作区知识', description: '优先使用本地文件、记忆和私有工作区知识。', official_only: false, default_freshness: 'workspace' },
+  { profile_name: 'study_materials', label: '学习材料', description: '优先使用本地学习材料和用户明确提供的引用。', official_only: false, default_freshness: 'coursework' },
+  { profile_name: 'tech_updates', label: '技术更新', description: '官方发布、更新日志、标准和厂商变更。', official_only: true, default_freshness: 'high' },
+  { profile_name: 'policy_cn', label: '中国政策', description: '中国政府政策、法规和统计数据。', official_only: true, default_freshness: 'high' },
+  { profile_name: 'policy_global', label: '全球政策', description: '中国以外的政府和监管机构来源。', official_only: true, default_freshness: 'high' },
+  { profile_name: 'finance_macro', label: '金融与宏观', description: '官方披露、宏观指标和财务公告。', official_only: true, default_freshness: 'high' },
+  { profile_name: 'academic_biomed', label: '学术与生医', description: '论文、PubMed、DOI 记录和生物医学文献。', official_only: true, default_freshness: 'medium' },
+  { profile_name: 'cyber_threat', label: '安全威胁', description: '官方漏洞和利用通告。', official_only: true, default_freshness: 'high' },
 ]
 
-const BASE_MODE_OPTIONS: AssistantMode[] = ['general', 'research', 'documents', 'study', 'automation', 'danxi']
+const BASE_MODE_OPTIONS: AssistantMode[] = ['general', 'automation', 'danxi']
 
 interface WorkspaceGovernanceEditorProps {
   baseUrl: string
@@ -78,6 +78,7 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
       return true
     })
   }, [selectedProfiles])
+
   const hasChanges =
     baseMode !== workspace.base_mode ||
     normalizedProfiles.join('|') !== workspace.preferred_source_profiles.join('|') ||
@@ -127,13 +128,13 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
         <div>
           <div className={styles.kicker}>治理编辑</div>
           <h3 className={styles.title}>来源偏好与记忆排序</h3>
-          <p className={styles.subtitle}>用于调整当前 workspace 的默认来源偏好。Procedure 推荐来源仍优先于这里的 workspace 偏好。</p>
+          <p className={styles.subtitle}>用于调整当前工作区的默认模式、来源偏好和记忆命中策略。复杂工作流由 SKILL 承担。</p>
         </div>
       </div>
 
       <div className={styles.form}>
         <label className={styles.field}>
-          <span className={styles.label}>Base Mode</span>
+          <span className={styles.label}>默认模式</span>
           <select
             className={styles.select}
             value={baseMode}
@@ -149,11 +150,11 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
               </option>
             ))}
           </select>
-          <span className={styles.hint}>当前工作区默认模式。若 thread 没有更具体的偏好，会优先以这里作为公开模式入口。</span>
+          <span className={styles.hint}>当前工作区的默认公开模式。线程没有更具体偏好时，会优先使用这里的设置。</span>
         </label>
 
         <label className={styles.field}>
-          <span className={styles.label}>Preferred Source Profiles</span>
+          <span className={styles.label}>偏好来源</span>
           <div className={styles.optionGrid}>
             {availableProfiles.map((profile) => {
               const selected = normalizedProfiles.includes(profile.profile_name)
@@ -169,19 +170,21 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
                   <span>{formatSourceProfileLabel(profile.profile_name)}</span>
                   <span className={styles.optionChipMeta}>
                     {profile.official_only ? <span className={styles.optionChipBadge}>官方优先</span> : null}
-                    <span className={styles.optionChipBadge}>{profile.default_freshness || 'default'}</span>
+                    <span className={styles.optionChipBadge}>{profile.default_freshness || '默认'}</span>
                   </span>
                 </button>
               )
             })}
           </div>
           <span className={styles.hint}>
-            {loadingProfiles ? '正在加载 source profile 目录...' : `当前选择：${normalizedProfiles.length > 0 ? normalizedProfiles.map((item) => formatSourceProfileLabel(item)).join(' / ') : '无'}`}
+            {loadingProfiles
+              ? '正在加载来源档案目录...'
+              : `当前选择：${normalizedProfiles.length > 0 ? normalizedProfiles.map((item) => formatSourceProfileLabel(item)).join(' / ') : '无'}`}
           </span>
         </label>
 
         <label className={styles.field}>
-          <span className={styles.label}>Memory Ranking Policy</span>
+          <span className={styles.label}>记忆排序</span>
           <select
             className={styles.select}
             value={memoryRankingPolicy}
@@ -193,7 +196,7 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
           >
             <option value="workspace_first">{formatMemoryRankingPolicyLabel('workspace_first')}</option>
           </select>
-          <span className={styles.hint}>当前实现固定为 workspace-first，优先命中当前工作区相关记忆。</span>
+          <span className={styles.hint}>当前固定为 workspace-first，优先命中当前工作区相关记忆。</span>
         </label>
       </div>
 

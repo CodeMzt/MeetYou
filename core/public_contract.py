@@ -3,45 +3,36 @@ from __future__ import annotations
 from typing import Any
 
 PUBLIC_MODE_GENERAL = "general"
-PUBLIC_MODE_RESEARCH = "research"
-PUBLIC_MODE_DOCUMENTS = "documents"
-PUBLIC_MODE_STUDY = "study"
 PUBLIC_MODE_AUTOMATION = "automation"
 PUBLIC_MODE_DANXI = "danxi"
 
 PUBLIC_ASSISTANT_MODES = (
     PUBLIC_MODE_GENERAL,
-    PUBLIC_MODE_RESEARCH,
-    PUBLIC_MODE_DOCUMENTS,
-    PUBLIC_MODE_STUDY,
     PUBLIC_MODE_AUTOMATION,
     PUBLIC_MODE_DANXI,
 )
 
-# Transitional mapping while the legacy assistant-mode runtime is still in place.
-_LEGACY_TO_PUBLIC_MODE = {
+_PUBLIC_MODE_ALIASES = {
     "normal": PUBLIC_MODE_GENERAL,
     "auto": PUBLIC_MODE_GENERAL,
+    "documents": PUBLIC_MODE_GENERAL,
+    "research": PUBLIC_MODE_GENERAL,
+    "study": PUBLIC_MODE_GENERAL,
+    "general": PUBLIC_MODE_GENERAL,
     "office": PUBLIC_MODE_AUTOMATION,
+    "automation": PUBLIC_MODE_AUTOMATION,
+    "danxi": PUBLIC_MODE_DANXI,
 }
 
 _PUBLIC_TO_INTERNAL_MODE = {
-    PUBLIC_MODE_GENERAL: "auto",
-    PUBLIC_MODE_RESEARCH: "research",
-    PUBLIC_MODE_DOCUMENTS: "documents",
-    PUBLIC_MODE_STUDY: "study",
-    PUBLIC_MODE_AUTOMATION: "office",
+    PUBLIC_MODE_GENERAL: PUBLIC_MODE_GENERAL,
+    PUBLIC_MODE_AUTOMATION: PUBLIC_MODE_AUTOMATION,
     PUBLIC_MODE_DANXI: "danxi",
 }
 
 _INTERNAL_ASSISTANT_MODES = {
     "auto",
-    "normal",
-    "research",
-    "documents",
-    "study",
-    "office",
-    "danxi",
+    *PUBLIC_ASSISTANT_MODES,
 }
 
 EXECUTION_TARGET_CORE_ONLY = "core_only"
@@ -58,28 +49,22 @@ EXECUTION_TARGETS = (
     EXECUTION_TARGET_PREFER_ENDPOINT_FALLBACK_CORE,
 )
 
-# TODO(v4-cutover): remove after the old HTTP client route module is replaced by Thread/Run/Delivery routes.
-EXECUTION_TARGET_SPECIFIC_CLIENT = EXECUTION_TARGET_SPECIFIC_ENDPOINT
-EXECUTION_TARGET_WORKSPACE_ANY_CLIENT = EXECUTION_TARGET_WORKSPACE_ANY_ENDPOINT
-EXECUTION_TARGET_PREFER_CLIENT_FALLBACK_CORE = EXECUTION_TARGET_PREFER_ENDPOINT_FALLBACK_CORE
-
 _EXECUTION_TARGET_ALIASES = {
     "assistant": EXECUTION_TARGET_CORE_LOCAL,
     "core": EXECUTION_TARGET_CORE_LOCAL,
     "core_only": EXECUTION_TARGET_CORE_LOCAL,
-    "desktop": EXECUTION_TARGET_SPECIFIC_ENDPOINT,
 }
 
 
 def to_public_assistant_mode(value: Any, *, fallback: str = PUBLIC_MODE_GENERAL) -> str:
     normalized = str(value or "").strip().lower()
-    normalized = _LEGACY_TO_PUBLIC_MODE.get(normalized, normalized)
+    normalized = _PUBLIC_MODE_ALIASES.get(normalized, normalized)
     if normalized in PUBLIC_ASSISTANT_MODES:
         return normalized
     return fallback
 
 
-def to_internal_assistant_mode(value: Any, *, fallback: str = "auto") -> str:
+def to_internal_assistant_mode(value: Any, *, fallback: str = PUBLIC_MODE_GENERAL) -> str:
     fallback_normalized = str(fallback or "").strip().lower()
     if not fallback_normalized:
         fallback_internal = ""
@@ -90,11 +75,11 @@ def to_internal_assistant_mode(value: Any, *, fallback: str = "auto") -> str:
     normalized = str(value or "").strip().lower()
     if not normalized:
         return fallback_internal
-    if normalized in _INTERNAL_ASSISTANT_MODES:
-        return normalized
-    public_mode = _LEGACY_TO_PUBLIC_MODE.get(normalized, normalized)
+    public_mode = _PUBLIC_MODE_ALIASES.get(normalized)
     if public_mode in PUBLIC_ASSISTANT_MODES:
         return _PUBLIC_TO_INTERNAL_MODE.get(public_mode, fallback_internal)
+    if normalized in _INTERNAL_ASSISTANT_MODES:
+        return normalized
     return fallback_internal
 
 
@@ -108,7 +93,3 @@ def normalize_execution_target(value: Any, *, fallback: str = EXECUTION_TARGET_C
 
 def requires_specific_endpoint(value: Any) -> bool:
     return normalize_execution_target(value) == EXECUTION_TARGET_SPECIFIC_ENDPOINT
-
-
-def requires_specific_client(value: Any) -> bool:
-    return requires_specific_endpoint(value)

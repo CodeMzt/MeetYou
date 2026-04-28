@@ -7,7 +7,7 @@ const workspace: ClientWorkspace = {
   workspace_id: 'study',
   title: 'Study',
   status: 'active',
-  base_mode: 'study',
+  base_mode: 'general',
   description: 'Study workspace for focused learning.',
   prompt_overlay: '',
   default_execution_target: 'core_only',
@@ -31,10 +31,10 @@ describe('WorkspaceGovernanceEditor', () => {
       />,
     )
 
-    expect(markup).toContain('Preferred Source Profiles')
-    expect(markup).toContain('Base Mode')
+    expect(markup).toContain('偏好来源')
+    expect(markup).toContain('默认模式')
     expect(markup).toContain('工作区：Study')
     expect(markup).toContain('Study')
-    expect(markup).toContain('Memory Ranking Policy')
+    expect(markup).toContain('记忆排序')
   })
 })

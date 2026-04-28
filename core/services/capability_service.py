@@ -44,7 +44,7 @@ class CapabilityService(ServiceBase):
                     return capability
             return None
 
-    def list_clients_for_tool_reference(self, *, tool_key: str, workspace_id) -> list[str]:
+    def list_endpoint_providers_for_tool_reference(self, *, tool_key: str, workspace_id) -> list[str]:
         normalized_ref = str(tool_key or "").strip()
         if not normalized_ref:
             return []
@@ -67,24 +67,41 @@ class CapabilityService(ServiceBase):
                 return False
             return repo.has_workspace_binding(capability_id=capability.id, workspace_id=workspace_id)
 
-    def replace_client_tools(self, *, client, tools: list[dict], workspace_rows: list[object], revision: int) -> int:
+    def replace_endpoint_capabilities(
+        self,
+        *,
+        endpoint_provider,
+        endpoint_public_id: str = "",
+        capabilities: list[dict],
+        workspace_rows: list[object],
+        revision: int,
+    ) -> int:
+        provider_ref = str(
+            endpoint_public_id
+            or getattr(endpoint_provider, "endpoint_id", "")
+            or getattr(endpoint_provider, "provider_ref", "")
+            or ""
+        ).strip()
+        provider_type = str(getattr(endpoint_provider, "provider_type", "") or "endpoint").strip() or "endpoint"
         with self.session_scope() as session:
             repo = CapabilityRepository(session)
             count = 0
             workspace_ids_by_key = {getattr(workspace, "workspace_id", ""): getattr(workspace, "id", None) for workspace in workspace_rows}
-            for item in tools:
+            for item in capabilities:
                 tool_key = str(item.get("tool_key") or "").strip()
                 tool_id = str(item.get("tool_id") or item.get("capability_id") or "").strip()
-                if not tool_key and tool_id.startswith("client."):
-                    parts = tool_id.split(".", 2)
-                    tool_key = parts[2] if len(parts) == 3 else ""
+                if tool_id and not tool_id.startswith("endpoint."):
+                    tool_id = ""
+                endpoint_prefix = f"endpoint.{provider_ref}." if provider_ref else ""
+                if not tool_key and endpoint_prefix and tool_id.startswith(endpoint_prefix):
+                    tool_key = tool_id[len(endpoint_prefix):]
                 if not tool_key:
                     continue
-                capability_key = tool_id or f"client.{client.client_id}.{tool_key}"
+                capability_key = tool_id or f"endpoint.{provider_ref}.{tool_key}"
                 capability = repo.upsert(
                     capability_id=capability_key,
-                    provider_type="client",
-                    provider_ref=client.client_id,
+                    provider_type=provider_type,
+                    provider_ref=provider_ref,
                     kind=str(item.get("kind") or "tool"),
                     title=str(item.get("title") or tool_key or ""),
                     risk_level=str(item.get("risk_level") or "read"),

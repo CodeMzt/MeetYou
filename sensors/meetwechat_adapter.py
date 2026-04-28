@@ -17,7 +17,7 @@ from adapters.meetwechat_client import (
     MeetWeChatSendResult,
 )
 from clients.gateway_client import GatewayConversationClient
-from core.client_tool_bundles import EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE
+from core.endpoint_tool_bundles import EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE
 from core.interaction_response_service import InteractionResponseService
 from core.persistence import atomic_write_json, load_json_with_recovery
 
@@ -41,7 +41,7 @@ DEFAULT_STATE_FLUSH_INTERVAL_MS = 500
 DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS = 600
 _MAX_STATE_EVENTS = 4096
 _BLOCKED_SEND_STATUSES = {"manual_only", "mute", "read_only", "blocked"}
-MEETWECHAT_BASIC_TOOL_BUNDLE = list(EXTERNAL_CLIENT_BASIC_TOOL_BUNDLE)
+MEETWECHAT_BASIC_TOOL_BUNDLE = list(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE)
 
 
 class MeetWeChatSendBlocked(RuntimeError):

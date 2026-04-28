@@ -130,7 +130,7 @@ class ServiceRuntimeTests(unittest.TestCase):
         boundaries = build_runtime_platform_boundaries().to_dict()
 
         retained = {item["name"]: item for item in boundaries["retained_in_core"]}
-        delegated = {item["name"]: item for item in boundaries["delegated_to_local_clients"]}
+        delegated = {item["name"]: item for item in boundaries["delegated_to_endpoint_providers"]}
 
         self.assertIn("runtime_host_detection", retained)
         self.assertIn("runtime_host_observability", retained)
@@ -158,7 +158,7 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertEqual(health_events[0].payload["status"], RuntimeHealthStatus.READY.value)
         self.assertIn("platform_boundary", health_events[0].payload)
         delegated_names = {
-            item["name"] for item in health_events[0].payload["platform_boundary"]["delegated_to_local_clients"]
+            item["name"] for item in health_events[0].payload["platform_boundary"]["delegated_to_endpoint_providers"]
         }
         self.assertIn("terminal_shell_execution", delegated_names)
         self.assertTrue(runtime._app.setup_called)
