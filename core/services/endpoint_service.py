@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from uuid import uuid4
 
 from core.db.repositories import (
@@ -10,8 +11,17 @@ from core.db.repositories import (
     EndpointConnectionRepository,
     EndpointOutboxRepository,
     EndpointRepository,
+    EndpointThreadBindingRepository,
+    ThreadRepository,
 )
 from core.services.base import ServiceBase
+
+
+class EndpointThreadBindingError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 class EndpointRegistryService(ServiceBase):
@@ -139,16 +149,31 @@ class EndpointCapabilityService(ServiceBase):
                 raw_capability_id = str(item.get("capability_id") or item.get("tool_id") or "").strip()
                 if raw_capability_id and not raw_capability_id.startswith("endpoint."):
                     raw_capability_id = ""
+                input_schema = (
+                    item.get("input_schema")
+                    if isinstance(item.get("input_schema"), dict)
+                    else item.get("schema")
+                    if isinstance(item.get("schema"), dict)
+                    else {}
+                )
+                output_schema = item.get("output_schema") if isinstance(item.get("output_schema"), dict) else {}
+                metadata = {
+                    k: v
+                    for k, v in dict(item).items()
+                    if k not in {"schema", "input_schema", "output_schema", "constraints"}
+                }
+                metadata["input_schema"] = dict(input_schema or {})
+                metadata["output_schema"] = dict(output_schema or {})
                 repo.upsert(
                     endpoint_id=endpoint_row_id,
                     tool_key=tool_key,
                     capability_id=raw_capability_id or f"endpoint.{endpoint_public_id}.{tool_key}",
-                    schema=item.get("schema") if isinstance(item.get("schema"), dict) else item.get("input_schema") if isinstance(item.get("input_schema"), dict) else {},
+                    schema=input_schema,
                     risk_level=str(item.get("risk_level") or "read"),
                     requires_confirmation=bool(item.get("requires_confirmation", False)),
                     enabled=bool(item.get("enabled", True)),
                     constraints=item.get("constraints") if isinstance(item.get("constraints"), dict) else {},
-                    metadata={k: v for k, v in dict(item).items() if k not in {"schema", "input_schema"}},
+                    metadata=metadata,
                 )
                 count += 1
         return count
@@ -226,6 +251,144 @@ class EndpointAddressService(ServiceBase):
     def delete_address(self, *, address_id: str) -> bool:
         with self.session_scope() as session:
             return EndpointAddressRepository(session).delete(address_id=address_id)
+
+
+class EndpointThreadBindingService(ServiceBase):
+    _VALID_STRATEGIES = {"per_conversation", "per_address", "shared_endpoint", "explicit_thread"}
+
+    @staticmethod
+    def _binding_id(*parts: str) -> str:
+        digest = hashlib.sha256("\n".join(str(part or "") for part in parts).encode("utf-8")).hexdigest()[:32]
+        return f"etb.{digest}"
+
+    @staticmethod
+    def _clean_key(value: str) -> str:
+        return str(value or "").strip()
+
+    def _canonical_key(
+        self,
+        *,
+        thread_strategy: str,
+        endpoint_public_id: str,
+        conversation_key: str = "",
+        address=None,
+        explicit_thread_id: str = "",
+    ) -> str:
+        if thread_strategy == "shared_endpoint":
+            return f"endpoint:{endpoint_public_id}"
+        if thread_strategy == "per_address":
+            address_id = str(getattr(address, "address_id", "") or "").strip()
+            external_ref = str(getattr(address, "external_ref", "") or "").strip()
+            key = address_id or self._clean_key(conversation_key) or external_ref
+            if not key:
+                raise EndpointThreadBindingError("conversation_key_required", "per_address requires address_id or conversation_key.")
+            return f"address:{key}"
+        if thread_strategy == "explicit_thread":
+            key = self._clean_key(explicit_thread_id)
+            if not key:
+                raise EndpointThreadBindingError("explicit_thread_id_required", "explicit_thread requires explicit_thread_id.")
+            return f"thread:{key}"
+        key = self._clean_key(conversation_key)
+        if not key:
+            raise EndpointThreadBindingError("conversation_key_required", "per_conversation requires conversation_key.")
+        return f"conversation:{key}"
+
+    def resolve_thread(
+        self,
+        *,
+        principal_id,
+        endpoint_row_id,
+        endpoint_public_id: str,
+        workspace_row_id,
+        workspace_public_id: str = "",
+        thread_strategy: str = "per_conversation",
+        conversation_key: str = "",
+        address_row_id=None,
+        title: str = "",
+        display_name: str = "",
+        explicit_thread_id: str = "",
+        metadata: dict | None = None,
+    ):
+        strategy = str(thread_strategy or "per_conversation").strip() or "per_conversation"
+        if strategy not in self._VALID_STRATEGIES:
+            raise EndpointThreadBindingError("unsupported_thread_strategy", f"Unsupported endpoint thread strategy: {strategy}")
+
+        with self.session_scope() as session:
+            binding_repo = EndpointThreadBindingRepository(session)
+            thread_repo = ThreadRepository(session)
+            address = EndpointAddressRepository(session).get_by_id(address_row_id) if address_row_id is not None else None
+            canonical_key = self._canonical_key(
+                thread_strategy=strategy,
+                endpoint_public_id=endpoint_public_id,
+                conversation_key=conversation_key,
+                address=address,
+                explicit_thread_id=explicit_thread_id,
+            )
+            binding = binding_repo.get_by_endpoint_strategy_key(
+                endpoint_id=endpoint_row_id,
+                thread_strategy=strategy,
+                conversation_key=canonical_key,
+            )
+            explicit_thread = thread_repo.get_by_thread_id(explicit_thread_id) if explicit_thread_id else None
+            explicit_thread_error: EndpointThreadBindingError | None = None
+            if explicit_thread_id and explicit_thread is None:
+                explicit_thread_error = EndpointThreadBindingError("explicit_thread_not_found", f"Unknown explicit thread: {explicit_thread_id}")
+            if explicit_thread is not None:
+                if str(getattr(explicit_thread, "status", "") or "") == "deleted":
+                    explicit_thread_error = EndpointThreadBindingError("explicit_thread_deleted", f"Explicit thread is deleted: {explicit_thread_id}")
+                elif str(getattr(explicit_thread, "principal_id", "") or "") != str(principal_id or ""):
+                    explicit_thread_error = EndpointThreadBindingError("explicit_thread_forbidden", "Explicit thread does not belong to the current principal.")
+                elif workspace_row_id is not None and getattr(explicit_thread, "home_workspace_id", None) != workspace_row_id:
+                    explicit_thread_error = EndpointThreadBindingError("explicit_thread_workspace_mismatch", "Explicit thread does not belong to the requested workspace.")
+            if strategy == "explicit_thread" and explicit_thread_error is not None:
+                raise explicit_thread_error
+            if strategy != "explicit_thread" and explicit_thread_error is not None:
+                explicit_thread = None
+
+            thread = None
+            if binding is not None:
+                thread = thread_repo.get_by_id(getattr(binding, "thread_id", None))
+                if thread is not None and str(getattr(thread, "status", "") or "") == "deleted":
+                    thread = None
+            if thread is None:
+                thread = explicit_thread
+            if thread is None:
+                thread = thread_repo.create(
+                    thread_id=f"thr_{uuid4().hex}",
+                    principal_id=principal_id,
+                    home_workspace_id=workspace_row_id,
+                    title=str(title or display_name or canonical_key).strip()[:255],
+                    metadata={
+                        **dict(metadata or {}),
+                        "endpoint_thread_binding": True,
+                        "endpoint_id": endpoint_public_id,
+                        "workspace_id": workspace_public_id,
+                        "thread_strategy": strategy,
+                        "conversation_key": canonical_key,
+                    },
+                )
+
+            binding_metadata = {
+                **dict(metadata or {}),
+                "endpoint_id": endpoint_public_id,
+                "workspace_id": workspace_public_id,
+                "thread_id": getattr(thread, "thread_id", ""),
+                "raw_conversation_key": self._clean_key(conversation_key),
+                "explicit_thread_id": self._clean_key(explicit_thread_id),
+            }
+            binding = binding_repo.upsert(
+                endpoint_id=endpoint_row_id,
+                thread_id=getattr(thread, "id", None),
+                workspace_id=workspace_row_id,
+                address_id=address_row_id,
+                thread_strategy=strategy,
+                conversation_key=canonical_key,
+                binding_id=self._binding_id(str(endpoint_public_id), strategy, canonical_key),
+                display_name=display_name or title,
+                status="active",
+                metadata=binding_metadata,
+            )
+            return binding, thread
 
 
 class ActorDeliveryPreferenceService(ServiceBase):

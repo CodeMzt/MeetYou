@@ -400,6 +400,39 @@ class RuntimeSessionResponse(BaseModel):
     status: str = "active"
 
 
+class RuntimeEndpointSessionResolveRequest(BaseModel):
+    endpoint_id: str
+    workspace_id: str = ""
+    provider_type: str = ""
+    endpoint_type: str = ""
+    display_name: str = ""
+    conversation_key: str = ""
+    address_id: str = ""
+    thread_strategy: str = "per_conversation"
+    title: str = ""
+    explicit_thread_id: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeEndpointThreadBindingResponse(BaseModel):
+    binding_id: str
+    endpoint_id: str
+    thread_id: str
+    workspace_id: str
+    address_id: str = ""
+    thread_strategy: str
+    conversation_key: str
+    display_name: str = ""
+    status: str = "active"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeEndpointSessionResolveResponse(BaseModel):
+    thread: RuntimeThreadResponse
+    session: RuntimeSessionResponse
+    binding: RuntimeEndpointThreadBindingResponse
+
+
 class RuntimeActiveWorkspacePatchRequest(BaseModel):
     active_workspace_id: str
     endpoint_id: str = ""

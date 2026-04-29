@@ -13,6 +13,7 @@ interface ConfirmModalProps {
   confirmationLabel?: string
   confirmationHint?: string
   confirmationText?: string
+  busy?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -27,6 +28,7 @@ export default function ConfirmModal({
   confirmationLabel = '确认文本',
   confirmationHint = '',
   confirmationText = '',
+  busy = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -56,7 +58,7 @@ export default function ConfirmModal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            onClick={onCancel}
+            onClick={busy ? undefined : onCancel}
           />
           <motion.div
             className={styles.modal}
@@ -70,7 +72,7 @@ export default function ConfirmModal({
                 <AlertTriangle size={18} />
               </div>
               <h3 className={styles.title}>{title}</h3>
-              <button className={styles.closeBtn} onClick={onCancel} title="关闭">
+              <button className={styles.closeBtn} onClick={onCancel} title="关闭" disabled={busy}>
                 <X size={16} />
               </button>
             </div>
@@ -94,13 +96,13 @@ export default function ConfirmModal({
               ) : null}
             </div>
             <div className={styles.footer}>
-              <button className={styles.cancelBtn} onClick={onCancel}>
+              <button className={styles.cancelBtn} onClick={onCancel} disabled={busy}>
                 {cancelText}
               </button>
               <button
                 className={`${styles.confirmBtn} ${isDestructive ? styles.destructiveBtn : styles.primaryBtn}`}
                 onClick={onConfirm}
-                disabled={confirmDisabled}
+                disabled={confirmDisabled || busy}
               >
                 {confirmText}
               </button>

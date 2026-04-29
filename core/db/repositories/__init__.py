@@ -13,6 +13,7 @@ from core.db.repositories.endpoint import (
     EndpointConnectionRepository,
     EndpointOutboxRepository,
     EndpointRepository,
+    EndpointThreadBindingRepository,
 )
 from core.db.repositories.memory_record import MemoryRecordRepository
 from core.db.repositories.message import MessageRepository
@@ -42,6 +43,7 @@ __all__ = [
     "EndpointConnectionRepository",
     "EndpointOutboxRepository",
     "EndpointRepository",
+    "EndpointThreadBindingRepository",
     "MemoryRecordRepository",
     "MessageRepository",
     "OperationRepository",

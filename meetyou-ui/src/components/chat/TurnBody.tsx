@@ -19,6 +19,7 @@ interface TurnBodyProps {
 export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, onRegenerate, onDownloadAttachment }: TurnBodyProps) {
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
   const displayContent = turn.role === 'assistant' ? normalizeAssistantDisplayText(turn.content) : turn.content
+  const showActionBar = !turn.isStreaming && turn.role === 'assistant' && !isBusy && isLastAssistantTurn && Boolean(onRegenerate)
 
   const placeholderText =
     turn.isStreaming && !turn.content && !turn.reasoning && (!turn.activities || turn.activities.length === 0)
@@ -50,13 +51,11 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, o
       {turn.isStreaming && turn.content && <span className={styles.cursorBlink}>▍</span>}
       {turn.error && <div className={styles.error}>{turn.error}</div>}
 
-      {!turn.isStreaming && turn.role === 'assistant' && !isBusy && (
+      {showActionBar && (
         <div className={styles.actionBar}>
-          {isLastAssistantTurn && onRegenerate && (
-            <button className={styles.actionBtn} onClick={onRegenerate} title="重新生成">
-              <RefreshCw size={14} />
-            </button>
-          )}
+          <button className={styles.actionBtn} onClick={onRegenerate} title="重新生成">
+            <RefreshCw size={14} />
+          </button>
         </div>
       )}
     </>

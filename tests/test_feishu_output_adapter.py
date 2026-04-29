@@ -464,10 +464,27 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         content = json.loads(message_calls[0]["json"]["content"])
         self.assertEqual(content["text"], "OK")
 
-    async def test_chat_scoped_connection_ignores_address_targeted_delivery(self):
-        adapter = self._build_adapter([])
+    async def test_chat_scoped_connection_handles_matching_address_targeted_delivery(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
         payload = _message("OK", message_id="msg-final-address")
         payload["payload"]["target_external_ref"] = "oc_test"
+
+        await adapter.send_runtime_event("oc_test", payload)
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+        content = json.loads(message_calls[0]["json"]["content"])
+        self.assertEqual(content["text"], "OK")
+
+    async def test_chat_scoped_connection_ignores_other_address_targeted_delivery(self):
+        adapter = self._build_adapter([])
+        payload = _message("OK", message_id="msg-final-address")
+        payload["payload"]["target_external_ref"] = "oc_other"
 
         await adapter.send_runtime_event("oc_test", payload)
 

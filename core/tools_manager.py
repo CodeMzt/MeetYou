@@ -10,12 +10,16 @@ from core.tool_runtime import (
     ToolCallResult,
     ToolAuthorizationGateway,
     ToolExecutor,
+    ToolErrorCategory,
     ToolPermissionPolicy,
     ToolRegistry,
     ToolRiskClassifier,
+    ToolSourceType,
     get_mcp_timeout_seconds,
+    normalize_tool_result,
     should_expose_mcp_tool,
 )
+from core.services.tool_router_service import ToolRouterError
 from tools.attachment_tools import AttachmentTools
 from tools.memory_tools import MemoryTools
 from tools.danxi_tools import get_shared_danxi_tools
@@ -127,6 +131,7 @@ class ToolsManager:
         )
         self._office_tools = OfficeTools(mode_manager, self._document_tools) if self._document_tools else None
         self._study_tools = StudyTools(self._document_tools) if self._document_tools else None
+        self._core_domain = None
 
         supported_funcs = {
             "exec_sys_cmd": system_tools_module.exec_sys_cmd,
@@ -273,6 +278,7 @@ class ToolsManager:
         return _handler
 
     def set_core_domain(self, core_domain) -> None:
+        self._core_domain = core_domain
         self._attachment_tools.set_core_domain(core_domain)
         self._scheduler_tools.set_core_domain(core_domain)
         self._thread_tools.set_core_domain(core_domain)
@@ -341,7 +347,180 @@ class ToolsManager:
                 continue
             if self._authorization_gateway.should_expose_tool(tool_name, route_context=route_context):
                 filtered_tools.append(tool)
+        existing_names = {
+            str(tool.get("function", {}).get("name") or "").strip()
+            for tool in filtered_tools
+            if str(tool.get("function", {}).get("name") or "").strip()
+        }
+        filtered_tools.extend(self._contextual_endpoint_tool_schemas(route_context, existing_names=existing_names))
         return filtered_tools
+
+    @staticmethod
+    def _endpoint_action_risk(risk_level: str) -> str:
+        normalized = str(risk_level or "read").strip().lower()
+        if normalized in {"system", "destructive"}:
+            return "destructive"
+        if normalized in {"write", "local_write"}:
+            return "local_write"
+        if normalized in {"external_write", "network_write"}:
+            return "external_write"
+        return "read"
+
+    @staticmethod
+    def _endpoint_tool_slug(value: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9_]+", "_", str(value or "").strip()).strip("_") or "tool"
+
+    @staticmethod
+    def _valid_parameters_schema(schema: Any) -> dict[str, Any]:
+        if not isinstance(schema, dict) or not schema:
+            return {"type": "object", "properties": {}, "additionalProperties": True}
+        normalized = dict(schema)
+        if normalized.get("type") != "object":
+            return {"type": "object", "properties": {}, "additionalProperties": True}
+        normalized.setdefault("properties", {})
+        return normalized
+
+    @staticmethod
+    def _visibility_allows_auto_inject(capability) -> bool:
+        meta = dict(getattr(capability, "meta", {}) or {})
+        visibility = meta.get("visibility") if isinstance(meta.get("visibility"), dict) else {}
+        if "auto_inject" in visibility:
+            return bool(visibility.get("auto_inject"))
+        if "auto_inject" in meta:
+            return bool(meta.get("auto_inject"))
+        return True
+
+    @staticmethod
+    def _route_workspace_id(route_context: dict[str, Any]) -> str:
+        workspace = route_context.get("workspace") if isinstance(route_context.get("workspace"), dict) else {}
+        return str(route_context.get("workspace_id") or workspace.get("workspace_id") or "").strip()
+
+    @staticmethod
+    def _route_endpoint_id(route_context: dict[str, Any]) -> str:
+        endpoint = route_context.get("endpoint") if isinstance(route_context.get("endpoint"), dict) else {}
+        return str(route_context.get("endpoint_id") or route_context.get("origin_endpoint_id") or endpoint.get("endpoint_id") or "").strip()
+
+    def _endpoint_constraints_allow(self, capability, endpoint, route_context: dict[str, Any]) -> bool:
+        constraints = dict(getattr(capability, "constraints", {}) or {})
+        mode_values = constraints.get("modes") or constraints.get("assistant_modes")
+        if isinstance(mode_values, list):
+            current_mode = str(route_context.get("current_mode") or "").strip()
+            allowed_modes = {str(item).strip() for item in mode_values if str(item).strip()}
+            if allowed_modes and current_mode not in allowed_modes:
+                return False
+        workspace_id = self._route_workspace_id(route_context)
+        endpoint_scope = [str(item).strip() for item in (getattr(endpoint, "workspace_scope", []) or []) if str(item).strip()]
+        if workspace_id and endpoint_scope and workspace_id not in endpoint_scope and "*" not in endpoint_scope:
+            return False
+        constraint_workspaces = constraints.get("workspace_ids") or constraints.get("workspace_scope")
+        if isinstance(constraint_workspaces, list):
+            allowed_workspaces = {str(item).strip() for item in constraint_workspaces if str(item).strip()}
+            if allowed_workspaces and workspace_id and workspace_id not in allowed_workspaces and "*" not in allowed_workspaces:
+                return False
+        address_values = constraints.get("address_types") or constraints.get("address_type")
+        if isinstance(address_values, str):
+            address_values = [address_values]
+        if isinstance(address_values, list):
+            endpoint_context = route_context.get("endpoint") if isinstance(route_context.get("endpoint"), dict) else {}
+            route_address_type = str(route_context.get("address_type") or endpoint_context.get("address_type") or "").strip()
+            allowed_address_types = {str(item).strip() for item in address_values if str(item).strip()}
+            if allowed_address_types and "*" not in allowed_address_types and route_address_type not in allowed_address_types:
+                return False
+        auth_policy = route_context.get("authorization_policy") if isinstance(route_context.get("authorization_policy"), dict) else {}
+        if bool(auth_policy.get("read_only")) and self._endpoint_action_risk(str(getattr(capability, "risk_level", "") or "read")) != "read":
+            return False
+        return True
+
+    def _contextual_endpoint_tool_schemas(self, route_context: dict[str, Any] | None, *, existing_names: set[str]) -> list[dict[str, Any]]:
+        route_context = route_context or {}
+        if bool(route_context.get("disable_tools")) or self._core_domain is None:
+            return []
+        origin_endpoint_id = self._route_endpoint_id(route_context)
+        if not origin_endpoint_id:
+            return []
+        services = getattr(self._core_domain, "services", None)
+        if services is None:
+            return []
+        origin = services.endpoint.get_by_endpoint_id(origin_endpoint_id)
+        if origin is None:
+            return []
+        provider_type = str(getattr(origin, "provider_type", "") or "").strip()
+        online_statuses = {"online", "ready", "active"}
+        catalog = route_context.setdefault("endpoint_tool_catalog", {})
+        tool_map = catalog.setdefault("tools", {})
+        schemas: list[dict[str, Any]] = []
+        for endpoint in services.endpoint.list_all():
+            endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip()
+            if not endpoint_id:
+                continue
+            if provider_type and str(getattr(endpoint, "provider_type", "") or "").strip() != provider_type:
+                continue
+            if str(getattr(endpoint, "status", "") or "").strip().lower() not in online_statuses:
+                continue
+            for capability in services.endpoint_capability.list_for_endpoint(endpoint_row_id=getattr(endpoint, "id", None)):
+                if not bool(getattr(capability, "enabled", True)):
+                    continue
+                if not self._visibility_allows_auto_inject(capability):
+                    continue
+                if not self._endpoint_constraints_allow(capability, endpoint, route_context):
+                    continue
+                tool_key = str(getattr(capability, "tool_key", "") or "").strip()
+                if not tool_key:
+                    continue
+                capability_id = str(getattr(capability, "capability_id", "") or "")
+                suffix = self._endpoint_tool_slug(tool_key)[:48]
+                digest = hashlib.sha256(f"{endpoint_id}\n{capability_id}\n{tool_key}".encode("utf-8")).hexdigest()[:10]
+                dynamic_name = f"ep_{digest}_{suffix}"
+                if dynamic_name in existing_names:
+                    continue
+                meta = dict(getattr(capability, "meta", {}) or {})
+                title = str(meta.get("title") or tool_key).strip()
+                description = str(meta.get("description") or title or tool_key).strip()
+                input_schema = meta.get("input_schema") if isinstance(meta.get("input_schema"), dict) else getattr(capability, "schema", {})
+                output_schema = meta.get("output_schema") if isinstance(meta.get("output_schema"), dict) else {}
+                tool_map[dynamic_name] = {
+                    "endpoint_id": endpoint_id,
+                    "capability_id": capability_id,
+                    "tool_key": tool_key,
+                    "risk_level": str(getattr(capability, "risk_level", "") or "read"),
+                    "requires_confirmation": bool(getattr(capability, "requires_confirmation", False)),
+                    "constraints": dict(getattr(capability, "constraints", {}) or {}),
+                    "title": title,
+                    "description": description,
+                    "input_schema": dict(input_schema or {}),
+                    "output_schema": dict(output_schema or {}),
+                }
+                schemas.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": dynamic_name,
+                            "description": description,
+                            "parameters": self._valid_parameters_schema(input_schema),
+                            "metadata": {
+                                "source": "endpoint",
+                                "endpoint_id": endpoint_id,
+                                "capability_id": capability_id,
+                                "tool_key": tool_key,
+                                "risk_level": str(getattr(capability, "risk_level", "") or "read"),
+                                "requires_confirmation": bool(getattr(capability, "requires_confirmation", False)),
+                                "output_schema": dict(output_schema or {}),
+                            },
+                        },
+                    }
+                )
+                existing_names.add(dynamic_name)
+        catalog["origin_endpoint_id"] = origin_endpoint_id
+        catalog["provider_type"] = provider_type
+        return schemas
+
+    @staticmethod
+    def _resolve_endpoint_catalog_tool(tool_name: str, *, route_context: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        route_context = route_context or {}
+        catalog = route_context.get("endpoint_tool_catalog") if isinstance(route_context.get("endpoint_tool_catalog"), dict) else {}
+        tools = catalog.get("tools") if isinstance(catalog.get("tools"), dict) else {}
+        payload = tools.get(str(tool_name or "").strip())
+        return dict(payload) if isinstance(payload, dict) else None
 
     def get_heartbeat_tools(self) -> list[dict]:
         return self._registry.get_heartbeat_tools()
@@ -408,7 +587,26 @@ class ToolsManager:
         *,
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del route_context
+        dynamic_tool = self._resolve_endpoint_catalog_tool(tool_name, route_context=route_context)
+        if dynamic_tool is not None:
+            constraints = dict(dynamic_tool.get("constraints") or {})
+            action_risk = self._endpoint_action_risk(str(dynamic_tool.get("risk_level") or "read"))
+            safe_parallel = bool(constraints.get("safe_parallel", action_risk == "read"))
+            try:
+                max_concurrency = max(1, int(constraints.get("max_concurrency") or (3 if safe_parallel else 1)))
+            except (TypeError, ValueError):
+                max_concurrency = 3 if safe_parallel else 1
+            return {
+                "tool_name": str(tool_name or "").strip(),
+                "source": "endpoint",
+                "action_risk": action_risk,
+                "safe_parallel": safe_parallel,
+                "parallel_group": str(constraints.get("parallel_group") or f"endpoint:{dynamic_tool.get('endpoint_id')}"),
+                "resource_key": str(constraints.get("resource_key") or f"endpoint:{dynamic_tool.get('endpoint_id')}:{dynamic_tool.get('tool_key')}"),
+                "mutates_state": action_risk in {"local_write", "external_write", "destructive"},
+                "requires_order": action_risk in {"local_write", "external_write", "destructive"},
+                "max_concurrency": max_concurrency,
+            }
         normalized_tool_name = str(tool_name or "").strip()
         normalized_tool_args = dict(tool_args or {})
         capability = self._executor.get_tool_capability_metadata(normalized_tool_name)
@@ -523,6 +721,15 @@ class ToolsManager:
         tool_activity_callback=None,
         route_context: dict[str, Any] | None = None,
     ) -> ToolCallResult:
+        dynamic_tool = self._resolve_endpoint_catalog_tool(tool_name, route_context=route_context)
+        if dynamic_tool is not None:
+            return await self._call_endpoint_catalog_tool(
+                tool_name,
+                tool_args,
+                session_id=session_id,
+                route_context=route_context,
+                dynamic_tool=dynamic_tool,
+            )
         return await self._executor.execute(
             tool_name,
             tool_args,
@@ -530,4 +737,87 @@ class ToolsManager:
             source=source,
             tool_activity_callback=tool_activity_callback,
             route_context=route_context,
+        )
+
+    async def _call_endpoint_catalog_tool(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any] | None,
+        *,
+        session_id: str = "",
+        route_context: dict[str, Any] | None = None,
+        dynamic_tool: dict[str, Any],
+    ) -> ToolCallResult:
+        action_risk = self._endpoint_action_risk(str(dynamic_tool.get("risk_level") or "read"))
+        if self._core_domain is None or getattr(self._core_domain, "tool_router", None) is None:
+            return ToolCallResult.failure(
+                tool_name=tool_name,
+                source=ToolSourceType.UNKNOWN,
+                action_risk=action_risk,
+                code="tool_router_unavailable",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="ToolRouter is unavailable for endpoint catalog tool dispatch.",
+                retryable=True,
+            )
+        if tool_args is not None and not isinstance(tool_args, dict):
+            return ToolCallResult.failure(
+                tool_name=tool_name,
+                source=ToolSourceType.UNKNOWN,
+                action_risk=action_risk,
+                code="tool_arguments_invalid",
+                category=ToolErrorCategory.VALIDATION,
+                message="Tool arguments must be a JSON object.",
+                details={"tool_name": tool_name, "provided_type": type(tool_args).__name__},
+            )
+        route_context = route_context or {}
+        constraints = dict(dynamic_tool.get("constraints") or {})
+        try:
+            timeout_seconds = int(constraints.get("timeout_seconds") or constraints.get("timeout") or 120)
+        except (TypeError, ValueError):
+            timeout_seconds = 120
+        try:
+            result = await self._core_domain.tool_router.dispatch_tool_call(
+                tool_key=str(dynamic_tool.get("tool_key") or "").strip(),
+                arguments=dict(tool_args or {}),
+                target_endpoint_id=str(dynamic_tool.get("endpoint_id") or "").strip(),
+                session_id=session_id,
+                workspace_id=self._route_workspace_id(route_context),
+                title=f"Endpoint catalog tool: {dynamic_tool.get('tool_key')}",
+                timeout_seconds=max(5, timeout_seconds),
+                confirmed=False,
+            )
+        except ToolRouterError as exc:
+            category = (
+                ToolErrorCategory.PERMISSION
+                if exc.code == "tool_confirmation_required"
+                else ToolErrorCategory.DEPENDENCY
+                if exc.retryable
+                else ToolErrorCategory.EXECUTION
+            )
+            return ToolCallResult.failure(
+                tool_name=tool_name,
+                source=ToolSourceType.UNKNOWN,
+                action_risk=action_risk,
+                code=exc.code,
+                category=category,
+                message=exc.message,
+                retryable=exc.retryable,
+                details={
+                    **dict(exc.details or {}),
+                    "endpoint_id": str(dynamic_tool.get("endpoint_id") or ""),
+                    "tool_key": str(dynamic_tool.get("tool_key") or ""),
+                    "capability_id": str(dynamic_tool.get("capability_id") or ""),
+                },
+            )
+        return normalize_tool_result(
+            result,
+            tool_name=tool_name,
+            source=ToolSourceType.UNKNOWN,
+            action_risk=action_risk,
+            metadata={
+                "source": "endpoint",
+                "endpoint_id": str(dynamic_tool.get("endpoint_id") or ""),
+                "tool_key": str(dynamic_tool.get("tool_key") or ""),
+                "capability_id": str(dynamic_tool.get("capability_id") or ""),
+            },
         )

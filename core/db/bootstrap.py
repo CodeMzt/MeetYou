@@ -25,6 +25,7 @@ from core.services import (
     EndpointConnectionService,
     EndpointOutboxService,
     EndpointRegistryService,
+    EndpointThreadBindingService,
     MemoryStateService,
     MessageService,
     OperationService,
@@ -147,6 +148,7 @@ def build_core_services(session_factory) -> CoreServices:
     workspace = WorkspaceService(session_factory)
     endpoint = EndpointRegistryService(session_factory)
     endpoint_address = EndpointAddressService(session_factory)
+    endpoint_thread_binding = EndpointThreadBindingService(session_factory)
     actor_delivery_preference = ActorDeliveryPreferenceService(session_factory)
     endpoint_capability = EndpointCapabilityService(session_factory)
     operation = OperationService(session_factory)
@@ -161,6 +163,7 @@ def build_core_services(session_factory) -> CoreServices:
         endpoint_connection=EndpointConnectionService(session_factory),
         endpoint_capability=endpoint_capability,
         endpoint_address=endpoint_address,
+        endpoint_thread_binding=endpoint_thread_binding,
         actor_delivery_preference=actor_delivery_preference,
         endpoint_outbox=endpoint_outbox,
         delivery_attempt=delivery_attempt,

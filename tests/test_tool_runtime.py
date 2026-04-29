@@ -295,6 +295,122 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.metadata["authorization"]["write_boundary"], "endpoint_tool_managed")
         self.assertIsNone(result.metadata["authorization"]["trusted_root"])
 
+    async def test_contextual_endpoint_tool_catalog_injects_and_dispatches_original_tool_key(self):
+        manager = self._build_manager()
+        origin = SimpleNamespace(
+            id="endpoint-origin",
+            endpoint_id="wechat.meetwechat.ui",
+            provider_type="wechat",
+            status="online",
+            workspace_scope=["personal"],
+        )
+        executor = SimpleNamespace(
+            id="endpoint-executor",
+            endpoint_id="wechat.meetwechat.executor",
+            provider_type="wechat",
+            status="online",
+            workspace_scope=["personal"],
+        )
+        other_provider = SimpleNamespace(
+            id="endpoint-other",
+            endpoint_id="desktop.main.executor",
+            provider_type="desktop",
+            status="online",
+            workspace_scope=["personal"],
+        )
+        capability = SimpleNamespace(
+            tool_key="utility.echo",
+            capability_id="endpoint.wechat.meetwechat.executor.utility.echo",
+            schema={"type": "object", "properties": {"text": {"type": "string"}}},
+            risk_level="read",
+            requires_confirmation=False,
+            enabled=True,
+            constraints={"workspace_ids": ["personal"], "timeout": 15, "max_concurrency": 2},
+            meta={
+                "title": "Echo",
+                "description": "Echo text through the endpoint.",
+                "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
+                "output_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
+                "visibility": {"auto_inject": True},
+            },
+        )
+        other_capability = SimpleNamespace(
+            tool_key="utility.other",
+            capability_id="endpoint.desktop.main.executor.utility.other",
+            schema={"type": "object"},
+            risk_level="read",
+            requires_confirmation=False,
+            enabled=True,
+            constraints={},
+            meta={"visibility": {"auto_inject": True}},
+        )
+
+        class _EndpointService:
+            def get_by_endpoint_id(self, endpoint_id):
+                return {
+                    origin.endpoint_id: origin,
+                    executor.endpoint_id: executor,
+                    other_provider.endpoint_id: other_provider,
+                }.get(endpoint_id)
+
+            def list_all(self):
+                return [origin, executor, other_provider]
+
+        class _CapabilityService:
+            def list_for_endpoint(self, endpoint_row_id):
+                if endpoint_row_id == executor.id:
+                    return [capability]
+                if endpoint_row_id == other_provider.id:
+                    return [other_capability]
+                return []
+
+        class _ToolRouter:
+            def __init__(self):
+                self.calls = []
+
+            async def dispatch_tool_call(self, **kwargs):
+                self.calls.append(dict(kwargs))
+                return {"text": kwargs["arguments"]["text"]}
+
+        router = _ToolRouter()
+        manager.set_core_domain(
+            SimpleNamespace(
+                services=SimpleNamespace(endpoint=_EndpointService(), endpoint_capability=_CapabilityService()),
+                tool_router=router,
+            )
+        )
+        route_context = {
+            "endpoint_id": origin.endpoint_id,
+            "workspace_id": "personal",
+            "current_mode": "general",
+            "mcp_servers": [],
+        }
+
+        schemas = manager.get_all_tools(route_context=route_context)
+        dynamic_names = [
+            schema["function"]["name"]
+            for schema in schemas
+            if schema.get("function", {}).get("metadata", {}).get("source") == "endpoint"
+        ]
+
+        self.assertEqual(len(dynamic_names), 1)
+        dynamic_name = dynamic_names[0]
+        self.assertTrue(dynamic_name.startswith("ep_"))
+        self.assertEqual(route_context["endpoint_tool_catalog"]["tools"][dynamic_name]["tool_key"], "utility.echo")
+
+        result = await manager.call_tool(
+            dynamic_name,
+            {"text": "hello"},
+            session_id="sess-1",
+            route_context=route_context,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.content.data, {"text": "hello"})
+        self.assertEqual(router.calls[0]["tool_key"], "utility.echo")
+        self.assertEqual(router.calls[0]["target_endpoint_id"], executor.endpoint_id)
+        self.assertEqual(router.calls[0]["workspace_id"], "personal")
+
     async def test_readonly_authorization_hides_write_tools_and_blocks_write_calls(self):
         with tempfile.TemporaryDirectory() as trusted_dir:
             manager = self._build_manager(mode_manager=_FakeModeManager([trusted_dir]))

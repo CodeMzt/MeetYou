@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Check, ChevronDown, MessageSquare, Plus, Trash2 } from 'lucide-react'
 import type { RuntimeThreadPresentation } from '../../threadPresentation'
+import ConfirmModal from '../common/ConfirmModal'
 import styles from './ThreadPicker.module.css'
 
 interface ThreadPickerProps {
@@ -25,6 +26,8 @@ export default function ThreadPicker({
   const [draftTitle, setDraftTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [deletingThreadId, setDeletingThreadId] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<RuntimeThreadPresentation | null>(null)
+  const [deleteError, setDeleteError] = useState('')
   const rootRef = useRef<HTMLDivElement | null>(null)
   const activeItem = useMemo(
     () => items.find((item) => item.thread.thread_id === activeThreadId) ?? items[0] ?? null,
@@ -79,17 +82,36 @@ export default function ThreadPicker({
     }
   }
 
-  const handleDelete = async (threadId: string, title: string) => {
+  const requestDelete = (item: RuntimeThreadPresentation) => {
+    const threadId = item.thread.thread_id
     if (!threadId || threadId === defaultThreadId || deletingThreadId) {
       return
     }
-    if (!window.confirm(`删除“${title}”？`)) {
+    setDeleteError('')
+    setDeleteTarget(item)
+  }
+
+  const cancelDelete = () => {
+    if (deletingThreadId) {
       return
     }
+    setDeleteError('')
+    setDeleteTarget(null)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deletingThreadId) {
+      return
+    }
+    const threadId = deleteTarget.thread.thread_id
     setDeletingThreadId(threadId)
     try {
       await onDeleteThread(threadId)
+      setDeleteTarget(null)
+      setDeleteError('')
       setOpen(false)
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : '删除失败，请稍后重试。')
     } finally {
       setDeletingThreadId('')
     }
@@ -151,7 +173,7 @@ export default function ThreadPicker({
                   <button
                     type="button"
                     className={styles.deleteButton}
-                    onClick={() => void handleDelete(item.thread.thread_id, item.title)}
+                    onClick={() => requestDelete(item)}
                     title="删除会话"
                     disabled={Boolean(deletingThreadId)}
                   >
@@ -163,6 +185,21 @@ export default function ThreadPicker({
           })}
         </div>
       )}
+      <ConfirmModal
+        isOpen={Boolean(deleteTarget)}
+        title="删除会话"
+        message={
+          deleteError
+            ? `删除失败：${deleteError}`
+            : `确认删除“${deleteTarget?.title || ''}”？该会话会从列表中移除。`
+        }
+        confirmText={deletingThreadId ? '删除中...' : '删除'}
+        cancelText="取消"
+        isDestructive={true}
+        busy={Boolean(deletingThreadId)}
+        onConfirm={() => void confirmDelete()}
+        onCancel={cancelDelete}
+      />
     </div>
   )
 }

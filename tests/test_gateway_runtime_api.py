@@ -364,6 +364,94 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(len(message_service.rows), 1)
         self.assertEqual(event_bus.inbound_queue.qsize(), 1)
 
+    def test_endpoint_session_resolve_binds_external_conversation_to_thread(self):
+        workspace = SimpleNamespace(
+            id="workspace-row",
+            workspace_id="personal",
+            title="Personal",
+            status="active",
+            base_mode="general",
+            prompt_overlay="",
+            default_execution_target="core.local",
+            meta={},
+        )
+        endpoint = SimpleNamespace(
+            id="endpoint-row",
+            endpoint_id="wechat.meetwechat.ui",
+            endpoint_type="wechat_ui",
+            provider_type="wechat",
+        )
+        address = SimpleNamespace(id="address-row", address_id="addr.wechat.group.example")
+        thread = SimpleNamespace(
+            id="thread-row",
+            thread_id="thr-chat",
+            title="Example Group",
+            status="active",
+            summary="",
+            home_workspace_id="workspace-row",
+        )
+        binding = SimpleNamespace(
+            binding_id="etb-chat",
+            endpoint_id="endpoint-row",
+            thread_id="thread-row",
+            workspace_id="workspace-row",
+            address_id="address-row",
+            thread_strategy="per_conversation",
+            conversation_key="conversation:wechat:meetwechat:group:example",
+            display_name="Example Group",
+            status="active",
+            meta={},
+        )
+        resolved_calls = []
+
+        class _EndpointThreadBindingService:
+            def resolve_thread(self, **kwargs):
+                resolved_calls.append(dict(kwargs))
+                return binding, thread
+
+        domain = SimpleNamespace(
+            principal=SimpleNamespace(id="principal-row"),
+            services=SimpleNamespace(
+                workspace=SimpleNamespace(get_by_workspace_id=lambda workspace_id: workspace),
+                endpoint=SimpleNamespace(get_by_endpoint_id=lambda endpoint_id: endpoint),
+                endpoint_address=SimpleNamespace(get_by_address_id=lambda address_id: address),
+                endpoint_thread_binding=_EndpointThreadBindingService(),
+                session=SimpleNamespace(
+                    create_session=lambda **kwargs: SimpleNamespace(id="session-row", session_id="sess-chat", status="active")
+                ),
+            ),
+        )
+        gateway = FastAPIGateway(
+            EventBus(),
+            SessionManager(),
+            core_domain=domain,
+            access_token=self.access_token,
+        )
+        client = TestClient(gateway.app)
+        self.addCleanup(client.close)
+
+        response = client.post(
+            "/runtime/endpoint-sessions/resolve",
+            json={
+                "endpoint_id": "wechat.meetwechat.ui",
+                "workspace_id": "personal",
+                "display_name": "Example Group",
+                "conversation_key": "wechat:meetwechat:group:example",
+                "address_id": "addr.wechat.group.example",
+                "thread_strategy": "per_conversation",
+                "title": "Example Group",
+            },
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["thread"]["thread_id"], "thr-chat")
+        self.assertEqual(payload["session"]["session_id"], "sess-chat")
+        self.assertEqual(payload["binding"]["binding_id"], "etb-chat")
+        self.assertEqual(resolved_calls[0]["conversation_key"], "wechat:meetwechat:group:example")
+        self.assertEqual(resolved_calls[0]["thread_strategy"], "per_conversation")
+
     def test_legacy_chat_http_routes_return_controlled_migration_errors(self):
         response_specs = [
             ("/inputs", self.client.post("/inputs", json={"content": "hello"}, headers=self._auth_headers()), "/runtime/messages"),

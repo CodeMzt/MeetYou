@@ -13,6 +13,7 @@ from core.db.models.endpoint import (
     EndpointCapability,
     EndpointConnection,
     EndpointOutbox,
+    EndpointThreadBinding,
 )
 from core.db.repositories.base import RepositoryBase
 
@@ -314,6 +315,75 @@ class EndpointAddressRepository(RepositoryBase):
         row.capabilities = []
         self.session.flush()
         return True
+
+
+class EndpointThreadBindingRepository(RepositoryBase):
+    def upsert(
+        self,
+        *,
+        endpoint_id,
+        thread_id,
+        workspace_id,
+        thread_strategy: str,
+        conversation_key: str,
+        binding_id: str = "",
+        address_id=None,
+        display_name: str = "",
+        status: str = "active",
+        metadata: dict | None = None,
+    ) -> EndpointThreadBinding:
+        normalized_strategy = str(thread_strategy or "").strip()
+        normalized_key = str(conversation_key or "").strip()
+        row = self.get_by_endpoint_strategy_key(
+            endpoint_id=endpoint_id,
+            thread_strategy=normalized_strategy,
+            conversation_key=normalized_key,
+        )
+        if row is None:
+            row = EndpointThreadBinding(
+                binding_id=str(binding_id or "").strip(),
+                endpoint_id=endpoint_id,
+                thread_id=thread_id,
+                workspace_id=workspace_id,
+                address_id=address_id,
+                thread_strategy=normalized_strategy,
+                conversation_key=normalized_key,
+                display_name=str(display_name or "").strip(),
+                status=str(status or "active").strip() or "active",
+                meta=dict(metadata or {}),
+            )
+            if not row.binding_id:
+                row.binding_id = f"etb.{endpoint_id}.{normalized_strategy}.{normalized_key}"
+            self.session.add(row)
+        else:
+            row.thread_id = thread_id
+            row.workspace_id = workspace_id
+            row.address_id = address_id
+            row.display_name = str(display_name or row.display_name or "").strip()
+            row.status = str(status or row.status or "active").strip() or "active"
+            row.meta = dict(metadata or row.meta or {})
+        self.session.flush()
+        return row
+
+    def get_by_endpoint_strategy_key(
+        self,
+        *,
+        endpoint_id,
+        thread_strategy: str,
+        conversation_key: str,
+    ) -> EndpointThreadBinding | None:
+        return (
+            self.session.query(EndpointThreadBinding)
+            .filter_by(
+                endpoint_id=endpoint_id,
+                thread_strategy=str(thread_strategy or "").strip(),
+                conversation_key=str(conversation_key or "").strip(),
+            )
+            .one_or_none()
+        )
+
+    def get_by_binding_id(self, binding_id: str) -> EndpointThreadBinding | None:
+        return self.session.query(EndpointThreadBinding).filter_by(binding_id=str(binding_id or "").strip()).one_or_none()
 
 
 class ActorDeliveryPreferenceRepository(RepositoryBase):

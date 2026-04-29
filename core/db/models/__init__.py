@@ -12,6 +12,7 @@ from core.db.models.endpoint import (
     EndpointCapability,
     EndpointConnection,
     EndpointOutbox,
+    EndpointThreadBinding,
 )
 from core.db.models.memory_record import MemoryRecordModel, MemoryWorkspaceTag
 from core.db.models.message import Message
@@ -41,6 +42,7 @@ __all__ = [
     "EndpointCapability",
     "EndpointConnection",
     "EndpointOutbox",
+    "EndpointThreadBinding",
     "MemoryRecordModel",
     "MemoryWorkspaceTag",
     "Message",

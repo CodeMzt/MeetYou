@@ -88,6 +88,12 @@
   color: var(--text-primary);
 }
 
+.closeBtn:disabled,
+.cancelBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .body {
   padding: 20px;
 }
