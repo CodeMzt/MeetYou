@@ -292,6 +292,39 @@ class EndpointOutboxService(ServiceBase):
                 metadata=metadata,
             )
 
+    def list_due(self, *, target_endpoint_id=None, limit: int = 50):
+        with self.session_scope() as session:
+            return EndpointOutboxRepository(session).list_due(
+                target_endpoint_id=target_endpoint_id,
+                limit=limit,
+            )
+
+    def mark_inflight(self, *, outbox_id):
+        with self.session_scope() as session:
+            return EndpointOutboxRepository(session).mark_inflight(outbox_id=outbox_id)
+
+    def mark_sent(self, *, outbox_id):
+        with self.session_scope() as session:
+            return EndpointOutboxRepository(session).mark_sent(outbox_id=outbox_id)
+
+    def reschedule_failure(
+        self,
+        *,
+        outbox_id,
+        error: str,
+        max_attempts: int = 5,
+        base_delay_seconds: int = 2,
+        max_delay_seconds: int = 300,
+    ):
+        with self.session_scope() as session:
+            return EndpointOutboxRepository(session).reschedule_failure(
+                outbox_id=outbox_id,
+                error=error,
+                max_attempts=max_attempts,
+                base_delay_seconds=base_delay_seconds,
+                max_delay_seconds=max_delay_seconds,
+            )
+
 
 class DeliveryAttemptService(ServiceBase):
     def record(

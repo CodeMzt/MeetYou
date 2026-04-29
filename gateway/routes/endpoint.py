@@ -171,6 +171,12 @@ async def _publish_operation_update(
         await publisher(thread_id=thread_id, operation_id=operation_id, payload=payload)
 
 
+async def _drain_endpoint_outbox(domain, endpoint) -> None:
+    drainer = getattr(getattr(domain.services, "delivery", None), "drain_endpoint_outbox", None)
+    if callable(drainer) and endpoint is not None:
+        await drainer(target_endpoint=endpoint)
+
+
 async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str, Any], state: dict[str, Any]) -> None:
     if str(frame.get("schema") or "") != ENDPOINT_WS_SCHEMA:
         await _send_error(gateway, websocket, code="invalid_schema", message="expected meetyou.endpoint.ws.v4")
@@ -275,6 +281,7 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
             websocket,
             _frame("endpoint.ready", endpoint_id=endpoint.endpoint_id, correlation_id=correlation_id, payload={"registered_capability_count": count}),
         )
+        await _drain_endpoint_outbox(domain, endpoint)
         return
 
     if frame_type in {"endpoint.addresses.snapshot", "endpoint.address.upsert"}:
@@ -332,7 +339,8 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
     if frame_type == "endpoint.ready":
         endpoint_id = str(frame.get("endpoint_id") or payload.get("endpoint_id") or state.get("endpoint_id") or "").strip()
         if endpoint_id:
-            domain.services.endpoint.set_status(endpoint_id=endpoint_id, status="ready")
+            endpoint = domain.services.endpoint.set_status(endpoint_id=endpoint_id, status="ready")
+            await _drain_endpoint_outbox(domain, endpoint)
         return
 
     if frame_type == "endpoint.heartbeat":
