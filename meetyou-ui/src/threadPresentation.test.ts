@@ -20,6 +20,7 @@ describe('threadPresentation', () => {
         thread('thr_wechat_new', 'MeetWeChat Provider'),
         thread('thr_feishu_new', 'Feishu Provider'),
         thread('thr_desktop', '桌面聊天'),
+        thread('thr_desktop_old', '桌面聊天'),
         thread('thr_wechat_old', 'MeetWeChat Provider'),
         thread('thr_feishu_old', 'Feishu Provider'),
       ],

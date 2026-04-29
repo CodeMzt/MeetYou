@@ -76,6 +76,9 @@ function baseTitleForThread(thread: RuntimeThread, kind: RuntimeThreadKind): str
 
 function duplicateIdentityKey(thread: RuntimeThread, kind: RuntimeThreadKind): string {
   const rawTitle = normalizeTitle(thread.title)
+  if (kind === 'desktop') {
+    return 'desktop'
+  }
   if (kind === 'wechat_provider' || kind === 'feishu_provider') {
     return kind
   }
