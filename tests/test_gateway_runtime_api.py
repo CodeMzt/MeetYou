@@ -162,7 +162,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
                         "delivery": {"pending_redelivery_count": 0},
                         "system": {},
                     },
-                    "sources": ["task_manager.schedule"],
+                    "sources": ["scheduler.jobs"],
                 },
                 "runtime_state": {"session_id": session_id, "status": "thinking"},
                 "usage": {"session_id": session_id, "usage_ready": True},
@@ -248,11 +248,11 @@ class GatewayRuntimeApiTests(unittest.TestCase):
 
     def test_legacy_chat_http_routes_return_controlled_migration_errors(self):
         response_specs = [
-            ("/inputs", self.client.post("/inputs", json={"content": "hello"}, headers=self._auth_headers()), "/client/messages"),
-            ("/controls", self.client.post("/controls", json={"action": "stop"}, headers=self._auth_headers()), "/client/*"),
-            ("/session", self.client.post("/session", json={"client_id": "legacy-client"}, headers=self._auth_headers()), "/client/sessions"),
-            ("/sessions", self.client.post("/sessions", json={"client_id": "legacy-client"}, headers=self._auth_headers()), "/client/sessions"),
-            ("/messages", self.client.post("/messages", json={"content": "legacy hello"}, headers=self._auth_headers()), "/client/messages"),
+            ("/inputs", self.client.post("/inputs", json={"content": "hello"}, headers=self._auth_headers()), "/runtime/messages"),
+            ("/controls", self.client.post("/controls", json={"action": "stop"}, headers=self._auth_headers()), "/runtime/*"),
+            ("/session", self.client.post("/session", json={"endpoint_id": "legacy-endpoint"}, headers=self._auth_headers()), "/runtime/sessions"),
+            ("/sessions", self.client.post("/sessions", json={"endpoint_id": "legacy-endpoint"}, headers=self._auth_headers()), "/runtime/sessions"),
+            ("/messages", self.client.post("/messages", json={"content": "legacy hello"}, headers=self._auth_headers()), "/runtime/messages"),
         ]
 
         for legacy_path, response, replacement_path in response_specs:
@@ -410,23 +410,24 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(payload["error"]["details"]["session_id"], "missing-session")
 
     def test_websocket_rejects_unauthorized_connection(self):
-        with self.client.websocket_connect("/ws?session_id=web:session:1&source_id=browser-tab-a") as websocket:
-            payload = websocket.receive_json()
-            self.assertEqual(payload["kind"], "error")
-            self.assertEqual(payload["error"]["code"], "unauthorized")
-            with self.assertRaises(WebSocketDisconnect):
-                websocket.receive_json()
+        with self.assertRaises(WebSocketDisconnect) as ctx:
+            with self.client.websocket_connect("/ws?session_id=web:session:1&source_id=browser-tab-a"):
+                pass
+        self.assertEqual(ctx.exception.code, 1008)
 
-    def test_websocket_returns_legacy_path_error_for_root_ws(self):
-        with self.client.websocket_connect(
-            "/ws?session_id=web:session:1&source_id=browser-tab-a&access_token=runtime-token"
-        ) as websocket:
-            payload = websocket.receive_json()
-            self.assertEqual(payload["kind"], "error")
-            self.assertEqual(payload["error"]["code"], "legacy_websocket_path_removed")
-            self.assertEqual(payload["error"]["details"]["replacement_path"], "/endpoint/ws")
-            with self.assertRaises(WebSocketDisconnect):
-                websocket.receive_json()
+    def test_websocket_rejects_legacy_root_ws_before_handshake(self):
+        with self.assertRaises(WebSocketDisconnect) as ctx:
+            with self.client.websocket_connect(
+                "/ws?session_id=web:session:1&source_id=browser-tab-a&access_token=runtime-token"
+            ):
+                pass
+        self.assertEqual(ctx.exception.code, 1008)
+
+    def test_websocket_rejects_legacy_client_ws_before_handshake(self):
+        with self.assertRaises(WebSocketDisconnect) as ctx:
+            with self.client.websocket_connect("/client/ws?access_token=runtime-token"):
+                pass
+        self.assertEqual(ctx.exception.code, 1008)
 
 
 if __name__ == "__main__":

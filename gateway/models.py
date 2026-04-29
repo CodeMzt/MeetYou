@@ -332,7 +332,7 @@ class MemoryRecordMutationResponse(BaseModel):
     record: MemoryRecordResponse | None = None
 
 
-class ClientThreadCreateRequest(BaseModel):
+class RuntimeThreadCreateRequest(BaseModel):
     home_workspace_id: str = ""
     workspace_id: str = ""
     title: str = ""
@@ -348,7 +348,7 @@ class ClientThreadCreateRequest(BaseModel):
         return to_public_assistant_mode(value)
 
 
-class ClientThreadResponse(BaseModel):
+class RuntimeThreadResponse(BaseModel):
     thread_id: str
     home_workspace_id: str
     workspace_id: str = ""
@@ -357,12 +357,12 @@ class ClientThreadResponse(BaseModel):
     summary: str = ""
 
 
-class ClientSessionCreateRequest(BaseModel):
+class RuntimeSessionCreateRequest(BaseModel):
     thread_id: str
     active_workspace_id: str = ""
     workspace_id: str = ""
-    client_id: str
-    client_type: str = "electron"
+    endpoint_id: str
+    endpoint_type: str = "electron"
     display_name: str = ""
 
     @property
@@ -370,31 +370,31 @@ class ClientSessionCreateRequest(BaseModel):
         return str(self.active_workspace_id or self.workspace_id or "").strip()
 
 
-class ClientSessionResponse(BaseModel):
+class RuntimeSessionResponse(BaseModel):
     session_id: str
     thread_id: str
     active_workspace_id: str
     workspace_id: str = ""
-    client_id: str
+    endpoint_id: str
     status: str = "active"
 
 
-class ClientActiveWorkspacePatchRequest(BaseModel):
+class RuntimeActiveWorkspacePatchRequest(BaseModel):
     active_workspace_id: str
-    client_id: str = ""
+    endpoint_id: str = ""
 
 
-class ClientMessageCreateRequest(BaseModel):
+class RuntimeMessageCreateRequest(BaseModel):
     thread_id: str
     active_workspace_id: str | None = None
     workspace_id: str | None = None
-    client_id: str
+    endpoint_id: str
     content: str
     session_id: str | None = None
-    client_type: str = "electron"
+    endpoint_type: str = "electron"
     display_name: str = ""
     role: str = "user"
-    client_message_id: str | None = None
+    endpoint_message_id: str | None = None
     preferred_mode: str | None = None
     options: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -411,13 +411,13 @@ class ClientMessageCreateRequest(BaseModel):
         return str(self.active_workspace_id or self.workspace_id or "").strip()
 
 
-class ClientMessageResponse(BaseModel):
+class RuntimeMessageResponse(BaseModel):
     message_id: str
     thread_id: str
     session_id: str = ""
     active_workspace_id: str
     workspace_id: str = ""
-    client_id: str = ""
+    endpoint_id: str = ""
     role: str
     content: str
     status: str = "completed"
@@ -425,30 +425,14 @@ class ClientMessageResponse(BaseModel):
     created_at: str = ""
 
 
-class ClientWsCommand(BaseModel):
-    action: str
-    session_id: str | None = None
-    request_id: str | None = None
-    accepted: bool | None = None
-    answer_text: str | None = None
-    selected_option: str | None = None
-    guidance: str | None = None
-    checkpoint_id: str | None = None
-    turn_id: str | None = None
-    stream_id: str | None = None
-    client_request_id: str | None = None
-    client_id: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ClientConfirmResponseRequest(BaseModel):
+class RuntimeConfirmResponseRequest(BaseModel):
     accepted: bool
     request_id: str
     reason: str = ""
-    client_id: str = ""
+    endpoint_id: str = ""
 
 
-class ClientConfirmResponseResult(BaseModel):
+class RuntimeConfirmResponseResult(BaseModel):
     request_id: str
     session_id: str
     accepted: bool
@@ -457,21 +441,21 @@ class ClientConfirmResponseResult(BaseModel):
     operation_id: str = ""
 
 
-class ClientHumanInputResponseRequest(BaseModel):
+class RuntimeHumanInputResponseRequest(BaseModel):
     request_id: str
     answer_text: str = ""
     selected_option: str | None = None
-    client_id: str = ""
+    endpoint_id: str = ""
 
 
-class ClientHumanInputResponseResult(BaseModel):
+class RuntimeHumanInputResponseResult(BaseModel):
     request_id: str
     session_id: str
     answer_text: str = ""
     selected_option: str | None = None
 
 
-class ClientAttachmentUploadTicketRequest(BaseModel):
+class RuntimeAttachmentUploadTicketRequest(BaseModel):
     owner_type: str
     owner_id: str
     kind: str
@@ -479,10 +463,10 @@ class ClientAttachmentUploadTicketRequest(BaseModel):
     file_name: str = ""
     size_bytes: int = 0
     lifecycle_policy: str = "normal"
-    client_id: str = ""
+    endpoint_id: str = ""
 
 
-class ClientAttachmentUploadTicketResponse(BaseModel):
+class RuntimeAttachmentUploadTicketResponse(BaseModel):
     attachment_id: str
     ticket_id: str
     upload_url: str
@@ -493,7 +477,7 @@ class ClientAttachmentUploadTicketResponse(BaseModel):
     updated_at: str = ""
 
 
-class ClientAttachmentUploadResult(BaseModel):
+class RuntimeAttachmentUploadResult(BaseModel):
     attachment_id: str
     ticket_id: str
     status: str
@@ -504,13 +488,13 @@ class ClientAttachmentUploadResult(BaseModel):
     uploaded_at: str = ""
 
 
-class ClientAttachmentCompleteRequest(BaseModel):
+class RuntimeAttachmentCompleteRequest(BaseModel):
     ticket_id: str = ""
     sha256: str = ""
     size_bytes: int | None = None
 
 
-class ClientAttachmentResponse(BaseModel):
+class RuntimeAttachmentResponse(BaseModel):
     attachment_id: str
     owner_type: str
     owner_id: str
@@ -532,7 +516,7 @@ class ClientAttachmentResponse(BaseModel):
     updated_at: str = ""
 
 
-class ClientAttachmentDownloadTicketResponse(BaseModel):
+class RuntimeAttachmentDownloadTicketResponse(BaseModel):
     attachment_id: str
     ticket_id: str
     download_url: str
@@ -544,10 +528,10 @@ class ClientAttachmentDownloadTicketResponse(BaseModel):
     size_bytes: int
 
 
-class ClientOperationCreateRequest(BaseModel):
+class RuntimeOperationCreateRequest(BaseModel):
     thread_id: str
     workspace_id: str
-    client_id: str = ""
+    endpoint_id: str = ""
     session_id: str | None = None
     title: str = ""
     operation_type: str
@@ -566,7 +550,7 @@ class ClientOperationCreateRequest(BaseModel):
         return normalize_execution_target(value)
 
 
-class ClientOperationResponse(BaseModel):
+class RuntimeOperationResponse(BaseModel):
     operation_id: str
     thread_id: str
     workspace_id: str
@@ -589,13 +573,13 @@ class ClientOperationResponse(BaseModel):
         return normalize_execution_target(value)
 
 
-class ClientApprovalDecisionRequest(BaseModel):
+class RuntimeApprovalDecisionRequest(BaseModel):
     decision: str
     reason: str = ""
-    client_id: str = ""
+    endpoint_id: str = ""
 
 
-class ClientApprovalResponse(BaseModel):
+class RuntimeApprovalResponse(BaseModel):
     approval_id: str
     operation_id: str
     approval_type: str
@@ -606,14 +590,14 @@ class ClientApprovalResponse(BaseModel):
     operation_status: str = ""
 
 
-class ClientWorkspaceResponse(BaseModel):
+class RuntimeWorkspaceResponse(BaseModel):
     workspace_id: str
     title: str
     status: str
     base_mode: str
     description: str = ""
     prompt_overlay: str = ""
-    default_execution_target: str = "core_only"
+    default_execution_target: str = "core.local"
     tool_policy: str = "allow_all"
     allowed_tool_ids: list[str] = Field(default_factory=list)
     preferred_target_endpoint_ids: list[str] = Field(default_factory=list)
@@ -634,7 +618,7 @@ class ClientWorkspaceResponse(BaseModel):
         return normalize_execution_target(value)
 
 
-class ClientDanxiSessionLoginRequest(BaseModel):
+class RuntimeDanxiSessionLoginRequest(BaseModel):
     session_key: str = "default"
     encrypted_credentials: dict[str, Any] | None = None
     use_webvpn: bool | None = None
@@ -643,14 +627,14 @@ class ClientDanxiSessionLoginRequest(BaseModel):
     webvpn_cookie: str = ""
 
 
-class ClientDanxiWebvpnCookiePatchRequest(BaseModel):
+class RuntimeDanxiWebvpnCookiePatchRequest(BaseModel):
     session_key: str = "default"
     encrypted_credentials: dict[str, Any] | None = None
     cookie_header: str = ""
     enable_webvpn: bool = True
 
 
-class ClientDanxiSessionResponse(BaseModel):
+class RuntimeDanxiSessionResponse(BaseModel):
     session_key: str
     email: str = ""
     transport: str = ""
@@ -662,17 +646,17 @@ class ClientDanxiSessionResponse(BaseModel):
     user_profile: dict[str, Any] | None = None
 
 
-class ClientDanxiListResponse(BaseModel):
+class RuntimeDanxiListResponse(BaseModel):
     count: int = 0
     items: list[Any] = Field(default_factory=list)
     scope: str = ""
 
 
-class ClientDanxiPostResponse(BaseModel):
+class RuntimeDanxiPostResponse(BaseModel):
     hole: dict[str, Any] = Field(default_factory=dict)
 
 
-class ClientDanxiSearchResponse(BaseModel):
+class RuntimeDanxiSearchResponse(BaseModel):
     query: str = ""
     floor_hits: int = 0
     hole_ids: list[int] = Field(default_factory=list)
@@ -680,7 +664,7 @@ class ClientDanxiSearchResponse(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ClientDanxiProfileResponse(BaseModel):
+class RuntimeDanxiProfileResponse(BaseModel):
     session_key: str = ""
     logged_in: bool = False
     transport: str = ""
@@ -691,22 +675,22 @@ class ClientDanxiProfileResponse(BaseModel):
     profile: dict[str, Any] | None = None
 
 
-class ClientDanxiMessageTargetResponse(BaseModel):
+class RuntimeDanxiMessageTargetResponse(BaseModel):
     floor_id: int
     hole_id: int
 
 
-class ClientDanxiReplyCreateRequest(BaseModel):
+class RuntimeDanxiReplyCreateRequest(BaseModel):
     session_key: str = "default"
     content: str = ""
 
 
-class ClientDanxiReplyUpdateRequest(BaseModel):
+class RuntimeDanxiReplyUpdateRequest(BaseModel):
     session_key: str = "default"
     content: str = ""
 
 
-class ClientDanxiActionResponse(BaseModel):
+class RuntimeDanxiActionResponse(BaseModel):
     ok: bool = False
     status_code: int = 200
     message: str = ""
@@ -714,7 +698,7 @@ class ClientDanxiActionResponse(BaseModel):
     floor_id: int | None = None
 
 
-class ClientDanxiSummaryResponse(BaseModel):
+class RuntimeDanxiSummaryResponse(BaseModel):
     hole_id: int
     title: str = ""
     summary: str = ""
@@ -765,7 +749,7 @@ class OperatorWorkspaceCreateRequest(BaseModel):
     description: str = ""
     base_mode: str = "general"
     prompt_overlay: str = ""
-    default_execution_target: str = "core_only"
+    default_execution_target: str = "core.local"
     tool_policy: str = ""
     allowed_tool_ids: list[str] = Field(default_factory=list)
     preferred_target_endpoint_ids: list[str] = Field(default_factory=list)
@@ -814,7 +798,7 @@ class OperatorWorkspaceResponse(BaseModel):
     base_mode: str
     description: str = ""
     prompt_overlay: str = ""
-    default_execution_target: str = "core_only"
+    default_execution_target: str = "core.local"
     tool_policy: str = "allow_all"
     allowed_tool_ids: list[str] = Field(default_factory=list)
     preferred_target_endpoint_ids: list[str] = Field(default_factory=list)

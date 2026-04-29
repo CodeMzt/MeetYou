@@ -229,9 +229,9 @@ endpoint_protocol_sdk
 
 ## 验收
 
-- [ ] `/endpoint/ws` 可用。
-- [ ] `/client/ws` 不可作为 V4 入口使用。
-- [ ] Desktop / Edge 使用 endpoint frames。
-- [ ] endpoint.heartbeat 只做 keepalive。
-- [ ] EndpointCapabilities 写入 DB。
-- [ ] Subscription 能接收 run/message events。
+- [x] `/endpoint/ws` 可用。
+- [x] `/client/ws` 不可作为 V4 入口使用。
+- [x] Desktop / Edge 使用 endpoint frames。
+- [x] endpoint.heartbeat 只做 keepalive。
+- [x] EndpointCapabilities 写入 DB。
+- [x] Subscription 能接收 run/message events。

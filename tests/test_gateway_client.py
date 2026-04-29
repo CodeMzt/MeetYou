@@ -12,8 +12,8 @@ class GatewayConversationClientTests(unittest.TestCase):
     def test_endpoint_ws_url_includes_stable_endpoint_identity(self):
         client = GatewayConversationClient(
             base_url="http://127.0.0.1:8000",
-            client_id="feishu-oc-test",
-            client_type="feishu",
+            provider_id="feishu-oc-test",
+            provider_type="feishu",
             display_name="Feishu OC Test",
             workspace_id="personal",
             thread_id="thr-1",
@@ -79,8 +79,8 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_endpoint_subscription_disables_replay_for_external_side_effect_clients(self):
         client = GatewayConversationClient(
             base_url="http://127.0.0.1:8000",
-            client_id="feishu-oc-test",
-            client_type="feishu",
+            provider_id="feishu-oc-test",
+            provider_type="feishu",
             display_name="Feishu OC Test",
             workspace_id="personal",
             thread_id="thr-1",
@@ -104,8 +104,8 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
         observed = []
         client = GatewayConversationClient(
             base_url="http://127.0.0.1:8000",
-            client_id="feishu-oc-test",
-            client_type="feishu",
+            provider_id="feishu-oc-test",
+            provider_type="feishu",
             display_name="Feishu OC Test",
             workspace_id="personal",
             thread_id="thr-1",

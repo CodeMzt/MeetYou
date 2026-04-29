@@ -154,9 +154,8 @@ class ServiceRuntime:
         try:
             await asyncio.gather(
                 self._app.brain_processor(),
-                self._app.heart.scheduler_processor(),
+                self._app.scheduler_processor(),
                 self._app.heart.housekeeping_processor(),
-                self._app.heart.heartbeat_processor(),
                 self._app.proprioceptor.run(),
             )
         finally:

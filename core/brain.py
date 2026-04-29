@@ -2092,9 +2092,9 @@ class Brain:
             ],
         )
         resolved_route_context.setdefault("mcp_servers", [])
-        resolved_route_context.setdefault("current_mode", "scheduled_task")
-        resolved_route_context.setdefault("route_reason", "Running a scheduled background task.")
-        resolved_route_context.setdefault("source_profile", "scheduled_tasks")
+        resolved_route_context.setdefault("current_mode", "automation")
+        resolved_route_context.setdefault("route_reason", "Running a Scheduler-owned background job.")
+        resolved_route_context.setdefault("source_profile", "scheduler_jobs")
         self._store_route_context(session, resolved_route_context)
         self._sync_runtime_route_state(normalized_session_id, session, resolved_route_context)
 

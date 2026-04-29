@@ -15,7 +15,7 @@ class DesktopClientBackend:
         self._runtime_task: asyncio.Task | None = None
         self._runtime_start_lock = asyncio.Lock()
         self.api_server = (
-            DesktopApiServer(config, on_client_session_created=self.ensure_runtime_started)
+            DesktopApiServer(config, on_endpoint_session_created=self.ensure_runtime_started)
             if config.local_bridge_enabled
             else None
         )

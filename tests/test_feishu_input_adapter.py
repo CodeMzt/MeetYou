@@ -1,4 +1,4 @@
-﻿import json
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -138,7 +138,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             def resolve_human_input(self, chat_id: str, raw_text: str):
                 return None
 
-            async def send_client_event(self, chat_id: str, payload: dict):
+            async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
         class _FakeGatewayClient:
@@ -213,7 +213,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             def resolve_human_input(self, chat_id: str, raw_text: str):
                 return None
 
-            async def send_client_event(self, chat_id: str, payload: dict):
+            async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
         class _FakeGatewayClient:
@@ -273,7 +273,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             def resolve_human_input(self, chat_id: str, raw_text: str):
                 return None
 
-            async def send_client_event(self, chat_id: str, payload: dict):
+            async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
         class _FakeGatewayClient:
@@ -346,7 +346,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
                     "selected_option": "B",
                 }
 
-            async def send_client_event(self, chat_id: str, payload: dict):
+            async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
         class _FakeGatewayClient:
@@ -421,7 +421,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             def resolve_human_input(self, chat_id: str, raw_text: str):
                 return None
 
-            async def send_client_event(self, chat_id: str, payload: dict):
+            async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
         class _FakeGatewayClient:

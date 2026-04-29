@@ -28,7 +28,7 @@ Initialization helpers:
 - `core_base_url`: Core Service base URL. Runtime connects to `GET /endpoint/ws`.
 - `core_access_token`: access token used by the Desktop Endpoint Provider to access Core. It may also come from `MEETYOU_CLIENT_ACCESS_TOKEN` or `MEETYOU_GATEWAY_ACCESS_TOKEN`.
 - `gateway_access_token`: token used by the desktop backend when proxying Core HTTP surfaces.
-- `client_id`: stable provider id for the Desktop Endpoint Provider.
+- `provider_id`: stable provider id for the Desktop Endpoint Provider.
 - `display_name`: display name.
 - `workspace_ids`: workspaces the provider declares membership in.
 - `enabled_endpoint_tools`: executable EndpointCapability tool keys declared to Core.
@@ -46,8 +46,8 @@ Local acceptance can temporarily set `MEETYOU_FEISHU_ENABLE=false` and `MEETYOU_
 
 - `core_base_url`: Core Service base URL. Runtime connects to `GET /endpoint/ws`.
 - `core_access_token`: access token used by the Edge Endpoint Provider to access Core.
-- `client_id`: stable provider id for the Edge Endpoint Provider.
-- `client_type`: edge executor provider type, default `edge`.
+- `provider_id`: stable provider id for the Edge Endpoint Provider.
+- `provider_type`: edge executor provider type, default `edge`.
 - `workspace_ids`: allowed workspace memberships.
 - `enabled_endpoint_tools`: executable EndpointCapability tool keys declared to Core.
 - `heartbeat_interval_seconds`: connection keepalive interval.

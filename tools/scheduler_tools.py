@@ -172,7 +172,7 @@ class SchedulerTools:
         trigger_type: str = "interval",
         trigger_config: dict[str, Any] | None = None,
         interval_seconds: int | None = None,
-        timezone: str = "UTC",
+        timezone: str | None = None,
         action_ref: str = "",
         run_template: dict[str, Any] | None = None,
         execution_policy: dict[str, Any] | None = None,
@@ -228,7 +228,7 @@ class SchedulerTools:
                 updates["enabled"] = bool(enabled)
             if trigger_config is not None or interval_seconds is not None:
                 updates["trigger_config"] = self._trigger_config(trigger_config, interval_seconds)
-            if timezone:
+            if timezone not in (None, ""):
                 updates["timezone"] = str(timezone or "").strip()
             if action_ref != "":
                 updates["action_ref"] = str(action_ref or "").strip()

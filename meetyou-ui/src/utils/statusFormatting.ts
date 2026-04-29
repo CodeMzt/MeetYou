@@ -106,8 +106,8 @@ export function formatAssistantModeLabel(mode: string): string {
 
 export function formatExecutionTargetLabel(target: string): string {
   const normalized = String(target || '').trim().toLowerCase()
-  if (normalized === 'core_only') return '仅核心服务'
-  if (normalized === 'specific_endpoint') return '指定端点'
+  if (normalized === 'core.local') return '核心本地'
+  if (normalized === 'endpoint') return '指定端点'
   if (normalized === 'workspace_any_endpoint') return '工作区任意端点'
   if (normalized === 'prefer_endpoint_fallback_core') return '优先端点，失败回落核心服务'
   return target || '未设置'

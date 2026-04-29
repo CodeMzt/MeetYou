@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 
 from core.app import App, _initial_progress_notice_content
-from core.client_thread_bridge import ClientThreadBridge
+from core.thread_delivery_bridge import ThreadDeliveryBridge
 from core.io_protocol import EventTarget, TargetKind
 from core.session_manager import SessionManager
 from core.status import RuntimeStatus
@@ -37,7 +37,7 @@ class _GatewayStub:
         self._session_manager = session_manager
         self.thread_events: list[dict] = []
 
-    async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict) -> None:
+    async def publish_thread_delivery_event(self, thread_id: str, *, event_type: str, payload: dict) -> None:
         self.thread_events.append({"thread_id": thread_id, "event_type": event_type, "payload": dict(payload)})
 
 
@@ -187,7 +187,7 @@ class _ShortReplyBridgeStub:
         return {"delivered": True, "session_id": session_id, **dict(kwargs)}
 
 
-class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
+class ThreadDeliveryBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def test_bridged_runtime_session_creates_persistent_session_for_final_reply(self):
         session_manager = SessionManager()
         session_manager.bind_runtime_session(
@@ -210,7 +210,7 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
             workspace=_WorkspaceServiceStub(),
             message=message_service,
         )
-        bridge = ClientThreadBridge(
+        bridge = ThreadDeliveryBridge(
             gateway_getter=lambda: gateway,
             core_services_getter=lambda: core_services,
         )
@@ -268,7 +268,7 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
             workspace=_WorkspaceServiceStub(),
             message=message_service,
         )
-        bridge = ClientThreadBridge(
+        bridge = ThreadDeliveryBridge(
             gateway_getter=lambda: gateway,
             core_services_getter=lambda: core_services,
         )
@@ -316,7 +316,7 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
             run_event=run_event_service,
             message=message_service,
         )
-        bridge = ClientThreadBridge(
+        bridge = ThreadDeliveryBridge(
             gateway_getter=lambda: gateway,
             core_services_getter=lambda: core_services,
         )
@@ -373,7 +373,7 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
             workspace=_WorkspaceServiceStub(),
             message=message_service,
         )
-        bridge = ClientThreadBridge(
+        bridge = ThreadDeliveryBridge(
             gateway_getter=lambda: gateway,
             core_services_getter=lambda: core_services,
         )
@@ -396,7 +396,7 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def test_app_progress_notice_only_allowed_during_active_turn(self):
         app = App.__new__(App)
         bridge = _ShortReplyBridgeStub()
-        app._get_client_thread_bridge = lambda: bridge
+        app._get_thread_delivery_bridge = lambda: bridge
         app.brain = _BrainStub({"status": RuntimeStatus.IDLE.value, "turn_id": "turn-1", "stream_id": "stream-1"})
 
         rejected = await App.emit_progress_notice(app, "not now", session_id="sess-1", turn_id="turn-1")
@@ -448,4 +448,5 @@ class ClientThreadBridgeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

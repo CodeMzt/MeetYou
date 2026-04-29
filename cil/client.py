@@ -52,13 +52,13 @@ class CILClient:
         self._connection_logged = False
         self._conversation = GatewayConversationClient(
             base_url=self.base_url,
-            client_id=self.source_id,
-            client_type="cil",
+            provider_id=self.source_id,
+            provider_type="cil",
             display_name="CIL",
             workspace_id="personal",
             access_token=os.environ.get("MEETYOU_GATEWAY_ACCESS_TOKEN", ""),
             thread_title="CIL Chat",
-            event_handler=self._handle_client_ws_payload,
+            event_handler=self._handle_endpoint_ws_payload,
         )
 
         self.output_field = TextArea(text="", read_only=True, scrollbar=True)
@@ -125,7 +125,7 @@ class CILClient:
             f"目标 gateway: {self.base_url}\n\n"
         )
 
-    async def _handle_client_ws_payload(self, data: dict):
+    async def _handle_endpoint_ws_payload(self, data: dict):
         if data.get("schema") != "meetyou.endpoint.ws.v4":
             return
 

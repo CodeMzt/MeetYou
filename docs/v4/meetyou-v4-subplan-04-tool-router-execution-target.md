@@ -253,10 +253,10 @@ grep -R "ClientToolDispatchService\|source_client_id\|target_client_id" core gat
 
 ## 验收
 
-- [ ] ClientToolDispatchService 不再是主链。
-- [ ] ToolRouterService 完成。
-- [ ] ExecutionTargetResolver 完成。
-- [ ] core.local 可执行 core tool。
-- [ ] endpoint executor 可执行 desktop / edge tool。
-- [ ] Operation/OperationCall 记录 endpoint / execution target。
-- [ ] source_client_id / target_client_id 不出现在新运行时接口。
+- [x] ClientToolDispatchService 不再是主链。
+- [x] ToolRouterService 完成。
+- [x] ExecutionTargetResolver 完成。
+- [x] core.local 可执行 core tool。
+- [x] endpoint executor 可执行 desktop / edge tool。
+- [x] Operation/OperationCall 记录 endpoint / execution target。
+- [x] source_client_id / target_client_id 不出现在新运行时接口。

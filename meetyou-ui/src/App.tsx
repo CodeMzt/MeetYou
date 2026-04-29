@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getDanxiSessionStatus } from './clientApi'
+import { getDanxiSessionStatus } from './runtimeApi'
 import { useMeetYou } from './hooks/useMeetYou'
 import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'

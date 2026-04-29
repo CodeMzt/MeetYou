@@ -59,13 +59,13 @@ _ORDER_REQUIRED_TOOLS = {
     "danxi_mark_message_read",
 }
 
-_CLIENT_LOCAL_FILE_TOOLS = {
+_ENDPOINT_LOCAL_FILE_TOOLS = {
     "analyze_workspace",
     "read_local_documents",
     "write_local_document",
     "rewrite_local_document",
 }
-_CLIENT_DIRECTED_LOCAL_TOOLS = {"exec_sys_cmd", *_CLIENT_LOCAL_FILE_TOOLS}
+_ENDPOINT_REQUIRED_LOCAL_TOOLS = {"exec_sys_cmd", *_ENDPOINT_LOCAL_FILE_TOOLS}
 
 _WEB_READ_TOOLS = {"search_web", "read_web_page"}
 _WEB_MCP_READ_PREFIXES = ("tavily",)
@@ -395,7 +395,7 @@ class ToolsManager:
         if not resource_key and normalized_tool_name.startswith(_WEB_MCP_READ_PREFIXES):
             serialized = repr(sorted(normalized_tool_args.items()))
             resource_key = f"mcp-web:{normalized_tool_name}:{_stable_short_hash(serialized)}"
-        if not resource_key and normalized_tool_name in _CLIENT_LOCAL_FILE_TOOLS:
+        if not resource_key and normalized_tool_name in _ENDPOINT_LOCAL_FILE_TOOLS:
             path_candidate = normalized_tool_args.get("path") or normalized_tool_args.get("workspace_path")
             normalized_path = self._normalize_path(str(path_candidate or ""))
             if normalized_path:
@@ -449,7 +449,7 @@ class ToolsManager:
             is_builtin = self._registry.has_builtin(normalized)
             if is_builtin:
                 source_type = "builtin"
-                if normalized in _CLIENT_DIRECTED_LOCAL_TOOLS:
+                if normalized in _ENDPOINT_REQUIRED_LOCAL_TOOLS:
                     executor_owner = "tool_router" if self._tool_router_available else "endpoint_required"
                 else:
                     executor_owner = "core"

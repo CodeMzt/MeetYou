@@ -1,7 +1,7 @@
 import { Activity, Bot, LayoutTemplate, ShieldCheck, Sparkles, Wrench } from 'lucide-react'
 import type {
   ApprovalDisplayModel,
-  ClientWorkspace,
+  RuntimeWorkspace,
   ConnectionState,
   HumanInputRequestPayload,
   OperationView,
@@ -19,7 +19,7 @@ import {
 import styles from './WorkspacePanel.module.css'
 
 interface WorkspacePanelProps {
-  workspace: ClientWorkspace | null
+  workspace: RuntimeWorkspace | null
   connectionState: ConnectionState
   desktopToolsAvailable: boolean
   operations: OperationView[]

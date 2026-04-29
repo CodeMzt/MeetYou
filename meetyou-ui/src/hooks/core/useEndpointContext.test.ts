@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AvailableEndpoint } from '../../types'
 import {
   chooseDesktopToolEndpoint,
-  DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS,
+  DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
   resolveDesktopToolEndpointId,
-} from './useClientContext'
+} from './useEndpointContext'
 
-describe('useClientContext helpers', () => {
+describe('useEndpointContext helpers', () => {
   it('picks the online desktop tool endpoint for the current workspace', () => {
     const availableEndpoints: AvailableEndpoint[] = [
       {
@@ -38,7 +38,7 @@ describe('useClientContext helpers', () => {
     ]
 
     expect(chooseDesktopToolEndpoint(availableEndpoints, 'desktop-main', 'desktop-app')).toBe('desktop-main-endpoint')
-    expect(DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS).toBe(10000)
+    expect(DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS).toBe(10000)
   })
 
   it('reloads available endpoints and returns the newly available desktop tool endpoint', async () => {

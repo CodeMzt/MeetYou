@@ -151,7 +151,7 @@ class AppRuntimeUsageTests(unittest.IsolatedAsyncioTestCase):
                 "execution": {"awaiting_completion_count": 0},
                 "delivery": {"pending_redelivery_count": 0},
                 "system": {},
-                "background_status_sources": ["task_manager.schedule"],
+                "background_status_sources": ["scheduler.jobs"],
             }
         app.heart = SimpleNamespace(get_background_status=_get_background_status)
         app.config = _FakeConfig(

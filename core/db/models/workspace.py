@@ -20,5 +20,5 @@ class Workspace(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     base_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="general")
     prompt_overlay: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    default_execution_target: Mapped[str] = mapped_column(String(64), nullable=False, default="core_only")
+    default_execution_target: Mapped[str] = mapped_column(String(64), nullable=False, default="core.local")
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)

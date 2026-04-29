@@ -1,8 +1,8 @@
 import type {
   AckPayload,
-  ClientMessage,
-  ClientWsEvent,
+  RuntimeMessage,
   ConfirmRequestPayload,
+  EndpointWsEvent,
   HumanInputRequestPayload,
   RuntimeCompressionSnapshot,
   RuntimeDebugSnapshot,
@@ -53,7 +53,7 @@ function normalizeContent(value: unknown): string {
   }
 }
 
-function toClientMessage(value: unknown): ClientMessage | null {
+function toRuntimeMessage(value: unknown): RuntimeMessage | null {
   const record = toRecord(value)
   if (!record.message_id || !record.thread_id || !record.role) {
     return null
@@ -64,8 +64,8 @@ function toClientMessage(value: unknown): ClientMessage | null {
       session_id: toString(record.session_id),
       active_workspace_id: toString(record.active_workspace_id || record.workspace_id),
       workspace_id: toString(record.workspace_id || record.active_workspace_id),
-    client_id: toString(record.client_id),
-    role: (toString(record.role) || 'assistant') as ClientMessage['role'],
+    endpoint_id: toString(record.endpoint_id),
+    role: (toString(record.role) || 'assistant') as RuntimeMessage['role'],
     content: normalizeContent(record.content),
     status: toString(record.status) || 'completed',
     channel: toString(record.channel) || 'message',
@@ -82,7 +82,7 @@ function resolveEventSessionId(event: Record<string, unknown>): string {
   return toString(event.session_id) || toString(toRecord(event.message).session_id)
 }
 
-function toOperationUpdatedEvent(event: Record<string, unknown>): ClientWsEvent {
+function toOperationUpdatedEvent(event: Record<string, unknown>): EndpointWsEvent {
   return {
     kind: 'operation_updated',
     threadId: resolveEventThreadId(event),
@@ -648,7 +648,7 @@ export function parseWsPayload(payload: unknown, now: number = Date.now()): Prot
   return { kind: 'ignore' }
 }
 
-export function parseClientWsPayload(payload: unknown): ClientWsEvent {
+export function parseEndpointWsPayload(payload: unknown): EndpointWsEvent {
   const record = toRecord(payload)
   if (toString(record.schema) === 'meetyou.endpoint.ws.v4') {
     const frameType = toString(record.type)
@@ -672,7 +672,7 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
     }
     const outer = toRecord(record.payload)
     const body = toRecord(outer.payload)
-    return parseClientWsPayload({
+    return parseEndpointWsPayload({
       kind: 'event',
       event: {
         ...body,
@@ -720,7 +720,7 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
   const sessionId = resolveEventSessionId(event)
 
   if (eventType === 'message.created') {
-    const message = toClientMessage(event.message)
+    const message = toRuntimeMessage(event.message)
     return message ? { kind: 'message_created', threadId, sessionId, message } : { kind: 'ignore' }
   }
 
@@ -844,7 +844,7 @@ export function parseClientWsPayload(payload: unknown): ClientWsEvent {
   }
 
   if (eventType === 'message.completed') {
-    const message = toClientMessage(event.message)
+    const message = toRuntimeMessage(event.message)
     if (!message) {
       return { kind: 'ignore' }
     }

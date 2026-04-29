@@ -14,9 +14,9 @@ DEFAULT_ENV_PATH = Path(".env")
 class EdgeClientConfig:
     core_base_url: str = "http://127.0.0.1:8000"
     core_access_token: str = ""
-    client_id: str = "edge-client"
+    provider_id: str = "edge-client"
     display_name: str = "Edge Endpoint Provider"
-    client_type: str = "edge"
+    provider_type: str = "edge"
     workspace_ids: list[str] = field(default_factory=lambda: ["home-lab"])
     enabled_endpoint_tools: list[str] = field(default_factory=list)
     heartbeat_interval_seconds: int = 20
@@ -73,9 +73,9 @@ def load_edge_client_config(config_file_path: str | None = None) -> EdgeClientCo
             or "http://127.0.0.1:8000"
         ).strip(),
         core_access_token=_resolve_core_access_token(payload),
-        client_id=str(os.environ.get("MEETYOU_EDGE_CLIENT_ID") or payload.get("client_id") or "edge-client").strip(),
-        display_name=str(os.environ.get("MEETYOU_EDGE_DISPLAY_NAME") or payload.get("display_name") or "Edge Endpoint Provider").strip(),
-        client_type=str(os.environ.get("MEETYOU_EDGE_CLIENT_TYPE") or payload.get("client_type") or "edge").strip(),
+        provider_id=str(os.environ.get("MEETYOU_EDGE_PROVIDER_ID") or payload.get("provider_id") or "edge-client").strip(),
+        display_name=str(os.environ.get("MEETYOU_EDGE_PROVIDER_DISPLAY_NAME") or payload.get("display_name") or "Edge Endpoint Provider").strip(),
+        provider_type=str(os.environ.get("MEETYOU_EDGE_PROVIDER_TYPE") or payload.get("provider_type") or "edge").strip(),
         workspace_ids=[str(item).strip() for item in (payload.get("workspace_ids") if isinstance(payload.get("workspace_ids"), list) else ["home-lab"]) if str(item).strip()],
         enabled_endpoint_tools=_string_list(payload, "enabled_endpoint_tools", []),
         heartbeat_interval_seconds=max(int(os.environ.get("MEETYOU_EDGE_HEARTBEAT_SECONDS") or payload.get("heartbeat_interval_seconds") or 20), 1),
@@ -83,7 +83,7 @@ def load_edge_client_config(config_file_path: str | None = None) -> EdgeClientCo
         max_parallel_calls=max(
             1,
             min(
-                int(os.environ.get("MEETYOU_EDGE_MAX_PARALLEL_CALLS") or os.environ.get("MEETYOU_CLIENT_MAX_PARALLEL_CALLS") or payload.get("max_parallel_calls") or 2),
+                int(os.environ.get("MEETYOU_EDGE_MAX_PARALLEL_CALLS") or os.environ.get("MEETYOU_ENDPOINT_MAX_PARALLEL_CALLS") or payload.get("max_parallel_calls") or 2),
                 4,
             ),
         ),

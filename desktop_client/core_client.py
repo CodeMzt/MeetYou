@@ -64,13 +64,13 @@ def rewrite_url_to_local_desktop(url: str, config: DesktopClientConfig) -> str:
     if not value:
         return ""
     parsed = urlsplit(value)
-    if parsed.path.startswith("/client/attachments/content/"):
+    if parsed.path.startswith("/runtime/attachments/content/"):
         local = urlsplit(config.local_bridge_base_url)
-        local_path = parsed.path.replace("/client/attachments/content/", "/desktop/attachments/content/", 1)
+        local_path = parsed.path.replace("/runtime/attachments/content/", "/desktop/attachments/content/", 1)
         return urlunsplit((local.scheme, local.netloc, local_path, parsed.query, parsed.fragment))
-    if value.startswith("/client/attachments/content/"):
+    if value.startswith("/runtime/attachments/content/"):
         local = urlsplit(config.local_bridge_base_url)
-        local_path = value.replace("/client/attachments/content/", "/desktop/attachments/content/", 1)
+        local_path = value.replace("/runtime/attachments/content/", "/desktop/attachments/content/", 1)
         return urlunsplit((local.scheme, local.netloc, local_path, "", ""))
     return value
 
@@ -180,7 +180,7 @@ class DesktopCoreClient:
         finally:
             response.release()
 
-    async def connect_client_ws(self, request, *, local_access_token: str) -> aiohttp.ClientWebSocketResponse:
+    async def connect_endpoint_ws(self, request, *, local_access_token: str) -> aiohttp.ClientWebSocketResponse:
         if self._session is None:
             raise RuntimeError("desktop_backend_unavailable")
         return await self._session.ws_connect(

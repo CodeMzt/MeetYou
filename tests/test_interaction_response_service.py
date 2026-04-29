@@ -21,7 +21,7 @@ class InteractionResponseServiceTests(unittest.IsolatedAsyncioTestCase):
                 True,
                 request_id=request_id,
                 session_id="sess-1",
-                client_id="test-client",
+                endpoint_id="test-client",
             )
         )
         self.assertTrue(await wait_task)

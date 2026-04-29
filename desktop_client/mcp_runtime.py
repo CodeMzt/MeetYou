@@ -81,7 +81,7 @@ class DesktopClientMCPRuntime:
                     continue
                 risk_level = self._risk_classifier.get_tool_action_risk(tool_name)
                 tool_key = f"mcp.{slug_tool_segment(server_name)}.{slug_tool_segment(tool_name)}"
-                executor_endpoint_id = f"desktop.{self._config.client_id}.executor"
+                executor_endpoint_id = f"desktop.{self._config.provider_id}.executor"
                 tool_id = build_endpoint_mcp_tool_id(executor_endpoint_id, server_name, tool_name)
                 mapping[tool_key] = {
                     "tool_id": tool_id,

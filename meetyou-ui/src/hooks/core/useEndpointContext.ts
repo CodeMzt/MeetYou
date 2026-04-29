@@ -1,30 +1,30 @@
 import { useCallback, useRef, useState, useReducer } from 'react'
 import {
-  createClientSession,
-  createClientThread,
+  createRuntimeSession,
+  createRuntimeThread,
   listAvailableEndpoints,
-  listClientWorkspaces,
-} from '../../clientApi'
+  listRuntimeWorkspaces,
+} from '../../runtimeApi'
 import { createInitialTransportState, reduceTransportState } from '../../transportState'
 import { createSystemTurn } from '../../chatState'
-import type { AvailableEndpoint, ClientSession, ClientWorkspace, RuntimeErrorPayload } from '../../types'
+import type { AvailableEndpoint, RuntimeSession, RuntimeWorkspace, RuntimeErrorPayload } from '../../types'
 
-export const DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS = 10000
+export const DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS = 10000
 
-export interface ClientContext {
-  workspace: ClientWorkspace
+export interface EndpointContext {
+  workspace: RuntimeWorkspace
   threadId: string
-  session: ClientSession
-  clientId: string
+  session: RuntimeSession
+  endpointId: string
 }
 
-export function chooseDesktopToolEndpoint(endpoints: AvailableEndpoint[], workspaceId: string, clientId: string): string {
+export function chooseDesktopToolEndpoint(endpoints: AvailableEndpoint[], workspaceId: string, endpointId: string): string {
   const matched = endpoints.find(
     (endpoint) =>
       endpoint.provider_type === 'desktop' &&
       endpoint.status === 'online' &&
       endpoint.workspace_ids.includes(workspaceId) &&
-      (endpoint.endpoint_id === clientId || endpoint.executable_tools.includes('file.read') || endpoint.executable_tools.includes('shell.exec')),
+      (endpoint.endpoint_id === endpointId || endpoint.executable_tools.includes('file.read') || endpoint.executable_tools.includes('shell.exec')),
   )
   return matched?.endpoint_id || ''
 }
@@ -33,13 +33,13 @@ export async function resolveDesktopToolEndpointId(
   loadAvailableEndpoints: (baseUrl: string, workspaceId: string) => Promise<AvailableEndpoint[]>,
   baseUrl: string,
   workspaceId: string,
-  clientId: string,
+  endpointId: string,
 ): Promise<string> {
   const availableEndpoints = await loadAvailableEndpoints(baseUrl, workspaceId)
-  return chooseDesktopToolEndpoint(availableEndpoints, workspaceId, clientId)
+  return chooseDesktopToolEndpoint(availableEndpoints, workspaceId, endpointId)
 }
 
-function chooseWorkspace(workspaces: ClientWorkspace[]): ClientWorkspace | null {
+function chooseWorkspace(workspaces: RuntimeWorkspace[]): RuntimeWorkspace | null {
   return workspaces.find((item) => item.workspace_id === 'personal') ?? workspaces[0] ?? null
 }
 
@@ -54,7 +54,7 @@ function buildTransportError(error: Error): RuntimeErrorPayload {
   }
 }
 
-export function useClientContext(baseUrl: string, onInitSuccess: (threadId: string) => void, onError: (turn: any) => void) {
+export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: string) => void, onError: (turn: any) => void) {
   const initialSessionIdRef = useRef(`desktop-${Math.random().toString(36).substring(2, 9)}`)
   const sourceIdRef = useRef('desktop-app')
   
@@ -64,15 +64,15 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
     () => createInitialTransportState(initialSessionIdRef.current, sourceIdRef.current),
   )
   
-  const [clientContext, setClientContext] = useState<ClientContext | null>(null)
+  const [endpointContext, setEndpointContext] = useState<EndpointContext | null>(null)
   const [desktopToolEndpointId, setDesktopToolEndpointId] = useState('')
-  const clientInitPromiseRef = useRef<Promise<ClientContext> | null>(null)
+  const endpointInitPromiseRef = useRef<Promise<EndpointContext> | null>(null)
 
-  const sessionId = clientContext?.session.session_id || transportState.sessionId
-  const clientId = clientContext?.clientId || sourceIdRef.current
+  const sessionId = endpointContext?.session.session_id || transportState.sessionId
+  const endpointId = endpointContext?.endpointId || sourceIdRef.current
 
-  const refreshDesktopToolClient = useCallback(async (contextOverride?: ClientContext | null) => {
-    const activeContext = contextOverride ?? clientContext
+  const refreshDesktopToolEndpoint = useCallback(async (contextOverride?: EndpointContext | null) => {
+    const activeContext = contextOverride ?? endpointContext
     if (!activeContext) {
       return ''
     }
@@ -81,7 +81,7 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
         listAvailableEndpoints,
         baseUrl,
         activeContext.workspace.workspace_id,
-        activeContext.clientId,
+        activeContext.endpointId,
       )
       setDesktopToolEndpointId((current) => (current === nextEndpointId ? current : nextEndpointId))
       return nextEndpointId
@@ -89,21 +89,21 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
       console.warn('加载可用端点工具目标失败:', error)
       return ''
     }
-  }, [baseUrl, clientContext])
+  }, [baseUrl, endpointContext])
 
   const refreshWorkspace = useCallback(async (workspaceIdOverride?: string) => {
-    const activeContext = clientContext
+    const activeContext = endpointContext
     const workspaceId = String(workspaceIdOverride || activeContext?.workspace.workspace_id || '').trim()
     if (!activeContext || !workspaceId) {
       return null
     }
     try {
-      const workspaces = await listClientWorkspaces(baseUrl)
+      const workspaces = await listRuntimeWorkspaces(baseUrl)
       const nextWorkspace = workspaces.find((item) => item.workspace_id === workspaceId) ?? null
       if (!nextWorkspace) {
         return null
       }
-      setClientContext((current) => {
+      setEndpointContext((current) => {
         if (!current || current.workspace.workspace_id !== workspaceId) {
           return current
         }
@@ -122,49 +122,49 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
       console.warn('刷新工作区失败:', error)
       return null
     }
-  }, [baseUrl, clientContext])
+  }, [baseUrl, endpointContext])
 
-  const initializeClientContext = useCallback(async () => {
-    if (clientContext) {
-      return clientContext
+  const initializeEndpointContext = useCallback(async () => {
+    if (endpointContext) {
+      return endpointContext
     }
-    if (clientInitPromiseRef.current) {
-      return clientInitPromiseRef.current
+    if (endpointInitPromiseRef.current) {
+      return endpointInitPromiseRef.current
     }
 
     const promise = (async () => {
-      const workspaces = await listClientWorkspaces(baseUrl)
+      const workspaces = await listRuntimeWorkspaces(baseUrl)
       const workspace = chooseWorkspace(workspaces)
       if (!workspace) {
         throw new Error('没有可用工作空间')
       }
-      const thread = await createClientThread(baseUrl, {
+      const thread = await createRuntimeThread(baseUrl, {
         home_workspace_id: workspace.workspace_id,
         workspace_id: workspace.workspace_id,
         title: '桌面聊天',
         mode: workspace.base_mode,
       })
-      const session = await createClientSession(baseUrl, {
+      const session = await createRuntimeSession(baseUrl, {
         thread_id: thread.thread_id,
         active_workspace_id: workspace.workspace_id,
         workspace_id: workspace.workspace_id,
-        client_id: sourceIdRef.current,
-        client_type: 'electron',
+        endpoint_id: sourceIdRef.current,
+        endpoint_type: 'electron',
         display_name: '桌面应用',
       })
-      const nextContext: ClientContext = {
+      const nextContext: EndpointContext = {
         workspace,
         threadId: thread.thread_id,
         session,
-        clientId: sourceIdRef.current,
+        endpointId: sourceIdRef.current,
       }
-      setClientContext(nextContext)
+      setEndpointContext(nextContext)
 
-      let nextClientId = await refreshDesktopToolClient(nextContext)
-      if (!nextClientId) {
-        for (let attempt = 0; attempt < 4 && !nextClientId; attempt += 1) {
+      let nextEndpointId = await refreshDesktopToolEndpoint(nextContext)
+      if (!nextEndpointId) {
+        for (let attempt = 0; attempt < 4 && !nextEndpointId; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 500))
-          nextClientId = await refreshDesktopToolClient(nextContext)
+          nextEndpointId = await refreshDesktopToolEndpoint(nextContext)
         }
       }
       dispatchTransport({ type: 'sync_session', sessionId: session.session_id })
@@ -172,7 +172,7 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
       return nextContext
     })()
 
-    clientInitPromiseRef.current = promise
+    endpointInitPromiseRef.current = promise
     try {
       return await promise
     } catch (error) {
@@ -183,21 +183,21 @@ export function useClientContext(baseUrl: string, onInitSuccess: (threadId: stri
       onError(createSystemTurn(transportError.message, true))
       throw error
     } finally {
-      if (clientInitPromiseRef.current === promise) {
-        clientInitPromiseRef.current = null
+      if (endpointInitPromiseRef.current === promise) {
+        endpointInitPromiseRef.current = null
       }
     }
-  }, [baseUrl, clientContext, onInitSuccess, onError, refreshDesktopToolClient])
+  }, [baseUrl, endpointContext, onInitSuccess, onError, refreshDesktopToolEndpoint])
 
   return {
-    clientContext,
-    desktopToolClientId: desktopToolEndpointId,
+    endpointContext,
+    desktopToolEndpointId: desktopToolEndpointId,
     transportState,
     dispatchTransport,
     sessionId,
-    clientId,
-    initializeClientContext,
-    refreshDesktopToolClient,
+    endpointId,
+    initializeEndpointContext,
+    refreshDesktopToolEndpoint,
     refreshWorkspace,
   }
 }

@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   createInitialChatState,
   createSystemTurn,
@@ -72,7 +72,7 @@ describe('chatState', () => {
     expect(state.messages[0]?.error).toBe('缺少有效访问令牌')
   })
 
-  it('hydrates persisted client messages into chat turns', () => {
+  it('hydrates persisted runtime messages into chat turns', () => {
     const state = reduceChatState(createInitialChatState(), {
       type: 'hydrate_messages',
       messages: [
@@ -82,7 +82,7 @@ describe('chatState', () => {
           session_id: 'sess_1',
           workspace_id: 'personal',
           active_workspace_id: 'personal',
-          client_id: 'desktop-app',
+          endpoint_id: 'desktop-app',
           role: 'user',
           content: 'hello',
           status: 'completed',
@@ -95,7 +95,7 @@ describe('chatState', () => {
           session_id: 'sess_1',
           workspace_id: 'personal',
           active_workspace_id: 'personal',
-          client_id: '',
+          endpoint_id: '',
           role: 'assistant',
           content: 'hi',
           status: 'completed',
@@ -133,7 +133,7 @@ describe('chatState', () => {
         session_id: 'sess_1',
         workspace_id: 'personal',
         active_workspace_id: 'personal',
-        client_id: '',
+        endpoint_id: '',
         role: 'assistant',
         content: 'hello',
         status: 'completed',
@@ -167,14 +167,14 @@ describe('chatState', () => {
     })
 
     state = reduceChatState(state, {
-      type: 'append_client_message',
+      type: 'append_runtime_message',
       message: {
         message_id: 'msg_short_1',
         thread_id: 'thr_1',
         session_id: 'sess_1',
         workspace_id: 'personal',
         active_workspace_id: 'personal',
-        client_id: '',
+        endpoint_id: '',
         role: 'assistant',
         content: 'working on it',
         status: 'completed',
@@ -184,14 +184,14 @@ describe('chatState', () => {
     })
 
     state = reduceChatState(state, {
-      type: 'append_client_message',
+      type: 'append_runtime_message',
       message: {
         message_id: 'msg_short_2',
         thread_id: 'thr_1',
         session_id: 'sess_1',
         workspace_id: 'personal',
         active_workspace_id: 'personal',
-        client_id: '',
+        endpoint_id: '',
         role: 'assistant',
         content: 'checking sources',
         status: 'completed',
@@ -230,7 +230,7 @@ describe('chatState', () => {
         session_id: 'sess_1',
         workspace_id: 'personal',
         active_workspace_id: 'personal',
-        client_id: '',
+        endpoint_id: '',
         role: 'assistant',
         content: 'working on it',
         status: 'completed',

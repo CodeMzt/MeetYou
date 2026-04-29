@@ -1,11 +1,12 @@
 const DEFAULT_LOCAL_BRIDGE_BASE_URL = 'http://127.0.0.1:38951'
+const ENV_LOCAL_BRIDGE_BASE_URL = String(import.meta.env.VITE_MEETYOU_DESKTOP_BASE_URL || '').trim()
 
 function resolveRendererBridgeBaseUrl(): string {
   if (typeof window === 'undefined') {
-    return DEFAULT_LOCAL_BRIDGE_BASE_URL
+    return ENV_LOCAL_BRIDGE_BASE_URL || DEFAULT_LOCAL_BRIDGE_BASE_URL
   }
   const candidate = String(window.meetyouDesktopRuntime?.bridgeBaseUrl || '').trim()
-  return candidate || DEFAULT_LOCAL_BRIDGE_BASE_URL
+  return candidate || ENV_LOCAL_BRIDGE_BASE_URL || DEFAULT_LOCAL_BRIDGE_BASE_URL
 }
 
 export const DEFAULT_BASE_URL = resolveRendererBridgeBaseUrl()

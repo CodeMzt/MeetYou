@@ -1,16 +1,16 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { ClientWorkspace } from '../../types'
+import type { RuntimeWorkspace } from '../../types'
 import WorkspaceGovernanceEditor from './WorkspaceGovernanceEditor'
 
-const workspace: ClientWorkspace = {
+const workspace: RuntimeWorkspace = {
   workspace_id: 'study',
   title: 'Study',
   status: 'active',
   base_mode: 'general',
   description: 'Study workspace for focused learning.',
   prompt_overlay: '',
-  default_execution_target: 'core_only',
+  default_execution_target: 'core.local',
   tool_policy: 'allow_all',
   allowed_tool_ids: [],
   preferred_target_endpoint_ids: [],

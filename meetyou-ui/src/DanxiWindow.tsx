@@ -18,7 +18,7 @@ import {
   searchDanxiPosts,
   updateDanxiReply,
   updateDanxiWebvpnCookie,
-} from './clientApi'
+} from './runtimeApi'
 import type {
   DanxiListResponse,
   DanxiSearchResponse,

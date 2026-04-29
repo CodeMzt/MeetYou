@@ -1,6 +1,6 @@
-﻿import type {
+import type {
   ChatTurn,
-  ClientMessage,
+  RuntimeMessage,
   ConfirmRequestPayload,
   HumanInputRequestPayload,
   RuntimeDebugSnapshot,
@@ -39,9 +39,9 @@ export function createInitialChatState(): ChatState {
 export type ChatAction =
   | { type: 'append_user_turn'; turn: ChatTurn }
   | { type: 'append_system_turn'; turn: ChatTurn }
-  | { type: 'hydrate_messages'; messages: ClientMessage[] }
-  | { type: 'append_client_message'; message: ClientMessage }
-  | { type: 'complete_stream_message'; message: ClientMessage; streamId: string; turnId: string }
+  | { type: 'hydrate_messages'; messages: RuntimeMessage[] }
+  | { type: 'append_runtime_message'; message: RuntimeMessage }
+  | { type: 'complete_stream_message'; message: RuntimeMessage; streamId: string; turnId: string }
   | {
       type: 'append_message'
       role: 'assistant'
@@ -184,7 +184,7 @@ function appendSystemTurn(turns: ChatTurn[], nextTurn: ChatTurn): ChatTurn[] {
   return [...turns, nextTurn]
 }
 
-function hydrateClientMessages(messages: ClientMessage[]): ChatTurn[] {
+function hydrateRuntimeMessages(messages: RuntimeMessage[]): ChatTurn[] {
   return messages.map((message) => ({
     id: message.message_id,
     streamId: '',
@@ -200,7 +200,7 @@ function hydrateClientMessages(messages: ClientMessage[]): ChatTurn[] {
   }))
 }
 
-function appendClientMessage(turns: ChatTurn[], message: ClientMessage): ChatTurn[] {
+function appendRuntimeMessage(turns: ChatTurn[], message: RuntimeMessage): ChatTurn[] {
   const logicalTurnId = message.role === 'assistant' ? message.message_id : ''
   const existing = turns.findIndex(
     (turn) =>
@@ -232,9 +232,9 @@ function appendClientMessage(turns: ChatTurn[], message: ClientMessage): ChatTur
   return [...turns, nextTurn]
 }
 
-function completeStreamMessage(turns: ChatTurn[], message: ClientMessage, streamId: string, turnId: string): ChatTurn[] {
+function completeStreamMessage(turns: ChatTurn[], message: RuntimeMessage, streamId: string, turnId: string): ChatTurn[] {
   if (message.channel === 'progress_notice' || message.temporary) {
-    return appendClientMessage(turns, message)
+    return appendRuntimeMessage(turns, message)
   }
   const index = findTurnIndex(turns, streamId, turnId)
   if (index === -1) {
@@ -380,13 +380,13 @@ export function reduceChatState(state: ChatState, action: ChatAction): ChatState
     case 'hydrate_messages':
       return {
         ...state,
-        messages: hydrateClientMessages(action.messages),
+        messages: hydrateRuntimeMessages(action.messages),
         archivedTurnCount: 0,
       }
-    case 'append_client_message':
+    case 'append_runtime_message':
       return withPrunedMessages(
         state,
-        appendClientMessage(state.messages, action.message),
+        appendRuntimeMessage(state.messages, action.message),
         state.runtimeSnapshot?.turn_id || '',
       )
     case 'complete_stream_message':

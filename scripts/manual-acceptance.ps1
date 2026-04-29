@@ -190,10 +190,10 @@ function Run-ManualAcceptanceCheck {
     }
 
     try {
-        $workspaces = As-List (Invoke-JsonGet "/client/workspaces")
-        Write-Ok ("/client/workspaces ok, count: {0}" -f $workspaces.Count)
+        $workspaces = As-List (Invoke-JsonGet "/runtime/workspaces")
+        Write-Ok ("/runtime/workspaces ok, count: {0}" -f $workspaces.Count)
     } catch {
-        Write-Fail "/client/workspaces failed: $($_.Exception.Message)"
+        Write-Fail "/runtime/workspaces failed: $($_.Exception.Message)"
         $failed = $true
     }
 
@@ -223,7 +223,7 @@ function Run-ManualAcceptanceCheck {
     }
 
     Write-Section "Done"
-    Write-Host "API checks passed. Next, validate UI / procedure / operation flows and record docs\v4\test-report.md."
+    Write-Host "API checks passed. Next, validate UI / thread / run / delivery / operation flows and record docs\v4\test-report.md."
     return 0
 }
 

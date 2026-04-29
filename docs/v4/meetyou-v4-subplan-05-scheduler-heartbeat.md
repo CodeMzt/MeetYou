@@ -230,11 +230,11 @@ GET    /scheduler/jobs/{job_id}/runs
 
 ## 验收
 
-- [ ] SchedulerService 完成。
-- [ ] system.heartbeat 是 scheduled job。
-- [ ] system.heartbeat 不可删除。
-- [ ] system.heartbeat 可启停、可调 interval。
-- [ ] 用户定时任务 CRUD 完成。
-- [ ] 每次触发都会生成 JobRun + Run。
-- [ ] HeartbeatWorkflow 至少能 no-op 并记录事件。
+- [x] SchedulerService 完成。
+- [x] system.heartbeat 是 scheduled job。
+- [x] system.heartbeat 不可删除。
+- [x] system.heartbeat 可启停、可调 interval。
+- [x] 用户定时任务 CRUD 完成。
+- [x] 每次触发都会生成 JobRun + Run。
+- [x] HeartbeatWorkflow 至少能 no-op 并记录事件。
 - [ ] 本地和远程真实测试通过。

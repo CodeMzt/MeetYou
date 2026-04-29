@@ -86,7 +86,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "target_id": {"type": "string", "description": "Target endpoint_id."},
                     "delivery_kind": {"type": "string", "enum": ["notice", "tool_call"], "default": "notice"},
                     "content": {"type": "string", "description": "Notice text when delivery_kind is notice.", "default": ""},
-                    "tool_key": {"type": "string", "description": "Directed tool key for tool_call.", "default": ""},
+                    "tool_key": {"type": "string", "description": "Endpoint capability tool key for tool_call.", "default": ""},
                     "arguments": {"type": "object", "description": "Tool call arguments.", "default": {}},
                     "workspace_id": {"type": "string", "description": "Workspace id for tool target lookup.", "default": ""},
                     "session_id": {"type": "string", "description": "Session id for operation tracking.", "default": ""},
@@ -103,17 +103,18 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "function": {
             "name": "emit_progress_notice",
             "description": (
-                "Send a brief standalone assistant reply to the current session while the current turn is still "
-                "thinking or tool-calling. You must call this before any potentially time-consuming operation, "
+                "Emit a brief assistant.progress_notice RunEvent for the current session while the current turn is "
+                "still thinking or tool-calling. It is not the final assistant answer, does not create an Operation, "
+                "and must not be used to answer the user. You must call this before any potentially time-consuming operation, "
                 "including web/page reading, research, local file or workspace work, endpoint tool calls, "
                 "endpoint messaging, or other slow I/O. For non-streaming external endpoints such as Feishu or "
-                "WeChat/MeetWeChat, call this before a nontrivial or multi-sentence final answer unless the answer "
-                "is immediate and very short. May be called multiple times."
+                "WeChat/MeetWeChat, only use it for genuine progress notices; the final answer must be delivered as "
+                "the persisted assistant Message. May be called multiple times."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "A short standalone reply, ideally one sentence."}
+                    "content": {"type": "string", "description": "A short progress notice, ideally one sentence."}
                 },
                 "required": ["content"],
             },
@@ -162,7 +163,8 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "name": "manage_scheduled_jobs",
             "description": (
                 "Manage V4 Scheduler jobs backed by scheduled_jobs. Use this for system.heartbeat inspection, "
-                "ordinary scheduled job CRUD, enable/disable, interval updates, and manual triggers."
+                "ordinary scheduled job CRUD, enable/disable, interval updates, and manual triggers. "
+                "system.heartbeat is preset and may only be enabled/disabled or have interval_seconds changed."
             ),
             "parameters": {
                 "type": "object",
@@ -188,17 +190,21 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "enum": ["interval", "cron", "manual", "event"],
                         "default": "interval",
                     },
-                    "trigger_config": {"type": "object", "description": "Structured trigger config.", "default": {}},
+                    "trigger_config": {
+                        "type": "object",
+                        "description": "Structured trigger config. For system.heartbeat updates this may only contain type=interval and interval_seconds.",
+                        "default": {},
+                    },
                     "interval_seconds": {
                         "type": "integer",
                         "description": "Shortcut for trigger_config.interval_seconds on interval jobs.",
                         "minimum": 1,
                     },
-                    "timezone": {"type": "string", "description": "IANA timezone name.", "default": "UTC"},
+                    "timezone": {"type": "string", "description": "IANA timezone name for ordinary jobs. Do not set this when updating system.heartbeat.", "default": "UTC"},
                     "action_ref": {
                         "type": "string",
                         "enum": ["core.workflow.assistant_turn", "core.workflow.noop", ""],
-                        "description": "Core workflow/action reference. system.heartbeat owns core.workflow.heartbeat and ordinary jobs cannot select it.",
+                        "description": "Core workflow/action reference for ordinary jobs. Use core.workflow.assistant_turn for scheduled assistant work; omit this field when updating system.heartbeat.",
                         "default": "core.workflow.assistant_turn",
                     },
                     "run_template": {

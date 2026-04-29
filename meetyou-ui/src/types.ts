@@ -12,7 +12,7 @@ export interface InputRequestPayload {
   content: string
   session_id?: string
   source_id: string
-  client_message_id?: string
+  endpoint_message_id?: string
   role: MessageRole
   preferred_mode?: AssistantMode
   metadata?: Record<string, unknown>
@@ -25,7 +25,7 @@ export interface InputRequestPayload {
   }
 }
 
-export interface ClientWorkspace {
+export interface RuntimeWorkspace {
   workspace_id: string
   title: string
   status: string
@@ -43,7 +43,7 @@ export interface ClientWorkspace {
   tool_routing_overrides: Record<string, unknown>
 }
 
-export interface ClientThread {
+export interface RuntimeThread {
   thread_id: string
   home_workspace_id: string
   workspace_id: string
@@ -52,16 +52,16 @@ export interface ClientThread {
   summary: string
 }
 
-export interface ClientSession {
+export interface RuntimeSession {
   session_id: string
   thread_id: string
   active_workspace_id: string
   workspace_id: string
-  client_id: string
+  endpoint_id: string
   status: string
 }
 
-export interface ClientOperation {
+export interface RuntimeOperation {
   operation_id: string
   thread_id: string
   workspace_id: string
@@ -80,7 +80,7 @@ export interface ClientOperation {
 
 export type OperationStatusTone = 'pending' | 'running' | 'success' | 'failed'
 
-export interface OperationView extends ClientOperation {
+export interface OperationView extends RuntimeOperation {
   call_id: string
   phase: string
   detail: string
@@ -90,16 +90,6 @@ export interface OperationView extends ClientOperation {
   tone: OperationStatusTone
   summary: string
   isBlocking: boolean
-}
-
-export interface OperatorClient {
-  client_id: string
-  client_type: string
-  display_name: string
-  transport_profile: string
-  status: string
-  last_seen_at: string
-  workspace_ids: string[]
 }
 
 export interface AvailableEndpoint {
@@ -190,13 +180,13 @@ export interface DanxiMessageTargetResponse {
   hole_id: number
 }
 
-export interface ClientMessage {
+export interface RuntimeMessage {
   message_id: string
   thread_id: string
   session_id: string
   active_workspace_id: string
   workspace_id: string
-  client_id: string
+  endpoint_id: string
   role: MessageRole
   content: string
   status: string
@@ -205,27 +195,27 @@ export interface ClientMessage {
   temporary?: boolean
 }
 
-export interface ClientMessageCreatePayload {
+export interface RuntimeMessageCreatePayload {
   thread_id: string
   active_workspace_id?: string
   workspace_id?: string
-  client_id: string
+  endpoint_id: string
   content: string
   session_id?: string
-  client_type?: string
+  endpoint_type?: string
   display_name?: string
   role?: MessageRole
-  client_message_id?: string
+  endpoint_message_id?: string
   preferred_mode?: AssistantMode
   options?: InputRequestPayload['options']
   metadata?: Record<string, unknown>
 }
 
-export type ClientWsConnectionState = 'connected'
+export type EndpointWsConnectionState = 'connected'
 
-export type ClientWsEvent =
+export type EndpointWsEvent =
   | { kind: 'ignore' }
-  | { kind: 'connection'; threadId: string; status: ClientWsConnectionState }
+  | { kind: 'connection'; threadId: string; status: EndpointWsConnectionState }
   | { kind: 'pong' }
   | { kind: 'ack'; ack: AckPayload }
   | { kind: 'error'; error: RuntimeErrorPayload }
@@ -258,7 +248,7 @@ export type ClientWsEvent =
       approvalStatus: string
       approvalRequired: boolean
     }
-  | { kind: 'message_created'; threadId: string; sessionId: string; message: ClientMessage }
+  | { kind: 'message_created'; threadId: string; sessionId: string; message: RuntimeMessage }
   | {
       kind: 'message_delta'
       threadId: string
@@ -275,7 +265,7 @@ export type ClientWsEvent =
       sessionId: string
       streamId: string
       turnId: string
-      message: ClientMessage
+      message: RuntimeMessage
     }
 
 export interface RuntimeStateSnapshot {
@@ -451,7 +441,7 @@ export interface AttachmentObjectView {
   downloadStrategy?: string
 }
 
-export interface ClientAttachmentRecord {
+export interface RuntimeAttachmentRecord {
   attachment_id: string
   owner_type: string
   owner_id: string

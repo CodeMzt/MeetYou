@@ -2,7 +2,6 @@ from core.db.models.approval import Approval
 from core.db.models.attachment import Attachment, AttachmentUploadTicket
 from core.db.models.actor import Actor
 from core.db.models.capability import Capability, CapabilityWorkspaceBinding
-from core.db.models.client import Client, ClientWorkspaceMembership
 from core.db.models.config_entry import ConfigEntry
 from core.db.models.context_pool import ContextPoolItem
 from core.db.models.endpoint import DeliveryAttempt, Endpoint, EndpointCapability, EndpointConnection, EndpointOutbox
@@ -25,8 +24,6 @@ __all__ = [
     "Actor",
     "Capability",
     "CapabilityWorkspaceBinding",
-    "Client",
-    "ClientWorkspaceMembership",
     "ConfigEntry",
     "ContextPoolItem",
     "DeliveryAttempt",

@@ -184,9 +184,7 @@ class ContextPoolService(ServiceBase):
         public_workspace_id = str(context.get("active_workspace_id") or context.get("workspace_id") or "").strip()
         public_endpoint_id = str(
             context.get("endpoint_id")
-            or context.get("client_id")
             or source_metadata.get("endpoint_id")
-            or source_metadata.get("client_id")
             or ""
         ).strip()
         with self.session_scope() as session:

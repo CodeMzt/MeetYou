@@ -20,5 +20,5 @@ class Approval(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     decision: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    decided_by_client_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=True)
+    decided_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("actors.id"), nullable=True)
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)

@@ -53,6 +53,14 @@ class _SchedulerService:
 
     def update_job(self, *, job_id, **updates):
         row = self.jobs[job_id]
+        if job_id == "system.heartbeat":
+            disallowed = sorted(key for key in updates if key not in {"enabled", "trigger_config"})
+            if disallowed:
+                raise ValueError("system.heartbeat only allows enabled and interval_seconds updates.")
+            if "trigger_config" in updates:
+                trigger_config = dict(updates["trigger_config"] or {})
+                if sorted(set(trigger_config) - {"type", "interval_seconds"}) or "interval_seconds" not in trigger_config:
+                    raise ValueError("system.heartbeat trigger_config may only set interval_seconds.")
         for key, value in updates.items():
             if key == "metadata":
                 row.meta = value
@@ -142,6 +150,22 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(scheduler.jobs["system.heartbeat"].trigger_config["interval_seconds"], 120)
         self.assertEqual(payload["job"]["trigger_config"]["interval_seconds"], 120)
+
+    async def test_manage_scheduled_jobs_rejects_mutating_system_heartbeat_shape(self):
+        tools, *_ = self._tools()
+
+        with self.assertRaisesRegex(ValueError, "only allows enabled and interval_seconds"):
+            await tools.manage_scheduled_jobs(
+                action="update",
+                job_id="system.heartbeat",
+                name="Renamed heartbeat",
+            )
+        with self.assertRaisesRegex(ValueError, "may only set interval_seconds"):
+            await tools.manage_scheduled_jobs(
+                action="update",
+                job_id="system.heartbeat",
+                trigger_config={"type": "cron", "cron": "* * * * *"},
+            )
 
     async def test_manage_scheduled_jobs_rejects_system_heartbeat_delete(self):
         tools, *_ = self._tools()

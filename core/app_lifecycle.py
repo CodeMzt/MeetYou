@@ -22,15 +22,6 @@ from core.source_catalog import SOURCE_CATALOG_STATE_KEY
 from core.state_backends import RuntimeStateBlobBackend
 from core.status import RuntimeStatus
 from gateway.api import FastAPIGateway
-from sensors.feishu_input_adapter import FeishuInputAdapter
-from sensors.feishu_output_adapter import FeishuOutputAdapter
-from adapters.meetwechat_client import DEFAULT_MEETWECHAT_BASE_URL, MeetWeChatClient
-from sensors.meetwechat_adapter import (
-    DEFAULT_STATE_FILE,
-    MeetWeChatInputAdapter,
-    MeetWeChatOutputService,
-    MeetWeChatStateStore,
-)
 from tools import system_tools
 
 logger = logging.getLogger("meetyou.app.lifecycle")
@@ -214,14 +205,9 @@ async def setup_app_runtime(app) -> None:
         runtime_usage_getter=app.get_runtime_usage,
         runtime_debug_getter=app.get_runtime_debug,
         health_getter=app._health_getter,
-        ws_delivery_observer=(
-            app._telemetry_recorder.observe_gateway_delivery
-            if app._telemetry_recorder is not None
-            else None
-        ),
         core_domain=app.core_domain,
-        client_connection_prompt_getter=app.build_client_connection_prompt,
-        client_connection_event_handler=app.inject_client_connection_event,
+        endpoint_connection_prompt_getter=app.build_endpoint_connection_prompt,
+        endpoint_connection_event_handler=app.inject_endpoint_connection_event,
         access_token=gateway_access_token,
         cors_origins=app.config.get("gateway_cors_origins") or [],
     )
@@ -229,7 +215,6 @@ async def setup_app_runtime(app) -> None:
     runtime_bridge_setter = getattr(app.tools_manager, "set_runtime_bridge", None)
     if callable(runtime_bridge_setter):
         runtime_bridge_setter(session_manager=app.session_manager, gateway_getter=lambda: app.gateway)
-    app.speaker.register_adapter("web", app.gateway.output_adapter)
     await app.gateway.start(host=host, port=port)
 
     await start_external_endpoint_providers(app)
@@ -268,6 +253,9 @@ async def _start_external_endpoint_provider(app, *, provider_name: str, enabled_
 
 async def _start_feishu_endpoint_provider(app) -> None:
     if app.config.get_bool("enable_feishu_bot"):
+        from sensors.feishu_input_adapter import FeishuInputAdapter
+        from sensors.feishu_output_adapter import FeishuOutputAdapter
+
         app.feishu_output = FeishuOutputAdapter(app.config)
         await app.feishu_output.init()
         app.feishu_input = FeishuInputAdapter(
@@ -283,6 +271,14 @@ async def _start_feishu_endpoint_provider(app) -> None:
 
 async def _start_meetwechat_endpoint_provider(app) -> None:
     if app.config.get_bool("enable_meetwechat_client"):
+        from adapters.meetwechat_client import DEFAULT_MEETWECHAT_BASE_URL, MeetWeChatClient
+        from sensors.meetwechat_adapter import (
+            DEFAULT_STATE_FILE,
+            MeetWeChatInputAdapter,
+            MeetWeChatOutputService,
+            MeetWeChatStateStore,
+        )
+
         wechat_client = MeetWeChatClient(
             base_url=str(app.config.get("meetwechat_base_url") or DEFAULT_MEETWECHAT_BASE_URL),
         )

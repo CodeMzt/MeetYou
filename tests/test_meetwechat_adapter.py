@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import tempfile
 import unittest
@@ -239,7 +239,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
         future = output.begin_event(self._event(), allow_send=True)
 
-        await output.send_client_event(
+        await output.send_runtime_event(
             "chat-1",
             _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "assistant reply"}}),
         )
@@ -261,11 +261,11 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
         future = output.begin_event(self._event(), allow_send=True)
 
-        await output.send_client_event(
+        await output.send_runtime_event(
             "chat-1",
             _run_event({"type": "message.delta", "stream_id": "stream-1", "channel": "answer", "delta": "你好"}),
         )
-        await output.send_client_event(
+        await output.send_runtime_event(
             "chat-1",
             _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "你好"}}),
         )
@@ -296,7 +296,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
         future = output.begin_event(self._event(), allow_send=True)
 
-        await output.send_client_event(
+        await output.send_runtime_event(
             "chat-1",
             _run_event({"type": "assistant.progress_notice", "content": "I will check.", "text": "I will check."}),
         )
@@ -309,7 +309,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meetwechat_client.sent[0]["text"], "I will check.")
         self.assertFalse(future.done())
 
-        await output.send_client_event(
+        await output.send_runtime_event(
             "chat-1",
             _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "assistant reply"}}),
         )
@@ -334,7 +334,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         state = MeetWeChatStateStore(self.state_path)
         output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
 
-        await output.send_client_event(
+        await output.send_runtime_event(
             "chat-1",
             _notice("direct notice"),
         )

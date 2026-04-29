@@ -12,7 +12,7 @@ mcp_module = types.ModuleType("mcp")
 mcp_client_module = types.ModuleType("mcp.client")
 mcp_client_session_module = types.ModuleType("mcp.client.session")
 mcp_client_stdio_module = types.ModuleType("mcp.client.stdio")
-mcp_client_session_module.ClientSession = object
+mcp_client_session_module.RuntimeSession = object
 mcp_client_stdio_module.StdioServerParameters = object
 mcp_client_stdio_module.stdio_client = object
 sys.modules.setdefault("mcp", mcp_module)

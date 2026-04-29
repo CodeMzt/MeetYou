@@ -114,15 +114,8 @@ class WorkspaceTools:
         if session_row is None:
             return {"ok": False, "code": "session_not_found", "message": f"Unknown session: {resolved_session_id}"}
         thread_row = domain.services.thread.get_by_id(session_row.thread_id)
-        client_row = domain.services.client.get_by_id(session_row.client_id)
-        if client_row is not None:
-            domain.services.client.bind_workspace(
-                workspace_id=workspace.id,
-                client_id=client_row.id,
-                membership_role="active",
-                enabled=True,
-                metadata={"source": "switch_workspace_tool", "reason": str(reason or "").strip()},
-            )
+        endpoint_row = domain.services.endpoint.get_by_id(getattr(session_row, "origin_endpoint_id", None))
+        endpoint_id = str(getattr(endpoint_row, "endpoint_id", "") or "")
         updated = domain.services.session.set_active_workspace(
             session_id=resolved_session_id,
             active_workspace_id=workspace.id,
@@ -146,7 +139,7 @@ class WorkspaceTools:
                     "workspace_id": workspace.workspace_id,
                     "workspace_title": workspace.title,
                     "workspace_base_mode": workspace.base_mode,
-                    "client_id": getattr(client_row, "client_id", ""),
+                    "endpoint_id": endpoint_id,
                     "session_row_id": str(getattr(session_row, "id", "") or ""),
                 },
             )
@@ -165,7 +158,7 @@ class WorkspaceTools:
                         "session_id": resolved_session_id,
                         "active_workspace_id": workspace.workspace_id,
                         "workspace_id": workspace.workspace_id,
-                        "client_id": getattr(client_row, "client_id", ""),
+                        "endpoint_id": endpoint_id,
                         "reason": str(reason or "").strip(),
                         "source": "switch_workspace_tool",
                     },

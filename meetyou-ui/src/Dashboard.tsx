@@ -140,7 +140,7 @@ export default function Dashboard() {
           )}
           {activeTab === 'timeline' && <TimelineView snapshot={snapshot} />}
           {activeTab === 'graph' && (
-            <Suspense fallback={<div className="card graph-loading">Loading graph view...</div>}>
+            <Suspense fallback={<div className="card graph-loading">正在加载图谱视图...</div>}>
               <GraphView graph={graph} />
             </Suspense>
           )}

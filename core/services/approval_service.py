@@ -20,11 +20,11 @@ class ApprovalService(ServiceBase):
         with self.session_scope() as session:
             return ApprovalRepository(session).get_by_approval_id(approval_id)
 
-    def decide_approval(self, *, approval_id: str, decision: str, reason: str = "", decided_by_client_id=None):
+    def decide_approval(self, *, approval_id: str, decision: str, reason: str = "", decided_by_actor_id=None):
         with self.session_scope() as session:
             return ApprovalRepository(session).decide(
                 approval_id=approval_id,
                 decision=decision,
                 reason=reason,
-                decided_by_client_id=decided_by_client_id,
+                decided_by_actor_id=decided_by_actor_id,
             )

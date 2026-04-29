@@ -98,7 +98,7 @@ class WorkspaceService(ServiceBase):
             "description": str(getattr(workspace, "description", "") or ""),
             "prompt_overlay": str(getattr(workspace, "prompt_overlay", "") or ""),
             "default_execution_target": normalize_execution_target(
-                getattr(workspace, "default_execution_target", "core_only"),
+                getattr(workspace, "default_execution_target", "core.local"),
             ),
             "tool_policy": str(normalized_meta.get("tool_policy") or "allow_all"),
             "allowed_tool_ids": list(normalized_meta.get("allowed_tool_ids") or []),
@@ -163,7 +163,7 @@ class WorkspaceService(ServiceBase):
         description: str = "",
         base_mode: str = "general",
         prompt_overlay: str = "",
-        default_execution_target: str = "core_only",
+        default_execution_target: str = "core.local",
         metadata: dict | None = None,
     ):
         with self.session_scope() as session:

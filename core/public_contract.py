@@ -35,16 +35,14 @@ _INTERNAL_ASSISTANT_MODES = {
     *PUBLIC_ASSISTANT_MODES,
 }
 
-EXECUTION_TARGET_CORE_ONLY = "core_only"
 EXECUTION_TARGET_CORE_LOCAL = "core.local"
-EXECUTION_TARGET_SPECIFIC_ENDPOINT = "specific_endpoint"
+EXECUTION_TARGET_ENDPOINT = "endpoint"
 EXECUTION_TARGET_WORKSPACE_ANY_ENDPOINT = "workspace_any_endpoint"
 EXECUTION_TARGET_PREFER_ENDPOINT_FALLBACK_CORE = "prefer_endpoint_fallback_core"
 
 EXECUTION_TARGETS = (
-    EXECUTION_TARGET_CORE_ONLY,
     EXECUTION_TARGET_CORE_LOCAL,
-    EXECUTION_TARGET_SPECIFIC_ENDPOINT,
+    EXECUTION_TARGET_ENDPOINT,
     EXECUTION_TARGET_WORKSPACE_ANY_ENDPOINT,
     EXECUTION_TARGET_PREFER_ENDPOINT_FALLBACK_CORE,
 )
@@ -52,7 +50,6 @@ EXECUTION_TARGETS = (
 _EXECUTION_TARGET_ALIASES = {
     "assistant": EXECUTION_TARGET_CORE_LOCAL,
     "core": EXECUTION_TARGET_CORE_LOCAL,
-    "core_only": EXECUTION_TARGET_CORE_LOCAL,
 }
 
 
@@ -83,7 +80,7 @@ def to_internal_assistant_mode(value: Any, *, fallback: str = PUBLIC_MODE_GENERA
     return fallback_internal
 
 
-def normalize_execution_target(value: Any, *, fallback: str = EXECUTION_TARGET_CORE_ONLY) -> str:
+def normalize_execution_target(value: Any, *, fallback: str = EXECUTION_TARGET_CORE_LOCAL) -> str:
     normalized = str(value or "").strip().lower()
     normalized = _EXECUTION_TARGET_ALIASES.get(normalized, normalized)
     if normalized in EXECUTION_TARGETS:
@@ -91,5 +88,5 @@ def normalize_execution_target(value: Any, *, fallback: str = EXECUTION_TARGET_C
     return fallback
 
 
-def requires_specific_endpoint(value: Any) -> bool:
-    return normalize_execution_target(value) == EXECUTION_TARGET_SPECIFIC_ENDPOINT
+def requires_endpoint_target(value: Any) -> bool:
+    return normalize_execution_target(value) == EXECUTION_TARGET_ENDPOINT

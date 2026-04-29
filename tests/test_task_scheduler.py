@@ -109,6 +109,20 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed.error.code, "task_domain_invalid")
         self.assertIn("manage_scheduled_jobs", failed.error.message)
 
+    async def test_legacy_taskmanager_scheduler_flow_is_removed(self):
+        manager = TaskManager(_FakeMemory())
+
+        self.assertEqual(await manager.backfill_scheduled_tasks(), 0)
+        self.assertEqual(await manager.claim_due_tasks(), [])
+        status = manager.build_background_status()
+        self.assertEqual(status["scheduled_task_count"], 0)
+        self.assertEqual(status["background_status_sources"], ["task_manager.user_todo"])
+
+        with self.assertRaisesRegex(RuntimeError, "V4 Scheduler"):
+            await manager.complete_due_notification("task-1", summary="due", delivered=True)
+        with self.assertRaisesRegex(RuntimeError, "V4 Scheduler"):
+            await manager.complete_task_run("task-1", succeeded=True, summary="done")
+
     async def test_task_manager_exposes_user_todo_tool_only(self):
         manager = TaskManager(_FakeMemory())
 

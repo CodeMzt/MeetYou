@@ -16,14 +16,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     import aiohttp  # noqa: F401
 except ImportError:
-    class _FakeClientSession:
+    class _FakeRuntimeSession:
         async def close(self):
             return None
 
     sys.modules.setdefault(
         "aiohttp",
         types.SimpleNamespace(
-            ClientSession=_FakeClientSession,
+            RuntimeSession=_FakeRuntimeSession,
             ClientTimeout=lambda **_kwargs: None,
         ),
     )
@@ -300,7 +300,7 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
                     "selected_option": "B",
                 }
 
-            async def send_client_event(self, chat_id: str, payload: dict):
+            async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
         class _FakeGatewayClient:
@@ -374,11 +374,11 @@ class HumanInputGatewayTests(unittest.TestCase):
         gateway = FastAPIGateway(bus, SessionManager(), access_token="ws-token")
         with TestClient(gateway.app) as client:
             response = client.post(
-                "/client/sessions/web:test/human-input-response",
+                "/runtime/sessions/web:test/human-input-response",
                 headers={"Authorization": "Bearer ws-token"},
                 json={
                     "action": "input_response",
-                    "client_id": "desktop",
+                    "endpoint_id": "desktop",
                     "request_id": "req-123",
                     "answer_text": "B",
                     "selected_option": "B",

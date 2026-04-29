@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { LayoutTemplate } from 'lucide-react'
 import type {
   ApprovalDisplayModel,
-  ClientWorkspace,
+  RuntimeWorkspace,
   ConnectionState,
   HumanInputRequestPayload,
   OperationView,
@@ -13,12 +13,12 @@ import WorkspaceGovernanceEditor from './components/workspace/WorkspaceGovernanc
 import WorkspacePanel from './components/workspace/WorkspacePanel'
 import SubWindow from './components/layout/SubWindow'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from './windowBridge'
-import { decideClientApproval } from './clientApi'
+import { decideRuntimeApproval } from './runtimeApi'
 
 type WorkspaceWindowPayload = {
   baseUrl: string
   threadId: string
-  workspace: ClientWorkspace | null
+  workspace: RuntimeWorkspace | null
   connectionState: ConnectionState
   desktopToolsAvailable: boolean
   operations: OperationView[]
@@ -67,7 +67,7 @@ export default function WorkspaceWindow() {
     }
     setApprovalSubmittingIds((current) => [...current, approvalId])
     try {
-      await decideClientApproval(payload.baseUrl, approvalId, { decision })
+      await decideRuntimeApproval(payload.baseUrl, approvalId, { decision })
     } catch (error) {
       console.warn('Failed to submit operation approval from workspace window:', error)
     } finally {

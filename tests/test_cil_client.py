@@ -90,27 +90,27 @@ class CILClientStreamTests(unittest.IsolatedAsyncioTestCase):
         self.client._conversation = _DummyConversation()
 
     async def test_message_stream_without_chunks_does_not_render_blank_line(self):
-        await self.client._handle_client_ws_payload(
+        await self.client._handle_endpoint_ws_payload(
             _run_event({"type": "message.completed", "message": {"content": ""}, "stream_id": "stream-1"})
         )
-        await self.client._handle_client_ws_payload(
+        await self.client._handle_endpoint_ws_payload(
             _run_event({"type": "message.completed", "message": {"content": ""}, "stream_id": "stream-1"})
         )
 
         self.assertEqual(self.client.output_field.text, "")
 
     async def test_message_stream_chunks_render_single_assistant_line(self):
-        await self.client._handle_client_ws_payload(
+        await self.client._handle_endpoint_ws_payload(
             _run_event({"type": "message.delta", "channel": "answer", "delta": "hello", "stream_id": "stream-1", "turn_id": "turn-1", "phase": "chunk"})
         )
-        await self.client._handle_client_ws_payload(
+        await self.client._handle_endpoint_ws_payload(
             _run_event({"type": "message.completed", "message": {"content": "hello"}, "stream_id": "stream-1", "turn_id": "turn-1"})
         )
 
         self.assertEqual(self.client.output_field.text, "Mozart: hello\n")
 
     async def test_delivery_notice_renders_independent_line(self):
-        await self.client._handle_client_ws_payload(
+        await self.client._handle_endpoint_ws_payload(
             _notice("desktop notice")
         )
 

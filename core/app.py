@@ -11,13 +11,8 @@ import logging
 import os
 import traceback
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
-
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # pragma: no cover - Python < 3.9 fallback
-    ZoneInfo = None  # type: ignore[assignment]
 
 from adapters.base import create_adapter
 from core.assistant_modes import AssistantModeManager
@@ -33,7 +28,7 @@ from core.app_lifecycle import (
     sync_source_catalog_state_to_db,
     sync_task_state_to_db,
 )
-from core.client_thread_bridge import ClientThreadBridge
+from core.thread_delivery_bridge import ThreadDeliveryBridge
 from core.event_bus import EventBus
 from core.exceptions import ConfigError, ExceptionRouter, MeetYouError
 from core.heart import Heart
@@ -60,10 +55,7 @@ from core.status import RuntimeStatus, StatusManager, utcnow_iso
 from core.tools_manager import ToolsManager
 from gateway.api import FastAPIGateway
 from platform_layer.detector import detect_platform
-from sensors.feishu_input_adapter import FeishuInputAdapter
-from sensors.feishu_output_adapter import FeishuOutputAdapter
 from sensors.proprioceptor import Proprioceptor
-from sensors.meetwechat_adapter import MeetWeChatInputAdapter, MeetWeChatOutputService
 from service_runtime.models import RuntimeError
 from tools import system_tools
 from tools.mcp import MCPManager
@@ -71,6 +63,11 @@ from tools.memory import Memory
 from tools.task_manager import TaskManager
 
 logger = logging.getLogger("meetyou.app")
+
+if TYPE_CHECKING:
+    from sensors.feishu_input_adapter import FeishuInputAdapter
+    from sensors.feishu_output_adapter import FeishuOutputAdapter
+    from sensors.meetwechat_adapter import MeetWeChatInputAdapter, MeetWeChatOutputService
 
 _CONTEXT_POOL_TOOL_SKIPLIST = {
     "search_memory",
@@ -113,50 +110,6 @@ def _initial_progress_notice_content(metadata: dict[str, Any]) -> str:
     ).strip()
     return text
 
-
-def _normalize_task_summary(task_record: dict[str, Any]) -> str:
-    return str(task_record.get("content") or task_record.get("summary") or task_record.get("task_key") or "scheduled task").strip()
-
-
-def _task_time_context(task_record: dict[str, Any]) -> dict[str, Any]:
-    timezone_name = str(task_record.get("timezone") or "UTC").strip() or "UTC"
-    if timezone_name == "UTC" or ZoneInfo is None:
-        zone = timezone.utc
-    else:
-        try:
-            zone = ZoneInfo(timezone_name)
-        except Exception:
-            zone = timezone.utc
-            timezone_name = "UTC"
-    current_utc = datetime.now(timezone.utc).replace(microsecond=0)
-    current_local = current_utc.astimezone(zone)
-
-    def _to_local(value: Any) -> str | None:
-        text = str(value or "").strip()
-        if not text:
-            return None
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return str(value or "").strip() or None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(zone).isoformat(timespec="seconds")
-
-    return {
-        "current_time_utc": current_utc.isoformat().replace("+00:00", "Z"),
-        "task_timezone": timezone_name,
-        "current_time_local": current_local.isoformat(timespec="seconds"),
-        "local_date": current_local.strftime("%Y-%m-%d"),
-        "local_time": current_local.strftime("%H:%M:%S"),
-        "weekday": current_local.strftime("%A"),
-        "next_run_at_local": _to_local(task_record.get("next_run_at")),
-        "due_at_local": _to_local(task_record.get("due_at")),
-        "current_cycle_start_at_local": _to_local(task_record.get("current_cycle_start_at")),
-        "current_cycle_end_at_local": _to_local(task_record.get("current_cycle_end_at")),
-    }
 
 _BRAIN_IMMEDIATE_KEYS = {
     "api_provider",
@@ -225,7 +178,7 @@ _RESTART_REQUIRED_KEYS = {
     "meetwechat_outbound_min_interval_ms",
     "meetwechat_send_timeout_ms",
     "meetwechat_state_flush_interval_ms",
-    "meetwechat_gateway_client_idle_ttl_seconds",
+    "meetwechat_gateway_endpoint_idle_ttl_seconds",
 }
 
 
@@ -316,7 +269,7 @@ class App:
         self._session_execution_runtime = SessionActorRuntime(self._process_session_execution)
         self._confirm_approval_requests: dict[str, dict[str, Any]] = {}
         self._interaction_responses = InteractionResponseService(self.event_bus)
-        self._client_thread_bridge = ClientThreadBridge(
+        self._thread_delivery_bridge = ThreadDeliveryBridge(
             gateway_getter=lambda: getattr(self, "gateway", None),
             core_services_getter=lambda: getattr(self, "core_services", None),
         )
@@ -330,15 +283,15 @@ class App:
 
         logger.info("Service runtime dependencies initialized")
 
-    def _get_client_thread_bridge(self) -> ClientThreadBridge:
-        bridge = getattr(self, "_client_thread_bridge", None)
-        if isinstance(bridge, ClientThreadBridge):
+    def _get_thread_delivery_bridge(self) -> ThreadDeliveryBridge:
+        bridge = getattr(self, "_thread_delivery_bridge", None)
+        if isinstance(bridge, ThreadDeliveryBridge):
             return bridge
-        bridge = ClientThreadBridge(
+        bridge = ThreadDeliveryBridge(
             gateway_getter=lambda: getattr(self, "gateway", None),
             core_services_getter=lambda: getattr(self, "core_services", None),
         )
-        self._client_thread_bridge = bridge
+        self._thread_delivery_bridge = bridge
         return bridge
 
     def _runtime_principal_context(self) -> dict[str, str]:
@@ -350,6 +303,44 @@ class App:
             "principal_key": str(getattr(principal, "principal_key", "") or "").strip(),
         }
         return {key: value for key, value in payload.items() if value}
+
+    def _actor_row_id(self, actor_id: str = ""):
+        core_services = getattr(self, "core_services", None)
+        actor_service = getattr(core_services, "actor", None) if core_services is not None else None
+        if actor_service is None:
+            return None
+        normalized_actor_id = str(actor_id or "").strip()
+        if not normalized_actor_id:
+            principal = getattr(getattr(self, "core_domain", None), "principal", None)
+            principal_key = str(getattr(principal, "principal_key", "") or "self").strip() or "self"
+            normalized_actor_id = f"user:{principal_key}"
+        actor = actor_service.get_by_actor_id(normalized_actor_id)
+        if actor is not None:
+            return getattr(actor, "id", None)
+        ensure_actor = getattr(actor_service, "ensure_actor", None)
+        if not callable(ensure_actor):
+            return None
+        if normalized_actor_id.startswith("system."):
+            actor_type = normalized_actor_id.replace(".", "_")
+            display_name = normalized_actor_id
+            permission_profile_id = f"profile.{actor_type}"
+            actor = ensure_actor(
+                actor_id=normalized_actor_id,
+                actor_type=actor_type,
+                display_name=display_name,
+                permission_profile_id=permission_profile_id,
+            )
+            return getattr(actor, "id", None)
+        principal = getattr(getattr(self, "core_domain", None), "principal", None)
+        principal_key = str(getattr(principal, "principal_key", "") or "self").strip() or "self"
+        actor = ensure_actor(
+            actor_id=normalized_actor_id,
+            actor_type="user",
+            owner_user_id=principal_key,
+            display_name=str(getattr(principal, "display_name", "") or principal_key),
+            permission_profile_id="profile.default_user",
+        )
+        return getattr(actor, "id", None)
 
     def _observe_tool_result(self, tool_name: str, result, tool_args: dict | None = None) -> None:
         if self._telemetry_recorder is not None:
@@ -449,7 +440,7 @@ class App:
                 metadata=metadata,
             )
         )
-        await self._get_client_thread_bridge().publish_runtime_state(session_id, snapshot, turn_id=metadata["turn_id"])
+        await self._get_thread_delivery_bridge().publish_runtime_state(session_id, snapshot, turn_id=metadata["turn_id"])
 
     async def _emit_usage_event(
         self,
@@ -469,7 +460,7 @@ class App:
                 metadata={"turn_id": turn_id},
             )
         )
-        await self._get_client_thread_bridge().publish_runtime_usage(session_id, payload)
+        await self._get_thread_delivery_bridge().publish_runtime_usage(session_id, payload)
 
     async def _emit_reasoning_stream_event(
         self,
@@ -496,7 +487,7 @@ class App:
                 },
             )
         )
-        await self._get_client_thread_bridge().publish_reasoning_event(
+        await self._get_thread_delivery_bridge().publish_reasoning_event(
             session_id,
             stream_id=stream_id,
             turn_id=turn_id,
@@ -521,7 +512,7 @@ class App:
             snapshot.get("turn_id", ""),
         )
         await self.speaker.emit(event)
-        await self._get_client_thread_bridge().publish_confirm_request(event, approval_context=approval_context)
+        await self._get_thread_delivery_bridge().publish_confirm_request(event, approval_context=approval_context)
 
     async def _handle_confirm_response(self, payload):
         if not isinstance(payload, dict):
@@ -533,9 +524,9 @@ class App:
         if request_id:
             context = self._confirm_approval_requests.get(request_id)
             if isinstance(context, dict):
-                client_id = str(payload.get("client_id") or "").strip()
-                if client_id:
-                    context["client_id"] = client_id
+                endpoint_id = str(payload.get("endpoint_id") or "").strip()
+                if endpoint_id:
+                    context["endpoint_id"] = endpoint_id
                     self._confirm_approval_requests[request_id] = context
         request_id = str(payload.get("request_id") or "").strip()
         approval_context = self._apply_confirm_approval_decision(
@@ -557,7 +548,7 @@ class App:
             EventTarget(kind=TargetKind.CURRENT_SESSION.value),
             snapshot.get("turn_id", ""),
         )
-        await self._get_client_thread_bridge().publish_confirm_resolution(payload, approval_context=approval_context)
+        await self._get_thread_delivery_bridge().publish_confirm_resolution(payload, approval_context=approval_context)
         if request_id:
             self._confirm_approval_requests.pop(request_id, None)
 
@@ -597,9 +588,9 @@ class App:
             thread_id=thread_row.id,
             workspace_id=session_row.workspace_id,
             operation_type=operation_type,
-            execution_target="core_only",
+            execution_target="core.local",
             title=operation_title,
-            requested_by_client_id=session_row.client_id,
+            requested_by_actor_id=self._actor_row_id(),
             requested_by_session_id=session_row.id,
             status="waiting_approval",
             metadata={
@@ -666,16 +657,11 @@ class App:
         operation_row_id = context.get("operation_row_id")
         approval = core_services.approval.get_by_approval_id(approval_id) if approval_id else None
         if approval is not None and approval.status == "pending":
-            decided_by_client_id = None
-            decided_by_client_key = str(context.get("client_id") or "").strip()
-            if decided_by_client_key:
-                decided_by_client = core_services.client.get_by_client_id(decided_by_client_key)
-                decided_by_client_id = getattr(decided_by_client, "id", None)
             approval = core_services.approval.decide_approval(
                 approval_id=approval.approval_id,
                 decision="approve" if accepted else "reject",
                 reason=reason,
-                decided_by_client_id=decided_by_client_id,
+                decided_by_actor_id=self._actor_row_id(),
             )
 
         if operation_row_id is not None:
@@ -714,7 +700,7 @@ class App:
             snapshot.get("turn_id", ""),
         )
         await self.speaker.emit(event)
-        await self._get_client_thread_bridge().publish_human_input_request(event)
+        await self._get_thread_delivery_bridge().publish_human_input_request(event)
 
     async def _handle_human_input_response(self, payload):
         if not isinstance(payload, dict):
@@ -736,7 +722,7 @@ class App:
             EventTarget(kind=TargetKind.CURRENT_SESSION.value),
             snapshot.get("turn_id", ""),
         )
-        await self._get_client_thread_bridge().publish_human_input_resolution(payload)
+        await self._get_thread_delivery_bridge().publish_human_input_resolution(payload)
 
     async def _update_heartbeat_status(self, status: str, detail: str = ""):
         snapshot = self.status_manager.set_heartbeat(status, detail)
@@ -802,74 +788,6 @@ class App:
         if callable(brain_setter):
             brain_setter(self.mode_manager)
 
-    def _scheduled_job_route_context(self, task_record: dict[str, Any] | None = None) -> tuple[list[dict], dict[str, Any]]:
-        tools = self.tools_manager.get_scheduled_job_tools()
-        task_record = task_record or {}
-        return tools, {
-            "current_mode": "general",
-            "route_reason": "Scheduler claimed an assistant-owned V4 scheduled job.",
-            "source_profile": "scheduled_jobs",
-            "task_routing": {
-                "preferred_tool_key": str(task_record.get("preferred_tool_key") or "").strip(),
-                "preferred_target_endpoint_ids": list(task_record.get("preferred_target_endpoint_ids") or task_record.get("preferred_endpoint_ids") or []),
-                "preferred_endpoint_provider_types": list(task_record.get("preferred_endpoint_provider_types") or task_record.get("preferred_endpoint_provider_types") or []),
-                "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
-            },
-            "tool_bundle": [
-                str(tool.get("function", {}).get("name", "")).strip()
-                for tool in tools
-                if str(tool.get("function", {}).get("name", "")).strip()
-            ],
-            "mcp_servers": [],
-        }
-
-    def _task_delivery(self, task_record: dict[str, Any]) -> tuple[str, EventTarget]:
-        delivery = task_record.get("delivery_target") if isinstance(task_record.get("delivery_target"), dict) else {}
-        session_id = str(delivery.get("session_id") or task_record.get("origin_session_id") or "").strip()
-        return session_id, EventTarget(
-            kind=str(delivery.get("kind") or TargetKind.CURRENT_SESSION.value),
-            id=str(delivery.get("id") or ""),
-        )
-
-    def _task_source(self, task_record: dict[str, Any]):
-        delivery = task_record.get("delivery_target") if isinstance(task_record.get("delivery_target"), dict) else {}
-        source_kind = str(delivery.get("source_kind") or SourceKind.SYSTEM.value)
-        source_id = str(delivery.get("source_id") or task_record.get("scope", {}).get("user_id") or "")
-        return make_source(source_kind, source_id)
-
-    def _task_operation_context(self, task_record: dict[str, Any]) -> tuple[object | None, object | None, object | None]:
-        core_services = getattr(self, "core_services", None)
-        if core_services is None:
-            return None, None, None
-        session_id, _ = self._task_delivery(task_record)
-        if not session_id:
-            return None, None, None
-        session_row = core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return None, None, None
-        thread_row = core_services.thread.get_by_id(session_row.thread_id)
-        workspace_row = core_services.workspace.get_by_id(session_row.workspace_id)
-        if thread_row is None or workspace_row is None:
-            return None, None, None
-        return session_row, thread_row, workspace_row
-
-    async def _publish_task_operation_update(
-        self,
-        operation,
-        *,
-        thread_id: str,
-        phase: str = "",
-        detail: str = "",
-        error: dict[str, Any] | None = None,
-    ) -> None:
-        await self._get_client_thread_bridge().publish_task_operation_update(
-            operation,
-            thread_id=thread_id,
-            phase=phase,
-            detail=detail,
-            error=error,
-        )
-
     def _resolve_background_target(self, session_id: str, target: EventTarget) -> EventTarget:
         resolved_target = target
         if target.kind == TargetKind.CURRENT_SESSION.value and session_id:
@@ -909,99 +827,10 @@ class App:
         has_subscription = getattr(endpoint_ws_manager, "has_subscription", None)
         return bool(callable(has_subscription) and has_subscription(target_type="thread", target_id=thread_id))
 
-    def _has_legacy_web_session(self, session_id: str) -> bool:
-        gateway = getattr(self, "gateway", None)
-        ws_manager = getattr(gateway, "ws_manager", None)
-        has_session = getattr(ws_manager, "has_session", None)
-        return bool(session_id and callable(has_session) and has_session(session_id))
-
-    async def _create_scheduled_task_operation(self, task_record: dict[str, Any], *, operation_type: str, title: str):
-        core_services = getattr(self, "core_services", None)
-        if core_services is None:
-            return None, None
-        session_row, thread_row, workspace_row = self._task_operation_context(task_record)
-        if session_row is None or thread_row is None or workspace_row is None:
-            return None, None
-        operation = core_services.operation.create_operation(
-            thread_id=thread_row.id,
-            workspace_id=workspace_row.id,
-            operation_type=operation_type,
-            execution_target="core_only",
-            title=title,
-            requested_by_client_id=session_row.client_id,
-            requested_by_session_id=session_row.id,
-            status="running",
-            metadata={
-                "workspace_id": getattr(workspace_row, "workspace_id", ""),
-                "task_key": str(task_record.get("task_key") or ""),
-                "task_summary": _normalize_task_summary(task_record),
-                "preferred_tool_key": str(task_record.get("preferred_tool_key") or ""),
-                "preferred_target_endpoint_ids": list(task_record.get("preferred_target_endpoint_ids") or task_record.get("preferred_endpoint_ids") or []),
-                "preferred_endpoint_provider_types": list(task_record.get("preferred_endpoint_provider_types") or task_record.get("preferred_endpoint_provider_types") or []),
-                "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced") or "balanced",
-                "source": "scheduled_task",
-            },
-        )
-        remember_operation = getattr(self.task_manager, "remember_task_operation", None)
-        if callable(remember_operation):
-            await remember_operation(
-                str(task_record.get("task_key") or ""),
-                operation_id=operation.operation_id,
-                status="running",
-            )
-        await self._publish_task_operation_update(
-            operation,
-            thread_id=thread_row.thread_id,
-            phase="running",
-            detail="Scheduled task execution started.",
-        )
-        return operation, thread_row.thread_id
-
-    async def _ensure_scheduled_task_operation(
-        self,
-        task_record: dict[str, Any],
-        *,
-        operation_id: str = "",
-        operation_type: str,
-        title: str,
-    ):
-        normalized_operation_id = str(operation_id or "").strip()
-        core_services = getattr(self, "core_services", None)
-        if normalized_operation_id and core_services is not None:
-            existing = core_services.operation.get_by_operation_id(normalized_operation_id)
-            if existing is not None:
-                existing = core_services.operation.update_status(
-                    operation_id=existing.id,
-                    status="running",
-                    metadata={"scheduler_precreated": True},
-                ) or existing
-                remember_operation = getattr(self.task_manager, "remember_task_operation", None)
-                if callable(remember_operation):
-                    await remember_operation(
-                        str(task_record.get("task_key") or ""),
-                        operation_id=existing.operation_id,
-                        status=existing.status,
-                    )
-                session_row, thread_row, _ = self._task_operation_context(task_record)
-                thread_key = getattr(thread_row, "thread_id", "") if thread_row is not None else ""
-                if thread_key:
-                    await self._publish_task_operation_update(
-                        existing,
-                        thread_id=thread_key,
-                        phase="running",
-                        detail="Scheduled task execution started.",
-                    )
-                return existing, thread_key
-        return await self._create_scheduled_task_operation(
-            task_record,
-            operation_type=operation_type,
-            title=title,
-        )
-
     def _can_deliver_task_update(self, session_id: str, target: EventTarget) -> bool:
         resolved_target = self._resolve_background_target(session_id, target)
         if resolved_target.kind == TargetKind.WEB.value:
-            return self._has_active_endpoint_thread(session_id) or self._has_legacy_web_session(session_id)
+            return self._has_active_endpoint_thread(session_id)
         if resolved_target.kind in {TargetKind.FEISHU.value, TargetKind.WECHAT.value}:
             return self._has_active_endpoint_thread(session_id)
         if resolved_target.kind == TargetKind.CLI.value:
@@ -1026,20 +855,11 @@ class App:
             return False
         resolved_target = self._resolve_background_target(session_id, target)
         if resolved_target.kind in {TargetKind.WEB.value, TargetKind.FEISHU.value, TargetKind.WECHAT.value} and self._can_persist_client_thread_message(session_id, resolved_target):
-            await self._get_client_thread_bridge().persist_and_publish_assistant_message(
+            await self._get_thread_delivery_bridge().persist_and_publish_assistant_message(
                 session_id,
                 content=message,
                 stream_id="",
                 turn_id=uuid4().hex,
-            )
-            return True
-        if resolved_target.kind == TargetKind.WEB.value and self._has_legacy_web_session(session_id):
-            await self.speaker.emit_text(
-                session_id,
-                message,
-                self._runtime_source,
-                target=resolved_target,
-                metadata={"activity_kind": activity_kind},
             )
             return True
         if resolved_target.kind == TargetKind.CLI.value:
@@ -1053,59 +873,9 @@ class App:
             return True
         return False
 
-    async def _emit_task_update(self, task_record: dict[str, Any], message: str) -> bool:
-        delivery_candidates: list[tuple[str, EventTarget]] = []
-        task_session_id, task_target = self._task_delivery(task_record)
-        if task_session_id:
-            delivery_candidates.append((task_session_id, task_target))
-        recent_delivery = self._recent_user_delivery()
-        if recent_delivery is not None:
-            recent_session_id, _ = recent_delivery
-            if all(existing_session_id != recent_session_id for existing_session_id, _ in delivery_candidates):
-                delivery_candidates.append(recent_delivery)
-        for session_id, target in delivery_candidates:
-            if not self._can_deliver_task_update(session_id, target):
-                continue
-            if await self._deliver_background_message(
-                session_id,
-                target,
-                message,
-                activity_kind="scheduled_task",
-            ):
-                return True
-        return False
-
     async def _emit_pending_task_updates(self, session_id: str, target: EventTarget, source) -> None:
-        peek_pending = getattr(self.task_manager, "peek_pending_delivery_messages", None)
-        if callable(peek_pending):
-            pending = await peek_pending(source=source)
-        else:
-            pending = await self.task_manager.collect_pending_delivery_messages(source=source)
-        if not pending:
-            return
-        lines = ["以下是之前未送达的后台更新补发："]
-        for item in pending[:6]:
-            kind = str(item.get("kind") or "").strip()
-            prefix = "提醒补发" if kind == "task_due" else "结果补发" if kind == "task_completion" else "后台补发"
-            lines.append(f"- {prefix}：{item['message']}")
-        delivered = await self._deliver_background_message(
-            session_id,
-            target,
-            "\n".join(lines),
-            activity_kind="scheduled_task",
-        )
-        if not delivered:
-            return
-        acknowledge_pending = getattr(self.task_manager, "acknowledge_pending_delivery_messages", None)
-        if callable(acknowledge_pending):
-            await acknowledge_pending(
-                source=source,
-                event_ids=[
-                    str(item.get("delivery_key") or item.get("source_event_id") or item.get("event_id") or "").strip()
-                    for item in pending
-                    if str(item.get("delivery_key") or item.get("source_event_id") or item.get("event_id") or "").strip()
-                ],
-            )
+        del session_id, target, source
+        return
 
     def _recent_user_delivery(self, *, require_deliverable: bool = True) -> tuple[str, EventTarget] | None:
         list_recent = getattr(self.session_manager, "list_recent_bindings", None)
@@ -1134,7 +904,7 @@ class App:
         return None
 
 
-    def _recent_client_thread_bridge_metadata(self, *, workspace_ids: list[str] | None = None) -> dict[str, str]:
+    def _recent_thread_delivery_bridge_metadata(self, *, workspace_ids: list[str] | None = None) -> dict[str, str]:
         list_recent = getattr(self.session_manager, "list_recent_bindings", None)
         if not callable(list_recent):
             return {}
@@ -1155,7 +925,7 @@ class App:
             candidate = {
                 "thread_id": thread_id,
                 "workspace_id": str(metadata.get("workspace_id") or "").strip(),
-                "client_id": str(metadata.get("client_id") or "").strip(),
+                "endpoint_id": str(metadata.get("endpoint_id") or "").strip(),
                 "bridged_session_id": session_id,
             }
             if allowed_workspace_ids and candidate["workspace_id"] in allowed_workspace_ids:
@@ -1225,213 +995,11 @@ class App:
             },
         }
 
-    def _control_claim_valid(self, task_key: str, claim_token: str) -> bool:
-        normalized_claim_token = str(claim_token or "").strip()
-        if not normalized_claim_token:
-            return True
-        checker = getattr(self.task_manager, "has_current_claim", None)
-        if not callable(checker):
-            return True
-        return bool(checker(task_key, normalized_claim_token))
-
-    async def _handle_scheduled_reminder(self, task_key: str, claim_token: str = "", trace_id: str = "", operation_id: str = ""):
-        if not self._control_claim_valid(task_key, claim_token):
-            return
-        task_record = self.task_manager.get_task_by_key(task_key)
-        if task_record is None:
-            return
-        task_operation, operation_thread_id = await self._ensure_scheduled_task_operation(
-            task_record,
-            operation_id=operation_id,
-            operation_type="scheduled_reminder_run",
-            title=f"Scheduled Reminder: {_normalize_task_summary(task_record)}",
-        )
-        message = (
-            f"Scheduled reminder: {_normalize_task_summary(task_record)}"
-            f"\nDue: {task_record.get('next_run_at') or task_record.get('due_at') or 'now'}"
-        )
-        should_notify = str(task_record.get("notify_policy") or "on_due") != "silent"
-        delivered = True
-        token = bind_event_context(
-            trace_id=trace_id,
-            session_id=self._task_delivery(task_record)[0] or f"system:task:{task_key}",
-            source=self._task_source(task_record),
-            target=self._task_delivery(task_record)[1],
-            job_id=task_key,
-            **self._runtime_principal_context(),
-        )
-        try:
-            if should_notify:
-                delivered = await self._emit_task_update(task_record, message)
-            if task_operation is not None:
-                core_services = getattr(self, "core_services", None)
-                if core_services is not None:
-                    task_operation = core_services.operation.update_status(
-                        operation_id=task_operation.id,
-                        status="succeeded",
-                        result_summary=message,
-                        metadata={
-                            "delivered": bool(delivered or not should_notify),
-                            "delivery_pending": bool(should_notify and not delivered),
-                        },
-                    ) or task_operation
-                    remember_operation = getattr(self.task_manager, "remember_task_operation", None)
-                    if callable(remember_operation):
-                        await remember_operation(
-                            task_key,
-                            operation_id=task_operation.operation_id,
-                            status=task_operation.status,
-                        )
-                    if operation_thread_id:
-                        await self._publish_task_operation_update(
-                            task_operation,
-                            thread_id=operation_thread_id,
-                            phase="completed",
-                            detail=message,
-                        )
-            await self.task_manager.complete_due_notification(
-                task_key,
-                summary=message,
-                delivered=(delivered or not should_notify),
-                runtime_source="app.scheduled_reminder",
-                delivery_channel="task_update",
-            )
-        finally:
-            reset_event_context(token)
-
-    async def _handle_scheduled_task(self, task_key: str, claim_token: str = "", trace_id: str = "", operation_id: str = ""):
-        if not self._control_claim_valid(task_key, claim_token):
-            return
-        task_record = self.task_manager.get_task_by_key(task_key)
-        if task_record is None:
-            return
-        task_operation, operation_thread_id = await self._ensure_scheduled_task_operation(
-            task_record,
-            operation_id=operation_id,
-            operation_type="scheduled_task_run",
-            title=f"Scheduled Task: {_normalize_task_summary(task_record)}",
-        )
-
-        tools, route_context = self._scheduled_job_route_context(task_record)
-        summary = _normalize_task_summary(task_record)
-        system_prompt = (
-            "[Scheduled Job Mode]\n"
-            "You are executing an assistant-owned scheduled background job, not a user TODO.\n"
-            "Use only the allowed tools.\n"
-            "Do the smallest reliable amount of work needed to complete the scheduled task.\n"
-            "Legacy TaskManager completion confirmation is disabled in V4; return the execution summary and let Scheduler own job state.\n"
-            "Never use destructive or external-send behavior.\n"
-            "Return a concise execution summary in plain text."
-        )
-        user_payload = {
-            "task": task_record,
-            "current_time": utcnow_iso(),
-            "time_context": _task_time_context(task_record),
-            "orchestration": task_record.get("orchestration") if isinstance(task_record.get("orchestration"), dict) else {},
-            "routing": {
-                "preferred_tool_key": str(task_record.get("preferred_tool_key") or "").strip(),
-                "preferred_target_endpoint_ids": list(task_record.get("preferred_target_endpoint_ids") or task_record.get("preferred_endpoint_ids") or []),
-                "preferred_endpoint_provider_types": list(task_record.get("preferred_endpoint_provider_types") or task_record.get("preferred_endpoint_provider_types") or []),
-                "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
-            },
-        }
-        task_source = self._task_source(task_record)
-        task_session_id, task_target = self._task_delivery(task_record)
-        token = bind_event_context(
-            trace_id=trace_id,
-            session_id=task_session_id or f"system:task:{task_key}",
-            source=task_source,
-            target=task_target,
-            job_id=task_key,
-            **self._runtime_principal_context(),
-        )
-        try:
-            result = await self.brain.run_background_turn(
-                api_url=self.config.get("api_url") or "",
-                api_key=self.config.get("api_key") or "",
-                model=self.config.get("model") or "",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-                ],
-                tools=tools,
-                session_id=task_session_id or f"system:task:{task_key}",
-                source=task_source,
-                route_context=route_context,
-                adapter_options=Brain._build_adapter_options(self._build_model_options({})),
-            )
-        finally:
-            reset_event_context(token)
-
-        content = str(result.get("content") or "").strip() or f"Scheduled task completed: {summary}"
-        completed_task_keys = {
-            str(item).strip()
-            for item in (result.get("completed_task_keys") or [])
-            if str(item).strip()
-        }
-        completed_by_brain = task_key in completed_task_keys
-        succeeded = result.get("status") == "ok" and not content.lower().startswith("error:")
-        error_payload = result.get("error") if isinstance(result.get("error"), dict) else {}
-        user_message = (
-            f"Scheduled task completed: {summary}\n{content}"
-            if succeeded and completed_by_brain
-            else f"Scheduled task ran successfully and is awaiting completion confirmation: {summary}\n{content}"
-            if succeeded
-            else f"Scheduled task failed: {summary}\n{content}"
-        )
-        should_notify = str(task_record.get("notify_policy") or "on_completion") == "on_completion"
-        delivered = True
-        if should_notify:
-            delivered = await self._emit_task_update(task_record, user_message)
-        if task_operation is not None:
-            core_services = getattr(self, "core_services", None)
-            if core_services is not None:
-                task_operation = core_services.operation.update_status(
-                    operation_id=task_operation.id,
-                    status="succeeded" if succeeded else "failed",
-                    result_summary=user_message,
-                    metadata={
-                        "completed_by_brain": completed_by_brain,
-                        "delivered": bool(delivered or not should_notify),
-                        "last_error": error_payload if isinstance(error_payload, dict) else {},
-                    },
-                ) or task_operation
-                remember_operation = getattr(self.task_manager, "remember_task_operation", None)
-                if callable(remember_operation):
-                    await remember_operation(
-                        task_key,
-                        operation_id=task_operation.operation_id,
-                        status=task_operation.status,
-                    )
-                if operation_thread_id:
-                    await self._publish_task_operation_update(
-                        task_operation,
-                        thread_id=operation_thread_id,
-                        phase="completed" if succeeded else "failed",
-                        detail=user_message,
-                        error=error_payload if not succeeded and isinstance(error_payload, dict) else None,
-                    )
-        await self.task_manager.complete_task_run(
-            task_key,
-            succeeded=succeeded,
-            summary=user_message,
-            delivered=(delivered or not should_notify),
-            completed=completed_by_brain,
-            failure_category=str(error_payload.get("category") or "retryable"),
-            failure_retryable=error_payload.get("retryable"),
-            failure_code=str(error_payload.get("code") or "scheduled_task_run_failed"),
-            failure_details=error_payload.get("details") if isinstance(error_payload.get("details"), dict) else {},
-            runtime_source="app.scheduled_task",
-            delivery_channel="task_update",
-        )
-
     async def _handle_control_event(self, event):
         metadata = dict(getattr(event, "metadata", {}) or {})
         control_kind = str(metadata.get("control_kind") or "").strip().lower()
         payload = event.content if isinstance(event.content, dict) else {}
         task_key = str(payload.get("task_key") or "").strip()
-        claim_token = str(payload.get("claim_token") or metadata.get("claim_token") or "").strip()
-        operation_id = str(payload.get("operation_id") or metadata.get("operation_id") or "").strip()
         if control_kind == "reply_control":
             await self._handle_reply_control_event(event)
             return True
@@ -1758,7 +1326,7 @@ class App:
                 metadata={"turn_id": turn_id},
             )
         )
-        await self._get_client_thread_bridge().publish_control_event(session_id, dict(payload or {}), turn_id=turn_id)
+        await self._get_thread_delivery_bridge().publish_control_event(session_id, dict(payload or {}), turn_id=turn_id)
 
     async def _submit_reply_control_replay(
         self,
@@ -2587,7 +2155,7 @@ class App:
                 "turn_id": context_turn_id,
                 "active_turn_id": active_turn_id,
             }
-        bridge = self._get_client_thread_bridge()
+        bridge = self._get_thread_delivery_bridge()
         publisher = getattr(bridge, "publish_progress_notice", None)
         result = await publisher(
             resolved_session_id,
@@ -2698,28 +2266,28 @@ class App:
             reloaded_components.add("mode_manager")
         return sorted(reloaded_components)
 
-    def build_client_connection_prompt(
+    def build_endpoint_connection_prompt(
         self,
         *,
-        client_id: str,
-        client_type: str,
+        endpoint_id: str,
+        endpoint_type: str,
         display_name: str,
         transport_profile: str,
         workspace_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         try:
             base_prompt = str(
-                self.config.get_prompt("client_connected")
-                or self.config.get_prompt("client_connection")
+                self.config.get_prompt("endpoint_connected")
+                or self.config.get_prompt("endpoint_connection")
                 or ""
             ).strip()
         except Exception:
             base_prompt = ""
         workspace_list = [str(item).strip() for item in (workspace_ids or []) if str(item).strip()]
         context = {
-            "trigger": "client_connected",
-            "client_id": str(client_id or "").strip(),
-            "client_type": str(client_type or "").strip(),
+            "trigger": "endpoint_connected",
+            "endpoint_id": str(endpoint_id or "").strip(),
+            "endpoint_type": str(endpoint_type or "").strip(),
             "display_name": str(display_name or "").strip(),
             "transport_profile": str(transport_profile or "").strip(),
             "workspace_ids": workspace_list,
@@ -2729,26 +2297,26 @@ class App:
         if base_prompt:
             prompt_parts.append(base_prompt)
         prompt_parts.append(
-            "现在有一个新的 Client 刚刚接入系统。\n"
+            "现在有一个新的 Endpoint Provider 刚刚接入系统。\n"
             "请你像真实协作中的助手一样，主动发出第一条简短、自然、不生硬的连接消息，语气友好、专业，像在和一个刚上线的同事说话。\n"
             "这条消息需要做到三件事：1）表明你已经感知到它已连接；2）结合它的身份和工作区给出贴合上下文的欢迎或协作提示；3）说明你会等待它的能力快照或后续任务。\n"
             "不要输出 JSON、字段名清单、程序化枚举或过度模板化措辞。\n\n"
-            f"本次接入的是 {context['display_name'] or context['client_id'] or '未知 Client'}"
-            f"（client_id={context['client_id'] or 'unknown'}，类型={context['client_type'] or 'unknown'}，"
+            f"本次接入的是 {context['display_name'] or context['endpoint_id'] or '未知 Endpoint'}"
+            f"（endpoint_id={context['endpoint_id'] or 'unknown'}，类型={context['endpoint_type'] or 'unknown'}，"
             f"传输={context['transport_profile'] or 'unknown'}），当前声明的工作区有：{workspace_text}。"
         )
         prompt = "\n\n".join(prompt_parts).strip()
         return {
-            "prompt_name": "client_connected",
+            "prompt_name": "endpoint_connected",
             "prompt": prompt,
             "context": context,
         }
 
-    async def inject_client_connection_event(
+    async def inject_endpoint_connection_event(
         self,
         *,
-        client_id: str,
-        client_type: str,
+        endpoint_id: str,
+        endpoint_type: str,
         display_name: str,
         transport_profile: str,
         workspace_ids: list[str] | None = None,
@@ -2757,9 +2325,9 @@ class App:
         payload = (
             dict(connection_prompt)
             if isinstance(connection_prompt, dict) and connection_prompt
-            else self.build_client_connection_prompt(
-                client_id=client_id,
-                client_type=client_type,
+            else self.build_endpoint_connection_prompt(
+                endpoint_id=endpoint_id,
+                endpoint_type=endpoint_type,
                 display_name=display_name,
                 transport_profile=transport_profile,
                 workspace_ids=workspace_ids,
@@ -2768,31 +2336,31 @@ class App:
         prompt_text = str(payload.get("prompt") or "").strip()
         if not prompt_text:
             return payload
-        client_key = str(client_id or "").strip() or "unknown"
-        client_session_id = f"system:client:{client_key}"
-        client_target = make_target(
+        endpoint_key = str(endpoint_id or "").strip() or "unknown"
+        endpoint_session_id = f"system:endpoint:{endpoint_key}"
+        endpoint_target = make_target(
             TargetKind.INTERNAL.value,
-            target_id=client_key,
-            trigger="client_connected",
+            target_id=endpoint_key,
+            trigger="endpoint_connected",
         )
-        bridge_metadata = self._recent_client_thread_bridge_metadata(workspace_ids=workspace_ids)
+        bridge_metadata = self._recent_thread_delivery_bridge_metadata(workspace_ids=workspace_ids)
         event = InboundEvent(
-            session_id=client_session_id,
+            session_id=endpoint_session_id,
             type=EventType.MESSAGE.value,
             role="user",
             content=prompt_text,
             source=make_source(
                 SourceKind.SYSTEM.value,
-                "client_connection",
-                display_name="Client Connection",
-                client_id=client_key,
+                "endpoint_connection",
+                display_name="Endpoint Connection",
+                endpoint_id=endpoint_key,
             ),
-            target=client_target,
+            target=endpoint_target,
             metadata={
-                "prompt_name": str(payload.get("prompt_name") or "client_connected"),
-                "trigger": "client_connected",
-                "client_id": client_key,
-                "client_type": str(client_type or "").strip(),
+                "prompt_name": str(payload.get("prompt_name") or "endpoint_connected"),
+                "trigger": "endpoint_connected",
+                "endpoint_id": endpoint_key,
+                "endpoint_type": str(endpoint_type or "").strip(),
                 "display_name": str(display_name or "").strip(),
                 "transport_profile": str(transport_profile or "").strip(),
                 "workspace_ids": [str(item).strip() for item in (workspace_ids or []) if str(item).strip()],
@@ -2800,35 +2368,35 @@ class App:
                 "connection_prompt": payload,
                 "bridge_thread_id": str(bridge_metadata.get("thread_id") or ""),
                 "bridge_workspace_id": str(bridge_metadata.get("workspace_id") or ""),
-                "bridge_client_id": str(bridge_metadata.get("client_id") or ""),
+                "bridge_endpoint_id": str(bridge_metadata.get("endpoint_id") or ""),
                 "bridge_session_id": str(bridge_metadata.get("bridged_session_id") or ""),
             },
         )
         bind_runtime_session = getattr(self.session_manager, "bind_runtime_session", None)
         if callable(bind_runtime_session):
             bind_runtime_session(
-                make_source(SourceKind.SYSTEM.value, f"client:{client_key}", client_id=client_key),
-                session_id=client_session_id,
-                default_target=client_target,
+                make_source(SourceKind.SYSTEM.value, f"endpoint:{endpoint_key}", endpoint_id=endpoint_key),
+                session_id=endpoint_session_id,
+                default_target=endpoint_target,
                 metadata={
                     "transient": True,
-                    "trigger": "client_connected",
-                    "client_id": client_key,
+                    "trigger": "endpoint_connected",
+                    "endpoint_id": endpoint_key,
                     "thread_id": str(bridge_metadata.get("thread_id") or ""),
                     "workspace_id": str(bridge_metadata.get("workspace_id") or ""),
-                    "bridge_client_id": str(bridge_metadata.get("client_id") or ""),
+                    "bridge_endpoint_id": str(bridge_metadata.get("endpoint_id") or ""),
                     "bridged_session_id": str(bridge_metadata.get("bridged_session_id") or ""),
                 },
             )
         await self.event_bus.inbound_queue.put(event)
         logger.info(
-            "Injected client connection event into Core",
+            "Injected endpoint connection event into Core",
             extra={
                 "context": {
-                    "client_id": client_key,
-                    "client_type": str(client_type or "").strip(),
+                    "endpoint_id": endpoint_key,
+                    "endpoint_type": str(endpoint_type or "").strip(),
                     "workspace_ids": [str(item).strip() for item in (workspace_ids or []) if str(item).strip()],
-                    "trigger": "client_connected",
+                    "trigger": "endpoint_connected",
                     "bridge_thread_id": str(bridge_metadata.get("thread_id") or ""),
                 }
             },
@@ -2837,7 +2405,7 @@ class App:
 
     def _resolve_session_execution_request(self, event: InboundEvent) -> SessionExecutionRequest | None:
         effective_session_id = event.session_id
-        is_client_connection_reply = False
+        is_endpoint_connection_reply = False
         is_proactive_idle_poke = False
         if event.type == EventType.SIGNAL.value:
             if self._is_heartbeat_signal(event):
@@ -2853,9 +2421,9 @@ class App:
             input_info = self._build_signal_input(event)
         else:
             event_metadata = dict(getattr(event, "metadata", {}) or {})
-            is_client_connection_reply = bool(
-                event_metadata.get("trigger") == "client_connected"
-                and str(effective_session_id or "").strip().startswith("system:client:")
+            is_endpoint_connection_reply = bool(
+                event_metadata.get("trigger") == "endpoint_connected"
+                and str(effective_session_id or "").strip().startswith("system:endpoint:")
             )
             input_info = {
                 "role": event.role,
@@ -2865,8 +2433,8 @@ class App:
             target = (
                 EventTarget(kind=TargetKind.BROADCAST.value)
                 if effective_session_id == "system:boot"
-                else EventTarget(kind=TargetKind.INTERNAL.value, id=event_metadata.get("client_id"))
-                if is_client_connection_reply
+                else EventTarget(kind=TargetKind.INTERNAL.value, id=event_metadata.get("endpoint_id"))
+                if is_endpoint_connection_reply
                 else EventTarget(kind=TargetKind.CURRENT_SESSION.value)
             )
         return SessionExecutionRequest(
@@ -2874,7 +2442,7 @@ class App:
             event=event,
             input_info=input_info,
             target=target,
-            is_boot=effective_session_id == "system:boot" or is_client_connection_reply,
+            is_boot=effective_session_id == "system:boot" or is_endpoint_connection_reply,
             is_proactive_idle_poke=is_proactive_idle_poke,
         )
 
@@ -2948,9 +2516,9 @@ class App:
             source_metadata = {}
         source_kind = str(getattr(source, "kind", "") or "").strip()
         source_id = str(getattr(source, "id", "") or "").strip()
-        client_id = str(metadata.get("client_id") or source_metadata.get("client_id") or "").strip()
-        if not client_id and source_kind in {"web", "feishu", "wechat", "cli"}:
-            client_id = source_id
+        endpoint_id = str(metadata.get("endpoint_id") or source_metadata.get("endpoint_id") or "").strip()
+        if not endpoint_id and source_kind in {"web", "feishu", "wechat", "cli"}:
+            endpoint_id = source_id
         active_workspace_id = str(metadata.get("active_workspace_id") or metadata.get("workspace_id") or "").strip()
         token = bind_event_context(
             trace_id=getattr(request.event, "event_id", ""),
@@ -2960,7 +2528,7 @@ class App:
             target=request.target,
             source_kind=source_kind,
             source_id=source_id,
-            client_id=client_id,
+            endpoint_id=endpoint_id,
             active_workspace_id=active_workspace_id,
             workspace_id=active_workspace_id,
             thread_id=str(metadata.get("thread_id") or ""),
@@ -3005,7 +2573,7 @@ class App:
                         **metadata,
                     },
                 )
-                await self._get_client_thread_bridge().publish_activity_event(
+                await self._get_thread_delivery_bridge().publish_activity_event(
                     request.session_id,
                     activity={
                         "turn_id": turn_id,
@@ -3049,7 +2617,7 @@ class App:
 
             initial_progress_notice = _initial_progress_notice_content(metadata)
             if initial_progress_notice:
-                await self._get_client_thread_bridge().publish_progress_notice(
+                await self._get_thread_delivery_bridge().publish_progress_notice(
                     request.session_id,
                     content=initial_progress_notice,
                     turn_id=turn_id,
@@ -3102,7 +2670,7 @@ class App:
                         reasoning_ended = True
                 elif output.type == "answer_text" and output.text:
                     answer_chunks.append(output.text)
-                    await self._get_client_thread_bridge().publish_message_delta(
+                    await self._get_thread_delivery_bridge().publish_message_delta(
                         request.session_id,
                         stream_id=stream_id,
                         turn_id=turn_id,
@@ -3158,7 +2726,7 @@ class App:
                 stream_channel="answer",
                 metadata={"turn_id": turn_id, "finish_reason": finish_reason},
             )
-            await self._get_client_thread_bridge().persist_and_publish_assistant_message(
+            await self._get_thread_delivery_bridge().persist_and_publish_assistant_message(
                 request.session_id,
                 content="".join(answer_chunks),
                 stream_id=stream_id,

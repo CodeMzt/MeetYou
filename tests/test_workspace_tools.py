@@ -17,7 +17,7 @@ class _WorkspaceService:
             title="Personal",
             base_mode="general",
             description="",
-            default_execution_target="core_only",
+            default_execution_target="core.local",
             meta={},
         )
         self.workspace = SimpleNamespace(
@@ -26,7 +26,7 @@ class _WorkspaceService:
             title="Study",
             base_mode="general",
             description="Study zone",
-            default_execution_target="specific_endpoint",
+            default_execution_target="endpoint",
             meta={"memory_ranking_policy": "workspace_first"},
         )
 
@@ -42,7 +42,7 @@ class _WorkspaceService:
     def get_governance_view(self, workspace):
         return {
             "description": getattr(workspace, "description", ""),
-            "default_execution_target": getattr(workspace, "default_execution_target", "core_only"),
+            "default_execution_target": getattr(workspace, "default_execution_target", "core.local"),
             "memory_ranking_policy": (getattr(workspace, "meta", {}) or {}).get("memory_ranking_policy", "workspace_first"),
         }
 
@@ -53,7 +53,7 @@ class _SessionService:
             id="session-row-1",
             session_id="sess_1",
             thread_id="thread-row-1",
-            client_id="client-row-1",
+            origin_endpoint_id="endpoint-row-1",
             active_workspace_id="workspace-row-personal",
             status="active",
         )
@@ -75,28 +75,12 @@ class _ThreadService:
         return None
 
 
-class _ClientService:
-    def __init__(self):
-        self.binds: list[dict] = []
-
+class _EndpointService:
     def get_by_id(self, row_id):
-        if row_id == "client-row-1":
-            return SimpleNamespace(id=row_id, client_id="desktop-app")
+        if row_id == "endpoint-row-1":
+            return SimpleNamespace(id=row_id, endpoint_id="desktop.desktop-app.ui")
         return None
 
-    def bind_workspace(self, **kwargs):
-        self.binds.append(dict(kwargs))
-        return SimpleNamespace(**kwargs)
-
-    def list_clients_for_workspace(self, workspace_id):
-        if workspace_id == "workspace-row-personal":
-            return [(SimpleNamespace(client_id="desktop-app", client_type="electron", display_name="Desktop"), SimpleNamespace())]
-        if workspace_id == "workspace-row-study":
-            return [(SimpleNamespace(client_id="study-client", client_type="desktop", display_name="Study Client"), SimpleNamespace())]
-        return []
-
-
-class _EndpointService:
     def list_all(self):
         return [
             SimpleNamespace(
@@ -122,17 +106,16 @@ class _Gateway:
     def __init__(self):
         self.events: list[dict] = []
 
-    async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict) -> None:
+    async def publish_thread_delivery_event(self, thread_id: str, *, event_type: str, payload: dict) -> None:
         self.events.append({"thread_id": thread_id, "event_type": event_type, "payload": dict(payload)})
 
 
 class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
     async def test_switch_workspace_updates_session_binding_and_publishes_event(self):
         session_service = _SessionService()
-        client_service = _ClientService()
         gateway = _Gateway()
         session_manager = SessionManager()
-        source = make_source("web", "desktop-app", client_id="desktop-app")
+        source = make_source("web", "desktop-app", endpoint_id="desktop-app")
 
         tools = WorkspaceTools()
         tools.set_core_domain(
@@ -141,7 +124,6 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
                     workspace=_WorkspaceService(),
                     session=session_service,
                     thread=_ThreadService(),
-                    client=client_service,
                     endpoint=_EndpointService(),
                 )
             )
@@ -158,13 +140,14 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["active_workspace_id"], "study")
         self.assertEqual(session_service.updates[0]["active_workspace_id"], "workspace-row-study")
-        self.assertEqual(client_service.binds[0]["workspace_id"], "workspace-row-study")
         binding = session_manager.get_binding("sess_1")
         self.assertIsNotNone(binding)
         self.assertEqual(binding.metadata["active_workspace_id"], "study")
+        self.assertEqual(binding.metadata["endpoint_id"], "desktop.desktop-app.ui")
         self.assertEqual(runtime_context["active_workspace_id"], "study")
         self.assertEqual(gateway.events[0]["event_type"], "workspace.changed")
         self.assertEqual(gateway.events[0]["payload"]["active_workspace_id"], "study")
+        self.assertEqual(gateway.events[0]["payload"]["endpoint_id"], "desktop.desktop-app.ui")
 
     async def test_list_workspaces_reports_active_workspace(self):
         tools = WorkspaceTools()
@@ -174,7 +157,6 @@ class WorkspaceToolsTests(unittest.IsolatedAsyncioTestCase):
                     workspace=_WorkspaceService(),
                     session=_SessionService(),
                     thread=_ThreadService(),
-                    client=_ClientService(),
                     endpoint=_EndpointService(),
                 )
             )

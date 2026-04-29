@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Save, SlidersHorizontal } from 'lucide-react'
-import { listOperatorSourceProfiles, updateOperatorWorkspaceGovernance } from '../../clientApi'
-import type { AssistantMode, ClientWorkspace, OperatorSourceProfile } from '../../types'
+import { listOperatorSourceProfiles, updateOperatorWorkspaceGovernance } from '../../runtimeApi'
+import type { AssistantMode, RuntimeWorkspace, OperatorSourceProfile } from '../../types'
 import { formatAssistantModeLabel, formatMemoryRankingPolicyLabel, formatSourceProfileLabel } from '../../utils/statusFormatting'
 import styles from './WorkspaceGovernanceEditor.module.css'
 
@@ -20,8 +20,8 @@ const BASE_MODE_OPTIONS: AssistantMode[] = ['general', 'automation', 'danxi']
 
 interface WorkspaceGovernanceEditorProps {
   baseUrl: string
-  workspace: ClientWorkspace
-  onWorkspaceSaved: (workspace: ClientWorkspace) => void
+  workspace: RuntimeWorkspace
+  onWorkspaceSaved: (workspace: RuntimeWorkspace) => void
 }
 
 export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorkspaceSaved }: WorkspaceGovernanceEditorProps) {
@@ -196,7 +196,7 @@ export default function WorkspaceGovernanceEditor({ baseUrl, workspace, onWorksp
           >
             <option value="workspace_first">{formatMemoryRankingPolicyLabel('workspace_first')}</option>
           </select>
-          <span className={styles.hint}>当前固定为 workspace-first，优先命中当前工作区相关记忆。</span>
+          <span className={styles.hint}>当前固定为“当前工作区优先”，优先命中当前工作区相关记忆。</span>
         </label>
       </div>
 

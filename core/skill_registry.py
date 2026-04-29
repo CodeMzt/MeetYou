@@ -15,6 +15,7 @@ _PROJECT_SKILL_FILE_RE = re.compile(
     re.DOTALL,
 )
 _SKILL_ID_RE = re.compile(r"[^a-z0-9_]+")
+_QUERY_TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 
 _DEFAULT_MODE_SKILL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "general": {
@@ -292,6 +293,7 @@ class SkillRegistryManager:
     def list_skills(self, *, skill_type: str = "all", query: str = "") -> list[dict[str, Any]]:
         requested_type = str(skill_type or "all").strip().lower()
         query_text = str(query or "").strip().lower()
+        query_tokens = [item for item in _QUERY_TOKEN_RE.findall(query_text) if item]
         records: list[SkillRecord] = []
         if requested_type in {"all", "mode"}:
             for mode in _DEFAULT_MODE_SKILL_DEFINITIONS:
@@ -305,9 +307,9 @@ class SkillRegistryManager:
                     records.append(record)
             records.extend(self._iter_created_skill_records())
 
-        def matches(record: SkillRecord) -> bool:
+        def match_score(record: SkillRecord) -> int:
             if not query_text:
-                return True
+                return 1
             haystack = "\n".join(
                 [
                     record.skill_id,
@@ -318,11 +320,21 @@ class SkillRegistryManager:
                     " ".join(record.recommended_tools),
                 ]
             ).lower()
-            return query_text in haystack
+            exact_score = 4 if query_text in haystack else 0
+            token_score = sum(1 for token in query_tokens if token in haystack)
+            tool_score = sum(2 for tool_name in record.recommended_tools if query_text and query_text in tool_name.lower())
+            return exact_score + token_score + tool_score
 
-        filtered = [record.to_dict() for record in records if matches(record)]
-        filtered.sort(key=lambda item: (item["skill_type"], item["id"]))
-        return filtered
+        filtered = [
+            (score, record.to_dict())
+            for score, record in ((match_score(record), record) for record in records)
+            if score > 0
+        ]
+        if query_text:
+            filtered.sort(key=lambda item: (-item[0], item[1]["skill_type"], item[1]["id"]))
+        else:
+            filtered.sort(key=lambda item: (item[1]["skill_type"], item[1]["id"]))
+        return [payload for _score, payload in filtered]
 
     def load_skill(self, skill_id: str) -> dict[str, Any] | None:
         normalized_id = _normalize_identifier(skill_id)

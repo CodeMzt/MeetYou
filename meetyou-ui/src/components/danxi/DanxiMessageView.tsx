@@ -28,7 +28,7 @@ export default function DanxiMessageView({ messages, busy, onLoadMore, onOpenPos
     <div className={styles.messageView}>
       <div className={styles.messageHeader}>
         <div>
-          <div className={styles.kicker}>Inbox</div>
+          <div className={styles.kicker}>收件箱</div>
           <h2 className={styles.messageTitle}>站内消息</h2>
         </div>
         <span className={styles.messageHint}>{messages.count} 条消息</span>

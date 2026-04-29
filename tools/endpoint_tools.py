@@ -38,14 +38,14 @@ def _string_list(values) -> list[str]:
 
 def _origin_endpoint_id_from_context() -> str:
     context = get_event_context()
-    for key in ("origin_endpoint_id", "endpoint_id", "source_id", "client_id"):
+    for key in ("origin_endpoint_id", "endpoint_id", "source_id"):
         value = str(context.get(key) or "").strip()
         if value:
             return value
     source = context.get("source")
     metadata = getattr(source, "metadata", {}) if source is not None else {}
     if isinstance(metadata, dict):
-        for key in ("endpoint_id", "origin_endpoint_id", "client_id"):
+        for key in ("endpoint_id", "origin_endpoint_id"):
             value = str(metadata.get(key) or "").strip()
             if value:
                 return value

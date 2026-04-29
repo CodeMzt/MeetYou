@@ -20,7 +20,7 @@ class _Row:
     session_id: str = ""
     thread_id: str = ""
     workspace_id: str = ""
-    client_id: str = ""
+    actor_id: str = ""
     status: str = "pending"
     operation_id: str = ""
     approval_id: str = ""
@@ -28,7 +28,7 @@ class _Row:
     risk_level: str = ""
     decision: str = ""
     reason: str = ""
-    requested_by_client_id: int | None = None
+    requested_by_actor_id: int | None = None
     requested_by_session_id: int | None = None
     operation_type: str = ""
     execution_target: str = ""
@@ -72,19 +72,18 @@ class _FakeWorkspaceService:
         return None
 
 
-class _FakeClientService:
-    def __init__(self, client_row: _Row):
-        self._row = client_row
+class _FakeActorService:
+    def __init__(self, actor_row: _Row):
+        self._row = actor_row
 
-    def get_by_client_id(self, client_id: str):
-        if client_id == self._row.client_id:
+    def get_by_actor_id(self, actor_id: str):
+        if actor_id == self._row.actor_id:
             return self._row
         return None
 
-    def get_by_id(self, row_id):
-        if row_id == self._row.id:
-            return self._row
-        return None
+    def ensure_actor(self, **kwargs):
+        self._row.actor_id = str(kwargs.get("actor_id") or self._row.actor_id)
+        return self._row
 
 
 class _FakeOperationService:
@@ -101,7 +100,7 @@ class _FakeOperationService:
         execution_target: str,
         title: str = "",
         target_endpoint_id=None,
-        requested_by_client_id=None,
+        requested_by_actor_id=None,
         requested_by_session_id=None,
         status: str = "queued",
         metadata: dict | None = None,
@@ -112,7 +111,7 @@ class _FakeOperationService:
             operation_id=f"op_{self._counter}",
             thread_id="",
             workspace_id="",
-            requested_by_client_id=requested_by_client_id,
+            requested_by_actor_id=requested_by_actor_id,
             requested_by_session_id=requested_by_session_id,
             operation_type=operation_type,
             execution_target=execution_target,
@@ -164,8 +163,8 @@ class _FakeApprovalService:
     def get_by_approval_id(self, approval_id: str):
         return self.rows.get(approval_id)
 
-    def decide_approval(self, *, approval_id: str, decision: str, reason: str = "", decided_by_client_id=None):
-        del decided_by_client_id
+    def decide_approval(self, *, approval_id: str, decision: str, reason: str = "", decided_by_actor_id=None):
+        del decided_by_actor_id
         row = self.rows.get(approval_id)
         if row is None:
             return None
@@ -205,7 +204,7 @@ class _FakeGateway:
     def __init__(self):
         self.events = []
 
-    async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict):
+    async def publish_thread_delivery_event(self, thread_id: str, *, event_type: str, payload: dict):
         self.events.append((thread_id, event_type, dict(payload)))
 
 
@@ -218,14 +217,13 @@ class ConfirmApprovalFlowTests(unittest.TestCase):
         app.gateway = _FakeGateway()
         app._emit_runtime_status_event = self._noop_async
 
-        session_row = _Row(id=10, session_id="sess_1", thread_id="", workspace_id="", client_id="", status="active")
+        session_row = _Row(id=10, session_id="sess_1", thread_id="", workspace_id="", status="active")
         session_row.thread_id = 20
         session_row.workspace_id = 30
-        session_row.client_id = 40
         thread_row = _Row(id=20, thread_id="thr_1", workspace_id="", status="active")
         thread_row.workspace_id = 30
         workspace_row = _Row(id=30, workspace_id="personal", status="active")
-        client_row = _Row(id=40, client_id="electron-main")
+        actor_row = _Row(id=40, actor_id="user:self")
 
         operation_service = _FakeOperationService()
         approval_service = _FakeApprovalService()
@@ -234,7 +232,7 @@ class ConfirmApprovalFlowTests(unittest.TestCase):
             session=_FakeSessionService(session_row),
             thread=_FakeThreadService(thread_row),
             workspace=_FakeWorkspaceService(workspace_row),
-            client=_FakeClientService(client_row),
+            actor=_FakeActorService(actor_row),
             operation=operation_service,
             approval=approval_service,
         )
@@ -274,7 +272,7 @@ class ConfirmApprovalFlowTests(unittest.TestCase):
             "session_id": "sess_1",
             "request_id": "req_1",
             "accepted": True,
-            "client_id": "electron-main",
+            "endpoint_id": "electron-main",
         }
         asyncio.run(app._handle_confirm_response(payload))
 

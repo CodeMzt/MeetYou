@@ -1,19 +1,19 @@
 import {
-  createClientAttachmentDownloadTicket,
-  downloadClientAttachmentContent,
-  resolveClientAttachmentDownloadPlan,
-} from './clientApi'
+  createRuntimeAttachmentDownloadTicket,
+  downloadRuntimeAttachmentContent,
+  resolveRuntimeAttachmentDownloadPlan,
+} from './runtimeApi'
 
 export async function triggerAttachmentDownload(
   baseUrl: string,
   attachmentId: string,
-  clientId?: string,
+  endpointId?: string,
 ): Promise<void> {
-  const ticket = await createClientAttachmentDownloadTicket(baseUrl, attachmentId, clientId)
+  const ticket = await createRuntimeAttachmentDownloadTicket(baseUrl, attachmentId, endpointId)
   const link = document.createElement('a')
   link.rel = 'noopener noreferrer'
   link.style.display = 'none'
-  const plan = resolveClientAttachmentDownloadPlan(ticket)
+  const plan = resolveRuntimeAttachmentDownloadPlan(ticket)
   if (plan.mode === 'direct') {
     link.href = plan.url
     link.download = plan.fileName || attachmentId
@@ -24,7 +24,7 @@ export async function triggerAttachmentDownload(
     link.remove()
     return
   }
-  const blob = await downloadClientAttachmentContent(plan.url)
+  const blob = await downloadRuntimeAttachmentContent(plan.url)
   const objectUrl = URL.createObjectURL(blob)
   link.href = objectUrl
   link.download = plan.fileName || attachmentId

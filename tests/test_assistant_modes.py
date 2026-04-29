@@ -337,7 +337,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "title": "Study",
                     "base_mode": "general",
                     "prompt_overlay": "Prefer teaching-oriented explanations and review questions.",
-                    "default_execution_target": "core_only",
+                    "default_execution_target": "core.local",
                     "preferred_source_profiles": ["study_materials"],
                     "memory_ranking_policy": "workspace_first",
                 },
@@ -347,7 +347,7 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("[Workspace Policy]", prompt_text)
         self.assertIn("Current workspace: Study (study).", prompt_text)
         self.assertIn("Default workspace mode: general", prompt_text)
-        self.assertIn("Default workspace execution target: core_only", prompt_text)
+        self.assertIn("Default workspace execution target: core.local", prompt_text)
         self.assertIn("Preferred source profiles: study_materials", prompt_text)
         self.assertIn("Memory ranking policy: workspace_first", prompt_text)
         self.assertIn("Prefer teaching-oriented explanations", prompt_text)
@@ -530,6 +530,9 @@ class AssistantModeManagerTests(unittest.TestCase):
             all_skills = manager.list_skills()
             self.assertTrue(any(item["skill_type"] == "mode" for item in all_skills))
             self.assertTrue(any(item["skill_type"] == "reusable" for item in all_skills))
+            task_matches = manager.list_skills(query="manage_scheduled_jobs")
+            self.assertTrue(task_matches)
+            self.assertEqual(task_matches[0]["id"], "task_recognition")
 
             general_mode_skill = manager.load_skill("mode:general")
             self.assertIsNotNone(general_mode_skill)

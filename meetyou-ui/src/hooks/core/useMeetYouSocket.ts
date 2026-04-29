@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createClientWsUrl } from '../../clientApi'
+import { createEndpointWsUrl } from '../../runtimeApi'
 import { fetchWithAuth } from '../../apiClient'
 import { parseHealthEnvelope } from '../../protocolClient'
-import type { ClientContext } from './useClientContext'
+import type { EndpointContext } from './useEndpointContext'
 
 const ENDPOINT_WS_SCHEMA = 'meetyou.endpoint.ws.v4'
 
@@ -19,23 +19,23 @@ function messageId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-export function buildUiEndpointId(clientContext: ClientContext): string {
-  return `desktop.${endpointSafeId(clientContext.clientId, 'desktop-app')}.ui`
+export function buildUiEndpointId(endpointContext: EndpointContext): string {
+  return `desktop.${endpointSafeId(endpointContext.endpointId, 'desktop-app')}.ui`
 }
 
-export function buildEndpointHandshakeFrames(clientContext: ClientContext): Record<string, unknown>[] {
-  const endpointId = buildUiEndpointId(clientContext)
-  const workspaceId = clientContext.workspace.workspace_id
+export function buildEndpointHandshakeFrames(endpointContext: EndpointContext): Record<string, unknown>[] {
+  const endpointId = buildUiEndpointId(endpointContext)
+  const workspaceId = endpointContext.workspace.workspace_id
   return [
     {
       schema: ENDPOINT_WS_SCHEMA,
       type: 'endpoint.hello',
       message_id: messageId('ui-hello'),
       payload: {
-        connection_id: `conn-${endpointSafeId(clientContext.session.session_id, 'ui-session')}-${Date.now()}`,
+        connection_id: `conn-${endpointSafeId(endpointContext.session.session_id, 'ui-session')}-${Date.now()}`,
         provider: {
           provider_type: 'desktop',
-          provider_id: endpointSafeId(clientContext.clientId, 'desktop-app'),
+          provider_id: endpointSafeId(endpointContext.endpointId, 'desktop-app'),
           display_name: '桌面应用',
           transport_profile: 'desktop_ui_bridge',
         },
@@ -55,9 +55,9 @@ export function buildEndpointHandshakeFrames(clientContext: ClientContext): Reco
       endpoint_id: endpointId,
       message_id: messageId('ui-subscribe'),
       payload: {
-        subscription_id: `sub-${endpointSafeId(clientContext.threadId, 'thread')}`,
+        subscription_id: `sub-${endpointSafeId(endpointContext.threadId, 'thread')}`,
         target_type: 'thread',
-        target_id: clientContext.threadId,
+        target_id: endpointContext.threadId,
         last_seen_event_seq: 0,
       },
     },
@@ -66,13 +66,13 @@ export function buildEndpointHandshakeFrames(clientContext: ClientContext): Reco
 
 export function useMeetYouSocket(
   baseUrl: string,
-  clientContext: ClientContext | null,
-  applyClientWsUpdate: (rawPayload: unknown) => void,
+  endpointContext: EndpointContext | null,
+  applyEndpointWsUpdate: (rawPayload: unknown) => void,
   dispatchTransport: any
 ) {
-  const clientWsRef = useRef<WebSocket | null>(null)
-  const clientReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
-  const [clientConnectionState, setClientConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
+  const endpointWsRef = useRef<WebSocket | null>(null)
+  const endpointReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const [endpointConnectionState, setEndpointConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -90,8 +90,8 @@ export function useMeetYouSocket(
     }
   }, [baseUrl, dispatchTransport])
 
-  const sendClientWsCommand = useCallback((payload: Record<string, unknown>) => {
-    const ws = clientWsRef.current
+  const sendEndpointWsCommand = useCallback((payload: Record<string, unknown>) => {
+    const ws = endpointWsRef.current
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(payload))
       return true
@@ -99,84 +99,84 @@ export function useMeetYouSocket(
     return false
   }, [])
 
-  const connectClientWs = useCallback(() => {
-    if (!clientContext?.threadId) {
+  const connectEndpointWs = useCallback(() => {
+    if (!endpointContext?.threadId) {
       return
     }
     if (
-      clientWsRef.current?.readyState === WebSocket.OPEN ||
-      clientWsRef.current?.readyState === WebSocket.CONNECTING
+      endpointWsRef.current?.readyState === WebSocket.OPEN ||
+      endpointWsRef.current?.readyState === WebSocket.CONNECTING
     ) {
       return
     }
 
-    clearTimeout(clientReconnectTimeoutRef.current)
-    setClientConnectionState('connecting')
+    clearTimeout(endpointReconnectTimeoutRef.current)
+    setEndpointConnectionState('connecting')
 
     void (async () => {
-      const url = await createClientWsUrl(baseUrl, clientContext.threadId, {
-        clientId: clientContext.clientId,
-        sessionId: clientContext.session.session_id,
-        workspaceId: clientContext.workspace.workspace_id,
-        clientType: 'electron',
+      const url = await createEndpointWsUrl(baseUrl, endpointContext.threadId, {
+        endpointId: endpointContext.endpointId,
+        sessionId: endpointContext.session.session_id,
+        workspaceId: endpointContext.workspace.workspace_id,
+        endpointType: 'electron',
         displayName: '桌面应用',
       })
-      if (clientWsRef.current?.readyState === WebSocket.OPEN || clientWsRef.current?.readyState === WebSocket.CONNECTING) {
+      if (endpointWsRef.current?.readyState === WebSocket.OPEN || endpointWsRef.current?.readyState === WebSocket.CONNECTING) {
         return
       }
       const ws = new WebSocket(url)
-      clientWsRef.current = ws
+      endpointWsRef.current = ws
 
       ws.onmessage = (event) => {
-        if (clientWsRef.current !== ws) {
+        if (endpointWsRef.current !== ws) {
           return
         }
 
         try {
-          applyClientWsUpdate(JSON.parse(event.data))
+          applyEndpointWsUpdate(JSON.parse(event.data))
         } catch (error) {
-          console.error('Client WS parse error:', error)
+          console.error('解析端点实时消息失败:', error)
         }
       }
 
       ws.onopen = () => {
-        if (clientWsRef.current !== ws) {
+        if (endpointWsRef.current !== ws) {
           ws.close()
           return
         }
-        for (const frame of buildEndpointHandshakeFrames(clientContext)) {
+        for (const frame of buildEndpointHandshakeFrames(endpointContext)) {
           ws.send(JSON.stringify(frame))
         }
-        setClientConnectionState('connected')
+        setEndpointConnectionState('connected')
         void refreshHealth()
       }
 
       ws.onclose = () => {
-        if (clientWsRef.current !== ws) {
+        if (endpointWsRef.current !== ws) {
           return
         }
-        clientWsRef.current = null
-        setClientConnectionState('disconnected')
+        endpointWsRef.current = null
+        setEndpointConnectionState('disconnected')
         dispatchTransport({ type: 'set_connection_state', connectionState: 'disconnected' })
-        clientReconnectTimeoutRef.current = setTimeout(() => {
-          if (!clientWsRef.current) {
-            connectClientWs()
+        endpointReconnectTimeoutRef.current = setTimeout(() => {
+          if (!endpointWsRef.current) {
+            connectEndpointWs()
           }
         }, 3000)
       }
 
       ws.onerror = (error) => {
-        if (clientWsRef.current !== ws) {
+        if (endpointWsRef.current !== ws) {
           return
         }
-        console.error('Client WS Error:', error)
+        console.error('端点实时连接错误:', error)
       }
     })()
-  }, [applyClientWsUpdate, baseUrl, clientContext, dispatchTransport, refreshHealth])
+  }, [applyEndpointWsUpdate, baseUrl, endpointContext, dispatchTransport, refreshHealth])
 
   useEffect(() => {
-    connectClientWs()
-  }, [connectClientWs])
+    connectEndpointWs()
+  }, [connectEndpointWs])
 
   useEffect(() => {
     void refreshHealth()
@@ -190,17 +190,17 @@ export function useMeetYouSocket(
 
   useEffect(() => {
     return () => {
-      clearTimeout(clientReconnectTimeoutRef.current)
-      const clientWs = clientWsRef.current
-      clientWsRef.current = null
-      clientWs?.close()
+      clearTimeout(endpointReconnectTimeoutRef.current)
+      const endpointWs = endpointWsRef.current
+      endpointWsRef.current = null
+      endpointWs?.close()
     }
   }, [])
 
   return {
-    clientConnectionState,
-    setClientConnectionState,
-    sendClientWsCommand,
+    endpointConnectionState,
+    setEndpointConnectionState,
+    sendEndpointWsCommand,
     refreshHealth,
   }
 }

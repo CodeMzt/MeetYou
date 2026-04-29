@@ -111,9 +111,9 @@ class DesktopClientRuntime(EndpointToolRuntimeBase):
             ticket = await self._request_json(
                 session,
                 "POST",
-                f"{base_url}/client/attachments/upload-ticket",
+                f"{base_url}/runtime/attachments/upload-ticket",
                 json={
-                    "client_id": self.config.client_id,
+                    "endpoint_id": self.config.provider_id,
                     "owner_type": str(item.get("owner_type") or "operation").strip() or "operation",
                     "owner_id": str(item.get("owner_id") or operation_id).strip() or operation_id,
                     "kind": str(item.get("kind") or "file").strip() or "file",
@@ -127,7 +127,7 @@ class DesktopClientRuntime(EndpointToolRuntimeBase):
             complete = await self._request_json(
                 session,
                 "POST",
-                f"{base_url}/client/attachments/{ticket['attachment_id']}/complete",
+                f"{base_url}/runtime/attachments/{ticket['attachment_id']}/complete",
                 json={
                     "ticket_id": ticket["ticket_id"],
                 },

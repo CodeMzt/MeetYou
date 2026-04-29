@@ -513,7 +513,7 @@ def build_operator_router(gateway) -> APIRouter:
             description=str(payload.description or "").strip(),
             base_mode=str(payload.base_mode or "general").strip() or "general",
             prompt_overlay=str(payload.prompt_overlay or "").strip(),
-            default_execution_target=str(payload.default_execution_target or "core_only").strip() or "core_only",
+            default_execution_target=str(payload.default_execution_target or "core.local").strip() or "core.local",
             metadata={
                 "tool_policy": str(payload.tool_policy or "").strip(),
                 "allowed_tool_ids": list(payload.allowed_tool_ids or []),

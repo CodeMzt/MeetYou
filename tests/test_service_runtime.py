@@ -43,9 +43,7 @@ class _FakeApp:
         self.setup_called = False
         self.shutdown_called = False
         self.heart = SimpleNamespace(
-            scheduler_processor=self._noop,
             housekeeping_processor=self._noop,
-            heartbeat_processor=self._noop,
         )
         self.proprioceptor = SimpleNamespace(run=self._noop)
 
@@ -56,6 +54,9 @@ class _FakeApp:
         self.shutdown_called = True
 
     async def brain_processor(self):
+        return None
+
+    async def scheduler_processor(self):
         return None
 
     async def get_background_status(self):

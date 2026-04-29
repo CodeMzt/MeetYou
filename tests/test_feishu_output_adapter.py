@@ -6,7 +6,7 @@ import unittest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-class _FakeClientSession:
+class _FakeRuntimeSession:
     async def close(self):
         return None
 
@@ -21,7 +21,7 @@ _FakeWSMsgType = types.SimpleNamespace(TEXT="TEXT", CLOSED="CLOSED", ERROR="ERRO
 sys.modules.setdefault(
     "aiohttp",
     types.SimpleNamespace(
-        ClientSession=_FakeClientSession,
+        RuntimeSession=_FakeRuntimeSession,
         ClientTimeout=_FakeClientTimeout,
         WSMsgType=_FakeWSMsgType,
     ),
@@ -272,7 +272,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        await adapter.send_client_event(
+        await adapter.send_runtime_event(
             "oc_test",
             _notice("desktop notice"),
         )
@@ -312,7 +312,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1. A", message_calls[0]["json"]["content"])
         self.assertIn("2. B", message_calls[0]["json"]["content"])
 
-    async def test_client_event_confirm_request_prompts_user(self):
+    async def test_runtime_event_confirm_request_prompts_user(self):
         adapter = self._build_adapter(
             [
                 FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
@@ -320,7 +320,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        await adapter.send_client_event(
+        await adapter.send_runtime_event(
             "oc_test",
             _run_event({"type": "confirm.requested", "request_id": "req-1", "content": "需要确认执行。"}),
         )
@@ -330,12 +330,12 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("确认编号: req-1", message_calls[0]["json"]["content"])
         self.assertEqual(adapter.get_pending_confirm_request("oc_test"), "req-1")
 
-    async def test_client_event_operation_update_is_suppressed(self):
+    async def test_runtime_event_operation_update_is_suppressed(self):
         adapter = self._build_adapter(
             []
         )
 
-        await adapter.send_client_event(
+        await adapter.send_runtime_event(
             "oc_test",
             _run_event({"type": "operation.updated", "operation_id": "op-1", "status": "running", "detail": "desktop endpoint accepted"}),
         )
@@ -343,10 +343,10 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
         self.assertEqual(message_calls, [])
 
-    async def test_client_event_activity_status_is_suppressed(self):
+    async def test_runtime_event_activity_status_is_suppressed(self):
         adapter = self._build_adapter([])
 
-        await adapter.send_client_event(
+        await adapter.send_runtime_event(
             "oc_test",
             _run_event({"type": "activity.status", "content": "正在路由到桌面端"}),
         )
@@ -354,7 +354,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
         self.assertEqual(message_calls, [])
 
-    async def test_client_event_stream_renders_completed_answer(self):
+    async def test_runtime_event_stream_renders_completed_answer(self):
         adapter = self._build_adapter(
             [
                 FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
@@ -362,11 +362,11 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        await adapter.send_client_event(
+        await adapter.send_runtime_event(
             "oc_test",
             _run_event({"type": "message.delta", "stream_id": "stream-1", "channel": "answer", "delta": "hello"}),
         )
-        await adapter.send_client_event(
+        await adapter.send_runtime_event(
             "oc_test",
             _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "hello"}}),
         )
@@ -376,7 +376,7 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         content = json.loads(message_calls[0]["json"]["content"])
         self.assertEqual(content["text"], "hello")
 
-    async def test_client_event_non_streaming_external_does_not_duplicate_completed_answer(self):
+    async def test_runtime_event_non_streaming_external_does_not_duplicate_completed_answer(self):
         adapter = self._build_adapter(
             [
                 FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
@@ -384,11 +384,11 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        await adapter.send_client_event(
+        await adapter.send_runtime_event(
             "oc_test",
             _run_event({"type": "message.delta", "stream_id": "stream-1", "channel": "answer", "delta": "你好"}),
         )
-        await adapter.send_client_event(
+        await adapter.send_runtime_event(
             "oc_test",
             _run_event({"type": "message.completed", "stream_id": "stream-1", "message": {"content": "你好"}}),
         )

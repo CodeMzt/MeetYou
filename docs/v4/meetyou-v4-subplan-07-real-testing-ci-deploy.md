@@ -271,8 +271,8 @@ Feishu / WeChatBot 未确认
 
 ## 验收
 
-- [ ] 本地基础测试通过。
-- [ ] 本地真实 Core + Desktop 测试通过。
+- [x] 本地基础测试通过。
+- [x] 本地真实 Core + Desktop 测试通过。
 - [ ] 已提交推送合并 main。
 - [ ] GitHub Actions CI 通过。
 - [ ] GitHub Actions Deploy 通过。

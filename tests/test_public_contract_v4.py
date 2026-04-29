@@ -1,7 +1,9 @@
 import unittest
 
 from core.public_contract import (
-    EXECUTION_TARGET_CORE_ONLY,
+    EXECUTION_TARGET_CORE_LOCAL,
+    EXECUTION_TARGET_ENDPOINT,
+    EXECUTION_TARGETS,
     PUBLIC_ASSISTANT_MODES,
     normalize_execution_target,
     to_internal_assistant_mode,
@@ -26,7 +28,13 @@ class PublicContractV4Tests(unittest.TestCase):
         self.assertEqual(to_internal_assistant_mode("danxi"), "danxi")
 
     def test_desktop_is_not_an_execution_target_alias(self):
-        self.assertEqual(normalize_execution_target("desktop"), EXECUTION_TARGET_CORE_ONLY)
+        self.assertEqual(normalize_execution_target("desktop"), EXECUTION_TARGET_CORE_LOCAL)
+
+    def test_execution_targets_are_v4_endpoint_terms(self):
+        self.assertIn(EXECUTION_TARGET_CORE_LOCAL, EXECUTION_TARGETS)
+        self.assertIn(EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS)
+        self.assertNotIn("core_only", EXECUTION_TARGETS)
+        self.assertNotIn("specific_endpoint", EXECUTION_TARGETS)
 
 
 if __name__ == "__main__":

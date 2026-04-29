@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseAckEnvelope,
-  parseClientWsPayload,
+  parseEndpointWsPayload,
   parseErrorEnvelope,
   parseRuntimeDebugEnvelope,
   parseRuntimeStateEnvelope,
@@ -262,7 +262,7 @@ describe('protocolClient', () => {
   })
 
   it('parses endpoint websocket message events', () => {
-    const created = parseClientWsPayload(endpointRunEvent({
+    const created = parseEndpointWsPayload(endpointRunEvent({
         type: 'message.created',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -271,7 +271,7 @@ describe('protocolClient', () => {
           thread_id: 'thr_1',
           session_id: 'sess_1',
           workspace_id: 'personal',
-          client_id: 'desktop-app',
+          endpoint_id: 'desktop-app',
           role: 'user',
           content: 'hello',
           status: 'completed',
@@ -279,7 +279,7 @@ describe('protocolClient', () => {
           created_at: '2026-04-08T00:00:00Z',
         },
       }))
-    const delta = parseClientWsPayload(endpointRunEvent({
+    const delta = parseEndpointWsPayload(endpointRunEvent({
         type: 'message.delta',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -287,7 +287,7 @@ describe('protocolClient', () => {
         turn_id: 'turn_1',
         delta: 'partial',
       }))
-    const completed = parseClientWsPayload(endpointRunEvent({
+    const completed = parseEndpointWsPayload(endpointRunEvent({
         type: 'message.completed',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -298,7 +298,7 @@ describe('protocolClient', () => {
           thread_id: 'thr_1',
           session_id: 'sess_1',
           workspace_id: 'personal',
-          client_id: '',
+          endpoint_id: '',
           role: 'assistant',
           content: 'done',
           status: 'completed',
@@ -318,24 +318,24 @@ describe('protocolClient', () => {
   })
 
   it('parses bridged endpoint websocket message events with nested message fallback', () => {
-    const delta = parseClientWsPayload(endpointRunEvent({
+    const delta = parseEndpointWsPayload(endpointRunEvent({
         type: 'message.delta',
         thread_id: 'thr_1',
-        session_id: 'system:client:desktop-main',
+        session_id: 'system:endpoint:desktop-main',
         stream_id: 'stream_1',
         turn_id: 'turn_1',
         content: 'partial-from-content',
       }))
-    const completed = parseClientWsPayload(endpointRunEvent({
+    const completed = parseEndpointWsPayload(endpointRunEvent({
         type: 'message.completed',
         stream_id: 'stream_1',
         turn_id: 'turn_1',
         message: {
           message_id: 'msg_transient_1',
           thread_id: 'thr_1',
-          session_id: 'system:client:desktop-main',
+          session_id: 'system:endpoint:desktop-main',
           workspace_id: 'desktop-main',
-          client_id: 'desktop-app',
+          endpoint_id: 'desktop-app',
           role: 'assistant',
           content: 'done',
           status: 'completed',
@@ -348,11 +348,11 @@ describe('protocolClient', () => {
     expect(delta.kind === 'message_delta' ? delta.delta : '').toBe('partial-from-content')
     expect(completed.kind).toBe('message_completed')
     expect(completed.kind === 'message_completed' ? completed.threadId : '').toBe('thr_1')
-    expect(completed.kind === 'message_completed' ? completed.sessionId : '').toBe('system:client:desktop-main')
+    expect(completed.kind === 'message_completed' ? completed.sessionId : '').toBe('system:endpoint:desktop-main')
   })
 
   it('parses endpoint websocket interactive events', () => {
-    const confirm = parseClientWsPayload(endpointRunEvent({
+    const confirm = parseEndpointWsPayload(endpointRunEvent({
         type: 'confirm.requested',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -366,7 +366,7 @@ describe('protocolClient', () => {
         risk_level: 'system',
         operation_id: 'op_confirm_1',
       }))
-    const humanInput = parseClientWsPayload(endpointRunEvent({
+    const humanInput = parseEndpointWsPayload(endpointRunEvent({
         type: 'human_input.requested',
         thread_id: 'thr_1',
         session_id: 'sess_1',
@@ -385,7 +385,7 @@ describe('protocolClient', () => {
   })
 
   it('parses operation updated events', () => {
-    const event = parseClientWsPayload(endpointRunEvent({
+    const event = parseEndpointWsPayload(endpointRunEvent({
         type: 'operation.updated',
         thread_id: 'thr_1',
         operation_id: 'op_1',
@@ -401,7 +401,7 @@ describe('protocolClient', () => {
   })
 
   it('parses operation update delivery frames from endpoint websocket', () => {
-    const event = parseClientWsPayload({
+    const event = parseEndpointWsPayload({
       schema: 'meetyou.endpoint.ws.v4',
       type: 'delivery.operation_update',
       payload: {
@@ -421,7 +421,7 @@ describe('protocolClient', () => {
   })
 
   it('parses runtime and activity events from endpoint websocket', () => {
-    const runtimeState = parseClientWsPayload(endpointRunEvent({
+    const runtimeState = parseEndpointWsPayload(endpointRunEvent({
         type: 'runtime.state',
         snapshot: {
           session_id: 'sess_1',
@@ -437,7 +437,7 @@ describe('protocolClient', () => {
           updated_at: '2026-04-08T00:00:00Z',
         },
       }))
-    const runtimeUsage = parseClientWsPayload(endpointRunEvent({
+    const runtimeUsage = parseEndpointWsPayload(endpointRunEvent({
         type: 'runtime.usage',
         snapshot: {
           session_id: 'sess_1',
@@ -463,7 +463,7 @@ describe('protocolClient', () => {
           updated_at: '2026-04-08T00:00:01Z',
         },
       }))
-    const activity = parseClientWsPayload(endpointRunEvent({
+    const activity = parseEndpointWsPayload(endpointRunEvent({
         type: 'activity.status',
         turn_id: 'turn_1',
         stream_id: 'stream_1',
@@ -473,7 +473,7 @@ describe('protocolClient', () => {
         tool_names: ['search_web'],
         event_id: 'evt_1',
       }))
-    const reasoning = parseClientWsPayload(endpointRunEvent({
+    const reasoning = parseEndpointWsPayload(endpointRunEvent({
         type: 'reasoning.delta',
         thread_id: 'thr_1',
         session_id: 'sess_1',

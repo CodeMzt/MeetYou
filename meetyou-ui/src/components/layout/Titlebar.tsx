@@ -1,12 +1,12 @@
 import { Database, Gauge, LayoutTemplate, MessageSquareMore, Minus, Paperclip, Pin, PinOff, Settings, Wrench, X } from 'lucide-react'
-import { ClientWorkspace, ConnectionState } from '../../types'
+import { RuntimeWorkspace, ConnectionState } from '../../types'
 import { getConnectionText } from '../../utils/statusFormatting'
 import { WINDOW_OPEN_CHANNEL } from '../../windowBridge'
 import styles from './Titlebar.module.css'
 
 interface TitlebarProps {
   connectionState: ConnectionState
-  workspace: ClientWorkspace | null
+  workspace: RuntimeWorkspace | null
   desktopToolsAvailable: boolean
   isPinned: boolean
   onTogglePin: () => void

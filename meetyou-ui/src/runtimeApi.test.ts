@@ -12,18 +12,18 @@ import {
   listDanxiPosts,
   listOperatorSourceProfiles,
   loginDanxiSession,
-  resolveClientAttachmentDownloadPlan,
+  resolveRuntimeAttachmentDownloadPlan,
   updateDanxiReply,
   updateDanxiWebvpnCookie,
   updateOperatorWorkspaceGovernance,
   updateDesktopMemoryRecordStatus,
-} from './clientApi'
+} from './runtimeApi'
 import { DEFAULT_BASE_URL } from './windowBridge'
 
 const originalFetch = globalThis.fetch
 const originalLocalStorage = globalThis.localStorage
 
-describe('clientApi', () => {
+describe('runtimeApi', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     globalThis.fetch = originalFetch
@@ -177,7 +177,7 @@ describe('clientApi', () => {
           base_mode: 'general',
           description: 'Study workspace for focused learning.',
           prompt_overlay: '',
-          default_execution_target: 'core_only',
+          default_execution_target: 'core.local',
           tool_policy: 'allow_all',
           allowed_tool_ids: [],
           preferred_target_endpoint_ids: [],
@@ -213,7 +213,7 @@ describe('clientApi', () => {
     )
   })
 
-  it('logs into Danxi session and patches WebVPN cookie through client API', async () => {
+  it('logs into Danxi session and patches WebVPN cookie through runtime API', async () => {
     const invoke = vi.fn(async (channel: string, payload?: { purpose?: string }) => {
       if (channel === 'get-gateway-access-token') {
         return ''
@@ -353,7 +353,7 @@ describe('clientApi', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('loads Danxi session status and posts via client API', async () => {
+  it('loads Danxi session status and posts via runtime API', async () => {
     globalThis.fetch = vi
       .fn()
       .mockResolvedValueOnce(
@@ -563,7 +563,7 @@ describe('clientApi', () => {
       }),
     ) as typeof fetch
 
-    const { downloadClientAttachmentContent: downloadAttachment } = await import('./clientApi')
+    const { downloadRuntimeAttachmentContent: downloadAttachment } = await import('./runtimeApi')
     const blob = await downloadAttachment(`${DEFAULT_BASE_URL}/desktop/attachments/content/att_1?ticket_id=down_1`)
 
     expect(await blob.text()).toBe('attachment-body')
@@ -596,7 +596,7 @@ describe('clientApi', () => {
       }),
     ) as typeof fetch
 
-    const { downloadClientAttachmentContent: downloadAttachment } = await import('./clientApi')
+    const { downloadRuntimeAttachmentContent: downloadAttachment } = await import('./runtimeApi')
     await downloadAttachment('https://minio.example.com/presigned/att_1')
 
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] || []
@@ -604,7 +604,7 @@ describe('clientApi', () => {
     expect(headers.get('Authorization')).toBeNull()
   })
 
-  it('creates websocket urls against desktop bridge instead of Core client ws', async () => {
+  it('creates websocket urls against the desktop endpoint bridge', async () => {
     vi.resetModules()
     globalThis.localStorage = {
       getItem: vi.fn().mockReturnValue('local-bridge-token'),
@@ -616,22 +616,22 @@ describe('clientApi', () => {
     } as unknown as Storage
     ;(globalThis as { window?: Window }).window = {} as Window
 
-    const { createClientWsUrl: createWsUrl } = await import('./clientApi')
+    const { createEndpointWsUrl: createWsUrl } = await import('./runtimeApi')
     const url = await createWsUrl('http://127.0.0.1:38951', 'thr_1', {
-      clientId: 'desktop-app',
+      endpointId: 'desktop-app',
       sessionId: 'sess_1',
       workspaceId: 'personal',
-      clientType: 'electron',
+      endpointType: 'electron',
       displayName: 'Desktop App',
     })
 
     expect(url).toBe(
-      'ws://127.0.0.1:38951/desktop/ws?thread_id=thr_1&client_id=desktop-app&session_id=sess_1&workspace_id=personal&client_type=electron&display_name=Desktop+App&access_token=local-bridge-token',
+      'ws://127.0.0.1:38951/desktop/ws?thread_id=thr_1&endpoint_id=desktop-app&session_id=sess_1&workspace_id=personal&endpoint_type=electron&display_name=Desktop+App&access_token=local-bridge-token',
     )
   })
 
   it('prefers direct browser download for presigned attachment tickets', () => {
-    const plan = resolveClientAttachmentDownloadPlan({
+    const plan = resolveRuntimeAttachmentDownloadPlan({
       attachment_id: 'att_1',
       ticket_id: 'down_1',
       download_url: 'https://minio.example.com/presigned/att_1',
@@ -651,7 +651,7 @@ describe('clientApi', () => {
   })
 
   it('falls back to proxy download plan for non-presigned tickets', () => {
-    const plan = resolveClientAttachmentDownloadPlan({
+    const plan = resolveRuntimeAttachmentDownloadPlan({
       attachment_id: 'att_2',
       ticket_id: 'down_2',
       download_url: 'http://127.0.0.1:8000/desktop/attachments/content/att_2?ticket_id=down_2',
@@ -671,7 +671,7 @@ describe('clientApi', () => {
   })
 
   it('treats non-proxy direct urls as direct download even without strategy', () => {
-    const plan = resolveClientAttachmentDownloadPlan({
+    const plan = resolveRuntimeAttachmentDownloadPlan({
       attachment_id: 'att_3',
       ticket_id: 'down_3',
       download_url: 'https://minio.example.com/presigned/att_3?X-Amz-Signature=demo',

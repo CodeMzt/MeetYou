@@ -162,14 +162,14 @@ class AttachmentServiceTests(unittest.TestCase):
                     attachment_id=attachment.attachment_id,
                     issuer_type="client",
                     issuer_ref="desktop-app",
-                    fallback_download_url="http://127.0.0.1:8000/client/attachments/content/demo?ticket_id=",
+                    fallback_download_url="http://127.0.0.1:8000/runtime/attachments/content/demo?ticket_id=",
                 )
 
                 self.assertEqual(download["download_strategy"], "presigned")
                 self.assertIn("https://object-store.example.com/", download["download_url"])
                 self.assertEqual(
                     download["fallback_download_url"],
-                    "http://127.0.0.1:8000/client/attachments/content/demo?ticket_id=",
+                    "http://127.0.0.1:8000/runtime/attachments/content/demo?ticket_id=",
                 )
             finally:
                 context.engine.dispose()
