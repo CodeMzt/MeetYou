@@ -4,6 +4,7 @@ import {
   createDanxiReply,
   deleteDesktopMemoryRecord,
   deleteDanxiReply,
+  ensureDefaultRuntimeThread,
   fetchRuntimeUsageSnapshot,
   getDanxiPostSummary,
   getDanxiProfile,
@@ -11,6 +12,7 @@ import {
   getDanxiSessionStatus,
   listDanxiPosts,
   listOperatorSourceProfiles,
+  listRuntimeThreads,
   loginDanxiSession,
   resolveRuntimeAttachmentDownloadPlan,
   updateDanxiReply,
@@ -211,6 +213,24 @@ describe('runtimeApi', () => {
         }),
       }),
     )
+  })
+
+  it('uses readable thread bootstrap errors', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('', { status: 404 }))
+      .mockResolvedValueOnce(new Response('', { status: 404 })) as typeof fetch
+
+    await expect(
+      ensureDefaultRuntimeThread('http://127.0.0.1:8000', {
+        workspace_id: 'personal',
+        default_key: 'frontend.default',
+      }),
+    ).rejects.toThrow('加载默认会话线程失败（HTTP 404）')
+
+    await expect(
+      listRuntimeThreads('http://127.0.0.1:8000', { workspace_id: 'personal' }),
+    ).rejects.toThrow('加载会话线程列表失败（HTTP 404）')
   })
 
   it('logs into Danxi session and patches WebVPN cookie through runtime API', async () => {
