@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { getDanxiSessionStatus } from './runtimeApi'
 import { useMeetYou } from './hooks/useMeetYou'
 import Titlebar from './components/layout/Titlebar'
@@ -7,23 +7,9 @@ import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
 import { MessageSquare } from 'lucide-react'
 import { AssistantMode, ThinkingOverride } from './types'
+import { getVisibleRuntimeThreadItems } from './threadPresentation'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
 import styles from './App.module.css'
-
-function getThreadDisplayTitle(rawTitle: string, threadId: string): string {
-  const title = String(rawTitle || '').trim()
-  const normalized = title.toLowerCase()
-  if (normalized.includes('meetwechat') || normalized.includes('wechat') || normalized.includes('weixin')) {
-    return '微信会话'
-  }
-  if (normalized.includes('feishu') || normalized.includes('lark')) {
-    return '飞书会话'
-  }
-  if (normalized.includes('desktop') || normalized.includes('frontend')) {
-    return '桌面聊天'
-  }
-  return title || `会话 ${threadId.slice(-6)}`
-}
 
 export default function App() {
   const baseUrl = DEFAULT_BASE_URL
@@ -45,6 +31,7 @@ export default function App() {
     statusFeedback,
     threads,
     threadId,
+    defaultThreadId,
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
@@ -59,6 +46,10 @@ export default function App() {
   const [thinkingOverride, setThinkingOverride] = useState<ThinkingOverride>('default')
   const [preferredMode, setPreferredMode] = useState<AssistantMode>('general')
   const [danxiStatusText, setDanxiStatusText] = useState('未连接')
+  const visibleThreads = useMemo(
+    () => getVisibleRuntimeThreadItems(threads, threadId, defaultThreadId),
+    [defaultThreadId, threadId, threads],
+  )
 
   const togglePin = () => {
     const nextPinned = !isPinned
@@ -147,14 +138,12 @@ export default function App() {
           danxiStatusText={danxiStatusText}
         />
 
-        {threads.length > 0 && (
+        {visibleThreads.length > 0 && (
           <div className={styles.threadStrip} aria-label="会话线程">
             <span className={styles.threadStripLabel}>会话</span>
             <div className={styles.threadList}>
-              {threads.map((thread) => {
+              {visibleThreads.map(({ thread, title, tooltip }) => {
                 const active = thread.thread_id === threadId
-                const title = getThreadDisplayTitle(thread.title, thread.thread_id)
-                const rawTitle = thread.title || title
                 return (
                   <button
                     key={thread.thread_id}
@@ -165,7 +154,7 @@ export default function App() {
                         void selectThread(thread.thread_id)
                       }
                     }}
-                    title={rawTitle === title ? title : `${title} · ${rawTitle}`}
+                    title={tooltip}
                     aria-current={active ? 'true' : undefined}
                   >
                     <MessageSquare size={14} aria-hidden="true" />
