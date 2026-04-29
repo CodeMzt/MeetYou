@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import {
   DESKTOP_BRIDGE_STATUS_PATH,
@@ -48,6 +49,12 @@ const DEFAULT_DESKTOP_BRIDGE_PORT = 38951
 let desktopBackendProcess: ChildProcess | null = null
 let desktopBridgeAccessToken = ''
 let desktopBridgeBaseUrl = DEFAULT_BASE_URL
+
+type DesktopBackendStatusPayload = {
+  build_info?: {
+    git_commit?: unknown
+  }
+}
 
 function getWorkspaceRoot() {
   return path.resolve(app.getAppPath(), '..')
@@ -104,6 +111,71 @@ function resolveDesktopBridgeBaseUrl() {
   const numericPort = Number.parseInt(portText, 10)
   const port = Number.isFinite(numericPort) && numericPort > 0 ? numericPort : DEFAULT_DESKTOP_BRIDGE_PORT
   return `http://${host}:${port}`
+}
+
+function setDesktopBridgeBaseUrl(baseUrl: string) {
+  desktopBridgeBaseUrl = baseUrl
+  process.env.MEETYOU_DESKTOP_BRIDGE_BASE_URL = desktopBridgeBaseUrl
+  latestRuntimeDebugWindow = { ...latestRuntimeDebugWindow, baseUrl: desktopBridgeBaseUrl }
+  latestDanxiWindow = { ...latestDanxiWindow, baseUrl: desktopBridgeBaseUrl }
+}
+
+function expectedUiGitCommit() {
+  return String(
+    typeof __MEETYOU_UI_GIT_COMMIT__ === 'string' ? __MEETYOU_UI_GIT_COMMIT__ : '',
+  ).trim()
+}
+
+function desktopBackendGitCommit(status: DesktopBackendStatusPayload | null) {
+  return String(status?.build_info?.git_commit || '').trim()
+}
+
+function isDesktopBackendBuildAligned(status: DesktopBackendStatusPayload | null) {
+  const expected = expectedUiGitCommit()
+  const actual = desktopBackendGitCommit(status)
+  if (!expected || expected === 'unknown' || !actual || actual === 'unknown') {
+    return true
+  }
+  return expected === actual
+}
+
+function parseDesktopBridgeHost(value: string) {
+  try {
+    return new URL(value).hostname || DEFAULT_DESKTOP_BRIDGE_HOST
+  } catch {
+    return DEFAULT_DESKTOP_BRIDGE_HOST
+  }
+}
+
+function allocateDesktopBridgePort(host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.once('error', reject)
+    server.listen(0, host, () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      server.close((error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        if (!port) {
+          reject(new Error('desktop_bridge_port_unavailable'))
+          return
+        }
+        resolve(port)
+      })
+    })
+  })
+}
+
+async function moveDesktopBridgeToAvailablePort(reason: string) {
+  const host = parseDesktopBridgeHost(desktopBridgeBaseUrl)
+  const port = await allocateDesktopBridgePort(host)
+  process.env.MEETYOU_DESKTOP_LOCAL_HOST = host
+  process.env.MEETYOU_DESKTOP_LOCAL_PORT = String(port)
+  setDesktopBridgeBaseUrl(`http://${host}:${port}`)
+  console.warn(`[desktop-backend] using alternate local bridge ${desktopBridgeBaseUrl}: ${reason}`)
 }
 
 function resolveWorkspacePython() {
@@ -218,30 +290,50 @@ function ensurePackagedRuntimeFiles() {
   maybeMigrateDefaultCoreUrlFromTemplate(getDesktopConfigPath(), path.join(templateUserDir, 'desktop_client.json'))
 }
 
+async function fetchDesktopBackendStatus(timeoutMs: number) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), Math.max(50, timeoutMs))
+  try {
+    const response = await fetch(`${desktopBridgeBaseUrl}${DESKTOP_BRIDGE_STATUS_PATH}`, {
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      return null
+    }
+    const payload = await response.json().catch(() => null)
+    return payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as DesktopBackendStatusPayload
+      : {}
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 async function waitForDesktopBackend(timeoutMs = DESKTOP_BACKEND_READY_TIMEOUT_MS) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(`${desktopBridgeBaseUrl}${DESKTOP_BRIDGE_STATUS_PATH}`)
-      if (response.ok) {
-        return true
-      }
-    } catch {
-      // Retry until timeout.
+    const status = await fetchDesktopBackendStatus(1000)
+    if (status) {
+      return status
     }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
-  return false
+  return null
 }
 
 async function ensureDesktopBackendStarted() {
-  desktopBridgeBaseUrl = resolveDesktopBridgeBaseUrl()
-  process.env.MEETYOU_DESKTOP_BRIDGE_BASE_URL = desktopBridgeBaseUrl
-  latestRuntimeDebugWindow = { ...latestRuntimeDebugWindow, baseUrl: desktopBridgeBaseUrl }
-  latestDanxiWindow = { ...latestDanxiWindow, baseUrl: desktopBridgeBaseUrl }
-  if (await waitForDesktopBackend(500)) {
+  setDesktopBridgeBaseUrl(resolveDesktopBridgeBaseUrl())
+  const existingStatus = await waitForDesktopBackend(500)
+  if (existingStatus && !app.isPackaged && isDesktopBackendBuildAligned(existingStatus)) {
     desktopBridgeAccessToken = ''
     return
+  }
+  if (existingStatus) {
+    const actualCommit = desktopBackendGitCommit(existingStatus) || 'unknown'
+    const expectedCommit = expectedUiGitCommit() || 'unknown'
+    await moveDesktopBridgeToAvailablePort(`existing bridge is not owned by this process (ui=${expectedCommit}, backend=${actualCommit})`)
   }
   if (desktopBackendProcess && desktopBackendProcess.exitCode == null) {
     return
