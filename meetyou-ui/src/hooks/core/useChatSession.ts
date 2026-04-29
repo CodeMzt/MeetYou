@@ -56,6 +56,27 @@ type BufferedDelta = {
   phase: string
 }
 
+function isThreadScopedUpdateForActiveContext(
+  update: ReturnType<typeof parseEndpointWsPayload>,
+  endpointContext: EndpointContext | null,
+): boolean {
+  if (!endpointContext) {
+    return true
+  }
+  if ('threadId' in update && update.threadId && update.threadId !== endpointContext.threadId) {
+    return false
+  }
+  if (
+    !('threadId' in update && update.threadId) &&
+    'sessionId' in update &&
+    update.sessionId &&
+    update.sessionId !== endpointContext.session.session_id
+  ) {
+    return false
+  }
+  return true
+}
+
 export function useChatSession(
   baseUrl: string,
   endpointContext: EndpointContext | null,
@@ -367,6 +388,9 @@ export function useChatSession(
   )
 
   const processWsUpdateForChat = useCallback((update: ReturnType<typeof parseEndpointWsPayload>) => {
+    if (!isThreadScopedUpdateForActiveContext(update, endpointContext)) {
+      return
+    }
     switch (update.kind) {
       case 'ack':
         {
@@ -456,7 +480,7 @@ export function useChatSession(
         })
         break
     }
-  }, [flushBufferedDeltas, scheduleDeltaFlush])
+  }, [endpointContext, flushBufferedDeltas, scheduleDeltaFlush])
 
   return {
     chatState,

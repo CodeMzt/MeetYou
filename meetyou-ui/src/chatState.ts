@@ -119,6 +119,14 @@ function findTurnIndex(turns: ChatTurn[], streamId: string, turnId: string): num
   return -1
 }
 
+function findMessageIndex(turns: ChatTurn[], messageId: string): number {
+  const normalizedMessageId = String(messageId || '').trim()
+  if (!normalizedMessageId) {
+    return -1
+  }
+  return turns.findIndex((turn) => turn.id === normalizedMessageId)
+}
+
 function upsertAssistantTurn(turns: ChatTurn[], streamId: string, turnId: string): { turns: ChatTurn[]; index: number } {
   const index = findTurnIndex(turns, streamId, turnId)
   if (index !== -1) {
@@ -233,10 +241,36 @@ function appendRuntimeMessage(turns: ChatTurn[], message: RuntimeMessage): ChatT
 }
 
 function completeStreamMessage(turns: ChatTurn[], message: RuntimeMessage, streamId: string, turnId: string): ChatTurn[] {
+  const messageIndex = findMessageIndex(turns, message.message_id)
+  const streamIndex = findTurnIndex(turns, streamId, turnId)
+  if (messageIndex !== -1) {
+    const existing = turns[messageIndex]
+    const streamed = streamIndex !== -1 && streamIndex !== messageIndex ? turns[streamIndex] : null
+    const mergedTurn: ChatTurn = {
+      ...existing,
+      streamId: streamId || existing.streamId || streamed?.streamId || '',
+      turnId: turnId || existing.turnId || streamed?.turnId || '',
+      content: message.content || existing.content,
+      reasoning: existing.reasoning || streamed?.reasoning || '',
+      activities: existing.activities.length > 0 ? existing.activities : streamed?.activities || [],
+      isStreaming: Boolean(message.temporary),
+      error: buildMessageError(message.status, message.role) || existing.error || streamed?.error,
+      temporary: Boolean(message.temporary),
+    }
+    return turns.flatMap((turn, index) => {
+      if (index === streamIndex && streamIndex !== messageIndex) {
+        return []
+      }
+      if (index === messageIndex) {
+        return [mergedTurn]
+      }
+      return [turn]
+    })
+  }
   if (message.channel === 'progress_notice' || message.temporary) {
     return appendRuntimeMessage(turns, message)
   }
-  const index = findTurnIndex(turns, streamId, turnId)
+  const index = streamIndex
   if (index === -1) {
     return [
       ...turns,

@@ -20,7 +20,7 @@
 .contentArea {
   flex: 1;
   overflow-y: auto;
-  padding: 92px var(--spacing-md) var(--spacing-sm);
+  padding: 100px var(--spacing-md) var(--spacing-sm);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
@@ -34,28 +34,52 @@
   left: var(--spacing-md);
   right: var(--spacing-md);
   z-index: calc(var(--z-island) - 1);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px;
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-app) 76%, transparent);
+  backdrop-filter: var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+}
+
+.threadStripLabel {
+  padding: 0 6px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.threadList {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 32px;
+  min-width: 0;
+  min-height: 28px;
   overflow-x: auto;
   scrollbar-width: none;
 }
 
-.threadStrip::-webkit-scrollbar {
+.threadList::-webkit-scrollbar {
   display: none;
 }
 
 .threadButton {
-  height: 30px;
-  max-width: 168px;
+  height: 28px;
+  min-width: 86px;
+  max-width: 118px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
-  padding: 0 10px;
+  padding: 0 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--bg-input);
   color: var(--text-secondary);
   font-size: 12px;
@@ -66,6 +90,10 @@
 .threadButton:hover {
   color: var(--text-primary);
   border-color: var(--border-focus);
+}
+
+.threadButton svg {
+  flex: 0 0 auto;
 }
 
 .activeThreadButton {
