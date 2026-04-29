@@ -55,6 +55,14 @@ jobs:
               if [ -f "/etc/meetyou/meetyou-external-provider.env" ]; then
                 PROVIDER_ENV_FILE="/etc/meetyou/meetyou-external-provider.env"
               fi
+              CORE_SERVICE_USER="$(sudo -n systemctl show meetyou-core.service -p User --value 2>/dev/null || true)"
+              CORE_SERVICE_GROUP="$(sudo -n systemctl show meetyou-core.service -p Group --value 2>/dev/null || true)"
+              if [ -z "${CORE_SERVICE_USER}" ]; then
+                CORE_SERVICE_USER="root"
+              fi
+              if [ -z "${CORE_SERVICE_GROUP}" ]; then
+                CORE_SERVICE_GROUP="${CORE_SERVICE_USER}"
+              fi
               if [ -x "${MEETYOU_REPO}/.venv/bin/python" ]; then
                 for provider in feishu meetwechat; do
                   SERVICE_NAME="meetyou-${provider}-provider"
@@ -66,6 +74,8 @@ jobs:
                   echo "Install/restart optional provider service: ${SERVICE_NAME}"
                   sudo -n env \
                     SERVICE_NAME="${SERVICE_NAME}" \
+                    MEETYOU_USER="${CORE_SERVICE_USER}" \
+                    MEETYOU_GROUP="${CORE_SERVICE_GROUP}" \
                     WORKDIR="${MEETYOU_REPO}" \
                     VENV_DIR="${MEETYOU_REPO}/.venv" \
                     ENV_FILE="${PROVIDER_ENV_FILE}" \
