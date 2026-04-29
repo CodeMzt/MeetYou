@@ -314,6 +314,24 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(message_calls), 1)
         self.assertIn("desktop notice", message_calls[0]["json"]["content"])
 
+    async def test_delivery_message_strips_markdown_for_feishu_text(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
+
+        await adapter.send_runtime_event(
+            "oc_test",
+            _message("**bold** and [Docs](https://example.test)", message_id="msg-markdown"),
+        )
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+        sent_content = json.loads(message_calls[0]["json"]["content"])
+        self.assertEqual(sent_content["text"], "bold and Docs (https://example.test)")
+
     async def test_human_input_request_renders_numbered_options(self):
         adapter = self._build_adapter(
             [

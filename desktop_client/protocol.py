@@ -122,6 +122,7 @@ def build_hello(config: DesktopClientConfig, *, extra_tools: list[dict[str, Any]
         transport_profile=config.transport_profile,
         workspace_ids=config.workspace_ids,
         supports_offline_cache=config.supports_offline_cache,
+        supports_markdown=config.supports_markdown,
         host={
             "hostname": socket.gethostname(),
             "os": host_os,

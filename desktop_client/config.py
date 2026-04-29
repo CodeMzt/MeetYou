@@ -39,6 +39,7 @@ class DesktopClientConfig:
     heartbeat_interval_seconds: int = 20
     reconnect_delay_seconds: int = 3
     supports_offline_cache: bool = True
+    supports_markdown: bool = True
     transport_profile: str = "desktop_wss"
     local_bridge_enabled: bool = True
     local_bridge_host: str = DEFAULT_LOCAL_BRIDGE_HOST
@@ -160,6 +161,7 @@ def load_desktop_client_config(config_file_path: str | None = None) -> DesktopCl
         heartbeat_interval_seconds=int(os.environ.get("MEETYOU_ENDPOINT_HEARTBEAT_SECONDS") or payload.get("heartbeat_interval_seconds") or 20),
         reconnect_delay_seconds=int(os.environ.get("MEETYOU_ENDPOINT_RECONNECT_SECONDS") or payload.get("reconnect_delay_seconds") or 3),
         supports_offline_cache=bool(payload.get("supports_offline_cache", True)),
+        supports_markdown=_to_bool(payload.get("supports_markdown"), default=True),
         transport_profile=str(payload.get("transport_profile") or "desktop_wss"),
         local_bridge_enabled=_to_bool(
             os.environ.get("MEETYOU_DESKTOP_LOCAL_BRIDGE_ENABLED", payload.get("local_bridge_enabled")),
