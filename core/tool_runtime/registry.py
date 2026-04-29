@@ -234,9 +234,9 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "function": {
             "name": "manage_scheduled_jobs",
             "description": (
-                "Manage V4 Scheduler jobs backed by scheduled_jobs. Use this for system.heartbeat inspection, "
-                "ordinary scheduled job CRUD, enable/disable, interval updates, and manual triggers. "
-                "system.heartbeat is preset and may only be enabled/disabled or have interval_seconds changed."
+                "Advanced low-level V4 Scheduler maintenance for scheduled_jobs and system.heartbeat. "
+                "Do not use this as the first choice for user reminders or recurring assistant work; use "
+                "create_scheduled_workflow/manage_scheduled_workflows, or create_scheduled_delivery when the output is a message delivery."
             ),
             "parameters": {
                 "type": "object",
@@ -249,9 +249,9 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "job_id": {"type": "string", "description": "Stable Scheduler job id, for example system.heartbeat."},
                     "kind": {
                         "type": "string",
-                        "enum": ["workflow", "user_task", "maintenance", "scheduled_delivery"],
+                        "enum": ["scheduled_workflow", "workflow", "user_task", "maintenance"],
                         "description": "Job kind for create. system.heartbeat is a built-in Scheduler preset and cannot be created here.",
-                        "default": "workflow",
+                        "default": "scheduled_workflow",
                     },
                     "name": {"type": "string", "description": "Human-readable job name.", "default": ""},
                     "workspace_id": {"type": "string", "description": "Workspace public id when the job is workspace scoped.", "default": ""},
@@ -275,9 +275,9 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "timezone": {"type": "string", "description": "IANA timezone name for ordinary jobs. Do not set this when updating system.heartbeat.", "default": "UTC"},
                     "action_ref": {
                         "type": "string",
-                        "enum": ["core.workflow.assistant_turn", "core.workflow.scheduled_delivery", "core.workflow.noop", ""],
-                        "description": "Core workflow/action reference for ordinary jobs. Use core.workflow.assistant_turn for scheduled assistant work; omit this field when updating system.heartbeat.",
-                        "default": "core.workflow.assistant_turn",
+                        "enum": ["core.workflow.scheduled_workflow", "core.workflow.assistant_turn", "core.workflow.noop", ""],
+                        "description": "Core workflow/action reference for ordinary jobs. Use core.workflow.scheduled_workflow for new scheduled assistant work; omit this field when updating system.heartbeat.",
+                        "default": "core.workflow.scheduled_workflow",
                     },
                     "run_template": {
                         "type": "object",
@@ -328,13 +328,117 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "metadata": {"action_risk": "local_write", "safe_parallel": False},
         },
     },
+    "create_scheduled_workflow": {
+        "type": "function",
+        "function": {
+            "name": "create_scheduled_workflow",
+            "description": (
+                "Create a flexible V4 Scheduled Workflow. Scheduler only owns the trigger; the workflow can generate text, "
+                "search, summarize, organize documents through endpoint tools, or produce other outputs. Message delivery is optional "
+                "and is modeled as one output policy, not as the Scheduler's core behavior."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short workflow name."},
+                    "schedule": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["daily", "interval", "cron", "one_shot"], "default": "daily"},
+                            "time_of_day": {"type": "string", "description": "HH:MM for daily schedules. If the user says only morning, confirm 08:00 Asia/Shanghai first.", "default": "08:00"},
+                            "interval_seconds": {"type": "integer", "minimum": 1},
+                            "expression": {"type": "string", "description": "Five-field cron expression."},
+                            "run_at": {"type": "string", "description": "ISO datetime for one_shot schedules."},
+                            "timezone": {"type": "string", "default": "Asia/Shanghai"},
+                        },
+                        "required": ["type"],
+                    },
+                    "instruction": {"type": "string", "description": "What Core should do at each fire time."},
+                    "timezone": {"type": "string", "default": "Asia/Shanghai"},
+                    "workflow_type": {"type": "string", "enum": ["assistant_run", "tool_workflow", "external_workflow"], "default": "assistant_run"},
+                    "mode": {"type": "string", "enum": ["general", "automation", "danxi"], "default": "automation"},
+                    "tool_policy": {
+                        "type": "object",
+                        "description": "Optional execution-tool policy for the workflow.",
+                        "properties": {
+                            "tool_bundle": {"type": "array", "items": {"type": "string"}, "description": "Allowed tools for the scheduled Run."},
+                            "mcp_servers": {"type": "array", "items": {"type": "string"}},
+                            "preferred_tool_key": {"type": "string"},
+                            "preferred_target_endpoint_ids": {"type": "array", "items": {"type": "string"}},
+                            "preferred_endpoint_provider_types": {"type": "array", "items": {"type": "string"}},
+                            "tool_target_routing_policy": {"type": "string", "enum": ["balanced", "prefer_origin_endpoint", "strict_preferred_endpoint"], "default": "balanced"},
+                            "max_rounds": {"type": "integer", "minimum": 1, "default": 6},
+                        },
+                        "default": {},
+                    },
+                    "output_policy": {
+                        "type": "object",
+                        "description": "Optional outputs. By default the final assistant reply is persisted to a Core Thread only.",
+                        "properties": {
+                            "persist_message": {"type": "boolean", "description": "V4 assistant workflows must persist the final assistant Message; false is rejected.", "default": True},
+                            "create_thread": {"type": "boolean", "description": "Create a Core Thread when no thread_id/session_id is supplied. false requires an existing thread_id or session_id.", "default": True},
+                            "thread_id": {"type": "string"},
+                            "session_id": {"type": "string"},
+                            "output_kinds": {"type": "array", "items": {"type": "string"}, "default": ["assistant_message"]},
+                            "delivery_targets": {
+                                "type": "array",
+                                "description": "Optional EndpointAddress/Actor delivery targets for generated assistant messages.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "address_id": {"type": "string"},
+                                        "actor_ref": {"type": "string", "enum": ["me"]},
+                                        "provider_type": {"type": "string"},
+                                        "alias": {"type": "string", "default": "me"},
+                                        "endpoint_id": {"type": "string"},
+                                        "message_type": {"type": "string", "enum": ["message", "notice"], "default": "message"},
+                                        "offline_policy": {"type": "string", "enum": ["store_and_retry", "store_in_outbox", "queue_until_online", "drop"], "default": "store_and_retry"},
+                                    },
+                                },
+                            },
+                            "delivery_policy": {"type": "object", "default": {}},
+                        },
+                        "default": {},
+                    },
+                    "workspace_id": {"type": "string", "default": "personal"},
+                    "enabled": {"type": "boolean", "default": True},
+                    "metadata": {"type": "object", "default": {}},
+                },
+                "required": ["name", "schedule", "instruction"],
+            },
+            "metadata": {"action_risk": "external_write", "safe_parallel": False},
+        },
+    },
+    "manage_scheduled_workflows": {
+        "type": "function",
+        "function": {
+            "name": "manage_scheduled_workflows",
+            "description": "List, inspect, update, enable, disable, delete, or manually trigger V4 scheduled_workflow jobs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "detail", "update", "enable", "disable", "delete", "trigger"], "default": "list"},
+                    "job_id": {"type": "string", "description": "Scheduled workflow job id."},
+                    "enabled": {"type": "boolean"},
+                    "schedule": {"type": "object", "description": "Replacement schedule config."},
+                    "timezone": {"type": "string", "default": ""},
+                    "instruction": {"type": "string", "default": ""},
+                    "tool_policy": {"type": "object", "default": {}},
+                    "output_policy": {"type": "object", "default": {}},
+                    "workspace_id": {"type": "string", "default": "personal"},
+                },
+                "required": ["action"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
     "create_scheduled_delivery": {
         "type": "function",
         "function": {
             "name": "create_scheduled_delivery",
             "description": (
-                "Create a user-facing V4 scheduled delivery. Use this for requests like daily Feishu/WeChat reminders. "
-                "The scheduled run generates the message at fire time, persists the assistant Message, then Delivery sends it to an EndpointAddress."
+                "Convenience wrapper for a Scheduled Workflow whose output is message delivery. Use only when the user explicitly "
+                "wants the scheduled result sent to Feishu/WeChat/email/etc.; otherwise use create_scheduled_workflow."
             ),
             "parameters": {
                 "type": "object",
@@ -378,7 +482,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "manage_scheduled_deliveries",
-            "description": "List, inspect, update, enable, disable, delete, or manually trigger V4 scheduled_delivery jobs.",
+            "description": "List, inspect, update, enable, disable, delete, or manually trigger delivery-flavored scheduled_workflow jobs.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -674,7 +778,14 @@ class ToolRegistry:
             "manage_scheduled_jobs",
             "get_current_system_time",
             "emit_progress_notice",
+            "search_knowledge",
+            "search_memory",
+            "search_web",
+            "read_web_page",
             "remember_knowledge",
+            "summarize_text",
+            "organize_notes",
+            "extract_action_items",
             "analyze_workspace",
             "read_local_documents",
             "write_local_document",
@@ -684,6 +795,6 @@ class ToolRegistry:
         return [
             tool
             for name in allowlist
-            if (tool := self._tool_schema_by_name(name, sections=("chain_tools", "common_tools"))) is not None
+            if (tool := self._tool_schema_by_name(name, sections=("chain_tools", "common_tools", "memory_tools", "web_tools"))) is not None
         ]
 

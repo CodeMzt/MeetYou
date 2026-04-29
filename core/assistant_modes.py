@@ -464,6 +464,8 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "list_delivery_targets",
     "set_delivery_preference",
     "send_delivery_message",
+    "create_scheduled_workflow",
+    "manage_scheduled_workflows",
     "create_scheduled_delivery",
     "manage_scheduled_deliveries",
     "send_endpoint_message",
@@ -547,7 +549,7 @@ _MODE_PROMPT_FALLBACKS = {
         "- danxi: FDU campus-forum browsing, thread search, favorites or subscriptions, messages, and normal-user post or reply actions through the Danxi tool suite\n"
         "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
         "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, endpoint tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
-        "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs, create_scheduled_delivery/manage_scheduled_deliveries for ordinary scheduled delivery, and manage_scheduled_jobs only for advanced Scheduler maintenance.\n"
+        "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs, create_scheduled_workflow/manage_scheduled_workflows for ordinary recurring work, create_scheduled_delivery/manage_scheduled_deliveries only when the output must be delivered to an endpoint address, and manage_scheduled_jobs only for advanced Scheduler maintenance.\n"
         "Legacy documents/research/study requests remain in general and should use skills/tools instead of switching modes."
     ),
     "general": (
@@ -556,7 +558,7 @@ _MODE_PROMPT_FALLBACKS = {
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
         "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
         "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, endpoint tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
-        "When the user's message clearly contains user TODO or scheduled-delivery work, the task_recognition skill can activate manage_tasks, create_scheduled_delivery, or manage_scheduled_deliveries; reserve manage_scheduled_jobs for advanced Scheduler maintenance.\n"
+        "When the user's message clearly contains user TODO, reminder, or recurring-work intent, the task_recognition skill can activate manage_tasks, create_scheduled_workflow, or manage_scheduled_workflows; use scheduled-delivery tools only when endpoint delivery is part of the request, and reserve manage_scheduled_jobs for advanced Scheduler maintenance.\n"
         "Stay in general mode unless the next immediate step clearly requires automation coordination or Danxi forum tools."
     ),
     "automation": (
@@ -564,7 +566,7 @@ _MODE_PROMPT_FALLBACKS = {
         "You are operating as an automation and coordination specialist.\n"
         "Favor schedules, drafts, task state, meeting notes, and note synchronization.\n"
         "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted. Call emit_progress_notice before page reads, endpoint messaging, endpoint tool calls, or other slow I/O, then use automation-specific tools when coordination artifacts must be produced.\n"
-        "Task-style requests can also activate the task_recognition skill so user TODO and scheduled-delivery tools stay available inside automation workflows.\n"
+        "Task-style requests can also activate the task_recognition skill so user TODO, scheduled workflow, and scheduled delivery tools stay available inside automation workflows.\n"
         "External side effects stay draft-first. Do not pretend that a message or calendar entry has been sent unless the tool confirms it."
     ),
     "danxi": (
@@ -580,7 +582,7 @@ _SKILL_PROMPT_FALLBACKS = {
     "task-recognition": (
         "[Task Recognition Skill]\n"
         "Detect when the user is creating, listing, updating, blocking, rescheduling, or completing actionable tasks.\n"
-        "Use manage_tasks for user TODOs. Use create_scheduled_delivery for ordinary scheduled delivery/reminders, manage_scheduled_deliveries for follow-up maintenance, and manage_scheduled_jobs only for advanced Scheduler/system.heartbeat inspection."
+        "Use manage_tasks for user TODOs. Use create_scheduled_workflow for ordinary reminders or recurring assistant work, manage_scheduled_workflows for follow-up maintenance, create_scheduled_delivery only when the scheduled output must be delivered to an EndpointAddress, and manage_scheduled_jobs only for advanced Scheduler/system.heartbeat inspection."
     ),
     "research-grounding": (
         "[Research Grounding Skill]\n"
@@ -671,7 +673,7 @@ _DEFAULT_PROMPT_REGISTRY = {
 _DEFAULT_SKILL_REGISTRY = {
     "task_recognition": {
         "prompts": ["skill:task-recognition"],
-        "tools": ["manage_tasks", "manage_scheduled_jobs", "create_scheduled_delivery", "manage_scheduled_deliveries"],
+        "tools": ["manage_tasks", "create_scheduled_workflow", "manage_scheduled_workflows", "create_scheduled_delivery", "manage_scheduled_deliveries", "manage_scheduled_jobs"],
         "mcp_servers": [],
         "activation_keywords": list(_TASK_RECOGNITION_HINTS),
     },
@@ -929,17 +931,27 @@ _DEFAULT_RUNTIME_NATIVE_TOOL_EXCEPTIONS = [
     {
         "tool_name": "manage_scheduled_jobs",
         "category": "core_state",
-        "reason": "直接管理 V4 SchedulerService / scheduled_jobs，不是外部集成。",
+        "reason": "高级维护 V4 SchedulerService / scheduled_jobs，不是普通提醒首选。",
+    },
+    {
+        "tool_name": "create_scheduled_workflow",
+        "category": "core_state",
+        "reason": "创建可扩展 V4 Scheduled Workflow，消息投递只是可选输出。",
+    },
+    {
+        "tool_name": "manage_scheduled_workflows",
+        "category": "core_state",
+        "reason": "管理 V4 scheduled_workflow 任务。",
     },
     {
         "tool_name": "create_scheduled_delivery",
         "category": "core_state",
-        "reason": "创建基于 V4 Scheduler + Delivery 的高层定时投递任务。",
+        "reason": "创建输出为 EndpointAddress 投递的 Scheduled Workflow 便捷任务。",
     },
     {
         "tool_name": "manage_scheduled_deliveries",
         "category": "core_state",
-        "reason": "管理 V4 scheduled_delivery 任务。",
+        "reason": "管理带投递输出的 V4 scheduled_workflow 任务。",
     },
 ]
 

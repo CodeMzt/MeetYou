@@ -2096,10 +2096,10 @@ class TaskManager(TaskRepository):
             return "No matching tasks were found."
         scheduled_domain = sum(1 for task in tasks if task.get("task_domain") == "assistant_schedule")
         if scheduled_domain:
-            return "Use manage_scheduled_jobs to inspect or adjust Core Scheduler jobs; user TODO state stays in manage_tasks."
+            return "Use create_scheduled_workflow or manage_scheduled_workflows for Core scheduled workflows; user TODO state stays in manage_tasks."
         scheduled = sum(1 for task in tasks if task.get("schedule_kind") in {"once", "recurring"})
         if scheduled:
-            return "Use manage_scheduled_jobs to inspect or adjust Core Scheduler jobs; user TODO state stays in manage_tasks."
+            return "Use create_scheduled_workflow or manage_scheduled_workflows for Core scheduled workflows; user TODO state stays in manage_tasks."
         blocked_count = sum(1 for task in tasks if task.get("task_status") == "blocked")
         if blocked_count:
             return "Review blocked tasks and decide what dependency needs to be cleared."
@@ -2549,7 +2549,7 @@ class TaskManager(TaskRepository):
                 category=ToolErrorCategory.VALIDATION,
                 message=(
                     "manage_tasks only manages user TODO items. "
-                    "Use manage_scheduled_jobs for Core Scheduler jobs with trigger time or recurrence."
+                    "Use create_scheduled_workflow/manage_scheduled_workflows for Core scheduled workflows with trigger time or recurrence."
                 ),
                 details={"action": normalized_action},
             )

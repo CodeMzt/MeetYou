@@ -344,13 +344,16 @@ scripts\manual-acceptance.cmd start
 - `docs/v3/operations/desktop-client-acceptance.md`
 - `user/README.md`
 
-## V4 EndpointAddress / Scheduled Delivery
+## V4 Scheduled Workflow / EndpointAddress
 
 - Endpoint represents Provider runtime health; Feishu/WeChat chats and groups are `EndpointAddress` destinations.
-- User-facing recurring delivery uses `create_scheduled_delivery` / `manage_scheduled_deliveries`.
+- User-facing recurring work uses `create_scheduled_workflow` / `manage_scheduled_workflows`; delivery is an optional output policy.
+- User-facing recurring delivery uses `create_scheduled_delivery` / `manage_scheduled_deliveries` as a convenience wrapper over Scheduled Workflow.
 - Actor alias `me` resolves through explicit `ActorDeliveryPreference` bindings.
+- Version line: `kind=scheduled_workflow` + `core.workflow.scheduled_workflow` is the generic scheduling protocol; timed message delivery is one `output_policy.delivery_targets` output, not the Scheduler core model. Scheduled assistant output always persists a final assistant Message; `persist_message=false` is invalid.
 
 ## 版本迭代线
 
 - V4 当前线：Core-owned Runtime + Endpoint Routing；`/endpoint/ws`、RunEvent + Delivery fan-out、ToolRouter + ExecutionTarget、Scheduler-owned `system.heartbeat`、SKILL-first workflows；运行态模式收敛为 `general` / `automation` / `danxi`，Procedure 与 V3 Client 兼容路径下线。
 - V4 调度线：`App.scheduler_processor()` 是唯一系统级调度入口；Heart 只执行 Scheduler 调起的单次 `system.heartbeat`，不再拥有重复调度/心跳时钟。真实验收脚本可用 `--desktop-tool-endpoint` 验证本地 Desktop Provider 工具链路。
+- V4 Endpoint 线：Gateway 必须在 Uvicorn ready 后才允许外部 Provider 自连；Feishu / WeChat Provider 由 Core 生命周期监督，单次启动竞态或瞬时失败不能导致 Provider 永久离线。

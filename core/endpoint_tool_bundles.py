@@ -18,6 +18,8 @@ EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE = [
     "list_delivery_targets",
     "set_delivery_preference",
     "send_delivery_message",
+    "create_scheduled_workflow",
+    "manage_scheduled_workflows",
     "create_scheduled_delivery",
     "manage_scheduled_deliveries",
     "emit_progress_notice",

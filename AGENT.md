@@ -9,6 +9,10 @@ V4 non-negotiable rules:
 - Core is not Client; `core.local` is an in-process `ExecutionTarget`, not a Client.
 - Scheduler is the only system-level scheduling clock.
 - `system.heartbeat` is a Scheduler-owned, non-deletable, enable/disable-able system Job with editable interval.
+- Scheduled Workflow is the generic user-facing scheduling protocol: `kind=scheduled_workflow`, `action_ref=core.workflow.scheduled_workflow`, `run_template.schema=meetyou.scheduler.workflow.v1`. Message delivery is one output policy, not the Scheduler core model.
+- Use `create_scheduled_workflow` / `manage_scheduled_workflows` for ordinary recurring work, and `create_scheduled_delivery` / `manage_scheduled_deliveries` only when the workflow output must be delivered to an `EndpointAddress`.
+- Scheduled Workflow assistant output must persist the final assistant Message. `persist_message=false` is invalid; `create_thread=false` requires an existing `thread_id` or `session_id`.
+- Gateway startup must wait for Uvicorn readiness before external Endpoint Providers self-connect. Lifecycle supervision must recover transient external Provider startup failures instead of leaving Feishu/WeChat permanently offline.
 - Heart may execute a single `system.heartbeat` run when Scheduler calls it, but Heart must not own a repeating scheduler or heartbeat clock.
 - `endpoint.heartbeat` is connection keepalive only and must not trigger `system.heartbeat`.
 - `short_reply` is removed as a directed tool and replaced by `assistant.progress_notice` RunEvent / Runtime Action.

@@ -667,6 +667,14 @@ class FastAPIGateway:
         config = uvicorn.Config(self.app, host=host, port=port, log_level="info")
         self._server = uvicorn.Server(config)
         self._server_task = asyncio.create_task(self._server.serve())
+        for _ in range(100):
+            if bool(getattr(self._server, "started", False)):
+                return
+            if self._server_task.done():
+                await self._server_task
+                raise RuntimeError(f"Gateway stopped before becoming ready on {host}:{port}")
+            await asyncio.sleep(0.05)
+        raise RuntimeError(f"Gateway did not become ready on {host}:{port}")
 
     async def stop(self):
         if self._server:

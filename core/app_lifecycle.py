@@ -246,12 +246,94 @@ async def _start_external_endpoint_provider(app, *, provider_name: str, enabled_
         return
     try:
         await starter(app)
+        logger.info("%s endpoint provider started.", provider_name)
     except Exception:
         logger.exception(
-            "%s endpoint provider failed to start; Core will continue without this external endpoint.",
+            "%s endpoint provider failed to start; Core will keep supervising this external endpoint.",
             provider_name,
         )
         await _close_external_endpoint_provider(app, provider_name=provider_name)
+        _schedule_external_endpoint_provider_recovery(
+            app,
+            provider_name=provider_name,
+            enabled_key=enabled_key,
+            starter=starter,
+        )
+
+
+def _external_endpoint_provider_tasks(app) -> dict[str, asyncio.Task]:
+    tasks = getattr(app, "_external_endpoint_provider_tasks", None)
+    if not isinstance(tasks, dict):
+        tasks = {}
+        setattr(app, "_external_endpoint_provider_tasks", tasks)
+    return tasks
+
+
+def _external_endpoint_shutdown_requested(app) -> bool:
+    shutdown_event = getattr(getattr(app, "event_bus", None), "shutdown_event", None)
+    if shutdown_event is None:
+        return False
+    is_set = getattr(shutdown_event, "is_set", None)
+    return bool(is_set()) if callable(is_set) else False
+
+
+def _schedule_external_endpoint_provider_recovery(app, *, provider_name: str, enabled_key: str, starter) -> None:
+    tasks = _external_endpoint_provider_tasks(app)
+    existing = tasks.get(provider_name)
+    if existing is not None and not existing.done():
+        return
+    tasks[provider_name] = asyncio.create_task(
+        _recover_external_endpoint_provider(
+            app,
+            provider_name=provider_name,
+            enabled_key=enabled_key,
+            starter=starter,
+        ),
+        name=f"meetyou-{provider_name}-endpoint-provider-supervisor",
+    )
+
+
+async def _recover_external_endpoint_provider(app, *, provider_name: str, enabled_key: str, starter) -> None:
+    try:
+        delay = float(getattr(app, "_external_endpoint_provider_retry_initial_delay_seconds", 5.0))
+    except (TypeError, ValueError):
+        delay = 5.0
+    try:
+        max_delay = float(getattr(app, "_external_endpoint_provider_retry_max_delay_seconds", 60.0))
+    except (TypeError, ValueError):
+        max_delay = 60.0
+    try:
+        while not _external_endpoint_shutdown_requested(app):
+            await asyncio.sleep(max(delay, 0.0))
+            if not app.config.get_bool(enabled_key):
+                return
+            try:
+                await starter(app)
+                logger.info("%s endpoint provider recovered and started.", provider_name)
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("%s endpoint provider recovery attempt failed.", provider_name)
+                await _close_external_endpoint_provider(app, provider_name=provider_name)
+                delay = min(max(delay * 2, 1.0), max_delay)
+    finally:
+        tasks = _external_endpoint_provider_tasks(app)
+        current = asyncio.current_task()
+        if tasks.get(provider_name) is current:
+            tasks.pop(provider_name, None)
+
+
+async def stop_external_endpoint_providers(app) -> None:
+    tasks = _external_endpoint_provider_tasks(app)
+    pending = [task for task in tasks.values() if task is not None and not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    tasks.clear()
+    await _close_external_endpoint_provider(app, provider_name="feishu")
+    await _close_external_endpoint_provider(app, provider_name="meetwechat")
 
 
 async def _start_feishu_endpoint_provider(app) -> None:
@@ -355,16 +437,9 @@ async def shutdown_app_runtime(app) -> None:
     app.status_manager.set_global(RuntimeStatus.SHUTTING_DOWN.value, "Shutting down")
     app.event_bus.request_shutdown()
     await app._session_execution_runtime.shutdown()
+    await stop_external_endpoint_providers(app)
     if app.gateway is not None:
         await app.gateway.stop()
-    if app.feishu_input is not None:
-        await app.feishu_input.close()
-    if app.feishu_output is not None:
-        await app.feishu_output.close()
-    if app.wechat_input is not None:
-        await app.wechat_input.close()
-    elif app.wechat_output is not None:
-        await app.wechat_output.close()
     await app.mcp_manager.close_mcp_servers()
     await app.brain.close_brain()
     await app.heart.close_heart()

@@ -107,7 +107,7 @@ class TaskSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(failed.ok)
         self.assertEqual(failed.error.code, "task_domain_invalid")
-        self.assertIn("manage_scheduled_jobs", failed.error.message)
+        self.assertIn("create_scheduled_workflow", failed.error.message)
 
     async def test_legacy_taskmanager_scheduler_flow_is_removed(self):
         manager = TaskManager(_FakeMemory())

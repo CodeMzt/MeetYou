@@ -264,6 +264,7 @@ class App:
         self.feishu_output: FeishuOutputAdapter | None = None
         self.wechat_input: MeetWeChatInputAdapter | None = None
         self.wechat_output: MeetWeChatOutputService | None = None
+        self._external_endpoint_provider_tasks: dict[str, asyncio.Task] = {}
         self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
         self._health_getter = health_getter
         self._telemetry_recorder = telemetry_recorder
@@ -1687,20 +1688,22 @@ class App:
             or "Run the scheduled job."
         ).strip()
         system_prompt = str(run_template.get("system_prompt") or "").strip() or (
-            "[V4 Scheduler Job]\n"
-            "You are executing a Core-owned Scheduler job. Scheduler owns the timing; Endpoint providers only execute routed capabilities.\n"
+            "[V4 Scheduled Workflow]\n"
+            "You are executing a Core-owned Scheduled Workflow. Scheduler owns only the trigger timing; the workflow owns the action plan and output policy.\n"
             "Use assistant.progress_notice for progress when work is nontrivial. The final result must be returned as normal assistant text so Core can persist it as a Message.\n"
-            "Do not use send_endpoint_message to answer the originating scheduled job thread."
+            "If delivery targets are configured, Core Delivery will send the persisted assistant Message after the run. Do not use send_endpoint_message to answer the originating scheduled job thread."
         )
         user_payload = {
             "job_id": str(getattr(job, "job_id", "") or ""),
             "name": str(getattr(job, "name", "") or ""),
             "kind": str(getattr(job, "kind", "") or ""),
             "action_ref": str(getattr(job, "action_ref", "") or "core.workflow.assistant_turn"),
+            "workflow_type": str(run_template.get("workflow_type") or "assistant_run"),
             "manual_trigger": bool(manual),
             "scheduled_at": utcnow_iso(),
             "prompt": prompt,
             "parameters": dict(run_template.get("parameters") or {}),
+            "output_policy": dict(run_template.get("output_policy") or {}),
             "metadata": dict(getattr(job, "meta", {}) or {}),
         }
         return [

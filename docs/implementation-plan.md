@@ -43,7 +43,7 @@
 - 不保留 `/client/ws`、`source_client_id`、`target_client_id`、`ClientToolDispatchService`。
 - `/client/*` 若仍存在，只能返回 removed 响应。
 - 不恢复 Procedure 表、API、工具、prompt layer、UI 或 pinned 字段。
-- 工具声明必须与底层一致：`manage_tasks` 只管用户 TODO；Scheduler 任务使用 `manage_scheduled_jobs`。
+- 工具声明必须与底层一致：`manage_tasks` 只管用户 TODO；普通定时工作使用 `create_scheduled_workflow` / `manage_scheduled_workflows`；`manage_scheduled_jobs` 只用于底层 Scheduler / `system.heartbeat` 维护。
 - 文档、测试、示例配置必须使用 Endpoint、Runtime、Scheduler、SKILL 术语。
 
 ## 验证

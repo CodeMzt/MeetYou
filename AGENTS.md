@@ -15,7 +15,7 @@
 - `short_reply` is no longer a directed tool. Replace it with `assistant.progress_notice` RunEvent / Runtime Action.
 - `assistant.progress_notice` must not go through ToolRouter, must not create Operation / OperationCall, and must not become final assistant message content.
 - Delivery is responsible for delivering `message`, `run_event`, `notice`, and `operation_update`. Delivery must not generate replies.
-- Cross-provider human-visible delivery must target `EndpointAddress` through Delivery. Do not expand `send_endpoint_message` into a cross-channel user delivery abstraction; use `send_delivery_message` / scheduled delivery tools.
+- Cross-provider human-visible delivery must target `EndpointAddress` through Delivery. Do not expand `send_endpoint_message` into a cross-channel user delivery abstraction; use `send_delivery_message` or Scheduled Workflow delivery outputs.
 - Final assistant reply must be an assistant Message persisted by MessageService.
 - Streaming must flow through RunEventLog plus Delivery fan-out.
 - Tool dispatch must flow through ToolRouter plus ExecutionTarget.
@@ -61,7 +61,10 @@
 - Tool frames are `tool.call.request`, `tool.call.result`, `tool.call.error`, and `tool.call.cancel`.
 - Use `origin_endpoint_id`, `target_endpoint_id`, and `execution_target_id` in V4 data paths. Do not add new runtime usage of `source_client_id` or `target_client_id`.
 - Capability/provider ids should be endpoint-oriented. Permissions are checked against abstract tool keys on Actor / Workspace / RunPolicy, not against a Client allowlist.
-- Scheduler-facing assistant tools should prefer `create_scheduled_delivery` and `manage_scheduled_deliveries` for user-facing recurring deliveries. Keep `manage_scheduled_jobs` as the low-level maintenance surface for Scheduler jobs and `system.heartbeat`.
+- Scheduler-facing assistant tools should prefer `create_scheduled_workflow` and `manage_scheduled_workflows` for ordinary reminders, recurring analysis, document organization, and other scheduled assistant work. Use `create_scheduled_delivery` / `manage_scheduled_deliveries` only when the Scheduled Workflow output must be delivered to an `EndpointAddress`. Keep `manage_scheduled_jobs` as the low-level maintenance surface for Scheduler jobs and `system.heartbeat`.
+- Scheduled Workflow is the extensible V4 scheduling protocol: `kind=scheduled_workflow`, `action_ref=core.workflow.scheduled_workflow`, and `run_template.schema=meetyou.scheduler.workflow.v1`. Scheduler owns due detection, leases, and firing; workflow specs own action/tool/output policy.
+- Scheduled Workflow assistant output must persist the final assistant Message. Do not expose or accept `persist_message=false`; `create_thread=false` requires an existing `thread_id` or `session_id`.
+- Core lifecycle must start Gateway only after Uvicorn reports ready, then external Endpoint Providers may self-connect to `/runtime/*` and `/endpoint/ws`. External providers are supervised by lifecycle recovery so one transient startup failure cannot leave Feishu/WeChat permanently offline.
 - Gateway auth may accept `Authorization: Bearer ...` or `X-API-Key` when enabled.
 
 ## Configuration And State

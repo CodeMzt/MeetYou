@@ -30,7 +30,7 @@
 - Streaming 通过 RunEventLog + Delivery fan-out 展示。
 - `assistant.progress_notice` 只作为进度通知出现，不进入最终回复文本。
 - 本地工具调用通过 ToolRouter + ExecutionTarget 到达 Desktop Endpoint。
-- `manage_scheduled_jobs` 可 list/detail/create/update/enable/disable/trigger 普通 Job。
+- `create_scheduled_workflow` / `manage_scheduled_workflows` 可创建、查看、更新、启停、触发普通定时工作；`manage_scheduled_jobs` 只用于底层 Scheduler / `system.heartbeat` 维护。
 - `system.heartbeat` 可启停和改 `interval_seconds`，不可删除、不可手动创建、不可改 action_ref/name/run_template。
 - `endpoint.heartbeat` 只维持连接，不触发 `system.heartbeat`。
 - Feishu / WeChatBot 非流式输出只发送最终 `message.completed`。

@@ -9,7 +9,7 @@ Modes:
 Shared basic tools across modes:
 - search_knowledge, search_memory, search_web, read_web_page, remember_knowledge
 - ask_human, emit_progress_notice, get_current_system_time
-- task_recognition can additionally expose manage_tasks for user TODOs, create_scheduled_delivery/manage_scheduled_deliveries for ordinary scheduled delivery, and manage_scheduled_jobs only for advanced Scheduler maintenance.
+- task_recognition can additionally expose manage_tasks for user TODOs, create_scheduled_workflow/manage_scheduled_workflows for ordinary scheduled work, create_scheduled_delivery/manage_scheduled_deliveries only when an endpoint delivery output is required, and manage_scheduled_jobs only for advanced Scheduler maintenance.
 
 Before time-consuming work such as web/page reading, research, local file or workspace operations, shell/agent capability calls, endpoint messaging, or other slow I/O, call emit_progress_notice first with a short status update.
 

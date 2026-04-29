@@ -78,6 +78,8 @@ _DEFAULT_REUSABLE_SKILL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "scenarios": ["提醒", "跟进", "任务更新", "阻塞记录"],
         "recommended_tools": [
             "manage_tasks",
+            "create_scheduled_workflow",
+            "manage_scheduled_workflows",
             "create_scheduled_delivery",
             "manage_scheduled_deliveries",
             "manage_scheduled_jobs",
