@@ -44,6 +44,22 @@ class MessageService(ServiceBase):
         with self.session_scope() as session:
             return MessageRepository(session).list_by_thread_id(thread_id)
 
+    def get_by_endpoint_message_id(
+        self,
+        *,
+        thread_id,
+        endpoint_message_id: str,
+        origin_endpoint_id=None,
+        role: str = "user",
+    ):
+        with self.session_scope() as session:
+            return MessageRepository(session).get_by_endpoint_message_id(
+                thread_id=thread_id,
+                endpoint_message_id=endpoint_message_id,
+                origin_endpoint_id=origin_endpoint_id,
+                role=role,
+            )
+
     def get_by_message_id(self, message_id: str):
         with self.session_scope() as session:
             return MessageRepository(session).get_by_message_id(message_id)

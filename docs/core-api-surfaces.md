@@ -34,6 +34,8 @@ Runtime HTTP 主要资源：
 - `GET /runtime/attachments/{attachment_id}/download-ticket`
 - `GET /runtime/attachments/content/{attachment_id}`
 
+`POST /runtime/messages` accepts `endpoint_message_id` for Endpoint Provider inbound idempotency. For the same thread, endpoint, role, and `endpoint_message_id`, Core returns the existing Message with `idempotent_replay=true` and does not enqueue another assistant run.
+
 Danxi 资源也在 `/runtime/danxi/*` 下。登录和 WebVPN Cookie 更新只接受加密载荷或服务端环境凭据，不接受明文密码、Cookie 或 token。
 
 ## Endpoint Protocol

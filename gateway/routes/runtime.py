@@ -146,7 +146,14 @@ def _thread_response(thread, workspace_id: str) -> RuntimeThreadResponse:
     )
 
 
-def _message_response(message, *, thread_id: str, workspace_id: str, session_id: str = "") -> RuntimeMessageResponse:
+def _message_response(
+    message,
+    *,
+    thread_id: str,
+    workspace_id: str,
+    session_id: str = "",
+    idempotent_replay: bool = False,
+) -> RuntimeMessageResponse:
     return RuntimeMessageResponse(
         message_id=message.message_id,
         thread_id=thread_id,
@@ -159,6 +166,7 @@ def _message_response(message, *, thread_id: str, workspace_id: str, session_id:
         status=message.status,
         channel=message.channel,
         created_at=message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
+        idempotent_replay=bool(idempotent_replay),
     )
 
 
@@ -499,17 +507,36 @@ def build_runtime_router(gateway) -> APIRouter:
         workspace = _find_workspace(domain, payload.resolved_active_workspace_id)
         session = domain.services.session.get_by_session_id(payload.session_id) if payload.session_id else None
         endpoint = _find_endpoint(domain, payload.endpoint_id)
+        source_id = str(getattr(endpoint, "endpoint_id", "") or payload.endpoint_id or "ui.endpoint")
+        metadata = dict(payload.metadata or {})
+        role = payload.role or "user"
+        endpoint_message_id = str(payload.endpoint_message_id or "").strip()
+        origin_endpoint_row_id = getattr(endpoint, "id", None)
+        if endpoint_message_id:
+            existing_message = domain.services.message.get_by_endpoint_message_id(
+                thread_id=thread.id,
+                endpoint_message_id=endpoint_message_id,
+                origin_endpoint_id=origin_endpoint_row_id,
+                role=role,
+            )
+            if existing_message is not None:
+                return _message_response(
+                    existing_message,
+                    thread_id=thread.thread_id,
+                    workspace_id=workspace.workspace_id,
+                    session_id=getattr(session, "session_id", ""),
+                    idempotent_replay=True,
+                )
+            metadata["endpoint_message_id"] = endpoint_message_id
         message = domain.services.message.create_message(
             thread_id=thread.id,
             session_id=getattr(session, "id", None),
-            role=payload.role or "user",
+            role=role,
             content=payload.content,
-            origin_endpoint_id=getattr(endpoint, "id", None),
+            origin_endpoint_id=origin_endpoint_row_id,
             active_workspace_id=workspace.id,
-            meta=dict(payload.metadata or {}),
+            meta=metadata,
         )
-        source_id = str(getattr(endpoint, "endpoint_id", "") or payload.endpoint_id or "ui.endpoint")
-        metadata = dict(payload.metadata or {})
         source_kind = _resolve_runtime_source_kind(
             endpoint_id=source_id,
             endpoint_type=payload.endpoint_type,
@@ -524,7 +551,7 @@ def build_runtime_router(gateway) -> APIRouter:
         event = InboundEvent(
             session_id=getattr(session, "session_id", "") or "",
             type=EventType.MESSAGE.value,
-            role=payload.role or "user",
+            role=role,
             content=payload.content,
             source=make_source(source_kind, source_id, **source_metadata),
             target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
