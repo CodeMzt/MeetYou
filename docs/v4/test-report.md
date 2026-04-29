@@ -2,6 +2,25 @@
 
 Status: local V4 validation, CI, Deploy, remote Core verification, local Desktop -> remote Core validation, and external Feishu / WeChatBot human confirmation passed.
 
+## 2026-04-29 ToolRouter Core Tool / Feishu Root-Cause Addendum
+
+- Commit sha: `3546f8fbce8f4102091105bac98bceea43038327`
+- Scope: fixed the V4 upper/lower contract mismatch where assistant-visible Core-owned tools such as `send_delivery_message`, `list_delivery_targets`, and `create_scheduled_workflow` were declared but not registered as `core.local` in-process ToolRouter targets. Local Shell/file capabilities remain excluded and must still route through Desktop Endpoint execution targets.
+- Root cause: Feishu Provider startup was already fixed in commit `829dd5741333eb6985edf00ace0175ec29827`; the remaining failure surfaced a second root cause: ToolRouter could not execute non-`core.*` Core tools and returned `execution_target_unavailable`.
+- Python tests: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 530 tests, 1 skipped).
+- Frontend typecheck: passed (`npm run typecheck`).
+- Frontend tests: passed (`npm run test`, 17 files / 71 tests).
+- Frontend build: passed (`npm run build`; existing Electron author, Vite CJS, and chunk-size warnings only).
+- CI status: passed (`CI`, run `25102124569`, commit `3546f8fbce8f4102091105bac98bceea43038327`).
+- Deploy status: passed (`Deploy MeetYou Core`, run `25102124602`, commit `3546f8fbce8f4102091105bac98bceea43038327`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=3546f8fbce8f4102091105bac98bceea43038327`, `build_time=2026-04-29T09:50:15Z`).
+- Remote endpoint status after deploy: `feishu.provider.ui` online, `wechat.provider.ui` online, and local `desktop.mzt-desktop-client.executor` online against remote Core.
+- Remote Core + local Desktop real acceptance: passed (`logs\v4-remote-toolrouter-corefix-acceptance.json`, marker `V4OK_20260429095334_d00df3`, streaming marker `V4STREAM_20260429095335_fd3c43`, real Desktop tool marker `DESKTOP_TOOL_20260429095342_61e2ee`, replay seq `16`).
+- ToolRouter Core tool probe: passed. `list_delivery_targets` executed through `/runtime/operations` as `core.local`, operation `op_231f292f111444c58f3abd16fb29df94`.
+- Feishu address delivery probe: passed. `send_delivery_message` executed through `/runtime/operations` as `core.local`, operation `op_00a246211b48488cba56fecaabca4a6b`, marker `FEISHU_CORE_DELIVERY_20260429_1753`.
+- External human feedback: passed. Human confirmed the Feishu validation was OK after the `FEISHU_CORE_DELIVERY_20260429_1753` probe and the Feishu inbound auto-reply check. WeChatBot remained OK as the comparison endpoint.
+- `.env.bak` handling: inspected, removed from Git tracking, and explicitly ignored. The working-tree `.env.bak` contains non-placeholder API keys, tokens, passwords, and a database URL, so the local file must remain untracked.
+
 ## 2026-04-29 EndpointAddress / Scheduled Delivery Addendum
 
 - Commit sha: `cbba889fdb11cc820697460074b68831de0e606d`
