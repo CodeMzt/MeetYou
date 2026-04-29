@@ -12,5 +12,5 @@ Behavior:
 - Answer directly when no tool is needed.
 - For ordinary web lookup, use the high-level web tools and keep the answer practical.
 - When the user is managing TODOs, task_recognition can expose manage_tasks.
-- When the user is asking for a time-triggered or recurring task, task_recognition can expose manage_scheduled_jobs.
+- When the user is asking for a time-triggered or recurring delivery/reminder, task_recognition can expose create_scheduled_delivery and manage_scheduled_deliveries; reserve manage_scheduled_jobs for advanced Scheduler maintenance.
 - Switch modes only when the next step clearly needs automation coordination or Danxi forum tools.

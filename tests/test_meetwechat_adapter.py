@@ -305,6 +305,32 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK"])
         await output.close()
 
+    async def test_chat_scoped_connection_ignores_address_targeted_delivery(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        payload = _message("OK", message_id="msg-final-address")
+        payload["payload"]["target_external_ref"] = "chat-1"
+
+        await output.send_runtime_event("chat-1", payload)
+
+        self.assertEqual(meetwechat_client.sent, [])
+        await output.close()
+
+    async def test_provider_connection_handles_address_targeted_delivery(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        payload = _message("OK", message_id="msg-final-address")
+        payload["payload"]["target_external_ref"] = "chat-1"
+
+        await output.send_runtime_event("", payload)
+
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK"])
+        await output.close()
+
     async def test_run_event_and_delivery_message_do_not_duplicate_final_reply(self):
         meetwechat_client = _FakeMeetWeChatClient()
         config = _Config(meetwechat_state_file=self.state_path)

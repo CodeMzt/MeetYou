@@ -212,6 +212,9 @@ async def setup_app_runtime(app) -> None:
         cors_origins=app.config.get("gateway_cors_origins") or [],
     )
     app.core_domain.tool_router.set_endpoint_transport(app.gateway.dispatch_endpoint_call)
+    app.core_domain.services.delivery.set_transport(
+        lambda endpoint_id, frame: app.gateway.dispatch_endpoint_call(endpoint_id=endpoint_id, payload=frame)
+    )
     runtime_bridge_setter = getattr(app.tools_manager, "set_runtime_bridge", None)
     if callable(runtime_bridge_setter):
         runtime_bridge_setter(session_manager=app.session_manager, gateway_getter=lambda: app.gateway)

@@ -36,6 +36,26 @@ def _string_list(values) -> list[str]:
     return result
 
 
+def _address_payload(address, *, endpoint=None, preference=None) -> dict[str, Any]:
+    endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
+    return {
+        "address_id": str(getattr(address, "address_id", "") or ""),
+        "endpoint_id": endpoint_id,
+        "provider_type": str(getattr(address, "provider_type", "") or ""),
+        "address_type": str(getattr(address, "address_type", "") or ""),
+        "external_ref": str(getattr(address, "external_ref", "") or ""),
+        "display_name": str(getattr(address, "display_name", "") or getattr(address, "external_ref", "") or ""),
+        "workspace_ids": _string_list(getattr(address, "workspace_scope", []) or []),
+        "status": str(getattr(address, "status", "") or "unknown"),
+        "capabilities": _string_list(getattr(address, "capabilities", []) or []),
+        "bound": preference is not None,
+        "alias": str(getattr(preference, "alias", "") or "") if preference is not None else "",
+        "is_default": bool(getattr(preference, "is_default", False)) if preference is not None else False,
+        "verified": bool(getattr(preference, "verified", False)) if preference is not None else False,
+        "metadata": dict(getattr(address, "meta", {}) or {}),
+    }
+
+
 def _origin_endpoint_id_from_context() -> str:
     context = get_event_context()
     for key in ("origin_endpoint_id", "endpoint_id", "source_id"):
@@ -92,6 +112,74 @@ class EndpointTools:
                     if workspace is not None:
                         return workspace
         return None
+
+    def _current_actor(self):
+        domain = self._domain()
+        principal = getattr(domain, "principal", None)
+        principal_key = str(getattr(principal, "principal_key", "") or "self").strip() or "self"
+        actor = domain.services.actor.get_by_actor_id(f"user:{principal_key}")
+        if actor is None:
+            actor = domain.services.actor.ensure_actor(
+                actor_id=f"user:{principal_key}",
+                actor_type="user",
+                owner_user_id=principal_key,
+                display_name=str(getattr(principal, "display_name", "") or principal_key),
+                permission_profile_id="profile.default_user",
+                metadata={"principal_key": principal_key},
+            )
+        return actor
+
+    def _endpoint_for_address(self, address):
+        endpoint = self._domain().services.endpoint.get_by_id(getattr(address, "endpoint_id", None))
+        if endpoint is None:
+            raise _tool_error("endpoint_not_found", f"Endpoint for address is missing: {getattr(address, 'address_id', '')}")
+        return endpoint
+
+    def _resolve_address(
+        self,
+        *,
+        address_id: str = "",
+        actor_ref: str = "",
+        provider_type: str = "",
+        alias: str = "me",
+    ):
+        domain = self._domain()
+        normalized_address_id = str(address_id or "").strip()
+        if normalized_address_id:
+            address = domain.services.endpoint_address.get_by_address_id(normalized_address_id)
+            if address is None:
+                raise _tool_error("address_not_found", f"Unknown delivery address: {normalized_address_id}")
+            return address, None
+        normalized_actor_ref = str(actor_ref or "").strip().lower()
+        if normalized_actor_ref in {"me", "self", "我"}:
+            actor = self._current_actor()
+            normalized_provider = str(provider_type or "").strip().lower()
+            if not normalized_provider:
+                raise _tool_error("provider_type_required", "provider_type is required when resolving actor_ref=me.")
+            preference = domain.services.actor_delivery_preference.get_default(
+                actor_row_id=actor.id,
+                provider_type=normalized_provider,
+                alias=str(alias or "me").strip() or "me",
+            )
+            if preference is None:
+                return None, {
+                    "requires_binding": True,
+                    "actor_ref": "me",
+                    "provider_type": normalized_provider,
+                    "alias": str(alias or "me").strip() or "me",
+                    "message": "No verified delivery preference is bound for this actor/provider.",
+                }
+            address = domain.services.endpoint_address.get_by_id(getattr(preference, "address_id", None))
+            if address is None:
+                return None, {
+                    "requires_binding": True,
+                    "actor_ref": "me",
+                    "provider_type": normalized_provider,
+                    "alias": str(alias or "me").strip() or "me",
+                    "message": "The bound delivery address no longer exists.",
+                }
+            return address, preference
+        raise _tool_error("delivery_target_required", "Specify address_id or actor_ref=me with provider_type.")
 
     def _endpoint_payload(self, endpoint, *, connected: bool = False, snapshots: list[dict[str, Any]] | None = None, include_capabilities: bool = True) -> dict[str, Any]:
         rows = list(snapshots or [])
@@ -227,6 +315,98 @@ class EndpointTools:
             "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or ""),
             "tool_key": normalized_tool_key,
             "endpoints": targets,
+        }
+
+    async def list_delivery_targets(
+        self,
+        provider_type: str = "",
+        actor_ref: str = "",
+        address_type: str = "",
+        workspace_id: str = "",
+        include_unavailable: bool = False,
+        route_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del route_context
+        domain = self._domain()
+        normalized_provider = str(provider_type or "").strip().lower()
+        normalized_actor_ref = str(actor_ref or "").strip().lower()
+        normalized_workspace = str(workspace_id or get_event_context().get("workspace_id") or "").strip()
+        addresses = list(
+            domain.services.endpoint_address.list_addresses(
+                provider_type=normalized_provider,
+                address_type=str(address_type or "").strip().lower(),
+                workspace_id=normalized_workspace,
+            )
+        )
+        if not include_unavailable:
+            addresses = [row for row in addresses if str(getattr(row, "status", "") or "").strip().lower() in {"sendable", "unknown"}]
+        preference_by_address: dict[str, Any] = {}
+        requires_binding = False
+        if normalized_actor_ref in {"me", "self", "我"}:
+            actor = self._current_actor()
+            preferences = domain.services.actor_delivery_preference.list_for_actor(
+                actor_row_id=actor.id,
+                provider_type=normalized_provider,
+                alias="me",
+            )
+            preference_by_address = {str(getattr(pref, "address_id", "") or ""): pref for pref in preferences}
+            if normalized_provider and not preferences:
+                requires_binding = True
+        payloads: list[dict[str, Any]] = []
+        for address in addresses:
+            endpoint = domain.services.endpoint.get_by_id(getattr(address, "endpoint_id", None))
+            preference = preference_by_address.get(str(getattr(address, "id", "") or ""))
+            payloads.append(_address_payload(address, endpoint=endpoint, preference=preference))
+        return {
+            "ok": True,
+            "count": len(payloads),
+            "requires_binding": requires_binding,
+            "provider_type": normalized_provider,
+            "actor_ref": normalized_actor_ref,
+            "addresses": payloads,
+        }
+
+    async def set_delivery_preference(
+        self,
+        provider_type: str,
+        address_id: str,
+        actor_ref: str = "me",
+        alias: str = "me",
+        verified: bool = True,
+        is_default: bool = True,
+        metadata: dict[str, Any] | None = None,
+        route_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del route_context
+        normalized_actor_ref = str(actor_ref or "me").strip().lower()
+        if normalized_actor_ref not in {"me", "self", "我"}:
+            raise _tool_error("unsupported_actor_ref", "Only actor_ref=me is supported for delivery preferences.")
+        domain = self._domain()
+        actor = self._current_actor()
+        address = domain.services.endpoint_address.get_by_address_id(str(address_id or "").strip())
+        if address is None:
+            raise _tool_error("address_not_found", f"Unknown delivery address: {address_id}")
+        normalized_provider = str(provider_type or getattr(address, "provider_type", "") or "").strip().lower()
+        if normalized_provider and normalized_provider != str(getattr(address, "provider_type", "") or "").strip().lower():
+            raise _tool_error("provider_type_mismatch", "The selected address does not belong to the requested provider_type.")
+        preference = domain.services.actor_delivery_preference.upsert_preference(
+            actor_row_id=actor.id,
+            provider_type=normalized_provider,
+            address_row_id=address.id,
+            alias=str(alias or "me").strip() or "me",
+            is_default=bool(is_default),
+            verified=bool(verified),
+            metadata={
+                **dict(metadata or {}),
+                "bound_at": _utcnow_iso(),
+                "actor_ref": "me",
+            },
+        )
+        endpoint = domain.services.endpoint.get_by_id(getattr(address, "endpoint_id", None))
+        return {
+            "ok": True,
+            "preference_id": str(getattr(preference, "preference_id", "") or ""),
+            "target": _address_payload(address, endpoint=endpoint, preference=preference),
         }
 
     async def _send_notice(self, *, target_type: str, target_id: str, content: str, session_id: str = "", workspace_id: str = "") -> dict[str, Any]:
@@ -366,3 +546,54 @@ class EndpointTools:
                 confirmed=confirmed,
             )
         raise _tool_error("unsupported_delivery_kind", f"Unsupported delivery_kind: {delivery_kind}")
+
+    async def send_delivery_message(
+        self,
+        content: str,
+        address_id: str = "",
+        actor_ref: str = "",
+        provider_type: str = "",
+        alias: str = "me",
+        message_type: str = "notice",
+        offline_policy: str = "store_and_retry",
+        workspace_id: str = "",
+        session_id: str = "",
+        route_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del route_context
+        text = str(content or "").strip()
+        if not text:
+            raise _tool_error("content_required", "content is required.")
+        address, preference = self._resolve_address(
+            address_id=address_id,
+            actor_ref=actor_ref,
+            provider_type=provider_type,
+            alias=alias,
+        )
+        if address is None:
+            return {"ok": False, **dict(preference or {})}
+        endpoint = self._endpoint_for_address(address)
+        result = await self._domain().services.delivery.deliver_to_address(
+            target_endpoint=endpoint,
+            target_address=address,
+            message_type=str(message_type or "notice").strip() or "notice",
+            payload={
+                "notice_id": f"notice_{uuid4().hex}",
+                "content": text,
+                "workspace_id": str(workspace_id or get_event_context().get("workspace_id") or ""),
+                "session_id": str(session_id or get_event_context().get("session_id") or ""),
+                "created_at": _utcnow_iso(),
+                "metadata": {
+                    "runtime_action": "delivery.address_message",
+                    "actor_ref": str(actor_ref or ""),
+                    "provider_type": str(provider_type or getattr(address, "provider_type", "") or ""),
+                },
+            },
+            offline_policy=str(offline_policy or "store_and_retry"),
+        )
+        return {
+            "ok": True,
+            "delivered": bool(result.get("sent")),
+            "status": str(result.get("status") or ""),
+            "target": _address_payload(address, endpoint=endpoint, preference=preference),
+        }

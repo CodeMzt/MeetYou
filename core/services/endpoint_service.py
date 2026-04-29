@@ -3,7 +3,9 @@ from __future__ import annotations
 from uuid import uuid4
 
 from core.db.repositories import (
+    ActorDeliveryPreferenceRepository,
     DeliveryAttemptRepository,
+    EndpointAddressRepository,
     EndpointCapabilityRepository,
     EndpointConnectionRepository,
     EndpointOutboxRepository,
@@ -164,11 +166,116 @@ class EndpointCapabilityService(ServiceBase):
             return EndpointCapabilityRepository(session).list_enabled_for_tool(tool_key=tool_key)
 
 
+class EndpointAddressService(ServiceBase):
+    def upsert_address(
+        self,
+        *,
+        endpoint_row_id,
+        provider_type: str,
+        address_type: str,
+        external_ref: str,
+        address_id: str = "",
+        display_name: str = "",
+        workspace_scope: list | None = None,
+        status: str = "sendable",
+        capabilities: list | None = None,
+        last_seen_at=None,
+        last_verified_at=None,
+        metadata: dict | None = None,
+    ):
+        with self.session_scope() as session:
+            return EndpointAddressRepository(session).upsert(
+                endpoint_id=endpoint_row_id,
+                provider_type=provider_type,
+                address_type=address_type,
+                external_ref=external_ref,
+                address_id=address_id,
+                display_name=display_name,
+                workspace_scope=workspace_scope,
+                status=status,
+                capabilities=capabilities,
+                last_seen_at=last_seen_at,
+                last_verified_at=last_verified_at,
+                metadata=metadata,
+            )
+
+    def get_by_address_id(self, address_id: str):
+        with self.session_scope() as session:
+            return EndpointAddressRepository(session).get_by_address_id(address_id)
+
+    def get_by_id(self, row_id):
+        with self.session_scope() as session:
+            return EndpointAddressRepository(session).get_by_id(row_id)
+
+    def list_addresses(
+        self,
+        *,
+        provider_type: str = "",
+        address_type: str = "",
+        workspace_id: str = "",
+        status: str = "",
+    ):
+        with self.session_scope() as session:
+            return EndpointAddressRepository(session).list_all(
+                provider_type=str(provider_type or "").strip(),
+                address_type=str(address_type or "").strip(),
+                workspace_id=str(workspace_id or "").strip(),
+                status=str(status or "").strip(),
+            )
+
+    def delete_address(self, *, address_id: str) -> bool:
+        with self.session_scope() as session:
+            return EndpointAddressRepository(session).delete(address_id=address_id)
+
+
+class ActorDeliveryPreferenceService(ServiceBase):
+    def upsert_preference(
+        self,
+        *,
+        actor_row_id,
+        provider_type: str,
+        address_row_id,
+        alias: str = "me",
+        preference_id: str = "",
+        is_default: bool = True,
+        verified: bool = False,
+        metadata: dict | None = None,
+    ):
+        with self.session_scope() as session:
+            return ActorDeliveryPreferenceRepository(session).upsert(
+                actor_id=actor_row_id,
+                provider_type=provider_type,
+                address_id=address_row_id,
+                alias=alias,
+                preference_id=preference_id,
+                is_default=is_default,
+                verified=verified,
+                metadata=metadata,
+            )
+
+    def list_for_actor(self, *, actor_row_id, provider_type: str = "", alias: str = ""):
+        with self.session_scope() as session:
+            return ActorDeliveryPreferenceRepository(session).list_for_actor(
+                actor_id=actor_row_id,
+                provider_type=str(provider_type or "").strip(),
+                alias=str(alias or "").strip(),
+            )
+
+    def get_default(self, *, actor_row_id, provider_type: str, alias: str = "me"):
+        with self.session_scope() as session:
+            return ActorDeliveryPreferenceRepository(session).get_default(
+                actor_id=actor_row_id,
+                provider_type=str(provider_type or "").strip(),
+                alias=str(alias or "me").strip() or "me",
+            )
+
+
 class EndpointOutboxService(ServiceBase):
     def enqueue(
         self,
         *,
         target_endpoint_id,
+        target_address_id=None,
         message_type: str,
         payload: dict,
         available_at=None,
@@ -178,6 +285,7 @@ class EndpointOutboxService(ServiceBase):
             return EndpointOutboxRepository(session).create(
                 outbox_id=f"outbox_{uuid4().hex}",
                 target_endpoint_id=target_endpoint_id,
+                target_address_id=target_address_id,
                 message_type=message_type,
                 payload=payload,
                 available_at=available_at,
@@ -190,6 +298,7 @@ class DeliveryAttemptService(ServiceBase):
         self,
         *,
         target_endpoint_id,
+        target_address_id=None,
         message_type: str,
         payload: dict,
         status: str = "pending",
@@ -202,6 +311,7 @@ class DeliveryAttemptService(ServiceBase):
                 delivery_id=f"delivery_{uuid4().hex}",
                 outbox_id=outbox_id,
                 target_endpoint_id=target_endpoint_id,
+                target_address_id=target_address_id,
                 message_type=message_type,
                 payload=payload,
                 status=status,

@@ -3,7 +3,9 @@ from __future__ import annotations
 from uuid import uuid4
 
 from core.db.repositories import ScheduledJobRepository, ScheduledJobRunRepository
+from core.db.base import utcnow
 from core.services.base import ServiceBase
+from core.services.schedule_time import compute_next_fire_at
 
 
 class SchedulerService(ServiceBase):
@@ -27,6 +29,12 @@ class SchedulerService(ServiceBase):
         misfire_policy: dict | None = None,
         metadata: dict | None = None,
     ):
+        next_fire_at = compute_next_fire_at(
+            trigger_type=trigger_type,
+            trigger_config=trigger_config,
+            timezone_name=timezone,
+            after=utcnow(),
+        )
         with self.session_scope() as session:
             return ScheduledJobRepository(session).create(
                 job_id=job_id or f"job_{uuid4().hex}",
@@ -58,6 +66,7 @@ class SchedulerService(ServiceBase):
                 delivery_policy=delivery_policy,
                 concurrency_policy=concurrency_policy,
                 misfire_policy=misfire_policy,
+                next_fire_at=next_fire_at,
                 metadata=metadata,
             )
 
@@ -67,7 +76,17 @@ class SchedulerService(ServiceBase):
 
     def ensure_system_heartbeat(self, *, interval_seconds: int = 600):
         with self.session_scope() as session:
-            return ScheduledJobRepository(session).ensure_system_heartbeat(interval_seconds=interval_seconds)
+            repo = ScheduledJobRepository(session)
+            row = repo.ensure_system_heartbeat(interval_seconds=interval_seconds)
+            if row.next_fire_at is None:
+                row.next_fire_at = compute_next_fire_at(
+                    trigger_type=row.trigger_type,
+                    trigger_config=row.trigger_config,
+                    timezone_name=row.timezone,
+                    after=utcnow(),
+                )
+                session.flush()
+            return row
 
     def get_job(self, job_id: str):
         with self.session_scope() as session:
@@ -81,15 +100,80 @@ class SchedulerService(ServiceBase):
         if int(interval_seconds) <= 0:
             raise ValueError("interval_seconds must be positive")
         with self.session_scope() as session:
-            return ScheduledJobRepository(session).update_interval(job_id=job_id, interval_seconds=interval_seconds)
+            repo = ScheduledJobRepository(session)
+            row = repo.update_interval(job_id=job_id, interval_seconds=interval_seconds)
+            if row is not None:
+                row.next_fire_at = compute_next_fire_at(
+                    trigger_type=row.trigger_type,
+                    trigger_config=row.trigger_config,
+                    timezone_name=row.timezone,
+                    after=utcnow(),
+                )
+                session.flush()
+            return row
 
     def update_job(self, *, job_id: str, **updates):
+        should_recompute = any(key in updates for key in {"trigger_type", "trigger_config", "timezone"})
         with self.session_scope() as session:
-            return ScheduledJobRepository(session).update(job_id=job_id, **updates)
+            repo = ScheduledJobRepository(session)
+            row = repo.update(job_id=job_id, **updates)
+            if row is not None and should_recompute:
+                row.next_fire_at = compute_next_fire_at(
+                    trigger_type=row.trigger_type,
+                    trigger_config=row.trigger_config,
+                    timezone_name=row.timezone,
+                    after=utcnow(),
+                )
+                session.flush()
+            return row
 
     def delete_job(self, *, job_id: str) -> bool:
         with self.session_scope() as session:
             return ScheduledJobRepository(session).delete(job_id=job_id)
+
+    def ensure_next_fire_at(self, *, job_id: str):
+        with self.session_scope() as session:
+            repo = ScheduledJobRepository(session)
+            row = repo.get_by_job_id(job_id)
+            if row is None:
+                return None
+            if row.next_fire_at is None:
+                row.next_fire_at = compute_next_fire_at(
+                    trigger_type=row.trigger_type,
+                    trigger_config=row.trigger_config,
+                    timezone_name=row.timezone,
+                    after=utcnow(),
+                )
+                session.flush()
+            return row
+
+    def acquire_due_lease(self, *, job_id: str, lease_owner: str, lease_seconds: int = 300):
+        with self.session_scope() as session:
+            return ScheduledJobRepository(session).acquire_due_lease(
+                job_id=job_id,
+                now=utcnow(),
+                lease_owner=lease_owner,
+                lease_seconds=lease_seconds,
+            )
+
+    def mark_fired(self, *, job_id: str, fired_at=None):
+        fired = fired_at or utcnow()
+        with self.session_scope() as session:
+            repo = ScheduledJobRepository(session)
+            row = repo.get_by_job_id(job_id)
+            if row is None:
+                return None
+            next_fire_at = compute_next_fire_at(
+                trigger_type=row.trigger_type,
+                trigger_config=row.trigger_config,
+                timezone_name=row.timezone,
+                after=fired,
+            )
+            return repo.mark_fired(job_id=job_id, fired_at=fired, next_fire_at=next_fire_at)
+
+    def release_lease(self, *, job_id: str):
+        with self.session_scope() as session:
+            return ScheduledJobRepository(session).release_lease(job_id=job_id)
 
 
 class ScheduledJobRunService(ServiceBase):

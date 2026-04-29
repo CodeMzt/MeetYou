@@ -10,7 +10,9 @@ from core.services.config_state_service import ConfigStateService
 from core.services.context_pool_service import ContextPoolService
 from core.services.delivery_service import DeliveryService
 from core.services.endpoint_service import (
+    ActorDeliveryPreferenceService,
     DeliveryAttemptService,
+    EndpointAddressService,
     EndpointCapabilityService,
     EndpointConnectionService,
     EndpointOutboxService,
@@ -40,6 +42,8 @@ class CoreServices:
     endpoint: EndpointRegistryService
     endpoint_connection: EndpointConnectionService
     endpoint_capability: EndpointCapabilityService
+    endpoint_address: EndpointAddressService
+    actor_delivery_preference: ActorDeliveryPreferenceService
     endpoint_outbox: EndpointOutboxService
     delivery_attempt: DeliveryAttemptService
     delivery: DeliveryService
@@ -66,6 +70,7 @@ class CoreServices:
 
 __all__ = [
     "ApprovalService",
+    "ActorDeliveryPreferenceService",
     "AttachmentService",
     "ActorService",
     "CapabilityService",
@@ -75,6 +80,7 @@ __all__ = [
     "DeliveryAttemptService",
     "DeliveryService",
     "EndpointCapabilityService",
+    "EndpointAddressService",
     "EndpointConnectionService",
     "EndpointOutboxService",
     "EndpointRegistryService",

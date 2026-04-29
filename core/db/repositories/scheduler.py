@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+from datetime import timezone, timedelta
+
 from core.db.base import utcnow
 from core.db.models.scheduler import ScheduledJob, ScheduledJobRun
 from core.db.repositories.base import RepositoryBase
+
+
+def _ensure_utc(value):
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class ScheduledJobRepository(RepositoryBase):
@@ -26,6 +36,10 @@ class ScheduledJobRepository(RepositoryBase):
         delivery_policy: dict | None = None,
         concurrency_policy: dict | None = None,
         misfire_policy: dict | None = None,
+        next_fire_at=None,
+        last_fire_at=None,
+        lease_owner: str = "",
+        lease_until_at=None,
         metadata: dict | None = None,
     ) -> ScheduledJob:
         row = ScheduledJob(
@@ -46,6 +60,10 @@ class ScheduledJobRepository(RepositoryBase):
             delivery_policy=dict(delivery_policy or {}),
             concurrency_policy=dict(concurrency_policy or {}),
             misfire_policy=dict(misfire_policy or {}),
+            next_fire_at=next_fire_at,
+            last_fire_at=last_fire_at,
+            lease_owner=str(lease_owner or ""),
+            lease_until_at=lease_until_at,
             meta=dict(metadata or {}),
         )
         self.session.add(row)
@@ -75,6 +93,7 @@ class ScheduledJobRepository(RepositoryBase):
                 delivery_policy={"targets": [{"endpoint_id": "core.inbox", "required": True}]},
                 concurrency_policy={"mode": "skip_if_running"},
                 misfire_policy={"mode": "run_once"},
+                next_fire_at=None,
             )
         row.kind = "system_heartbeat"
         row.singleton_key = "core.system.heartbeat"
@@ -101,6 +120,7 @@ class ScheduledJobRepository(RepositoryBase):
         job_id: str,
         name: str | None = None,
         enabled: bool | None = None,
+        trigger_type: str | None = None,
         trigger_config: dict | None = None,
         timezone: str | None = None,
         action_ref: str | None = None,
@@ -110,6 +130,10 @@ class ScheduledJobRepository(RepositoryBase):
         concurrency_policy: dict | None = None,
         misfire_policy: dict | None = None,
         metadata: dict | None = None,
+        next_fire_at=None,
+        last_fire_at=None,
+        lease_owner: str | None = None,
+        lease_until_at=None,
     ) -> ScheduledJob | None:
         row = self.get_by_job_id(job_id)
         if row is None:
@@ -120,6 +144,7 @@ class ScheduledJobRepository(RepositoryBase):
                 field_name
                 for field_name, value in (
                     ("name", name),
+                    ("trigger_type", trigger_type),
                     ("timezone", timezone),
                     ("action_ref", action_ref),
                     ("run_template", run_template),
@@ -152,6 +177,8 @@ class ScheduledJobRepository(RepositoryBase):
             row.name = name
         if enabled is not None:
             row.enabled = bool(enabled)
+        if trigger_type is not None:
+            row.trigger_type = str(trigger_type or row.trigger_type)
         if trigger_config is not None:
             row.trigger_config = dict(trigger_config or {})
         if timezone is not None:
@@ -170,6 +197,14 @@ class ScheduledJobRepository(RepositoryBase):
             row.misfire_policy = dict(misfire_policy or {})
         if metadata is not None:
             row.meta = dict(metadata or {})
+        if next_fire_at is not None:
+            row.next_fire_at = next_fire_at
+        if last_fire_at is not None:
+            row.last_fire_at = last_fire_at
+        if lease_owner is not None:
+            row.lease_owner = str(lease_owner or "")
+        if lease_until_at is not None:
+            row.lease_until_at = lease_until_at
         self.session.flush()
         return row
 
@@ -201,6 +236,49 @@ class ScheduledJobRepository(RepositoryBase):
         self.session.delete(row)
         self.session.flush()
         return True
+
+    def set_next_fire_at(self, *, job_id: str, next_fire_at) -> ScheduledJob | None:
+        row = self.get_by_job_id(job_id)
+        if row is None:
+            return None
+        row.next_fire_at = next_fire_at
+        self.session.flush()
+        return row
+
+    def acquire_due_lease(self, *, job_id: str, now, lease_owner: str, lease_seconds: int = 300) -> ScheduledJob | None:
+        row = self.get_by_job_id(job_id)
+        if row is None or not bool(row.enabled):
+            return None
+        due_at = _ensure_utc(row.next_fire_at)
+        if due_at is None or due_at > now:
+            return None
+        lease_until_at = _ensure_utc(row.lease_until_at)
+        if lease_until_at is not None and lease_until_at > now and str(row.lease_owner or ""):
+            return None
+        row.lease_owner = str(lease_owner or "")
+        row.lease_until_at = now + timedelta(seconds=max(int(lease_seconds or 300), 1))
+        self.session.flush()
+        return row
+
+    def mark_fired(self, *, job_id: str, fired_at, next_fire_at) -> ScheduledJob | None:
+        row = self.get_by_job_id(job_id)
+        if row is None:
+            return None
+        row.last_fire_at = fired_at
+        row.next_fire_at = next_fire_at
+        row.lease_owner = ""
+        row.lease_until_at = None
+        self.session.flush()
+        return row
+
+    def release_lease(self, *, job_id: str) -> ScheduledJob | None:
+        row = self.get_by_job_id(job_id)
+        if row is None:
+            return None
+        row.lease_owner = ""
+        row.lease_until_at = None
+        self.session.flush()
+        return row
 
 
 class ScheduledJobRunRepository(RepositoryBase):

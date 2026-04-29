@@ -47,6 +47,10 @@ def _tool_action_risk(tool_name: str) -> str:
     lowered = str(tool_name or "").strip().lower()
     if not lowered:
         return "read"
+    if lowered in {"send_delivery_message", "create_scheduled_delivery"}:
+        return "external_write"
+    if lowered in {"set_delivery_preference", "manage_scheduled_deliveries"}:
+        return "local_write"
     if any(token in lowered for token in ("delete", "remove", "erase")):
         return "destructive"
     if any(token in lowered for token in ("write", "create", "append", "move", "rename")):
