@@ -127,6 +127,28 @@ class ToolRouterV4Tests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"echo": "ok"})
 
+    async def test_registered_core_tool_name_routes_to_core_local(self):
+        noop = _NoopService()
+        router = ToolRouterService(
+            actor_service=noop,
+            workspace_service=noop,
+            endpoint_service=noop,
+            endpoint_capability_service=noop,
+            session_service=noop,
+            thread_service=noop,
+            operation_service=noop,
+            operation_call_service=noop,
+        )
+        router.register_core_tool("send_delivery_message", lambda args: {"delivered": True, "content": args["content"]})
+
+        result = await router.route_tool_call(
+            tool_key="send_delivery_message",
+            arguments={"content": "ok"},
+            workspace_id="personal",
+        )
+
+        self.assertEqual(result, {"delivered": True, "content": "ok"})
+
     async def test_endpoint_dispatch_can_return_operation_envelope_without_changing_default_tool_result(self):
         operation_service = _OperationService()
         operation_call_service = _OperationCallService()

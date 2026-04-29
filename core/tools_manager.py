@@ -243,11 +243,29 @@ class ToolsManager:
     def set_tool_router(self, dispatcher) -> None:
         if self._document_tools is not None:
             self._document_tools.set_tool_router(dispatcher)
+        self._register_core_tools_with_router(dispatcher)
         self._tool_router_available = dispatcher is not None
         self._authorization_gateway.set_local_capability_dispatcher_available(dispatcher is not None)
 
     def set_capability_dispatcher(self, dispatcher) -> None:
         self.set_tool_router(dispatcher)
+
+    def _register_core_tools_with_router(self, dispatcher) -> None:
+        register = getattr(dispatcher, "register_core_tool", None)
+        if not callable(register):
+            return
+
+        for tool_name in sorted(self._registry.supported_funcs):
+            normalized = str(tool_name or "").strip()
+            if not normalized or normalized in _ENDPOINT_REQUIRED_LOCAL_TOOLS:
+                continue
+            register(normalized, self._build_tool_router_core_handler(normalized))
+
+    def _build_tool_router_core_handler(self, tool_name: str):
+        async def _handler(arguments: dict[str, Any]) -> Any:
+            return await self.call_tool(tool_name, dict(arguments or {}))
+
+        return _handler
 
     def set_core_domain(self, core_domain) -> None:
         self._attachment_tools.set_core_domain(core_domain)
