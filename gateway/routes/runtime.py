@@ -46,6 +46,7 @@ from gateway.models import (
     RuntimeSessionCreateRequest,
     RuntimeSessionResponse,
     RuntimeThreadCreateRequest,
+    RuntimeThreadDeleteResponse,
     RuntimeThreadResponse,
     RuntimeWorkspaceResponse,
     ContextPoolQueryResponse,
@@ -421,6 +422,32 @@ def build_runtime_router(gateway) -> APIRouter:
         thread = _find_thread(domain, thread_id)
         workspace = domain.services.workspace.get_by_id(getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None))
         return _thread_response(thread, getattr(workspace, "workspace_id", ""))
+
+    @router.delete("/threads/{thread_id}", response_model=RuntimeThreadDeleteResponse)
+    async def delete_thread(thread_id: str, request: Request, force: bool = False):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        result = domain.services.thread.delete_thread(
+            principal_id=domain.principal.id,
+            thread_id=thread_id,
+            force=force,
+        )
+        row = result.thread
+        if row is None:
+            return RuntimeThreadDeleteResponse(
+                ok=False,
+                thread_id=str(thread_id or ""),
+                deleted=False,
+                reason=result.reason or "not_found",
+            )
+        return RuntimeThreadDeleteResponse(
+            ok=result.deleted,
+            thread_id=str(getattr(row, "thread_id", "") or thread_id),
+            deleted=result.deleted,
+            status=str(getattr(row, "status", "") or ""),
+            reason=result.reason,
+            default_thread=result.default_thread,
+        )
 
     @router.post("/sessions", response_model=RuntimeSessionResponse)
     async def create_session(payload: RuntimeSessionCreateRequest, request: Request):

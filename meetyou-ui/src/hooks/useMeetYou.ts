@@ -34,6 +34,9 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     defaultThreadId,
     initializeEndpointContext,
     selectRuntimeThread,
+    createAndSelectRuntimeThread,
+    deleteRuntimeThreadAndSelect,
+    refreshRuntimeThreads,
     refreshDesktopToolEndpoint,
     refreshWorkspace,
   } = useEndpointContext(baseUrl, async (threadId) => {
@@ -120,6 +123,26 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       dispatchTransport({ type: 'error', error: update.error })
     }
 
+    if (update.kind === 'thread_switched') {
+      if (update.targetThreadId && update.targetThreadId !== endpointContext?.threadId) {
+        void selectRuntimeThread(update.targetThreadId)
+      }
+      return
+    }
+
+    if (update.kind === 'thread_deleted') {
+      if (update.deletedThreadId && update.deletedThreadId === endpointContext?.threadId) {
+        if (update.fallbackThreadId) {
+          void selectRuntimeThread(update.fallbackThreadId)
+        } else {
+          void initializeEndpointContext()
+        }
+      } else {
+        void refreshRuntimeThreads(update.workspaceId)
+      }
+      return
+    }
+
     // Domain level handlers
     processWsUpdateForChat(update)
     processWsUpdateForOperations(update)
@@ -136,7 +159,17 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     ) {
       return
     }
-  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, refreshDesktopToolEndpoint, refreshWorkspace])
+  }, [
+    dispatchTransport,
+    endpointContext?.threadId,
+    initializeEndpointContext,
+    processWsUpdateForChat,
+    processWsUpdateForOperations,
+    refreshDesktopToolEndpoint,
+    refreshRuntimeThreads,
+    refreshWorkspace,
+    selectRuntimeThread,
+  ])
 
   useEffect(() => {
     if (autoInitializeAttemptedRef.current) {
@@ -285,6 +318,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     sendControlCommand,
     uploadAttachment,
     downloadAttachment,
+    createThread: createAndSelectRuntimeThread,
+    deleteThread: deleteRuntimeThreadAndSelect,
     refreshHealth,
     refreshWorkspace,
     selectThread: selectRuntimeThread,

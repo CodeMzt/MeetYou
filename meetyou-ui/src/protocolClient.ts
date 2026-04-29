@@ -741,6 +741,27 @@ export function parseEndpointWsPayload(payload: unknown): EndpointWsEvent {
     }
   }
 
+  if (eventType === 'thread.switched') {
+    return {
+      kind: 'thread_switched',
+      threadId,
+      sessionId,
+      targetThreadId: toString(event.target_thread_id),
+      workspaceId: toString(event.workspace_id || event.active_workspace_id),
+    }
+  }
+
+  if (eventType === 'thread.deleted') {
+    return {
+      kind: 'thread_deleted',
+      threadId,
+      sessionId,
+      deletedThreadId: toString(event.deleted_thread_id),
+      fallbackThreadId: toString(event.fallback_thread_id),
+      workspaceId: toString(event.workspace_id || event.active_workspace_id),
+    }
+  }
+
   if (eventType === 'confirm.requested') {
     return {
       kind: 'confirm_requested',

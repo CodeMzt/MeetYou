@@ -43,6 +43,7 @@ class ToolsManagerExposureTests(unittest.TestCase):
         self.assertIn("create_scheduled_workflow", router.handlers)
         self.assertIn("list_delivery_targets", router.handlers)
         self.assertIn("get_current_system_time", router.handlers)
+        self.assertIn("manage_threads", router.handlers)
         self.assertNotIn("exec_sys_cmd", router.handlers)
 
     def test_tools_example_schema_does_not_repeat_tool_names(self):

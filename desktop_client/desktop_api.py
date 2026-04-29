@@ -144,6 +144,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("GET", "/desktop/threads", lambda request: f"/runtime/threads?{request.query_string}" if request.query_string else "/runtime/threads"),
         DesktopApiRoute("POST", "/desktop/threads/default", lambda _request: "/runtime/threads/default"),
         DesktopApiRoute("POST", "/desktop/threads", lambda _request: "/runtime/threads"),
+        DesktopApiRoute("DELETE", "/desktop/threads/{thread_id}", lambda request: f"/runtime/threads/{request.match_info['thread_id']}?{request.query_string}" if request.query_string else f"/runtime/threads/{request.match_info['thread_id']}"),
         DesktopApiRoute("POST", "/desktop/sessions", lambda _request: "/runtime/sessions", starts_runtime=True),
         DesktopApiRoute("PATCH", "/desktop/sessions/{session_id}/active-workspace", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/active-workspace"),
         DesktopApiRoute("POST", "/desktop/messages", lambda _request: "/runtime/messages"),

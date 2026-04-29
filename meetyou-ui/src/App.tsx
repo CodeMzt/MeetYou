@@ -37,6 +37,8 @@ export default function App() {
     sendControlCommand,
     uploadAttachment,
     downloadAttachment,
+    createThread,
+    deleteThread,
     refreshWorkspace,
     selectThread,
   } = useMeetYou(baseUrl)
@@ -143,7 +145,10 @@ export default function App() {
             <ThreadPicker
               items={visibleThreads}
               activeThreadId={threadId}
+              defaultThreadId={defaultThreadId}
               onSelectThread={(nextThreadId) => void selectThread(nextThreadId)}
+              onCreateThread={(title) => createThread(title)}
+              onDeleteThread={(nextThreadId) => deleteThread(nextThreadId)}
             />
           </div>
         </div>

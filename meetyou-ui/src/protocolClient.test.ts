@@ -384,6 +384,29 @@ describe('protocolClient', () => {
     expect(humanInput.kind === 'human_input_requested' ? humanInput.payload.options : []).toEqual(['A', 'B'])
   })
 
+  it('parses endpoint websocket thread management events', () => {
+    const switched = parseEndpointWsPayload(endpointRunEvent({
+        type: 'thread.switched',
+        thread_id: 'thr_current',
+        session_id: 'sess_1',
+        target_thread_id: 'thr_next',
+        workspace_id: 'personal',
+      }))
+    const deleted = parseEndpointWsPayload(endpointRunEvent({
+        type: 'thread.deleted',
+        thread_id: 'thr_current',
+        session_id: 'sess_1',
+        deleted_thread_id: 'thr_old',
+        fallback_thread_id: 'thr_default',
+        workspace_id: 'personal',
+      }))
+
+    expect(switched.kind).toBe('thread_switched')
+    expect(switched.kind === 'thread_switched' ? switched.targetThreadId : '').toBe('thr_next')
+    expect(deleted.kind).toBe('thread_deleted')
+    expect(deleted.kind === 'thread_deleted' ? deleted.fallbackThreadId : '').toBe('thr_default')
+  })
+
   it('parses operation updated events', () => {
     const event = parseEndpointWsPayload(endpointRunEvent({
         type: 'operation.updated',

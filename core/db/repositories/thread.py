@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core.db.base import utcnow
 from core.db.models.thread import Thread
 from core.db.repositories.base import RepositoryBase
 
@@ -45,6 +46,7 @@ class ThreadRepository(RepositoryBase):
 
     def list_for_principal(self, *, principal_id, workspace_id=None, limit: int = 50) -> list[Thread]:
         query = self.session.query(Thread).filter_by(principal_id=principal_id)
+        query = query.filter(Thread.status != "deleted")
         if workspace_id is not None:
             query = query.filter_by(home_workspace_id=workspace_id)
         limit = max(1, min(int(limit or 50), 200))
@@ -60,3 +62,21 @@ class ThreadRepository(RepositoryBase):
             if metadata.get("default_key") == normalized_key:
                 return row
         return None
+
+    def soft_delete(self, *, thread_id: str, principal_id, force_default: bool = False) -> tuple[Thread | None, str]:
+        normalized_thread_id = str(thread_id or "").strip()
+        if not normalized_thread_id:
+            return None, "thread_id_required"
+        row = self.session.query(Thread).filter_by(thread_id=normalized_thread_id, principal_id=principal_id).one_or_none()
+        if row is None:
+            return None, "not_found"
+        if str(getattr(row, "status", "") or "") == "deleted":
+            return row, "already_deleted"
+        metadata = dict(row.meta or {})
+        if metadata.get("default_key") and not force_default:
+            return row, "default_thread"
+        metadata["deleted_at"] = utcnow().isoformat()
+        row.status = "deleted"
+        row.meta = metadata
+        self.session.flush()
+        return row, "deleted"
