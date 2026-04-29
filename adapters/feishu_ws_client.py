@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 
@@ -22,6 +23,9 @@ class FeishuWSClient:
         self._loop = None
         self._task: asyncio.Task | None = None
         self._client = None
+        self._closed = False
+        self._reconnect_base_delay_seconds = 1.0
+        self._reconnect_max_delay_seconds = 60.0
 
     def _build_client(self):
         if lark is None:
@@ -71,15 +75,45 @@ class FeishuWSClient:
         if not self._app_id or not self._app_secret:
             logger.info("飞书配置不完整，跳过长连接启动")
             return
+        if self._task is not None and not self._task.done():
+            return
         self._loop = asyncio.get_running_loop()
-        self._client = self._build_client()
-        self._task = asyncio.create_task(asyncio.to_thread(self._client.start))
+        self._closed = False
+        self._task = asyncio.create_task(self._run_forever())
+
+    async def _run_forever(self):
+        delay = float(self._reconnect_base_delay_seconds)
+        while not self._closed:
+            client = None
+            try:
+                client = self._build_client()
+                self._client = client
+                await asyncio.to_thread(client.start)
+                if not self._closed:
+                    logger.warning("飞书长连接已停止，将在 %.1f 秒后重连", delay)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if not self._closed:
+                    logger.exception("飞书长连接异常退出，将在 %.1f 秒后重连", delay)
+            finally:
+                if self._client is client:
+                    self._client = None
+            if self._closed:
+                break
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, float(self._reconnect_max_delay_seconds))
 
     async def stop(self):
+        self._closed = True
+        client = self._client
+        stop = getattr(client, "stop", None)
+        if callable(stop):
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(stop)
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except Exception:
-                pass
             self._task = None
+        self._client = None

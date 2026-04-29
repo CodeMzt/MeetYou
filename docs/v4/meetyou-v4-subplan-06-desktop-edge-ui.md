@@ -198,4 +198,4 @@ Desktop 重连流程：
 - [x] Thread 可跨重连继续。
 - [x] Streaming 正常。
 - [x] progress_notice 单独显示。
-- [ ] 本地 Desktop -> 远程 Core 真实测试通过。
+- [x] 本地 Desktop -> 远程 Core 真实测试通过。

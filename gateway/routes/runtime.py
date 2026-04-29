@@ -282,13 +282,14 @@ def build_runtime_router(gateway) -> APIRouter:
             if workspace_id not in scope and "*" not in scope:
                 continue
             meta = dict(getattr(endpoint, "meta", {}) or {})
+            is_connected = endpoint.endpoint_id in connected
             endpoints.append(
                 EndpointAvailableResponse(
                     endpoint_id=endpoint.endpoint_id,
                     display_name=str(meta.get("display_name") or endpoint.endpoint_id),
                     endpoint_type=endpoint.endpoint_type,
                     provider_type=endpoint.provider_type,
-                    status="online" if endpoint.endpoint_id in connected else endpoint.status,
+                    status="online" if is_connected else "offline",
                     workspace_ids=scope,
                     transport_profile=endpoint.transport_type,
                     available_tools=[],

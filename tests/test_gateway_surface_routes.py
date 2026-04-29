@@ -371,8 +371,10 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                 endpoints = {item["endpoint_id"]: item for item in endpoints_resp.json()}
                 self.assertTrue(endpoints["desktop.main.executor"]["connected"])
                 self.assertEqual(endpoints["desktop.main.executor"]["connection_count"], 1)
+                self.assertEqual(endpoints["desktop.main.executor"]["status"], "online")
                 self.assertTrue(endpoints["desktop.main.ui"]["connected"])
                 self.assertEqual(endpoints["desktop.main.ui"]["connection_count"], 1)
+                self.assertEqual(endpoints["desktop.main.ui"]["status"], "online")
 
                 legacy_clients_resp = client.get(
                     "/operator/clients",
@@ -383,6 +385,17 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                     legacy_clients_resp.json()["error"]["details"]["replacement_path"],
                     "/operator/endpoints",
                 )
+
+            endpoints_resp = client.get(
+                "/operator/endpoints",
+                headers={"Authorization": "Bearer surface-token"},
+            )
+            self.assertEqual(endpoints_resp.status_code, 200)
+            endpoints = {item["endpoint_id"]: item for item in endpoints_resp.json()}
+            self.assertFalse(endpoints["desktop.main.executor"]["connected"])
+            self.assertEqual(endpoints["desktop.main.executor"]["status"], "offline")
+            self.assertFalse(endpoints["desktop.main.ui"]["connected"])
+            self.assertEqual(endpoints["desktop.main.ui"]["status"], "offline")
 
         self.assertIn("desktop.main.ui", domain.services.endpoint.rows)
         self.assertIn("desktop.main.executor", domain.services.endpoint.rows)

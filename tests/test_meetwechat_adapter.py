@@ -35,6 +35,18 @@ def _notice(content: str) -> dict:
     }
 
 
+def _message(content: str, *, message_id: str = "msg-1") -> dict:
+    return {
+        "schema": "meetyou.endpoint.ws.v4",
+        "type": "delivery.message",
+        "payload": {
+            "message_id": message_id,
+            "role": "assistant",
+            "content": content,
+        },
+    }
+
+
 class _Config:
     def __init__(self, **values):
         defaults = {
@@ -275,6 +287,48 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual([item["text"] for item in meetwechat_client.sent], ["你好"])
+        await output.close()
+
+    async def test_delivery_message_is_final_reply_fallback(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        future = output.begin_event(self._event(), allow_send=True)
+
+        await output.send_runtime_event("chat-1", _message("OK", message_id="msg-final-1"))
+
+        result = await asyncio.wait_for(future, timeout=1)
+        await asyncio.wait_for(output._outbound_queue.join(), timeout=1)  # noqa: SLF001
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK"])
+        await output.close()
+
+    async def test_run_event_and_delivery_message_do_not_duplicate_final_reply(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        future = output.begin_event(self._event(), allow_send=True)
+
+        await output.send_runtime_event(
+            "chat-1",
+            _run_event(
+                {
+                    "type": "message.completed",
+                    "stream_id": "stream-1",
+                    "message": {"message_id": "msg-final-1", "content": "OK"},
+                }
+            ),
+        )
+        await output.send_runtime_event("chat-1", _message("OK", message_id="msg-final-1"))
+
+        result = await asyncio.wait_for(future, timeout=1)
+        await asyncio.wait_for(output._outbound_queue.join(), timeout=1)  # noqa: SLF001
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK"])
         await output.close()
 
     async def test_progress_notice_run_event_sends_without_completing_pending_reply(self):

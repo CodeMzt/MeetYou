@@ -619,11 +619,11 @@ WeChatBot 真实发送
 - [x] `assistant.progress_notice` 正常显示。
 - [x] 本地基础测试通过。
 - [x] 本地真实测试通过。
-- [ ] 代码提交、推送、合并 main。
-- [ ] GitHub Actions CI 通过。
-- [ ] GitHub Actions Deploy 通过。
-- [ ] 远程 Core 已更新并健康。
-- [ ] 本地 Desktop 连接远程 Core 真实测试通过。
+- [x] 代码提交、推送、合并 main。
+- [x] GitHub Actions CI 通过。
+- [x] GitHub Actions Deploy 通过。
+- [x] 远程 Core 已更新并健康。
+- [x] 本地 Desktop 连接远程 Core 真实测试通过。
 - [ ] Feishu 真实测试通过且人类确认。
 - [ ] WeChatBot 真实测试通过且人类确认。
 - [ ] 测试报告写入 docs/v4 或 PR description。
