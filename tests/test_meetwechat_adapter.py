@@ -212,6 +212,9 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         await adapter.handle_events([self._event()])
 
         self.assertEqual(len(gateway_clients), 1)
+        self.assertEqual(gateway_clients[0].kwargs["conversation_key"], "wechat:meetwechat:chat:chat-1")
+        self.assertEqual(gateway_clients[0].kwargs["thread_strategy"], "per_conversation")
+        self.assertEqual(gateway_clients[0].kwargs["address_id"], "addr.wechat.direct.chat-1")
         self.assertEqual(gateway_clients[0].messages[0]["content"], "hello")
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["transport"], "meetwechat")
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["response_transport"], "non_streaming_external_client")
@@ -233,6 +236,18 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         with open(self.state_path, encoding="utf-8") as handle:
             payload = json.load(handle)
         self.assertTrue(payload["events"]["evt-1"]["acked"])
+
+    async def test_guarded_auto_event_still_sends_after_bridge(self):
+        adapter, _, meetwechat_client, gateway_clients, state = self._build_adapter()
+        event = self._event(mode="guarded_auto")
+
+        await adapter.handle_events([event])
+
+        self.assertEqual(len(gateway_clients), 1)
+        self.assertEqual(gateway_clients[0].messages[0]["content"], "hello")
+        self.assertEqual(meetwechat_client.sent[0]["chat_id"], "chat-1")
+        self.assertEqual(meetwechat_client.sent[0]["text"], "assistant reply")
+        self.assertEqual(state.get_event_status("evt-1"), "sent")
 
     async def test_outbound_send_is_queued_from_ws_callback(self):
         class _SlowSendClient(_FakeMeetWeChatClient):
@@ -325,13 +340,30 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["text"] for item in meetwechat_client.sent], ["bold and Docs (https://example.test)"])
         await output.close()
 
-    async def test_chat_scoped_connection_ignores_address_targeted_delivery(self):
+    async def test_chat_scoped_connection_handles_matching_address_targeted_delivery(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        future = output.begin_event(self._event(), allow_send=True)
+        payload = _message("OK", message_id="msg-final-address")
+        payload["payload"]["target_external_ref"] = "chat-1"
+
+        await output.send_runtime_event("chat-1", payload)
+        result = await asyncio.wait_for(future, timeout=1)
+        await asyncio.wait_for(output._outbound_queue.join(), timeout=1)  # noqa: SLF001
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK"])
+        await output.close()
+
+    async def test_chat_scoped_connection_ignores_other_address_targeted_delivery(self):
         meetwechat_client = _FakeMeetWeChatClient()
         config = _Config(meetwechat_state_file=self.state_path)
         state = MeetWeChatStateStore(self.state_path)
         output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
         payload = _message("OK", message_id="msg-final-address")
-        payload["payload"]["target_external_ref"] = "chat-1"
+        payload["payload"]["target_external_ref"] = "chat-2"
 
         await output.send_runtime_event("chat-1", payload)
 

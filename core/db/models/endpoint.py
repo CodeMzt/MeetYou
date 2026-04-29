@@ -79,6 +79,26 @@ class EndpointAddress(TimestampMixin, Base):
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
 
+class EndpointThreadBinding(TimestampMixin, Base):
+    __tablename__ = "endpoint_thread_bindings"
+    __table_args__ = (
+        UniqueConstraint("binding_id", name="uq_endpoint_thread_bindings_binding_id"),
+        UniqueConstraint("endpoint_id", "thread_strategy", "conversation_key", name="uq_endpoint_thread_bindings_endpoint_strategy_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    binding_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    endpoint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoints.id"), nullable=False)
+    thread_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("threads.id"), nullable=False)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    address_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoint_addresses.id"), nullable=True)
+    thread_strategy: Mapped[str] = mapped_column(String(64), nullable=False)
+    conversation_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
 class ActorDeliveryPreference(TimestampMixin, Base):
     __tablename__ = "actor_delivery_preferences"
     __table_args__ = (

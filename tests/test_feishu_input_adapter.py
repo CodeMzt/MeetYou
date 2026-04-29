@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from core.event_bus import EventBus
 from core.session_manager import SessionManager
@@ -82,6 +83,33 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fake_client.messages[0][1]["metadata"]["chat_id"], "oc_test")
         self.assertTrue(self.event_bus.inbound_queue.empty())
         self.assertTrue(self.registry_path.exists())
+
+    async def test_gateway_client_uses_endpoint_owned_conversation_strategy(self):
+        class _FakeGatewayConversationClient:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            async def start(self):
+                return None
+
+        adapter = FeishuInputAdapter(
+            self.event_bus,
+            self.session_manager,
+            FakeConfig(
+                {
+                    "feishu_chat_registry_path": str(self.registry_path),
+                    "feishu_app_id": "",
+                    "feishu_app_secret": "",
+                }
+            ),
+        )
+
+        with patch("sensors.feishu_input_adapter.GatewayConversationClient", _FakeGatewayConversationClient):
+            client = await adapter._get_gateway_client("oc_test")  # noqa: SLF001
+
+        self.assertEqual(client.kwargs["conversation_key"], "feishu:chat:oc_test")
+        self.assertEqual(client.kwargs["thread_strategy"], "per_conversation")
+        self.assertEqual(client.kwargs["address_id"], "addr.feishu.direct.oc_test")
 
     async def test_ignores_self_message_from_bot_sender(self):
         payload = {

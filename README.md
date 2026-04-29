@@ -200,6 +200,15 @@ meetyou.endpoint.ws.v4
 }
 ```
 
+Endpoint Provider 通过 `endpoint.capabilities.snapshot` 自注册 **Endpoint Tool Catalog**。它不是新的顶层实体，也不叫 `endpoint_servers`；它只是 endpoint capability snapshot 的正式工具目录语义。能力项保留既有字段，并支持以下公共字段：
+
+- `tool_key`：endpoint 内部执行 key，例如 `file.read`、`mcp.filesystem.read_file`。
+- `tool_id` / `capability_id`：稳定能力 id，必须以 `endpoint.` 前缀归属到 endpoint。
+- `title`、`description`、`input_schema`、`output_schema`。
+- `risk_level`、`requires_confirmation`、`enabled`。
+- `visibility.auto_inject`：默认 `true`，表示当前 endpoint 会话允许时可自动进入模型工具集。
+- `constraints`：可包含 `workspace_ids` / `workspace_scope`、`modes`、`address_type`、`max_concurrency`、`timeout` 等限制。
+
 最小能力与地址示例：
 
 ```json
@@ -211,10 +220,28 @@ meetyou.endpoint.ws.v4
     "endpoint_id": "wechat.provider.ui",
     "capabilities": [
       {
-        "tool_key": "send_delivery_message",
-        "risk_level": "write",
+        "tool_key": "mcp.filesystem.read_file",
+        "tool_id": "endpoint.desktop.main.executor.mcp.filesystem.read_file",
+        "title": "Read file",
+        "description": "Read a file through the desktop endpoint provider.",
+        "input_schema": {
+          "type": "object",
+          "properties": { "path": { "type": "string" } },
+          "required": ["path"]
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": { "content": { "type": "string" } }
+        },
+        "risk_level": "read",
         "requires_confirmation": false,
-        "enabled": true
+        "enabled": true,
+        "visibility": { "auto_inject": true },
+        "constraints": {
+          "workspace_ids": ["personal"],
+          "max_concurrency": 2,
+          "timeout": 30
+        }
       }
     ]
   }
@@ -248,6 +275,57 @@ meetyou.endpoint.ws.v4
 - 不要连接或恢复 `/client/ws`。
 - 不要发送 `source_client_id` / `target_client_id`。
 - 不要把 provider 内部聊天对象建成 Client；它们必须是 `EndpointAddress`。
+- 不要把 endpoint 本地 thread 缓存当作 Core thread 权威。
+- 不要用 endpoint tool 覆盖 Core tool 名称；冲突时 Core 必须重命名或拒绝自动注入。
+
+### Endpoint-owned Thread Strategy
+
+Core 仍 owns Thread / Message / Run 的持久化；Endpoint Provider owns 外部会话到 Core Thread 的映射策略。Provider 不允许直接伪造 Core `thread_id`，只能提供稳定外部 key，或显式选择一个已存在且有权访问的 thread，最终 Core thread id 由 Core 验证或生成。
+
+Provider 通过 `/runtime/endpoint-sessions/resolve` 解析外部会话：
+
+```http
+POST /runtime/endpoint-sessions/resolve
+```
+
+请求示例：
+
+```json
+{
+  "endpoint_id": "wechat.meetwechat.ui",
+  "workspace_id": "personal",
+  "display_name": "MeetWeChat group example",
+  "conversation_key": "wechat:meetwechat:group:example",
+  "address_id": "addr.wechat.group.example",
+  "thread_strategy": "per_conversation",
+  "title": "MeetWeChat group example"
+}
+```
+
+`thread_strategy` 支持：
+
+- `per_conversation`：同一 `endpoint_id + conversation_key` 幂等返回同一 Core thread。
+- `per_address`：同一 endpoint address 幂等返回同一 Core thread。
+- `shared_endpoint`：整个 endpoint 共用一个 Core thread。
+- `explicit_thread`：只绑定已存在且当前 principal / workspace / endpoint 可访问的 thread，需要 `explicit_thread_id`。
+
+响应示例：
+
+```json
+{
+  "thread": { "thread_id": "thr_abc", "workspace_id": "personal", "title": "MeetWeChat group example" },
+  "session": { "session_id": "sess_abc", "thread_id": "thr_abc", "workspace_id": "personal", "endpoint_id": "wechat.meetwechat.ui" },
+  "binding": {
+    "binding_id": "etb.abc",
+    "endpoint_id": "wechat.meetwechat.ui",
+    "thread_id": "thr_abc",
+    "workspace_id": "personal",
+    "address_id": "addr.wechat.group.example",
+    "thread_strategy": "per_conversation",
+    "conversation_key": "conversation:wechat:meetwechat:group:example"
+  }
+}
+```
 
 ## Tool 模型
 
@@ -262,6 +340,18 @@ meetyou.endpoint.ws.v4
 - Actor / Workspace / RunPolicy 决定允许调用哪些抽象 tool key。
 - EndpointCapability 描述哪个 endpoint 能执行哪些 tool key。
 - `assistant.progress_notice` 是 Runtime Action / RunEvent，不是 tool，不创建 Operation。
+
+### Core Tools + Contextual Endpoint Tools
+
+进入某 endpoint 会话时，模型可见工具集为：
+
+```text
+Core 允许工具 + 当前 endpoint/provider 已注册且上下文允许 auto_inject 的 Endpoint Tool Catalog
+```
+
+Core 自动注入 endpoint tools 时必须防冲突：动态工具名由 Core 生成，例如 `ep_<endpoint_hash>_<tool_key_slug>`；route context 保存动态工具名到原始 `endpoint_id + capability_id + tool_key` 的映射。模型调用动态工具时仍通过 ToolRouter 派发 `tool.call.request` 到原始 endpoint，不通过 `send_endpoint_message` 包装。
+
+Endpoint 自注册只说明“我能执行”；Actor / Workspace / RunPolicy 仍决定“是否允许调用”。高风险 endpoint tools 必须继续走 confirmation、Operation 审计和 Delivery 更新。
 
 Operation 公共字段：
 

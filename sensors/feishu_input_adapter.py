@@ -142,6 +142,9 @@ class FeishuInputAdapter:
                 access_token=self._gateway_access_token,
                 thread_title=f"Feishu Chat {chat_id}",
                 endpoint_id=self._provider_endpoint_id,
+                conversation_key=f"feishu:chat:{chat_id}",
+                address_id=self._address_payload(chat_id, chat_type="").get("address_id", ""),
+                thread_strategy="per_conversation",
                 supports_markdown=False,
                 event_handler=(
                     (lambda payload, cid=chat_id: self._output_adapter.send_runtime_event(cid, payload))

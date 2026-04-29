@@ -231,7 +231,12 @@ class MeetWeChatProxyPolicy:
         return mode in {"auto", "read_only", "guarded_auto"}
 
     def allow_send(self, event: MeetWeChatEvent) -> bool:
-        return self.mode_for(event) == "auto"
+        mode = self.mode_for(event)
+        if mode in {"mute", "manual_only", "read_only"}:
+            return False
+        if event.chat_type == "group" and not event.is_group_mention and mode != "auto":
+            return False
+        return mode in {"auto", "guarded_auto"}
 
 
 class MeetWeChatStateStore:
@@ -596,10 +601,11 @@ class MeetWeChatOutputService:
         body_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
         target_chat_id = str(body_payload.get("target_external_ref") or "").strip()
         if target_chat_id:
-            # Explicit EndpointAddress delivery is handled by the provider-level
-            # connection. Chat-scoped subscriptions share the provider endpoint
-            # id, so they ignore address-targeted frames to avoid duplicate sends.
-            if chat_id:
+            # Address-targeted delivery may arrive on either the provider-level
+            # connection or the chat thread subscription. A chat-scoped handler
+            # should only ignore frames for a different chat; final-message
+            # dedupe below prevents duplicate sends when both receive it.
+            if chat_id and chat_id != target_chat_id:
                 return
             chat_id = target_chat_id
         if not chat_id and frame_type.startswith("delivery."):
@@ -1477,6 +1483,13 @@ class MeetWeChatInputAdapter:
                 thread_title=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
                 thread_id=thread_id,
                 endpoint_id=self._provider_endpoint_id,
+                conversation_key=conversation_key,
+                address_id=self._address_payload(
+                    chat_id=event.chat_id,
+                    chat_type=event.chat_type,
+                    display_name=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
+                ).get("address_id", ""),
+                thread_strategy="per_conversation",
                 supports_markdown=False,
                 event_handler=lambda payload, chat_id=event.chat_id: self._output_adapter.send_runtime_event(
                     chat_id,

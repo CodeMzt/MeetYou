@@ -57,6 +57,19 @@ function buildTransportError(error: Error): RuntimeErrorPayload {
   }
 }
 
+export function runtimeThreadDeleteErrorMessage(reason: string): string {
+  switch (String(reason || '').trim()) {
+    case 'default_thread':
+      return '这是受保护的默认会话，未被删除。'
+    case 'not_found':
+      return '会话不存在或已经被删除。'
+    case 'already_deleted':
+      return ''
+    default:
+      return '删除会话线程失败。'
+  }
+}
+
 export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: string) => Promise<void> | void, onError: (turn: any) => void) {
   const initialSessionIdRef = useRef(`desktop-${Math.random().toString(36).substring(2, 9)}`)
   const sourceIdRef = useRef('desktop-app')
@@ -257,7 +270,13 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
       throw new Error('默认桌面会话不能删除')
     }
     const activeContext = endpointContext ?? (await initializeEndpointContext())
-    await deleteRuntimeThread(baseUrl, normalizedThreadId)
+    const result = await deleteRuntimeThread(baseUrl, normalizedThreadId, { force: true })
+    if (!result.deleted) {
+      const message = runtimeThreadDeleteErrorMessage(result.reason)
+      if (message) {
+        throw new Error(message)
+      }
+    }
     const threads = await loadRuntimeThreads(activeContext.workspace.workspace_id)
     if (activeContext.threadId !== normalizedThreadId) {
       return null

@@ -1193,6 +1193,33 @@ class Brain:
                 "preferred_source_profiles": workspace_preferred_source_profiles,
                 "memory_ranking_policy": workspace_memory_ranking_policy,
             }
+        endpoint_id = str(metadata.get("endpoint_id") or metadata.get("origin_endpoint_id") or "").strip()
+        endpoint_type = str(metadata.get("endpoint_type") or "").strip()
+        provider_type = str(metadata.get("provider_type") or "").strip()
+        address_id = str(metadata.get("address_id") or "").strip()
+        raw_address_type = str(metadata.get("address_type") or metadata.get("chat_type") or "").strip().lower()
+        address_type = "group" if raw_address_type in {"group", "group_chat"} else "direct" if raw_address_type in {"direct", "private", "p2p"} else raw_address_type
+        conversation_key = str(metadata.get("conversation_key") or metadata.get("chat_id") or "").strip()
+        if endpoint_id or endpoint_type or provider_type or address_id or address_type or conversation_key:
+            endpoint_context = dict(route_dict.get("endpoint") or {})
+            if endpoint_id:
+                endpoint_context["endpoint_id"] = endpoint_id
+                route_dict["endpoint_id"] = endpoint_id
+                route_dict["origin_endpoint_id"] = endpoint_id
+            if endpoint_type:
+                endpoint_context["endpoint_type"] = endpoint_type
+            if provider_type:
+                endpoint_context["provider_type"] = provider_type
+            if address_id:
+                endpoint_context["address_id"] = address_id
+            if address_type:
+                endpoint_context["address_type"] = address_type
+                route_dict["address_type"] = address_type
+            if conversation_key:
+                endpoint_context["conversation_key"] = conversation_key
+            route_dict["endpoint"] = endpoint_context
+        if workspace_id:
+            route_dict["workspace_id"] = workspace_id
         allowed_tool_bundle = metadata.get("allowed_tool_bundle")
         if isinstance(allowed_tool_bundle, list):
             clean_tools = []

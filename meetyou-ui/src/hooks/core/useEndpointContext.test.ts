@@ -3,6 +3,7 @@ import type { AvailableEndpoint } from '../../types'
 import {
   chooseDesktopToolEndpoint,
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
+  runtimeThreadDeleteErrorMessage,
   resolveDesktopToolEndpointId,
 } from './useEndpointContext'
 
@@ -62,5 +63,11 @@ describe('useEndpointContext helpers', () => {
       resolveDesktopToolEndpointId(loadAvailableEndpoints, 'http://127.0.0.1:8000', 'personal', 'desktop-app'),
     ).resolves.toBe('desktop-main-endpoint')
     expect(loadAvailableEndpoints).toHaveBeenCalledWith('http://127.0.0.1:8000', 'personal')
+  })
+
+  it('maps thread delete business reasons to user-facing errors', () => {
+    expect(runtimeThreadDeleteErrorMessage('default_thread')).toBe('这是受保护的默认会话，未被删除。')
+    expect(runtimeThreadDeleteErrorMessage('already_deleted')).toBe('')
+    expect(runtimeThreadDeleteErrorMessage('unknown')).toBe('删除会话线程失败。')
   })
 })

@@ -9,6 +9,7 @@ from starlette.responses import JSONResponse
 from core.credential_transport import CredentialTransportError, decrypt_json_payload
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
+from core.services.endpoint_service import EndpointThreadBindingError
 from core.services.tool_router_service import ToolRouterError
 from gateway.models import (
     AckPayload,
@@ -43,6 +44,9 @@ from gateway.models import (
     RuntimeOperationCreateRequest,
     RuntimeOperationResponse,
     RuntimeDefaultThreadRequest,
+    RuntimeEndpointSessionResolveRequest,
+    RuntimeEndpointSessionResolveResponse,
+    RuntimeEndpointThreadBindingResponse,
     RuntimeSessionCreateRequest,
     RuntimeSessionResponse,
     RuntimeThreadCreateRequest,
@@ -216,6 +220,103 @@ def _find_endpoint(domain, endpoint_id: str = ""):
     if not normalized:
         return None
     return domain.services.endpoint.get_by_endpoint_id(normalized)
+
+
+def _infer_provider_type(endpoint_id: str, fallback: str = "") -> str:
+    normalized = str(endpoint_id or "").strip()
+    if fallback:
+        return str(fallback or "").strip().lower()
+    if "." in normalized:
+        return normalized.split(".", 1)[0].strip().lower()
+    return "external"
+
+
+def _ensure_endpoint_for_session_resolve(domain, payload: RuntimeEndpointSessionResolveRequest, workspace_id: str):
+    endpoint_id = str(payload.endpoint_id or "").strip()
+    if not endpoint_id:
+        raise EndpointThreadBindingError("endpoint_id_required", "endpoint_id is required.")
+    endpoint = domain.services.endpoint.get_by_endpoint_id(endpoint_id)
+    if endpoint is not None:
+        return endpoint
+    provider_type = _infer_provider_type(endpoint_id, payload.provider_type)
+    endpoint_type = str(payload.endpoint_type or f"{provider_type}_ui").strip() or "endpoint"
+    return domain.services.endpoint.ensure_endpoint(
+        endpoint_id=endpoint_id,
+        endpoint_type=endpoint_type,
+        provider_type=provider_type,
+        transport_type="websocket",
+        workspace_scope=[workspace_id] if workspace_id else [],
+        status="active",
+        labels=["input", "output"],
+        metadata={
+            "display_name": str(payload.display_name or endpoint_id).strip(),
+            "declared_by": "runtime.endpoint_sessions.resolve",
+        },
+    )
+
+
+def _session_response(session, *, thread, workspace, endpoint) -> RuntimeSessionResponse:
+    return RuntimeSessionResponse(
+        session_id=session.session_id,
+        thread_id=thread.thread_id,
+        active_workspace_id=workspace.workspace_id,
+        workspace_id=workspace.workspace_id,
+        endpoint_id=str(getattr(endpoint, "endpoint_id", "") or ""),
+        status=session.status,
+    )
+
+
+def _binding_response(binding, *, endpoint, thread, workspace, address=None) -> RuntimeEndpointThreadBindingResponse:
+    return RuntimeEndpointThreadBindingResponse(
+        binding_id=str(getattr(binding, "binding_id", "") or ""),
+        endpoint_id=str(getattr(endpoint, "endpoint_id", "") or ""),
+        thread_id=str(getattr(thread, "thread_id", "") or ""),
+        workspace_id=str(getattr(workspace, "workspace_id", "") or ""),
+        address_id=str(getattr(address, "address_id", "") or ""),
+        thread_strategy=str(getattr(binding, "thread_strategy", "") or ""),
+        conversation_key=str(getattr(binding, "conversation_key", "") or ""),
+        display_name=str(getattr(binding, "display_name", "") or ""),
+        status=str(getattr(binding, "status", "") or "active"),
+        metadata=dict(getattr(binding, "meta", {}) or {}),
+    )
+
+
+def _bind_gateway_runtime_session(gateway, *, session, thread, workspace, endpoint, endpoint_type: str = "", display_name: str = "") -> None:
+    source_id = str(getattr(endpoint, "endpoint_id", "") or "runtime.endpoint").strip()
+    source_kind = _resolve_runtime_source_kind(
+        endpoint_id=source_id,
+        endpoint_type=endpoint_type,
+        metadata={"provider_type": getattr(endpoint, "provider_type", "") if endpoint is not None else ""},
+    )
+    gateway._session_manager.bind_runtime_session(
+        make_source(
+            source_kind,
+            source_id,
+            endpoint_id=source_id,
+            endpoint_type=endpoint_type,
+            display_name=display_name,
+        ),
+        session_id=session.session_id,
+        default_target=_runtime_target_for_source(
+            source_kind,
+            source_id,
+            {
+                "endpoint_id": source_id,
+                "endpoint_type": endpoint_type,
+                "thread_id": thread.thread_id,
+                "workspace_id": workspace.workspace_id,
+            },
+        ),
+        metadata={
+            "thread_id": thread.thread_id,
+            "workspace_id": workspace.workspace_id,
+            "active_workspace_id": workspace.workspace_id,
+            "endpoint_id": source_id,
+            "endpoint_type": endpoint_type,
+            "source_kind": source_kind,
+            "provider_type": str(getattr(endpoint, "provider_type", "") or ""),
+        },
+    )
 
 
 def _request_actor_row_id(domain):
@@ -449,6 +550,51 @@ def build_runtime_router(gateway) -> APIRouter:
             default_thread=result.default_thread,
         )
 
+    @router.post("/endpoint-sessions/resolve", response_model=RuntimeEndpointSessionResolveResponse)
+    async def resolve_endpoint_session(payload: RuntimeEndpointSessionResolveRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            workspace = _find_workspace(domain, payload.workspace_id)
+            endpoint = _ensure_endpoint_for_session_resolve(domain, payload, workspace.workspace_id)
+            address = domain.services.endpoint_address.get_by_address_id(payload.address_id) if payload.address_id else None
+            binding, thread = domain.services.endpoint_thread_binding.resolve_thread(
+                principal_id=domain.principal.id,
+                endpoint_row_id=endpoint.id,
+                endpoint_public_id=endpoint.endpoint_id,
+                workspace_row_id=workspace.id,
+                workspace_public_id=workspace.workspace_id,
+                thread_strategy=payload.thread_strategy,
+                conversation_key=payload.conversation_key,
+                address_row_id=getattr(address, "id", None),
+                title=payload.title,
+                display_name=payload.display_name,
+                explicit_thread_id=payload.explicit_thread_id,
+                metadata=payload.metadata,
+            )
+        except EndpointThreadBindingError as exc:
+            status_code = 404 if exc.code in {"explicit_thread_not_found"} else 403 if exc.code in {"explicit_thread_forbidden"} else 400
+            gateway._raise_http_error(status_code=status_code, code=exc.code, message=exc.message)
+        session = domain.services.session.create_session(
+            thread_id=thread.id,
+            origin_endpoint_id=getattr(endpoint, "id", None),
+            workspace_id=workspace.id,
+        )
+        _bind_gateway_runtime_session(
+            gateway,
+            session=session,
+            thread=thread,
+            workspace=workspace,
+            endpoint=endpoint,
+            endpoint_type=payload.endpoint_type or getattr(endpoint, "endpoint_type", ""),
+            display_name=payload.display_name,
+        )
+        return RuntimeEndpointSessionResolveResponse(
+            thread=_thread_response(thread, workspace.workspace_id),
+            session=_session_response(session, thread=thread, workspace=workspace, endpoint=endpoint),
+            binding=_binding_response(binding, endpoint=endpoint, thread=thread, workspace=workspace, address=address),
+        )
+
     @router.post("/sessions", response_model=RuntimeSessionResponse)
     async def create_session(payload: RuntimeSessionCreateRequest, request: Request):
         gateway._require_http_auth(request)
@@ -461,39 +607,14 @@ def build_runtime_router(gateway) -> APIRouter:
             origin_endpoint_id=getattr(endpoint, "id", None),
             workspace_id=workspace.id,
         )
-        source_id = str(getattr(endpoint, "endpoint_id", "") or payload.endpoint_id or "runtime.endpoint").strip()
-        source_kind = _resolve_runtime_source_kind(
-            endpoint_id=source_id,
+        _bind_gateway_runtime_session(
+            gateway,
+            session=session,
+            thread=thread,
+            workspace=workspace,
+            endpoint=endpoint or type("_Endpoint", (), {"endpoint_id": payload.endpoint_id, "provider_type": ""})(),
             endpoint_type=payload.endpoint_type,
-            metadata={"provider_type": getattr(endpoint, "provider_type", "") if endpoint is not None else ""},
-        )
-        gateway._session_manager.bind_runtime_session(
-            make_source(
-                source_kind,
-                source_id,
-                endpoint_id=source_id,
-                endpoint_type=payload.endpoint_type,
-                display_name=payload.display_name,
-            ),
-            session_id=session.session_id,
-            default_target=_runtime_target_for_source(
-                source_kind,
-                source_id,
-                {
-                    "endpoint_id": source_id,
-                    "endpoint_type": payload.endpoint_type,
-                    "thread_id": thread.thread_id,
-                    "workspace_id": workspace.workspace_id,
-                },
-            ),
-            metadata={
-                "thread_id": thread.thread_id,
-                "workspace_id": workspace.workspace_id,
-                "active_workspace_id": workspace.workspace_id,
-                "endpoint_id": source_id,
-                "endpoint_type": payload.endpoint_type,
-                "source_kind": source_kind,
-            },
+            display_name=payload.display_name,
         )
         return RuntimeSessionResponse(
             session_id=session.session_id,
@@ -573,6 +694,7 @@ def build_runtime_router(gateway) -> APIRouter:
             **metadata,
             "endpoint_id": source_id,
             "endpoint_type": payload.endpoint_type,
+            "provider_type": str(getattr(endpoint, "provider_type", "") or metadata.get("provider_type") or ""),
             "display_name": payload.display_name,
         }
         event = InboundEvent(
@@ -588,6 +710,7 @@ def build_runtime_router(gateway) -> APIRouter:
                 "message_id": message.message_id,
                 "endpoint_id": source_id,
                 "endpoint_type": payload.endpoint_type,
+                "provider_type": str(getattr(endpoint, "provider_type", "") or metadata.get("provider_type") or ""),
                 "source_kind": source_kind,
                 **metadata,
             },

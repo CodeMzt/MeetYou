@@ -52,6 +52,9 @@ class GatewayConversationClient:
         thread_title: str = "",
         thread_id: str = "",
         endpoint_id: str = "",
+        conversation_key: str = "",
+        address_id: str = "",
+        thread_strategy: str = "",
         endpoint_addresses: list[dict[str, Any]] | None = None,
         supports_markdown: bool = True,
         event_handler: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
@@ -66,6 +69,9 @@ class GatewayConversationClient:
         self.access_token = str(access_token or "").strip()
         self._event_handler = event_handler
         self._endpoint_id_override = str(endpoint_id or "").strip()
+        self._conversation_key = str(conversation_key or "").strip()
+        self._address_id = str(address_id or "").strip()
+        self._thread_strategy = str(thread_strategy or "").strip()
         self._endpoint_addresses = list(endpoint_addresses or [])
         self.supports_markdown = bool(supports_markdown)
 
@@ -78,12 +84,24 @@ class GatewayConversationClient:
         self._subscription_acknowledged = asyncio.Event()
 
         self.thread_id = str(thread_id or "").strip()
+        self._explicit_thread_id = self.thread_id
         self.session_id = ""
 
     def _thread_default_key(self) -> str:
         provider_type = str(self.provider_type or "external").strip() or "external"
         provider_id = str(self.provider_id or self.endpoint_id or "default").strip() or "default"
         return f"endpoint.{provider_type}.{provider_id}"
+
+    def _resolved_thread_strategy(self) -> str:
+        if self._thread_strategy:
+            return self._thread_strategy
+        if self._conversation_key:
+            return "per_conversation"
+        if self._address_id:
+            return "per_address"
+        if self._explicit_thread_id:
+            return "explicit_thread"
+        return "shared_endpoint"
 
     @property
     def endpoint_id(self) -> str:
@@ -147,29 +165,31 @@ class GatewayConversationClient:
             workspace = next((item for item in workspaces if item.get("workspace_id") == self.workspace_id), workspaces[0])
             self.workspace_id = str(workspace.get("workspace_id") or self.workspace_id)
 
-            if not self.thread_id:
-                thread = await self.request_json(
-                    "POST",
-                    "/runtime/threads/default",
-                    json_body={
-                        "workspace_id": self.workspace_id,
-                        "default_key": self._thread_default_key(),
-                        "title": self.thread_title,
-                        "mode": "general",
-                    },
-                )
-                self.thread_id = str(thread.get("thread_id") or "")
-            session = await self.request_json(
+            resolved = await self.request_json(
                 "POST",
-                "/runtime/sessions",
+                "/runtime/endpoint-sessions/resolve",
                 json_body={
-                    "thread_id": self.thread_id,
-                    "workspace_id": self.workspace_id,
                     "endpoint_id": self.endpoint_id,
+                    "workspace_id": self.workspace_id,
+                    "provider_type": self.provider_type,
                     "endpoint_type": self.provider_type,
                     "display_name": self.display_name,
+                    "conversation_key": self._conversation_key or self._thread_default_key(),
+                    "address_id": self._address_id,
+                    "thread_strategy": self._resolved_thread_strategy(),
+                    "title": self.thread_title,
+                    "explicit_thread_id": self._explicit_thread_id,
+                    "metadata": {
+                        "provider_id": self.provider_id,
+                        "provider_type": self.provider_type,
+                    },
                 },
             )
+            if not isinstance(resolved, dict):
+                raise GatewayClientError("Unexpected endpoint session resolution response")
+            thread = resolved.get("thread") if isinstance(resolved.get("thread"), dict) else {}
+            session = resolved.get("session") if isinstance(resolved.get("session"), dict) else {}
+            self.thread_id = str(thread.get("thread_id") or session.get("thread_id") or self.thread_id)
             self.session_id = str(session.get("session_id") or "")
 
     async def start(self) -> None:

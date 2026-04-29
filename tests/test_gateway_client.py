@@ -76,7 +76,7 @@ class _FakeIncomingWs:
 
 
 class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
-    async def test_ensure_context_reuses_default_thread_for_stable_provider(self):
+    async def test_ensure_context_resolves_endpoint_owned_session(self):
         calls = []
 
         class _ContextClient(GatewayConversationClient):
@@ -84,10 +84,12 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
                 calls.append((method, path, dict(params or {}), dict(json_body or {})))
                 if path == "/runtime/workspaces":
                     return [{"workspace_id": "personal"}]
-                if path == "/runtime/threads/default":
-                    return {"thread_id": "thr-provider"}
-                if path == "/runtime/sessions":
-                    return {"session_id": "sess-provider"}
+                if path == "/runtime/endpoint-sessions/resolve":
+                    return {
+                        "thread": {"thread_id": "thr-provider"},
+                        "session": {"session_id": "sess-provider", "thread_id": "thr-provider"},
+                        "binding": {"binding_id": "etb.1"},
+                    }
                 raise AssertionError(path)
 
         client = _ContextClient(
@@ -103,8 +105,10 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.thread_id, "thr-provider")
         self.assertEqual(client.session_id, "sess-provider")
-        self.assertEqual([item[1] for item in calls], ["/runtime/workspaces", "/runtime/threads/default", "/runtime/sessions"])
-        self.assertEqual(calls[1][3]["default_key"], "endpoint.feishu.feishu-provider")
+        self.assertEqual([item[1] for item in calls], ["/runtime/workspaces", "/runtime/endpoint-sessions/resolve"])
+        self.assertEqual(calls[1][3]["endpoint_id"], "feishu.feishu-provider.ui")
+        self.assertEqual(calls[1][3]["conversation_key"], "endpoint.feishu.feishu-provider")
+        self.assertEqual(calls[1][3]["thread_strategy"], "shared_endpoint")
         self.assertEqual(calls[1][3]["title"], "Feishu Provider")
 
     async def test_endpoint_subscription_disables_replay_for_external_side_effect_clients(self):
