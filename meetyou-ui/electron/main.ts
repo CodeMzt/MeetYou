@@ -46,6 +46,17 @@ const DANXI_AUTH_USER_AGENT =
 const DESKTOP_BACKEND_READY_TIMEOUT_MS = 15000
 const DEFAULT_DESKTOP_BRIDGE_HOST = '127.0.0.1'
 const DEFAULT_DESKTOP_BRIDGE_PORT = 38951
+const RUNTIME_ENV_KEYS = [
+  'MEETYOU_CORE_BASE_URL',
+  'MEETYOU_GATEWAY_ACCESS_TOKEN',
+  'MEETYOU_CLIENT_ACCESS_TOKEN',
+  'MEETYOU_CREDENTIAL_SECRET',
+] as const
+const RUNTIME_SECRET_ENV_KEYS = new Set([
+  'MEETYOU_GATEWAY_ACCESS_TOKEN',
+  'MEETYOU_CLIENT_ACCESS_TOKEN',
+  'MEETYOU_CREDENTIAL_SECRET',
+])
 let desktopBackendProcess: ChildProcess | null = null
 let desktopBridgeAccessToken = ''
 let desktopBridgeBaseUrl = DEFAULT_BASE_URL
@@ -55,6 +66,8 @@ type DesktopBackendStatusPayload = {
     git_commit?: unknown
   }
 }
+
+type RuntimeEnvValues = Partial<Record<typeof RUNTIME_ENV_KEYS[number], string>>
 
 function getWorkspaceRoot() {
   return path.resolve(app.getAppPath(), '..')
@@ -86,9 +99,18 @@ function readDesktopClientConfigValue<T = unknown>(key: string): T | null {
 }
 
 function resolveCoreBaseUrl() {
+  const processCoreBaseUrl = String(process.env.MEETYOU_CORE_BASE_URL || '').trim()
+  const runtimeCoreBaseUrl = readWorkspaceEnvValue(['MEETYOU_CORE_BASE_URL'])
+  if (
+    app.isPackaged &&
+    runtimeCoreBaseUrl &&
+    (!processCoreBaseUrl || isLoopbackCoreUrl(processCoreBaseUrl))
+  ) {
+    return runtimeCoreBaseUrl
+  }
   return String(
-    process.env.MEETYOU_CORE_BASE_URL ||
-    readWorkspaceEnvValue(['MEETYOU_CORE_BASE_URL']) ||
+    processCoreBaseUrl ||
+    runtimeCoreBaseUrl ||
     readDesktopClientConfigValue<string>('core_base_url') ||
     'http://127.0.0.1:8000',
   ).trim() || 'http://127.0.0.1:8000'
@@ -219,6 +241,64 @@ function copyFileIfMissing(source: string, destination: string) {
   fs.copyFileSync(source, destination)
 }
 
+function parseEnvLine(line: string): { key: string; value: string } | null {
+  const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/)
+  if (!match) {
+    return null
+  }
+  let value = String(match[2] || '').trim()
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1)
+  }
+  return { key: match[1], value }
+}
+
+function readEnvFileValues(envPath: string, keys: readonly string[] = RUNTIME_ENV_KEYS): RuntimeEnvValues {
+  const wanted = new Set(keys)
+  const values: RuntimeEnvValues = {}
+  try {
+    const lines = fs.readFileSync(envPath, 'utf-8').split(/\r?\n/)
+    for (const line of lines) {
+      const parsed = parseEnvLine(line)
+      if (!parsed || !wanted.has(parsed.key)) {
+        continue
+      }
+      values[parsed.key as keyof RuntimeEnvValues] = parsed.value
+    }
+  } catch {
+    // Missing runtime env files are valid on first packaged launch.
+  }
+  return values
+}
+
+function writeEnvFileValues(envPath: string, updates: RuntimeEnvValues) {
+  const entries = Object.entries(updates).filter(([, value]) => String(value || '').trim())
+  if (!entries.length) {
+    return
+  }
+  const updateMap = new Map(entries.map(([key, value]) => [key, String(value).trim()]))
+  const lines = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8').split(/\r?\n/) : []
+  const seen = new Set<string>()
+  const nextLines = lines.map((line) => {
+    const parsed = parseEnvLine(line)
+    if (!parsed || !updateMap.has(parsed.key)) {
+      return line
+    }
+    seen.add(parsed.key)
+    return `${parsed.key}=${updateMap.get(parsed.key)}`
+  })
+  for (const [key, value] of updateMap.entries()) {
+    if (!seen.has(key)) {
+      nextLines.push(`${key}=${value}`)
+    }
+  }
+  fs.mkdirSync(path.dirname(envPath), { recursive: true })
+  fs.writeFileSync(envPath, `${nextLines.filter((line, index) => line || index < nextLines.length - 1).join('\n')}\n`, 'utf-8')
+}
+
 function readJsonFile(filePath: string): Record<string, unknown> | null {
   try {
     const payload = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
@@ -242,11 +322,51 @@ function isLoopbackCoreUrl(value: unknown) {
   return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/i.test(text)
 }
 
-function maybeMigrateDefaultCoreUrlFromTemplate(configPath: string, templateConfigPath: string) {
-  const current = readJsonFile(configPath)
+function resolveTemplateCoreBaseUrl(templateConfigPath: string, templateEnvPath: string) {
+  const templateEnv = readEnvFileValues(templateEnvPath)
+  const envCoreUrl = String(templateEnv.MEETYOU_CORE_BASE_URL || '').trim()
+  if (envCoreUrl && !isLoopbackCoreUrl(envCoreUrl)) {
+    return envCoreUrl
+  }
   const template = readJsonFile(templateConfigPath)
   const templateCoreUrl = String(template?.core_base_url || '').trim()
-  if (!current || !templateCoreUrl || isLoopbackCoreUrl(templateCoreUrl)) {
+  return templateCoreUrl && !isLoopbackCoreUrl(templateCoreUrl) ? templateCoreUrl : ''
+}
+
+function syncRuntimeEnvFromTemplate(runtimeEnvPath: string, templateEnvPath: string) {
+  const template = readEnvFileValues(templateEnvPath)
+  const current = readEnvFileValues(runtimeEnvPath)
+  const templateCoreUrl = String(template.MEETYOU_CORE_BASE_URL || '').trim()
+  const currentCoreUrl = String(current.MEETYOU_CORE_BASE_URL || '').trim()
+  const replacingLoopbackCoreUrl = Boolean(
+    templateCoreUrl &&
+    !isLoopbackCoreUrl(templateCoreUrl) &&
+    (!currentCoreUrl || isLoopbackCoreUrl(currentCoreUrl)),
+  )
+  const updates: RuntimeEnvValues = {}
+  if (replacingLoopbackCoreUrl) {
+    updates.MEETYOU_CORE_BASE_URL = templateCoreUrl
+  }
+  for (const key of RUNTIME_ENV_KEYS) {
+    if (key === 'MEETYOU_CORE_BASE_URL') {
+      continue
+    }
+    const templateValue = String(template[key] || '').trim()
+    if (!templateValue) {
+      continue
+    }
+    const currentValue = String(current[key] || '').trim()
+    if (!currentValue || (replacingLoopbackCoreUrl && RUNTIME_SECRET_ENV_KEYS.has(key))) {
+      updates[key] = templateValue
+    }
+  }
+  writeEnvFileValues(runtimeEnvPath, updates)
+}
+
+function maybeMigrateDefaultCoreUrlFromTemplate(configPath: string, templateConfigPath: string, templateEnvPath: string) {
+  const current = readJsonFile(configPath)
+  const templateCoreUrl = resolveTemplateCoreBaseUrl(templateConfigPath, templateEnvPath)
+  if (!current || !templateCoreUrl) {
     return
   }
   if (!current.core_base_url || isLoopbackCoreUrl(current.core_base_url)) {
@@ -263,8 +383,11 @@ function ensurePackagedRuntimeFiles() {
   const userDir = path.join(runtimeRoot, 'user')
   const templateRoot = getPackagedRuntimeTemplateRoot()
   const templateUserDir = path.join(templateRoot, 'user')
+  const runtimeEnvPath = path.join(runtimeRoot, '.env')
+  const templateEnvPath = path.join(templateRoot, '.env')
   fs.mkdirSync(userDir, { recursive: true })
-  copyFileIfMissing(path.join(templateRoot, '.env'), path.join(runtimeRoot, '.env'))
+  copyFileIfMissing(templateEnvPath, runtimeEnvPath)
+  syncRuntimeEnvFromTemplate(runtimeEnvPath, templateEnvPath)
   copyFileIfMissing(path.join(templateUserDir, 'cmd_policy.json'), path.join(userDir, 'cmd_policy.json'))
   copyFileIfMissing(path.join(templateUserDir, 'mcp_servers.json'), path.join(userDir, 'mcp_servers.json'))
   copyFileIfMissing(path.join(templateUserDir, 'desktop_client.json'), getDesktopConfigPath())
@@ -287,7 +410,7 @@ function ensurePackagedRuntimeFiles() {
     local_bridge_host: DEFAULT_DESKTOP_BRIDGE_HOST,
     local_bridge_port: DEFAULT_DESKTOP_BRIDGE_PORT,
   })
-  maybeMigrateDefaultCoreUrlFromTemplate(getDesktopConfigPath(), path.join(templateUserDir, 'desktop_client.json'))
+  maybeMigrateDefaultCoreUrlFromTemplate(getDesktopConfigPath(), path.join(templateUserDir, 'desktop_client.json'), templateEnvPath)
 }
 
 async function fetchDesktopBackendStatus(timeoutMs: number) {
@@ -347,10 +470,12 @@ async function ensureDesktopBackendStarted() {
     }
     desktopBridgeAccessToken = crypto.randomBytes(24).toString('hex')
     const runtimeRoot = getDesktopRuntimeRoot()
+    const runtimeEnvOverrides = readEnvFileValues(path.join(runtimeRoot, '.env'))
     desktopBackendProcess = spawn(backendExecutable, [], {
       cwd: runtimeRoot,
       env: {
         ...process.env,
+        ...runtimeEnvOverrides,
         MEETYOU_DESKTOP_LOCAL_TOKEN: desktopBridgeAccessToken,
         MEETYOU_DESKTOP_CLIENT_CONFIG: getDesktopConfigPath(),
       },
@@ -414,20 +539,14 @@ function stopDesktopBackend() {
 
 function readWorkspaceEnvValue(envNames: string[]): string {
   const envPath = path.join(getDesktopRuntimeRoot(), '.env')
-  try {
-    const content = fs.readFileSync(envPath, 'utf-8')
-    for (const envName of envNames) {
-      const escaped = envName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const match = content.match(new RegExp(`^${escaped}\\s*=\\s*['"]?([^'"\\r\\n]+)['"]?\\s*$`, 'm'))
-      const value = (match?.[1] || '').trim()
-      if (value) {
-        return value
-      }
+  const values = readEnvFileValues(envPath, envNames)
+  for (const envName of envNames) {
+    const value = String(values[envName as keyof RuntimeEnvValues] || '').trim()
+    if (value) {
+      return value
     }
-    return ''
-  } catch {
-    return ''
   }
+  return ''
 }
 
 function readGatewayAccessToken(): string {
