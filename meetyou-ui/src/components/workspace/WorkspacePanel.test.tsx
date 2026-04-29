@@ -1,16 +1,16 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { ClientWorkspace, OperationView } from '../../types'
+import type { RuntimeWorkspace, OperationView } from '../../types'
 import WorkspacePanel from './WorkspacePanel'
 
-const workspace: ClientWorkspace = {
+const workspace: RuntimeWorkspace = {
   workspace_id: 'personal',
   title: 'Personal',
   status: 'active',
   base_mode: 'general',
   description: 'Personal workspace for everyday use.',
   prompt_overlay: '',
-  default_execution_target: 'core_only',
+  default_execution_target: 'core.local',
   tool_policy: 'allow_all',
   allowed_tool_ids: [],
   preferred_target_endpoint_ids: [],
@@ -55,7 +55,7 @@ describe('WorkspacePanel', () => {
             status: 'running',
             title: 'Run shell command',
             operation_type: 'tool.call',
-            execution_target: 'core_only',
+            execution_target: 'core.local',
             target_endpoint_id: '',
             tool_key: 'shell.exec',
             tool_id: 'endpoint.desktop.desktop-main.executor.shell.exec',

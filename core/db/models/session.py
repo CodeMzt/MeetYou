@@ -15,7 +15,6 @@ class Session(TimestampMixin, Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     thread_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("threads.id"), nullable=False)
-    client_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=True)
     origin_endpoint_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoints.id"), nullable=True)
     active_workspace_id: Mapped[uuid.UUID] = mapped_column("workspace_id", UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")

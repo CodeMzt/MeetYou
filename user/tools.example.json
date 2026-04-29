@@ -296,13 +296,13 @@
       "type": "function",
       "function": {
         "name": "emit_progress_notice",
-        "description": "Send a brief standalone assistant reply to the current session while the current turn is still thinking or tool-calling. You must call this before any potentially time-consuming operation, including web/page reading, research, local file or workspace work, endpoint tool calls, endpoint messaging, or other slow I/O. For non-streaming external endpoints such as Feishu or WeChat/MeetWeChat, call this before a nontrivial or multi-sentence final answer unless the answer is immediate and very short. May be called multiple times.",
+        "description": "Emit a brief assistant.progress_notice RunEvent for the current session while the current turn is still thinking or tool-calling. It is not the final assistant answer, does not create an Operation, and must not be used to answer the user. You must call this before any potentially time-consuming operation, including web/page reading, research, local file or workspace work, endpoint tool calls, endpoint messaging, or other slow I/O. For non-streaming external endpoints such as Feishu or WeChat/MeetWeChat, only use it for genuine progress notices; the final answer must be delivered as the persisted assistant Message. May be called multiple times.",
         "parameters": {
           "type": "object",
           "properties": {
             "content": {
               "type": "string",
-              "description": "A short standalone reply, ideally one sentence."
+              "description": "A short progress notice, ideally one sentence."
             }
           },
           "required": [
@@ -477,81 +477,6 @@
     {
       "type": "function",
       "function": {
-        "name": "manage_procedures",
-        "description": "Inspect procedures or propose creating, updating, deleting, pinning, or unpinning a procedure through the approval callback flow.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "action": {
-              "type": "string",
-              "enum": [
-                "list",
-                "detail",
-                "propose_create",
-                "propose_update",
-                "propose_delete",
-                "propose_pin",
-                "propose_unpin"
-              ]
-            },
-            "procedure_id": {
-              "type": "string"
-            },
-            "title": {
-              "type": "string"
-            },
-            "description": {
-              "type": "string"
-            },
-            "prompt_overlay": {
-              "type": "string"
-            },
-            "default_execution_target": {
-              "type": "string"
-            },
-            "risk_profile": {
-              "type": "string"
-            },
-            "applicable_modes": {
-              "type": "array",
-              "description": "V4 public assistant modes only: general, automation, or danxi. Research, documents, and study are skills/source profiles inside general, not modes.",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "general",
-                  "automation",
-                  "danxi"
-                ]
-              }
-            },
-            "recommended_capabilities": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "recommended_source_profiles": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "infer_keywords": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "action"
-          ]
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
         "name": "list_attachments",
         "description": "List attachments for a specific owner and return metadata with lifecycle timestamps.",
         "parameters": {
@@ -629,7 +554,7 @@
       "type": "function",
       "function": {
         "name": "manage_scheduled_jobs",
-        "description": "Manage V4 Scheduler jobs backed by scheduled_jobs. Use this for system.heartbeat inspection, ordinary scheduled job CRUD, enable/disable, interval updates, and manual triggers.",
+        "description": "Manage V4 Scheduler jobs backed by scheduled_jobs. Use this for system.heartbeat inspection, ordinary scheduled job CRUD, enable/disable, interval updates, and manual triggers. system.heartbeat is preset and may only be enabled/disabled or have interval_seconds changed.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -656,10 +581,9 @@
               "enum": [
                 "workflow",
                 "user_task",
-                "maintenance",
-                "system_heartbeat"
+                "maintenance"
               ],
-              "description": "Job kind for create.",
+              "description": "Job kind for creating ordinary Scheduler jobs. system.heartbeat is built in and cannot be created here.",
               "default": "workflow"
             },
             "name": {
@@ -693,7 +617,7 @@
             },
             "trigger_config": {
               "type": "object",
-              "description": "Structured trigger config.",
+              "description": "Structured trigger config. For system.heartbeat updates this may only contain type=interval and interval_seconds.",
               "default": {}
             },
             "interval_seconds": {
@@ -703,18 +627,17 @@
             },
             "timezone": {
               "type": "string",
-              "description": "IANA timezone name.",
+              "description": "IANA timezone name for ordinary jobs. Do not set this when updating system.heartbeat.",
               "default": "UTC"
             },
             "action_ref": {
               "type": "string",
               "enum": [
                 "core.workflow.assistant_turn",
-                "core.workflow.heartbeat",
                 "core.workflow.noop",
                 ""
               ],
-              "description": "Core workflow/action reference. Ordinary jobs should use core.workflow.assistant_turn.",
+              "description": "Core workflow/action reference for ordinary jobs. Use core.workflow.assistant_turn for scheduled assistant work; omit this field when updating system.heartbeat.",
               "default": "core.workflow.assistant_turn"
             },
             "run_template": {
@@ -758,7 +681,7 @@
       "type": "function",
       "function": {
         "name": "list_skills",
-        "description": "List the currently available open skills.",
+        "description": "Inspect the V4 SKILL registry before specialized or multi-step work; query matches title, summary, scenarios, and recommended tools.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -782,7 +705,7 @@
       "type": "function",
       "function": {
         "name": "load_skill",
-        "description": "Load a skill by identifier and optionally inject it into the current route context.",
+        "description": "Load a SKILL by identifier and optionally inject it into the current route context before following that workflow.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -803,7 +726,7 @@
       "type": "function",
       "function": {
         "name": "create_skill",
-        "description": "Create a new reusable skill in the open skill registry.",
+        "description": "Create a new reusable SKILL when no existing SKILL covers a repeated workflow.",
         "parameters": {
           "type": "object",
           "properties": {

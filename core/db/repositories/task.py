@@ -19,7 +19,7 @@ class TaskStateRepository(RepositoryBase):
         scope_session_id: str,
         task_type: str = "task",
         status: str = "active",
-        execution_target: str = "core_only",
+        execution_target: str = "core.local",
         due_at: str = "",
         next_run_at: str = "",
         workspace_id=None,

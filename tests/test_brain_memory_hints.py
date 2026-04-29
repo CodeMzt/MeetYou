@@ -7,12 +7,12 @@ import unittest
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-class _FakeClientSession:
+class _FakeRuntimeSession:
     async def close(self):
         return None
 
 
-sys.modules.setdefault("aiohttp", types.SimpleNamespace(ClientSession=_FakeClientSession))
+sys.modules.setdefault("aiohttp", types.SimpleNamespace(RuntimeSession=_FakeRuntimeSession))
 
 from adapters.base import StreamEvent
 from core.brain import Brain

@@ -252,9 +252,9 @@ Core：
 
 ## 验收
 
-- [ ] Streaming 走 RunEvent。
-- [ ] Final reply 走 Message。
-- [ ] Delivery 统一投递。
-- [ ] short_reply 删除。
-- [ ] assistant.progress_notice 工作正常。
-- [ ] 断线恢复可用。
+- [x] Streaming 走 RunEvent。
+- [x] Final reply 走 Message。
+- [x] Delivery 统一投递。
+- [x] short_reply 删除。
+- [x] assistant.progress_notice 工作正常。
+- [x] 断线恢复可用。

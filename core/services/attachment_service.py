@@ -142,7 +142,7 @@ class AttachmentService(ServiceBase):
         file_name: str = "",
         size_bytes: int = 0,
         lifecycle_policy: str = "normal",
-        origin_client_id=None,
+        origin_endpoint_id=None,
         expires_in_seconds: int = 900,
     ):
         attachment_key = f"att_{uuid4().hex}"
@@ -163,7 +163,7 @@ class AttachmentService(ServiceBase):
                 attachment_id=attachment_key,
                 owner_type=owner_type,
                 owner_id=owner_id,
-                origin_client_id=origin_client_id,
+                origin_endpoint_id=origin_endpoint_id,
                 kind=kind,
                 mime_type=mime_type,
                 object_key=object_key,

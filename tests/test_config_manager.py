@@ -240,7 +240,7 @@ class ConfigManagerTests(unittest.TestCase):
                 "meetwechat_outbound_min_interval_ms": "250",
                 "meetwechat_send_timeout_ms": "10000",
                 "meetwechat_state_flush_interval_ms": "500",
-                "meetwechat_gateway_client_idle_ttl_seconds": "600",
+                "meetwechat_gateway_endpoint_idle_ttl_seconds": "600",
             }
         )
         config.reload()
@@ -263,7 +263,7 @@ class ConfigManagerTests(unittest.TestCase):
                 "meetwechat_outbound_min_interval_ms",
                 "meetwechat_send_timeout_ms",
                 "meetwechat_state_flush_interval_ms",
-                "meetwechat_gateway_client_idle_ttl_seconds",
+                "meetwechat_gateway_endpoint_idle_ttl_seconds",
             },
         )
         self.assertIs(config.get("enable_meetwechat_client"), True)

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { buildEndpointHandshakeFrames, buildUiEndpointId } from './useMeetYouSocket'
-import type { ClientContext } from './useClientContext'
+import type { EndpointContext } from './useEndpointContext'
 
-function context(): ClientContext {
+function context(): EndpointContext {
   return {
     workspace: {
       workspace_id: 'desktop-main',
@@ -11,7 +11,7 @@ function context(): ClientContext {
       base_mode: 'general',
       description: '',
       prompt_overlay: '',
-      default_execution_target: 'specific_endpoint',
+      default_execution_target: 'endpoint',
       tool_policy: 'balanced',
       allowed_tool_ids: [],
       preferred_target_endpoint_ids: [],
@@ -27,19 +27,19 @@ function context(): ClientContext {
       thread_id: 'thr_123',
       active_workspace_id: 'desktop-main',
       workspace_id: 'desktop-main',
-      client_id: 'desktop-app',
+      endpoint_id: 'desktop-app',
       status: 'active',
     },
-    clientId: 'Desktop App',
+    endpointId: 'Desktop App',
   }
 }
 
 describe('useMeetYouSocket endpoint frames', () => {
   it('builds V4 endpoint hello and thread subscription frames for the UI socket', () => {
-    const clientContext = context()
-    const frames = buildEndpointHandshakeFrames(clientContext)
+    const endpointContext = context()
+    const frames = buildEndpointHandshakeFrames(endpointContext)
 
-    expect(buildUiEndpointId(clientContext)).toBe('desktop.desktop-app.ui')
+    expect(buildUiEndpointId(endpointContext)).toBe('desktop.desktop-app.ui')
     expect(frames[0]).toMatchObject({
       schema: 'meetyou.endpoint.ws.v4',
       type: 'endpoint.hello',

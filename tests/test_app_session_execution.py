@@ -380,7 +380,7 @@ class _GatewayStub:
     def __init__(self):
         self.thread_events = []
 
-    async def publish_client_thread_event(self, thread_id: str, *, event_type: str, payload: dict):
+    async def publish_thread_delivery_event(self, thread_id: str, *, event_type: str, payload: dict):
         self.thread_events.append({"thread_id": thread_id, "event_type": event_type, "payload": dict(payload)})
 
 

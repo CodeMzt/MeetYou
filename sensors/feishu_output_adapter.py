@@ -1,4 +1,4 @@
-﻿"""
+"""
 Feishu output adapter.
 """
 
@@ -97,7 +97,7 @@ class FeishuOutputAdapter:
             "selected_option": selected_option,
         }
 
-    async def send_client_event(self, chat_id: str, payload: dict):
+    async def send_runtime_event(self, chat_id: str, payload: dict):
         if payload.get("schema") != "meetyou.endpoint.ws.v4":
             return
         frame_type = str(payload.get("type") or "")

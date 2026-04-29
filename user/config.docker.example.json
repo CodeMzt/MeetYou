@@ -83,7 +83,7 @@
   "meetwechat_outbound_min_interval_ms": 250,
   "meetwechat_send_timeout_ms": 10000,
   "meetwechat_state_flush_interval_ms": 500,
-  "meetwechat_gateway_client_idle_ttl_seconds": 600,
+  "meetwechat_gateway_endpoint_idle_ttl_seconds": 600,
   "gateway_cors_origins": [
     "http://127.0.0.1:5173",
     "http://localhost:5173"

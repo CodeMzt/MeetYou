@@ -37,8 +37,8 @@ This document records the V3 model for workspace, memory, and cross-client conte
 
 ## Public Interface Direction
 
-- `ClientThreadResponse.home_workspace_id` is the canonical thread affinity field.
-- `ClientSessionResponse.active_workspace_id` is the canonical current workspace field.
+- `RuntimeThreadResponse.home_workspace_id` is the canonical thread affinity field.
+- `RuntimeSessionResponse.active_workspace_id` is the canonical current workspace field.
 - Legacy `workspace_id` remains only as a compatibility alias where needed.
 - `PATCH /client/sessions/{session_id}/active-workspace` switches the active workspace.
 - `GET /client/context-pool/query` explains currently recalled context pool items.

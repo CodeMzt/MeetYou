@@ -68,7 +68,7 @@ class InteractionResponseService:
         *,
         request_id: str = "",
         session_id: str = "",
-        client_id: str = "",
+        endpoint_id: str = "",
         approval_id: str = "",
         reason: str = "",
     ) -> bool:
@@ -81,7 +81,7 @@ class InteractionResponseService:
                 accepted,
                 request_id=request_id,
                 session_id=session_id,
-                client_id=client_id,
+                endpoint_id=endpoint_id,
                 approval_id=approval_id,
                 reason=reason,
             )

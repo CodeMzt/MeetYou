@@ -14,93 +14,93 @@ class _PromptConfig:
         self._start_prompt = start_prompt
 
     def get_prompt(self, prompt_name: str) -> str:
-        if prompt_name in {"client_connected", "client_connection"}:
+        if prompt_name in {"endpoint_connected", "endpoint_connection"}:
             return self._start_prompt
         if prompt_name == "start":
             return self._start_prompt
         raise AssertionError(prompt_name)
 
 
-class ClientConnectionPromptTests(unittest.IsolatedAsyncioTestCase):
-    def test_build_client_connection_prompt_includes_runtime_context(self):
+class EndpointConnectionPromptTests(unittest.IsolatedAsyncioTestCase):
+    def test_build_endpoint_connection_prompt_includes_runtime_context(self):
         app = App.__new__(App)
         app.config = _PromptConfig("client connect prompt")
 
-        payload = App.build_client_connection_prompt(
+        payload = App.build_endpoint_connection_prompt(
             app,
-            client_id="desktop-main-client",
-            client_type="desktop",
-            display_name="Desktop Main Client",
+            endpoint_id="desktop-main.ui",
+            endpoint_type="desktop",
+            display_name="Desktop Main Endpoint",
             transport_profile="desktop_wss",
             workspace_ids=["personal", "desktop-main"],
         )
 
-        self.assertEqual(payload["prompt_name"], "client_connected")
-        self.assertEqual(payload["context"]["trigger"], "client_connected")
-        self.assertEqual(payload["context"]["client_id"], "desktop-main-client")
+        self.assertEqual(payload["prompt_name"], "endpoint_connected")
+        self.assertEqual(payload["context"]["trigger"], "endpoint_connected")
+        self.assertEqual(payload["context"]["endpoint_id"], "desktop-main.ui")
         self.assertEqual(payload["context"]["workspace_ids"], ["personal", "desktop-main"])
         self.assertIn("client connect prompt", payload["prompt"])
-        self.assertIn("desktop-main-client", payload["prompt"])
+        self.assertIn("desktop-main.ui", payload["prompt"])
         self.assertIn("desktop_wss", payload["prompt"])
 
-    async def test_inject_client_connection_event_enqueues_internal_message(self):
+    async def test_inject_endpoint_connection_event_enqueues_internal_message(self):
         app = App.__new__(App)
         app.config = _PromptConfig("client connect prompt")
         app.event_bus = EventBus()
         app.session_manager = SessionManager()
         app.session_manager.bind_runtime_session(
-            make_source(SourceKind.WEB.value, "desktop-app", client_id="desktop-app"),
+            make_source(SourceKind.WEB.value, "desktop-app", endpoint_id="desktop-app"),
             session_id="client-session-1",
             metadata={
                 "thread_id": "thr_recent",
                 "workspace_id": "desktop-main",
-                "client_id": "desktop-app",
+                "endpoint_id": "desktop-app",
             },
         )
 
-        payload = await App.inject_client_connection_event(
+        payload = await App.inject_endpoint_connection_event(
             app,
-            client_id="desktop-main-client",
-            client_type="desktop",
-            display_name="Desktop Main Client",
+            endpoint_id="desktop-main.ui",
+            endpoint_type="desktop",
+            display_name="Desktop Main Endpoint",
             transport_profile="desktop_wss",
             workspace_ids=["personal", "desktop-main"],
         )
 
         event = app.event_bus.inbound_queue.get_nowait()
         self.assertIsInstance(event, InboundEvent)
-        self.assertEqual(event.session_id, "system:client:desktop-main-client")
+        self.assertEqual(event.session_id, "system:endpoint:desktop-main.ui")
         self.assertEqual(event.source.kind, SourceKind.SYSTEM.value)
         self.assertEqual(event.target.kind, TargetKind.INTERNAL.value)
-        self.assertEqual(event.target.id, "desktop-main-client")
-        self.assertEqual(event.metadata["trigger"], "client_connected")
-        self.assertEqual(event.metadata["connection_prompt"]["prompt_name"], "client_connected")
+        self.assertEqual(event.target.id, "desktop-main.ui")
+        self.assertEqual(event.metadata["trigger"], "endpoint_connected")
+        self.assertEqual(event.metadata["connection_prompt"]["prompt_name"], "endpoint_connected")
         self.assertEqual(event.metadata["bridge_thread_id"], "thr_recent")
-        self.assertIn("desktop-main-client", event.content)
-        self.assertEqual(payload["prompt_name"], "client_connected")
-        bridge_binding = app.session_manager.get_binding("system:client:desktop-main-client")
+        self.assertIn("desktop-main.ui", event.content)
+        self.assertEqual(payload["prompt_name"], "endpoint_connected")
+        bridge_binding = app.session_manager.get_binding("system:endpoint:desktop-main.ui")
         self.assertIsNotNone(bridge_binding)
         self.assertEqual(bridge_binding.metadata["thread_id"], "thr_recent")
         self.assertEqual(bridge_binding.metadata["workspace_id"], "desktop-main")
         self.assertEqual(bridge_binding.metadata["bridged_session_id"], "client-session-1")
 
-    def test_client_connection_event_resolves_as_transient_internal_reply(self):
+    def test_endpoint_connection_event_resolves_as_transient_internal_reply(self):
         app = App.__new__(App)
         event = InboundEvent(
-            session_id="system:client:desktop-main-client",
+            session_id="system:endpoint:desktop-main.ui",
             type="message",
             role="user",
             content="hello",
             source=SimpleNamespace(kind=SourceKind.SYSTEM.value),
-            target=SimpleNamespace(kind=TargetKind.INTERNAL.value, id="desktop-main-client"),
-            metadata={"trigger": "client_connected", "transient": True, "client_id": "desktop-main-client"},
+            target=SimpleNamespace(kind=TargetKind.INTERNAL.value, id="desktop-main.ui"),
+            metadata={"trigger": "endpoint_connected", "transient": True, "endpoint_id": "desktop-main.ui"},
         )
 
         request = App._resolve_session_execution_request(app, event)
 
         self.assertIsNotNone(request)
         self.assertEqual(request.target.kind, TargetKind.INTERNAL.value)
-        self.assertEqual(request.target.id, "desktop-main-client")
+        self.assertEqual(request.target.id, "desktop-main.ui")
         self.assertTrue(request.is_boot)
 
 

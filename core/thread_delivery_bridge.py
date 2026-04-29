@@ -1,5 +1,5 @@
 """
-Bridge Core runtime events to client thread surfaces.
+Bridge Core runtime events to Thread / Run / Delivery surfaces.
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 
-class ClientThreadBridge:
+class ThreadDeliveryBridge:
     def __init__(
         self,
         *,
@@ -98,9 +98,6 @@ class ClientThreadBridge:
         if callable(publisher):
             await publisher(thread_id, event_type=event_type, payload=payload)
             return
-        fallback = getattr(gateway, "publish_" + "client_thread_event", None)
-        if callable(fallback):
-            await fallback(thread_id, event_type=event_type, payload=payload)
 
     @staticmethod
     def _supports_run_event_log(core_services) -> bool:

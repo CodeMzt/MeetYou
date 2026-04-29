@@ -92,7 +92,7 @@ export default function MessageList({
         {messages.length === 0 && (
           <motion.div key="empty-state" className={styles.emptyState} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <div className={styles.emptyCopy}>
-              {connected ? '随时可以开始对话。' : '等待后端服务启动后即可使用。'}
+              {connected ? '随时可以开始对话。' : '正在连接服务，连接恢复后即可使用。'}
             </div>
           </motion.div>
         )}

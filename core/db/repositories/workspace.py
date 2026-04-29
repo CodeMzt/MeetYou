@@ -14,7 +14,7 @@ class WorkspaceRepository(RepositoryBase):
         description: str = "",
         base_mode: str = "general",
         prompt_overlay: str = "",
-        default_execution_target: str = "core_only",
+        default_execution_target: str = "core.local",
         metadata: dict | None = None,
     ) -> Workspace:
         workspace = Workspace(

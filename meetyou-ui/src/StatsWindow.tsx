@@ -62,7 +62,7 @@ export default function RuntimeDebugWindow() {
         }
       } catch (error) {
         if (!cancelled) {
-          console.error('Failed to load runtime debug snapshot:', error)
+          console.error('加载运行调试快照失败:', error)
         }
       }
     }
@@ -118,12 +118,12 @@ export default function RuntimeDebugWindow() {
     <SubWindow title="运行调试" icon={<Gauge size={16} />} contentStyle={{ padding: '20px', display: 'flex', flexDirection: 'column' }}>
       <div className={styles.hero}>
         <div>
-          <div className={styles.kicker}>Runtime Debug</div>
+          <div className={styles.kicker}>运行调试</div>
           <h2 className={styles.title}>仅展示 `/desktop/runtime/debug` 独有信息</h2>
-          <p className={styles.description}>这里用于排查路由决策、请求预算、授权预览、压缩状态和最近失败，不再重复“上下文与用量”窗口里的 token 统计。</p>
+          <p className={styles.description}>这里用于排查路由决策、请求预算、授权预览、压缩状态和最近失败，不再重复“上下文与用量”窗口里的令牌统计。</p>
         </div>
         <div className={styles.metaCard}>
-          <span className={styles.metaLabel}>Session</span>
+          <span className={styles.metaLabel}>会话</span>
           <strong className={styles.metaValue}>{sessionId || '未绑定'}</strong>
           <span className={styles.metaLabel}>更新时间</span>
           <strong className={styles.metaValue}>{runtimeDebugSnapshot?.updated_at || '未同步'}</strong>
@@ -131,7 +131,7 @@ export default function RuntimeDebugWindow() {
       </div>
 
       {!runtimeDebugSnapshot ? (
-        <div className={styles.empty}>当前会话还没有可用的 runtime debug 快照。</div>
+        <div className={styles.empty}>当前会话还没有可用的运行调试快照。</div>
       ) : (
         <>
           <section className={styles.section}>
@@ -139,15 +139,15 @@ export default function RuntimeDebugWindow() {
             <div className={styles.grid}>
               <div className={styles.card}>
                 <span className={styles.cardLabel}>当前模式</span>
-                <strong className={styles.cardValue}>{String(route.current_mode || 'unknown')}</strong>
+                <strong className={styles.cardValue}>{String(route.current_mode || '未知')}</strong>
               </div>
               <div className={styles.card}>
                 <span className={styles.cardLabel}>请求模式</span>
-                <strong className={styles.cardValue}>{String(route.requested_mode || 'unknown')}</strong>
+                <strong className={styles.cardValue}>{String(route.requested_mode || '未知')}</strong>
               </div>
               <div className={styles.card}>
                 <span className={styles.cardLabel}>来源档案</span>
-                <strong className={styles.cardValue}>{String(route.source_profile || 'unknown')}</strong>
+                <strong className={styles.cardValue}>{String(route.source_profile || '未知')}</strong>
               </div>
               <div className={styles.card}>
                 <span className={styles.cardLabel}>上下文预载</span>
@@ -166,15 +166,15 @@ export default function RuntimeDebugWindow() {
             {request ? (
               <>
                 <div className={styles.grid}>
-                  <div className={styles.card}><span className={styles.cardLabel}>Provider</span><strong className={styles.cardValue}>{request.provider_name || 'unknown'}</strong></div>
-                  <div className={styles.card}><span className={styles.cardLabel}>Model</span><strong className={styles.cardValue}>{request.model || 'unknown'}</strong></div>
-                  <div className={styles.card}><span className={styles.cardLabel}>Transport</span><strong className={styles.cardValue}>{request.transport_mode || 'unknown'}</strong></div>
-                  <div className={styles.card}><span className={styles.cardLabel}>Target Host</span><strong className={styles.cardValue}>{request.api_target.host || 'unknown'}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>提供方</span><strong className={styles.cardValue}>{request.provider_name || '未知'}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>模型</span><strong className={styles.cardValue}>{request.model || '未知'}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>传输</span><strong className={styles.cardValue}>{request.transport_mode || '未知'}</strong></div>
+                  <div className={styles.card}><span className={styles.cardLabel}>目标主机</span><strong className={styles.cardValue}>{request.api_target.host || '未知'}</strong></div>
                   <div className={styles.card}><span className={styles.cardLabel}>消息数</span><strong className={styles.cardValue}>{request.message_count}</strong></div>
                   <div className={styles.card}><span className={styles.cardLabel}>工具数</span><strong className={styles.cardValue}>{request.tool_count}</strong></div>
                 </div>
                 <div className={styles.inlineMeta}>
-                  <span>请求 tokens 估算：{request.request_tokens_estimated}</span>
+                  <span>请求令牌估算：{request.request_tokens_estimated}</span>
                   <span>压力：{Math.round(request.pressure_ratio * 100)}%</span>
                   <span>{request.near_limit ? '接近上限' : '未接近上限'}</span>
                   <span>历史消息：{request.layers.history_message_count}</span>
@@ -188,18 +188,18 @@ export default function RuntimeDebugWindow() {
           <section className={styles.section}>
             <div className={styles.sectionHeader}>预算与压缩</div>
             <div className={styles.inlineMeta}>
-              <span>目标输入：{String(lengthPolicy.target_input_tokens || 'unknown')}</span>
-              <span>保留输出：{String(lengthPolicy.reserved_response_tokens || 'unknown')}</span>
-              <span>预留比例：{String(lengthPolicy.reserve_ratio || 'unknown')}</span>
+              <span>目标输入：{String(lengthPolicy.target_input_tokens || '未知')}</span>
+              <span>保留输出：{String(lengthPolicy.reserved_response_tokens || '未知')}</span>
+              <span>预留比例：{String(lengthPolicy.reserve_ratio || '未知')}</span>
               <span>摘要层：{formatBooleanLabel(layers.conversation_summary, '启用', '关闭')}</span>
               <span>记忆召回：{formatBooleanLabel(layers.memory_recall, '启用', '关闭')}</span>
             </div>
             {compression ? (
               <div className={styles.grid}>
                 <div className={styles.card}><span className={styles.cardLabel}>压缩状态</span><strong className={styles.cardValue}>{compression.triggered ? '已触发' : '未触发'}</strong></div>
-                <div className={styles.card}><span className={styles.cardLabel}>压缩级别</span><strong className={styles.cardValue}>{compression.level || 'none'}</strong></div>
+                <div className={styles.card}><span className={styles.cardLabel}>压缩级别</span><strong className={styles.cardValue}>{compression.level || '无'}</strong></div>
                 <div className={styles.card}><span className={styles.cardLabel}>修剪消息</span><strong className={styles.cardValue}>{compression.trimmed_messages}</strong></div>
-                <div className={styles.card}><span className={styles.cardLabel}>摘要 tokens</span><strong className={styles.cardValue}>{compression.summary_tokens}</strong></div>
+                <div className={styles.card}><span className={styles.cardLabel}>摘要令牌</span><strong className={styles.cardValue}>{compression.summary_tokens}</strong></div>
               </div>
             ) : (
               <div className={styles.empty}>本轮没有压缩信息。</div>
@@ -231,9 +231,9 @@ export default function RuntimeDebugWindow() {
               <div className={styles.list}>
                 {objectOperations.map((item, index) => (
                   <div key={`${String(item.action || 'op')}-${index}`} className={styles.listItem}>
-                    <strong>{String(item.action || 'action')}</strong>
-                    <span>{String(item.object_type || 'object')}</span>
-                    <span>{String(item.status || 'status')}</span>
+                    <strong>{String(item.action || '动作')}</strong>
+                    <span>{String(item.object_type || '对象')}</span>
+                    <span>{String(item.status || '状态')}</span>
                     <span>{String(item.summary || '')}</span>
                   </div>
                 ))}
@@ -243,8 +243,8 @@ export default function RuntimeDebugWindow() {
               <div className={styles.list}>
                 {routeHistory.map((item, index) => (
                   <div key={`route-history-${index}`} className={styles.listItem}>
-                    <strong>Round {String(item.round ?? index)}</strong>
-                    <span>{String(item.mode || 'unknown')}</span>
+                    <strong>轮次 {String(item.round ?? index)}</strong>
+                    <span>{String(item.mode || '未知')}</span>
                   </div>
                 ))}
               </div>

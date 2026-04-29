@@ -17,7 +17,7 @@ from core.tools_manager import ToolsManager
 from tools import system_tools as real_system_tools
 
 
-class _FakeClientSession:
+class _FakeRuntimeSession:
     async def close(self):
         return None
 
@@ -398,7 +398,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             event_bus=None,
             exception_router=None,
         )
-        brain._http_session = _FakeClientSession()
+        brain._http_session = _FakeRuntimeSession()
 
         result = await brain._call_tool_with_route(
             "lookup_profile",

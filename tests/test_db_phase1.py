@@ -86,14 +86,12 @@ class DatabasePhase1Tests(unittest.TestCase):
         self.assertTrue(
             {
                 "principals",
-                "clients",
                 "workspaces",
                 "threads",
                 "sessions",
                 "operations",
                 "approvals",
                 "attachments",
-                "client_workspace_memberships",
                 "context_pool_items",
                 "actors",
                 "endpoints",
@@ -110,6 +108,8 @@ class DatabasePhase1Tests(unittest.TestCase):
         self.assertNotIn("agents", tables)
         self.assertNotIn("workspace_agent_memberships", tables)
         self.assertNotIn("agent_capability_snapshots", tables)
+        self.assertNotIn("clients", tables)
+        self.assertNotIn("client_workspace_memberships", tables)
 
     def test_repositories_can_create_phase1_resource_chain(self):
         with self.session_factory() as session:
@@ -175,7 +175,7 @@ class DatabasePhase1Tests(unittest.TestCase):
                 thread_id=thread.id,
                 workspace_id=workspace.id,
                 operation_type="capture_screenshot",
-                execution_target="specific_endpoint",
+                execution_target="endpoint",
                 execution_target_type="endpoint",
                 execution_target_id=endpoint.endpoint_id,
                 target_endpoint_id=endpoint.id,
@@ -195,6 +195,7 @@ class DatabasePhase1Tests(unittest.TestCase):
                 mime_type="image/png",
                 object_key="ops/test.png",
                 size_bytes=128,
+                origin_endpoint_id=endpoint.id,
             )
             session.commit()
 

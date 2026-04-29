@@ -55,6 +55,7 @@ _REMOVED_WECHAT_CONFIG_KEYS = {
 }
 _REMOVED_CONFIG_KEYS = {
     "enable_gateway",
+    "meetwechat_gateway_client_idle_ttl_seconds",
     "source_profiles",
     *_REMOVED_WECHAT_CONFIG_KEYS,
 }
@@ -87,7 +88,7 @@ _INTEGER_KEYS = {
     "meetwechat_outbound_min_interval_ms",
     "meetwechat_send_timeout_ms",
     "meetwechat_state_flush_interval_ms",
-    "meetwechat_gateway_client_idle_ttl_seconds",
+    "meetwechat_gateway_endpoint_idle_ttl_seconds",
     "max_parallel_tool_calls",
     "web_search_parallel_reads",
     "web_search_extract_timeout_seconds",
@@ -109,7 +110,7 @@ _POSITIVE_INTEGER_KEYS = {
     "meetwechat_outbound_min_interval_ms",
     "meetwechat_send_timeout_ms",
     "meetwechat_state_flush_interval_ms",
-    "meetwechat_gateway_client_idle_ttl_seconds",
+    "meetwechat_gateway_endpoint_idle_ttl_seconds",
     "max_parallel_tool_calls",
     "web_search_parallel_reads",
     "web_search_extract_timeout_seconds",
@@ -163,7 +164,7 @@ _ENV_OVERRIDE_KEY_MAP = {
     "meetwechat_outbound_min_interval_ms": "MEETYOU_MEETWECHAT_OUTBOUND_MIN_INTERVAL_MS",
     "meetwechat_send_timeout_ms": "MEETYOU_MEETWECHAT_SEND_TIMEOUT_MS",
     "meetwechat_state_flush_interval_ms": "MEETYOU_MEETWECHAT_STATE_FLUSH_INTERVAL_MS",
-    "meetwechat_gateway_client_idle_ttl_seconds": "MEETYOU_MEETWECHAT_GATEWAY_CLIENT_IDLE_TTL_SECONDS",
+    "meetwechat_gateway_endpoint_idle_ttl_seconds": "MEETYOU_MEETWECHAT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS",
 }
 
 _KNOWN_CONFIG_KEYS = set(CONFIG_FIELD_KEYS)

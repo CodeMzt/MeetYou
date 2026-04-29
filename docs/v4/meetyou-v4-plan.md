@@ -600,25 +600,25 @@ WeChatBot 真实发送
 
 ## 12. 最终验收清单
 
-- [ ] AGENT.md / AGENTS.md 已更新 V4 规则。
-- [ ] docs/v4 已成为实现真源。
-- [ ] `/endpoint/ws` 正常。
-- [ ] `/client/ws` 删除或明确不可用。
-- [ ] Actor / Endpoint / Run / RunEvent / Scheduler schema 完成。
-- [ ] Thread 不依赖 Client。
-- [ ] Client 下线重连继续 Thread。
-- [ ] Run 支持 user_message / scheduled_job / system_heartbeat。
-- [ ] system.heartbeat 是不可删除 scheduled job。
-- [ ] 用户定时任务 CRUD 完成。
-- [ ] ToolRouter 基于 ExecutionTarget。
-- [ ] Core tool 走 core.local。
-- [ ] Desktop / Edge tool 走 endpoint executor。
-- [ ] Delivery 统一投递 message / run_event / notice。
-- [ ] Streaming 正常。
-- [ ] `short_reply` 不再作为 directed tool。
-- [ ] `assistant.progress_notice` 正常显示。
-- [ ] 本地基础测试通过。
-- [ ] 本地真实测试通过。
+- [x] AGENT.md / AGENTS.md 已更新 V4 规则。
+- [x] docs/v4 已成为实现真源。
+- [x] `/endpoint/ws` 正常。
+- [x] `/client/ws` 删除或明确不可用。
+- [x] Actor / Endpoint / Run / RunEvent / Scheduler schema 完成。
+- [x] Thread 不依赖 Client。
+- [x] Client 下线重连继续 Thread。
+- [x] Run 支持 user_message / scheduled_job / system_heartbeat。
+- [x] system.heartbeat 是不可删除 scheduled job。
+- [x] 用户定时任务 CRUD 完成。
+- [x] ToolRouter 基于 ExecutionTarget。
+- [x] Core tool 走 core.local。
+- [x] Desktop / Edge tool 走 endpoint executor。
+- [x] Delivery 统一投递 message / run_event / notice。
+- [x] Streaming 正常。
+- [x] `short_reply` 不再作为 directed tool。
+- [x] `assistant.progress_notice` 正常显示。
+- [x] 本地基础测试通过。
+- [x] 本地真实测试通过。
 - [ ] 代码提交、推送、合并 main。
 - [ ] GitHub Actions CI 通过。
 - [ ] GitHub Actions Deploy 通过。
@@ -627,3 +627,8 @@ WeChatBot 真实发送
 - [ ] Feishu 真实测试通过且人类确认。
 - [ ] WeChatBot 真实测试通过且人类确认。
 - [ ] 测试报告写入 docs/v4 或 PR description。
+## 13. Current Implementation Status
+
+- Completed locally on 2026-04-29: V4 domain schema/migration/bootstrap, `/endpoint/ws`, `/runtime/*`, Thread / Message / RunEvent / Delivery fan-out, `assistant.progress_notice`, ToolRouter + ExecutionTarget, Scheduler-owned `system.heartbeat`, Desktop Provider routing, UI runtime API rename, SKILL-first workflow layer, and Procedure removal.
+- Completed locally on 2026-04-29: Python full discovery, frontend typecheck/test/build, migration/protocol/scheduler/tool-router/delivery coverage, and local Core + Desktop + UI real acceptance with real Desktop Provider `utility.echo`.
+- Pending after this local batch: commit/push to `main`, GitHub Actions CI and Deploy, remote Core `/health` + commit verification, local Desktop -> remote Core real acceptance, and Feishu / WeChatBot human confirmation.

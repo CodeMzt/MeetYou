@@ -192,10 +192,10 @@ Desktop 重连流程：
 
 ## 验收
 
-- [ ] Desktop 使用 /endpoint/ws。
-- [ ] Edge 使用 /endpoint/ws。
-- [ ] UI 不再依赖 client-bound conversation。
-- [ ] Thread 可跨重连继续。
-- [ ] Streaming 正常。
-- [ ] progress_notice 单独显示。
+- [x] Desktop 使用 /endpoint/ws。
+- [x] Edge 使用 /endpoint/ws。
+- [x] UI 不再依赖 client-bound conversation。
+- [x] Thread 可跨重连继续。
+- [x] Streaming 正常。
+- [x] progress_notice 单独显示。
 - [ ] 本地 Desktop -> 远程 Core 真实测试通过。

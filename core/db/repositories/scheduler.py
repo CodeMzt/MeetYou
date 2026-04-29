@@ -65,8 +65,6 @@ class ScheduledJobRepository(RepositoryBase):
                 editable_fields=[
                     "enabled",
                     "trigger_config.interval_seconds",
-                    "execution_policy.limits",
-                    "delivery_policy",
                 ],
                 trigger_type="interval",
                 trigger_config={"type": "interval", "interval_seconds": int(interval_seconds or 600)},
@@ -84,8 +82,6 @@ class ScheduledJobRepository(RepositoryBase):
         row.editable_fields = [
             "enabled",
             "trigger_config.interval_seconds",
-            "execution_policy.limits",
-            "delivery_policy",
         ]
         row.action_ref = "core.workflow.heartbeat"
         if not isinstance(row.trigger_config, dict) or not row.trigger_config:
@@ -118,29 +114,61 @@ class ScheduledJobRepository(RepositoryBase):
         row = self.get_by_job_id(job_id)
         if row is None:
             return None
-        editable = set(row.editable_fields or [])
         is_system = not bool(row.deletable)
-        if name is not None and not is_system:
+        if is_system:
+            disallowed = [
+                field_name
+                for field_name, value in (
+                    ("name", name),
+                    ("timezone", timezone),
+                    ("action_ref", action_ref),
+                    ("run_template", run_template),
+                    ("execution_policy", execution_policy),
+                    ("delivery_policy", delivery_policy),
+                    ("concurrency_policy", concurrency_policy),
+                    ("misfire_policy", misfire_policy),
+                    ("metadata", metadata),
+                )
+                if value is not None
+            ]
+            if disallowed:
+                raise ValueError("system.heartbeat only allows enabled and interval_seconds updates.")
+            if enabled is not None:
+                row.enabled = bool(enabled)
+            if trigger_config is not None:
+                requested = dict(trigger_config or {})
+                unknown = sorted(set(requested) - {"type", "interval_seconds"})
+                trigger_type = str(requested.get("type") or "interval").strip() or "interval"
+                if unknown or trigger_type != "interval" or "interval_seconds" not in requested:
+                    raise ValueError("system.heartbeat trigger_config may only set interval_seconds.")
+                interval_seconds = int(requested.get("interval_seconds") or 0)
+                if interval_seconds <= 0:
+                    raise ValueError("system.heartbeat interval_seconds must be positive.")
+                row.trigger_config = {"type": "interval", "interval_seconds": interval_seconds}
+            self.session.flush()
+            return row
+
+        if name is not None:
             row.name = name
-        if enabled is not None and ("enabled" in editable or not is_system):
+        if enabled is not None:
             row.enabled = bool(enabled)
-        if trigger_config is not None and ("trigger_config" in editable or "trigger_config.interval_seconds" in editable or not is_system):
+        if trigger_config is not None:
             row.trigger_config = dict(trigger_config or {})
-        if timezone is not None and not is_system:
+        if timezone is not None:
             row.timezone = timezone
-        if action_ref is not None and not is_system:
+        if action_ref is not None:
             row.action_ref = action_ref
-        if run_template is not None and not is_system:
+        if run_template is not None:
             row.run_template = dict(run_template or {})
-        if execution_policy is not None and ("execution_policy" in editable or "execution_policy.limits" in editable or not is_system):
+        if execution_policy is not None:
             row.execution_policy = dict(execution_policy or {})
-        if delivery_policy is not None and ("delivery_policy" in editable or not is_system):
+        if delivery_policy is not None:
             row.delivery_policy = dict(delivery_policy or {})
-        if concurrency_policy is not None and not is_system:
+        if concurrency_policy is not None:
             row.concurrency_policy = dict(concurrency_policy or {})
-        if misfire_policy is not None and not is_system:
+        if misfire_policy is not None:
             row.misfire_policy = dict(misfire_policy or {})
-        if metadata is not None and not is_system:
+        if metadata is not None:
             row.meta = dict(metadata or {})
         self.session.flush()
         return row

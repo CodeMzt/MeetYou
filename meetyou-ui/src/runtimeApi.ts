@@ -2,7 +2,7 @@ import { fetchWithAuth, readErrorMessage, resolveAccessToken } from './apiClient
 import { parseRuntimeUsageEnvelope } from './protocolClient'
 import type {
   AssistantMode,
-  ClientAttachmentRecord,
+  RuntimeAttachmentRecord,
   AvailableEndpoint,
   ContextPoolQueryResponse,
   DanxiActionResponse,
@@ -13,17 +13,17 @@ import type {
   DanxiSessionStatus,
   DanxiSummaryResponse,
   DanxiUserProfileResponse,
-  ClientMessage,
-  ClientMessageCreatePayload,
-  ClientOperation,
+  RuntimeMessage,
+  RuntimeMessageCreatePayload,
+  RuntimeOperation,
   OperatorSourceProfile,
-  ClientSession,
-  ClientThread,
+  RuntimeSession,
+  RuntimeThread,
   RuntimeUsageSnapshot,
-  ClientWorkspace,
+  RuntimeWorkspace,
 } from './types'
 
-export interface ClientAttachmentDownloadTicket {
+export interface RuntimeAttachmentDownloadTicket {
   attachment_id: string
   ticket_id: string
   download_url: string
@@ -35,7 +35,7 @@ export interface ClientAttachmentDownloadTicket {
   size_bytes: number
 }
 
-export interface ClientAttachmentDownloadPlan {
+export interface RuntimeAttachmentDownloadPlan {
   mode: 'direct' | 'proxy'
   url: string
   fileName: string
@@ -78,7 +78,7 @@ function isProxyAttachmentDownloadUrl(url: string): boolean {
   }
 }
 
-function toClientWsBaseUrl(baseUrl: string): string {
+function toEndpointWsBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/^http/i, 'ws')
 }
 
@@ -101,9 +101,9 @@ async function readJsonOrThrow<T>(response: Response, fallback: string): Promise
   throw new Error(failure.message)
 }
 
-export async function listClientWorkspaces(baseUrl: string): Promise<ClientWorkspace[]> {
+export async function listRuntimeWorkspaces(baseUrl: string): Promise<RuntimeWorkspace[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/workspaces'))
-  return readJsonOrThrow<ClientWorkspace[]>(response, '加载工作空间失败')
+  return readJsonOrThrow<RuntimeWorkspace[]>(response, '加载工作空间失败')
 }
 
 export async function loginDanxiSession(
@@ -360,13 +360,13 @@ export async function updateOperatorWorkspaceGovernance(
     preferred_source_profiles?: string[]
     memory_ranking_policy?: string
   },
-): Promise<ClientWorkspace> {
+): Promise<RuntimeWorkspace> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientWorkspace>(response, '更新工作区治理失败')
+  return readJsonOrThrow<RuntimeWorkspace>(response, '更新工作区治理失败')
 }
 
 export async function listOperatorSourceProfiles(baseUrl: string): Promise<OperatorSourceProfile[]> {
@@ -374,70 +374,70 @@ export async function listOperatorSourceProfiles(baseUrl: string): Promise<Opera
   return readJsonOrThrow<OperatorSourceProfile[]>(response, '加载来源档案目录失败')
 }
 
-export async function createClientThread(
+export async function createRuntimeThread(
   baseUrl: string,
-  payload: Pick<ClientThread, 'title'> & { home_workspace_id?: string; workspace_id?: string; mode?: string },
-): Promise<ClientThread> {
+  payload: Pick<RuntimeThread, 'title'> & { home_workspace_id?: string; workspace_id?: string; mode?: string },
+): Promise<RuntimeThread> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/threads'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientThread>(response, '创建会话线程失败')
+  return readJsonOrThrow<RuntimeThread>(response, '创建会话线程失败')
 }
 
-export async function createClientSession(
+export async function createRuntimeSession(
   baseUrl: string,
   payload: {
     thread_id: string
     active_workspace_id?: string
     workspace_id?: string
-    client_id: string
-    client_type?: string
+    endpoint_id: string
+    endpoint_type?: string
     display_name?: string
   },
-): Promise<ClientSession> {
+): Promise<RuntimeSession> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/sessions'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientSession>(response, '创建端点会话失败')
+  return readJsonOrThrow<RuntimeSession>(response, '创建端点会话失败')
 }
 
-export async function updateClientSessionActiveWorkspace(
+export async function updateRuntimeSessionActiveWorkspace(
   baseUrl: string,
   sessionId: string,
-  payload: { active_workspace_id: string; client_id?: string },
-): Promise<ClientSession> {
+  payload: { active_workspace_id: string; endpoint_id?: string },
+): Promise<RuntimeSession> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/sessions/${encodeURIComponent(sessionId)}/active-workspace`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientSession>(response, '切换工作区失败')
+  return readJsonOrThrow<RuntimeSession>(response, '切换工作区失败')
 }
 
-export async function sendClientMessage(baseUrl: string, payload: ClientMessageCreatePayload): Promise<ClientMessage> {
+export async function sendRuntimeMessage(baseUrl: string, payload: RuntimeMessageCreatePayload): Promise<RuntimeMessage> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/messages'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientMessage>(response, '发送消息失败')
+  return readJsonOrThrow<RuntimeMessage>(response, '发送消息失败')
 }
 
-export async function listThreadMessages(baseUrl: string, threadId: string): Promise<ClientMessage[]> {
+export async function listThreadMessages(baseUrl: string, threadId: string): Promise<RuntimeMessage[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/messages`))
-  return readJsonOrThrow<ClientMessage[]>(response, '加载消息历史失败')
+  return readJsonOrThrow<RuntimeMessage[]>(response, '加载消息历史失败')
 }
 
-export async function createClientOperation(
+export async function createRuntimeOperation(
   baseUrl: string,
   payload: {
     thread_id: string
     workspace_id: string
-    client_id?: string
+    endpoint_id?: string
     session_id?: string
     title: string
     operation_type: string
@@ -447,13 +447,13 @@ export async function createClientOperation(
     tool_id?: string
     arguments?: Record<string, unknown>
   },
-): Promise<ClientOperation> {
+): Promise<RuntimeOperation> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/operations'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientOperation>(response, '创建操作失败')
+  return readJsonOrThrow<RuntimeOperation>(response, '创建操作失败')
 }
 
 export async function listAvailableEndpoints(baseUrl: string, workspaceId: string): Promise<AvailableEndpoint[]> {
@@ -475,10 +475,10 @@ export async function queryContextPool(
   return readJsonOrThrow<ContextPoolQueryResponse>(response, '查询上下文池失败')
 }
 
-export async function decideClientApproval(
+export async function decideRuntimeApproval(
   baseUrl: string,
   approvalId: string,
-  payload: { decision: 'approve' | 'reject'; reason?: string; client_id?: string },
+  payload: { decision: 'approve' | 'reject'; reason?: string; endpoint_id?: string },
 ): Promise<{
   approval_id: string
   operation_id: string
@@ -497,14 +497,14 @@ export async function decideClientApproval(
   return readJsonOrThrow(response, '提交审批结果失败')
 }
 
-export async function submitClientConfirmResponse(
+export async function submitRuntimeConfirmResponse(
   baseUrl: string,
   sessionId: string,
   payload: {
     accepted: boolean
     request_id: string
     reason?: string
-    client_id?: string
+    endpoint_id?: string
   },
 ): Promise<{
   request_id: string
@@ -525,14 +525,14 @@ export async function submitClientConfirmResponse(
   return readJsonOrThrow(response, '提交确认结果失败')
 }
 
-export async function submitClientHumanInputResponse(
+export async function submitRuntimeHumanInputResponse(
   baseUrl: string,
   sessionId: string,
   payload: {
     request_id: string
     answer_text: string
     selected_option?: string
-    client_id?: string
+    endpoint_id?: string
   },
 ): Promise<{
   request_id: string
@@ -551,7 +551,7 @@ export async function submitClientHumanInputResponse(
   return readJsonOrThrow(response, '提交补充输入结果失败')
 }
 
-export async function createClientAttachmentUploadTicket(
+export async function createRuntimeAttachmentUploadTicket(
   baseUrl: string,
   payload: {
     owner_type: string
@@ -561,7 +561,7 @@ export async function createClientAttachmentUploadTicket(
     file_name?: string
     size_bytes?: number
     lifecycle_policy?: string
-    client_id?: string
+    endpoint_id?: string
   },
 ): Promise<{
   attachment_id: string
@@ -579,7 +579,7 @@ export async function createClientAttachmentUploadTicket(
   return readJsonOrThrow(response, '创建附件上传票据失败')
 }
 
-export async function uploadClientAttachmentContent(
+export async function uploadRuntimeAttachmentContent(
   uploadUrl: string,
   file: Blob,
 ): Promise<{
@@ -596,48 +596,48 @@ export async function uploadClientAttachmentContent(
   return readJsonOrThrow(response, '上传附件内容失败')
 }
 
-export async function completeClientAttachment(
+export async function completeRuntimeAttachment(
   baseUrl: string,
   attachmentId: string,
   payload: { ticket_id?: string; sha256?: string; size_bytes?: number },
-): Promise<ClientAttachmentRecord> {
+): Promise<RuntimeAttachmentRecord> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}/complete`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<ClientAttachmentRecord>(response, '完成附件上传失败')
+  return readJsonOrThrow<RuntimeAttachmentRecord>(response, '完成附件上传失败')
 }
 
-export async function listClientThreadAttachments(
+export async function listRuntimeThreadAttachments(
   baseUrl: string,
   threadId: string,
-): Promise<ClientAttachmentRecord[]> {
+): Promise<RuntimeAttachmentRecord[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/attachments`))
-  return readJsonOrThrow<ClientAttachmentRecord[]>(response, '加载附件列表失败')
+  return readJsonOrThrow<RuntimeAttachmentRecord[]>(response, '加载附件列表失败')
 }
 
-export async function deleteClientAttachment(
+export async function deleteRuntimeAttachment(
   baseUrl: string,
   attachmentId: string,
-): Promise<ClientAttachmentRecord> {
+): Promise<RuntimeAttachmentRecord> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}`), {
     method: 'DELETE',
   })
-  return readJsonOrThrow<ClientAttachmentRecord>(response, '删除附件失败')
+  return readJsonOrThrow<RuntimeAttachmentRecord>(response, '删除附件失败')
 }
 
-export async function createClientAttachmentDownloadTicket(
+export async function createRuntimeAttachmentDownloadTicket(
   baseUrl: string,
   attachmentId: string,
-  clientId?: string,
-): Promise<ClientAttachmentDownloadTicket> {
-  const query = clientId ? `?client_id=${encodeURIComponent(clientId)}` : ''
+  endpointId?: string,
+): Promise<RuntimeAttachmentDownloadTicket> {
+  const query = endpointId ? `?endpoint_id=${encodeURIComponent(endpointId)}` : ''
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}/download-ticket${query}`))
   return readJsonOrThrow(response, '创建附件下载票据失败')
 }
 
-export function resolveClientAttachmentDownloadPlan(ticket: ClientAttachmentDownloadTicket): ClientAttachmentDownloadPlan {
+export function resolveRuntimeAttachmentDownloadPlan(ticket: RuntimeAttachmentDownloadTicket): RuntimeAttachmentDownloadPlan {
   const directUrl = String(ticket.download_url || '').trim()
   const fallbackUrl = String(ticket.fallback_download_url || '').trim()
   const strategy = String(ticket.download_strategy || '').trim().toLowerCase()
@@ -663,7 +663,7 @@ export function resolveClientAttachmentDownloadPlan(ticket: ClientAttachmentDown
   }
 }
 
-export async function downloadClientAttachmentContent(downloadUrl: string): Promise<Blob> {
+export async function downloadRuntimeAttachmentContent(downloadUrl: string): Promise<Blob> {
   const response = await fetchWithAuth(downloadUrl)
   if (!response.ok) {
     const failure = await readErrorMessage(response, '下载附件内容失败')
@@ -717,21 +717,21 @@ export async function deleteDesktopMemoryRecord(
   return readJsonOrThrow<MemoryRecordMutationResult>(response, '删除记忆记录失败')
 }
 
-export async function createClientWsUrl(
+export async function createEndpointWsUrl(
   baseUrl: string,
   threadId: string,
   identity: {
-    clientId?: string
+    endpointId?: string
     sessionId?: string
     workspaceId?: string
-    clientType?: string
+    endpointType?: string
     displayName?: string
   } = {},
 ): Promise<string> {
-  const url = new URL(`${toClientWsBaseUrl(baseUrl)}/desktop/ws`)
+  const url = new URL(`${toEndpointWsBaseUrl(baseUrl)}/desktop/ws`)
   url.searchParams.set('thread_id', threadId)
-  if (identity.clientId) {
-    url.searchParams.set('client_id', identity.clientId)
+  if (identity.endpointId) {
+    url.searchParams.set('endpoint_id', identity.endpointId)
   }
   if (identity.sessionId) {
     url.searchParams.set('session_id', identity.sessionId)
@@ -739,8 +739,8 @@ export async function createClientWsUrl(
   if (identity.workspaceId) {
     url.searchParams.set('workspace_id', identity.workspaceId)
   }
-  if (identity.clientType) {
-    url.searchParams.set('client_type', identity.clientType)
+  if (identity.endpointType) {
+    url.searchParams.set('endpoint_type', identity.endpointType)
   }
   if (identity.displayName) {
     url.searchParams.set('display_name', identity.displayName)

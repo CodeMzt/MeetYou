@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
 
 from core.app_lifecycle import build_runtime_processors, start_external_endpoint_providers
+from core.heart import Heart
 
 
 class _Config:
@@ -19,9 +20,7 @@ class AppLifecycleV4Tests(unittest.TestCase):
             brain_processor=lambda: "brain",
             scheduler_processor=lambda: "scheduler",
             heart=SimpleNamespace(
-                scheduler_processor=lambda: "legacy_scheduler",
                 housekeeping_processor=lambda: "housekeeping",
-                heartbeat_processor=lambda: "legacy_heartbeat",
             ),
             proprioceptor=SimpleNamespace(run=lambda: "proprioceptor"),
         )
@@ -30,6 +29,9 @@ class AppLifecycleV4Tests(unittest.TestCase):
             build_runtime_processors(app),
             ("brain", "scheduler", "housekeeping", "proprioceptor"),
         )
+
+    def test_heart_no_longer_exposes_scheduler_clock(self):
+        self.assertFalse(hasattr(Heart, "scheduler_processor"))
 
     def test_external_endpoint_provider_failure_does_not_block_other_providers(self):
         async def failing_feishu(app):

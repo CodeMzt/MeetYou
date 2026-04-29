@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -38,7 +38,7 @@ DEFAULT_OUTBOUND_QUEUE_SIZE = 500
 DEFAULT_OUTBOUND_MIN_INTERVAL_MS = 250
 DEFAULT_SEND_TIMEOUT_MS = 10000
 DEFAULT_STATE_FLUSH_INTERVAL_MS = 500
-DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS = 600
+DEFAULT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS = 600
 _MAX_STATE_EVENTS = 4096
 _BLOCKED_SEND_STATUSES = {"manual_only", "mute", "read_only", "blocked"}
 MEETWECHAT_BASIC_TOOL_BUNDLE = list(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE)
@@ -527,7 +527,7 @@ class MeetWeChatOutputService:
         if asyncio.iscoroutine(result):
             await result
 
-    async def send_client_event(self, chat_id: str, payload: dict[str, Any]) -> None:
+    async def send_runtime_event(self, chat_id: str, payload: dict[str, Any]) -> None:
         if payload.get("schema") != "meetyou.endpoint.ws.v4":
             return
         frame_type = str(payload.get("type") or "")
@@ -567,7 +567,7 @@ class MeetWeChatOutputService:
             if pending is not None:
                 request_id = str(body.get("request_id") or "")
                 self._pending_confirm_requests[pending.participant_key] = request_id
-                text = f"{body.get('content', '')}\nConfirm ID: {request_id}\nReply y/yes to approve, n/no to reject."
+                text = f"{body.get('content', '')}\n确认编号: {request_id}\n请回复 y/yes/确认 或 n/no/拒绝。"
                 self._enqueue_outbound(pending, text, delay_before_send=False)
             return
         if event_type == "confirm.resolved":
@@ -586,7 +586,7 @@ class MeetWeChatOutputService:
                 }
                 option_lines = "\n".join(f"{index}. {option}" for index, option in enumerate(options, start=1))
                 suffix = f"\n{option_lines}" if option_lines else ""
-                text = f"{body.get('question', '')}{suffix}\nReply with a number or text.\nRequest ID: {request_id}"
+                text = f"{body.get('question', '')}{suffix}\n请回复编号或直接输入内容。\n请求编号: {request_id}"
                 self._enqueue_outbound(pending, text, delay_before_send=False)
             return
         if event_type == "human_input.resolved":
@@ -865,9 +865,9 @@ class MeetWeChatInputAdapter:
         )
         self._gateway_clients: dict[str, Any] = {}
         self._gateway_client_last_used: dict[str, float] = {}
-        self._gateway_client_idle_ttl_seconds = _safe_positive_int(
-            config.get("meetwechat_gateway_client_idle_ttl_seconds"),
-            DEFAULT_GATEWAY_CLIENT_IDLE_TTL_SECONDS,
+        self._gateway_endpoint_idle_ttl_seconds = _safe_positive_int(
+            config.get("meetwechat_gateway_endpoint_idle_ttl_seconds"),
+            DEFAULT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS,
         )
         self._poll_task: asyncio.Task | None = None
         self._closed = False
@@ -1079,7 +1079,7 @@ class MeetWeChatInputAdapter:
                 self._format_inbound_text(event),
                 metadata=self._metadata_for(event),
                 preferred_mode=_infer_preferred_mode(text),
-                client_message_id=event.event_id,
+                endpoint_message_id=event.event_id,
             )
             result = await asyncio.wait_for(future, timeout=self._policy.reply_timeout_seconds)
         except Exception as exc:
@@ -1170,13 +1170,13 @@ class MeetWeChatInputAdapter:
         return f"wechat:meetwechat:{prefix}:{event.chat_id}"
 
     async def _close_idle_gateway_clients(self) -> None:
-        if self._gateway_client_idle_ttl_seconds <= 0 or not self._gateway_clients:
+        if self._gateway_endpoint_idle_ttl_seconds <= 0 or not self._gateway_clients:
             return
         now = asyncio.get_running_loop().time()
         stale_keys = [
             key
             for key, last_used in self._gateway_client_last_used.items()
-            if now - float(last_used or 0) >= self._gateway_client_idle_ttl_seconds
+            if now - float(last_used or 0) >= self._gateway_endpoint_idle_ttl_seconds
         ]
         for conversation_key in stale_keys:
             client = self._gateway_clients.pop(conversation_key, None)
@@ -1196,14 +1196,14 @@ class MeetWeChatInputAdapter:
             thread_id = self._state_store.get_thread_id(conversation_key)
             client = self._gateway_client_factory(
                 base_url=self._gateway_base_url,
-                client_id=f"meetwechat-{digest}",
-                client_type="wechat",
+                provider_id=f"meetwechat-{digest}",
+                provider_type="wechat",
                 display_name=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
                 workspace_id="personal",
                 access_token=self._gateway_access_token,
                 thread_title=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
                 thread_id=thread_id,
-                event_handler=lambda payload, chat_id=event.chat_id: self._output_adapter.send_client_event(
+                event_handler=lambda payload, chat_id=event.chat_id: self._output_adapter.send_runtime_event(
                     chat_id,
                     payload,
                 ),

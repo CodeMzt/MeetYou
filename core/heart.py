@@ -169,12 +169,6 @@ class Heart:
         if self._http_session is None:
             self._http_session = aiohttp.ClientSession() if aiohttp is not None else _FallbackClientSession()
         self._memory.set_housekeeping_adapter(self._adapter)
-        try:
-            changed = await self._task_manager.backfill_scheduled_tasks()
-            if changed:
-                logger.info("Backfilled schedule metadata for %s task(s)", changed)
-        except Exception as exc:
-            logger.warning("Task schedule backfill failed: %s", exc)
         logger.info(
             "Heart initialized: heartbeat=%ss housekeeping=%ss scheduler=%ss model=%s",
             self._heartbeat_interval,
@@ -230,57 +224,6 @@ class Heart:
 
     def set_core_services(self, core_services):
         self._core_services = core_services
-
-    def _task_operation_context(self, task_record: dict[str, Any]) -> tuple[object | None, object | None, object | None]:
-        if self._core_services is None:
-            return None, None, None
-        delivery = task_record.get("delivery_target") if isinstance(task_record.get("delivery_target"), dict) else {}
-        session_id = str(delivery.get("session_id") or task_record.get("origin_session_id") or "").strip()
-        if not session_id:
-            return None, None, None
-        session_row = self._core_services.session.get_by_session_id(session_id)
-        if session_row is None:
-            return None, None, None
-        thread_row = self._core_services.thread.get_by_id(session_row.thread_id)
-        workspace_row = self._core_services.workspace.get_by_id(session_row.workspace_id)
-        if thread_row is None or workspace_row is None:
-            return None, None, None
-        return session_row, thread_row, workspace_row
-
-    async def _create_scheduled_operation(self, task_record: dict[str, Any], *, operation_type: str, title: str):
-        if self._core_services is None:
-            return None
-        session_row, thread_row, workspace_row = self._task_operation_context(task_record)
-        if session_row is None or thread_row is None or workspace_row is None:
-            return None
-        operation = self._core_services.operation.create_operation(
-            thread_id=thread_row.id,
-            workspace_id=workspace_row.id,
-            operation_type=operation_type,
-            execution_target="core_only",
-            title=title,
-            requested_by_client_id=session_row.client_id,
-            requested_by_session_id=session_row.id,
-            status="queued",
-            metadata={
-                "workspace_id": getattr(workspace_row, "workspace_id", ""),
-                "task_key": str(task_record.get("task_key") or ""),
-                "task_summary": str(task_record.get("content") or "").strip(),
-                "preferred_tool_key": str(task_record.get("preferred_tool_key") or ""),
-                "preferred_target_endpoint_ids": list(task_record.get("preferred_target_endpoint_ids") or []),
-                "preferred_endpoint_provider_types": list(task_record.get("preferred_endpoint_provider_types") or []),
-                "tool_target_routing_policy": str(task_record.get("tool_target_routing_policy") or "balanced") or "balanced",
-                "source": "heart_scheduler",
-            },
-        )
-        remember_operation = getattr(self._task_manager, "remember_task_operation", None)
-        if callable(remember_operation):
-            await remember_operation(
-                str(task_record.get("task_key") or ""),
-                operation_id=operation.operation_id,
-                status="queued",
-            )
-        return operation
 
     async def close_heart(self):
         if self._http_session:
@@ -804,7 +747,7 @@ class Heart:
             dict.fromkeys(
                 list(payload.get("background_status_sources") or [])
                 + [
-                    "task_manager.build_background_status",
+                    "task_manager.user_todo",
                     "heart.job_runtime",
                     "memory.pending_consolidation",
                     "session.latest_user_activity",
@@ -910,100 +853,6 @@ class Heart:
             except asyncio.TimeoutError:
                 pass
 
-    async def scheduler_processor(self):
-        shutdown = self._event_bus.shutdown_event
-        while True:
-            if shutdown.is_set() or self._http_session is None:
-                break
-            started_at = _utcnow_iso()
-            token = self._bind_job_context("scheduler")
-            try:
-                try:
-                    self._update_job(
-                        "scheduler",
-                        status="running",
-                        runtime_source="heart.scheduler",
-                        started_at=started_at,
-                        increment_attempt=True,
-                    )
-                    claimed = await self._task_manager.claim_due_tasks(limit=8, lease_seconds=120)
-                    self._last_scheduler_tick_at = _utcnow_iso()
-                    self._last_scheduler_claim_count = len(claimed)
-                    for record in claimed:
-                        control_kind = "scheduled_task" if record.get("auto_run") else "scheduled_reminder"
-                        claim_token = str(record.get("active_claim_token") or "").strip()
-                        operation = await self._create_scheduled_operation(
-                            record,
-                            operation_type="scheduled_task_run" if record.get("auto_run") else "scheduled_reminder_run",
-                            title=(
-                                f"Scheduled Task: {str(record.get('content') or '').strip()}"
-                                if record.get("auto_run")
-                                else f"Scheduled Reminder: {str(record.get('content') or '').strip()}"
-                            ),
-                        )
-                        await self._event_bus.inbound_queue.put(
-                            InboundEvent(
-                                session_id=f"system:task:{record.get('task_key', '')}",
-                                type=EventType.CONTROL.value,
-                                role="system",
-                                content={
-                                    "task_key": record.get("task_key", ""),
-                                    "claim_token": claim_token,
-                                    "operation_id": getattr(operation, "operation_id", ""),
-                                },
-                                source=self._source,
-                                target=EventTarget(kind=TargetKind.INTERNAL.value),
-                                metadata={
-                                    "control_kind": control_kind,
-                                    "claim_token": claim_token,
-                                    "operation_id": getattr(operation, "operation_id", ""),
-                                },
-                            )
-                        )
-                    self._update_job(
-                        "scheduler",
-                        status="succeeded",
-                        runtime_source="heart.scheduler",
-                        finished_at=self._last_scheduler_tick_at,
-                        success_at=self._last_scheduler_tick_at,
-                        next_retry_at=None,
-                        retry_count=0,
-                        last_failure=None,
-                        last_result={
-                            "status": "ok",
-                            "claimed_count": len(claimed),
-                            "at": self._last_scheduler_tick_at,
-                        },
-                        last_delivery=delivery_payload(state="not_applicable"),
-                    )
-                except Exception as exc:
-                    logger.error("Scheduler tick failed: %s", exc)
-                    failed_at = _utcnow_iso()
-                    self._update_job(
-                        "scheduler",
-                        status="failed",
-                        runtime_source="heart.scheduler",
-                        finished_at=failed_at,
-                        next_retry_at=None,
-                        retry_count=int(self._job_record("scheduler").get("retry_count", 0) or 0) + 1,
-                        last_failure=failure_payload(
-                            category="retryable",
-                            code="scheduler_tick_failed",
-                            message=str(exc),
-                            at=failed_at,
-                        ),
-                        last_result={"status": "error", "message": str(exc), "at": failed_at},
-                        last_delivery=delivery_payload(state="not_applicable"),
-                    )
-            finally:
-                reset_event_context(token)
-
-            try:
-                await asyncio.wait_for(shutdown.wait(), timeout=max(self._scheduler_interval, 1))
-                break
-            except asyncio.TimeoutError:
-                pass
-
     def _heartbeat_route_context(self, tools: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "tool_bundle": [
@@ -1033,7 +882,10 @@ class Heart:
             return None
         return payload if isinstance(payload, dict) else None
 
-    async def heartbeat_processor(self, *, once: bool = False):
+    async def heartbeat_processor(self, *, once: bool = True):
+        if not once:
+            logger.warning("Heartbeat processor is one-shot in V4; Scheduler owns the heartbeat clock.")
+            once = True
         shutdown = self._event_bus.shutdown_event
 
         while True:

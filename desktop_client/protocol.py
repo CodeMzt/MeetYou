@@ -34,8 +34,8 @@ def _configured_tool_keys(values: list[str], defaults: list[str]) -> list[str]:
 
 def build_static_tools(config: DesktopClientConfig, *, extra_tools: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     workspace_ids = list(config.workspace_ids)
-    client_id = config.client_id
-    executor_endpoint_id = f"desktop.{client_id}.executor"
+    provider_id = config.provider_id
+    executor_endpoint_id = f"desktop.{provider_id}.executor"
     base = [
         {
             "tool_id": build_endpoint_tool_id(executor_endpoint_id, "utility.echo"),
@@ -116,7 +116,7 @@ def build_hello(config: DesktopClientConfig, *, extra_tools: list[dict[str, Any]
     del extra_tools
     host_os = normalize_platform_system(platform.system())
     return build_endpoint_hello(
-        provider_id=config.client_id,
+        provider_id=config.provider_id,
         provider_type="desktop",
         display_name=config.display_name,
         transport_profile=config.transport_profile,
@@ -137,7 +137,7 @@ def build_tools_snapshot(
     extra_tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return build_endpoint_capabilities_snapshot(
-        provider_id=config.client_id,
+        provider_id=config.provider_id,
         revision=revision,
         capabilities=build_static_tools(config, extra_tools=extra_tools),
     )
@@ -145,7 +145,7 @@ def build_tools_snapshot(
 
 def build_heartbeat(config: DesktopClientConfig, *, status: str = "ready", metrics: dict[str, Any] | None = None) -> dict[str, Any]:
     return build_endpoint_heartbeat(
-        provider_id=config.client_id,
+        provider_id=config.provider_id,
         status=status,
         metrics=metrics,
     )
@@ -153,7 +153,7 @@ def build_heartbeat(config: DesktopClientConfig, *, status: str = "ready", metri
 
 def build_call_accepted(config: DesktopClientConfig, *, call_id: str, correlation_id: str) -> dict[str, Any]:
     return build_tool_call_accepted_message(
-        provider_id=config.client_id,
+        provider_id=config.provider_id,
         call_id=call_id,
         correlation_id=correlation_id,
     )
@@ -161,7 +161,7 @@ def build_call_accepted(config: DesktopClientConfig, *, call_id: str, correlatio
 
 def build_call_progress(config: DesktopClientConfig, *, call_id: str, correlation_id: str, phase: str, detail: str) -> dict[str, Any]:
     return build_tool_call_progress_message(
-        provider_id=config.client_id,
+        provider_id=config.provider_id,
         call_id=call_id,
         correlation_id=correlation_id,
         phase=phase,
@@ -178,7 +178,7 @@ def build_call_result(
     attachment_outputs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return build_tool_call_result_message(
-        provider_id=config.client_id,
+        provider_id=config.provider_id,
         call_id=call_id,
         correlation_id=correlation_id,
         result=result,
@@ -188,7 +188,7 @@ def build_call_result(
 
 def build_call_error(config: DesktopClientConfig, *, call_id: str, correlation_id: str, code: str, message: str, retryable: bool = False) -> dict[str, Any]:
     return build_tool_call_error_message(
-        provider_id=config.client_id,
+        provider_id=config.provider_id,
         call_id=call_id,
         correlation_id=correlation_id,
         code=code,

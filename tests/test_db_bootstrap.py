@@ -50,7 +50,7 @@ class DatabaseBootstrapTests(unittest.TestCase):
         try:
             self.assertEqual(context.principal.principal_key, "self")
             self.assertEqual(set(context.workspaces), {"personal", "desktop-main", "study", "home-lab"})
-            self.assertEqual(context.workspaces["desktop-main"].default_execution_target, "specific_endpoint")
+            self.assertEqual(context.workspaces["desktop-main"].default_execution_target, "endpoint")
             self.assertTrue(context.workspaces["desktop-main"].prompt_overlay)
             self.assertEqual(context.workspaces["home-lab"].default_execution_target, "workspace_any_endpoint")
             inspector = inspect(context.engine)
@@ -106,7 +106,7 @@ class DatabaseBootstrapTests(unittest.TestCase):
                 thread_id=thread.id,
                 workspace_id=context.workspaces["personal"].id,
                 operation_type="capture_screenshot",
-                execution_target="specific_endpoint",
+                execution_target="endpoint",
                 execution_target_type="endpoint",
                 execution_target_id=endpoint.endpoint_id,
                 target_endpoint_id=endpoint.id,

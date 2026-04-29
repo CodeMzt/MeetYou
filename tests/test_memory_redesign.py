@@ -76,7 +76,7 @@ class FakeContextPoolService:
                 "same_thread": False,
                 "same_workspace": False,
                 "workspace_tags": ["remote"],
-                "metadata": {"client_id": "feishu"},
+                "metadata": {"endpoint_id": "feishu"},
                 "created_at": "2026-04-24T00:00:00Z",
             }
         ]
@@ -640,15 +640,15 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("desktop-app", user_ids)
         self.assertEqual(len(graph["nodes"]), snapshot["stats"]["record_count"])
 
-    async def test_principal_scoped_memory_cross_client_recall_preserves_source_attribution(self):
-        feishu_source = DummySource(kind="feishu", source_id="feishu-user", metadata={"client_id": "feishu-bot"})
-        desktop_source = DummySource(kind="web", source_id="desktop-app", metadata={"client_id": "desktop-app"})
+    async def test_principal_scoped_memory_cross_endpoint_recall_preserves_source_attribution(self):
+        feishu_source = DummySource(kind="feishu", source_id="feishu-user", metadata={"endpoint_id": "feishu-bot"})
+        desktop_source = DummySource(kind="web", source_id="desktop-app", metadata={"endpoint_id": "desktop-app"})
 
         feishu_token = bind_event_context(
             principal_key="self",
             principal_id="principal-row-1",
             source=feishu_source,
-            client_id="feishu-bot",
+            endpoint_id="feishu-bot",
             workspace_id="personal",
             active_workspace_id="personal",
             thread_id="thr_feishu",
@@ -662,7 +662,7 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
             principal_key="self",
             principal_id="principal-row-1",
             source=desktop_source,
-            client_id="desktop-app",
+            endpoint_id="desktop-app",
             workspace_id="desktop-main",
             active_workspace_id="desktop-main",
             thread_id="thr_desktop",
@@ -683,7 +683,7 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         event = payload["recent_events"][0]
         self.assertEqual(event["scope"]["user_id"], "self")
         self.assertEqual(event["source_attribution"]["source_id"], "feishu-user")
-        self.assertEqual(event["source_attribution"]["client_id"], "feishu-bot")
+        self.assertEqual(event["source_attribution"]["endpoint_id"], "feishu-bot")
         source_view = self.memory.get_memory_snapshot(source_id="feishu-user")
         self.assertTrue(any(record["source_attribution"]["source_id"] == "feishu-user" for record in source_view["records"]))
 

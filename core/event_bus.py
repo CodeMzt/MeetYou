@@ -211,7 +211,7 @@ class EventBus:
         accepted: bool,
         request_id: str = "",
         session_id: str = "",
-        client_id: str = "",
+        endpoint_id: str = "",
         approval_id: str = "",
         reason: str = "",
     ) -> bool:
@@ -236,7 +236,7 @@ class EventBus:
                 "accepted": accepted,
                 "request_id": pending.request_id,
                 "session_id": pending.session_id,
-                "client_id": str(client_id or "").strip(),
+                "endpoint_id": str(endpoint_id or "").strip(),
                 "approval_id": str(approval_id or "").strip(),
                 "reason": str(reason or "").strip(),
             },
@@ -247,7 +247,7 @@ class EventBus:
         accepted: bool,
         request_id: str = "",
         session_id: str = "",
-        client_id: str = "",
+        endpoint_id: str = "",
         approval_id: str = "",
         reason: str = "",
     ) -> bool:
@@ -259,7 +259,7 @@ class EventBus:
             accepted,
             request_id=request_id,
             session_id=session_id,
-            client_id=client_id,
+            endpoint_id=endpoint_id,
             approval_id=approval_id,
             reason=reason,
         )

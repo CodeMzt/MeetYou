@@ -131,8 +131,8 @@ grep -R "Use /client/ws\|source_client_id as origin\|target_client_id as executi
 
 ## 验收
 
-- [ ] AGENT.md / AGENTS.md 更新或创建。
-- [ ] docs/v4 创建。
-- [ ] README 指向 V4 docs。
-- [ ] 明确 V3 docs 是 legacy。
-- [ ] 写入“基础测试后必须真实测试、CI/Deploy 后远程 Core 真实测试、Feishu/WeChatBot 最后用人类提问工具确认”的规则。
+- [x] AGENT.md / AGENTS.md 更新或创建。
+- [x] docs/v4 创建。
+- [x] README 指向 V4 docs。
+- [x] 明确 V3 docs 是 legacy。
+- [x] 写入“基础测试后必须真实测试、CI/Deploy 后远程 Core 真实测试、Feishu/WeChatBot 最后用人类提问工具确认”的规则。

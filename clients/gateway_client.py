@@ -22,8 +22,8 @@ class GatewayConversationClient:
         self,
         *,
         base_url: str,
-        client_id: str,
-        client_type: str,
+        provider_id: str,
+        provider_type: str,
         display_name: str,
         workspace_id: str = "personal",
         access_token: str = "",
@@ -33,11 +33,11 @@ class GatewayConversationClient:
     ):
         self.base_url = base_url.rstrip("/")
         self.ws_base_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
-        self.client_id = client_id
-        self.client_type = client_type
+        self.provider_id = provider_id
+        self.provider_type = provider_type
         self.display_name = display_name
         self.workspace_id = workspace_id
-        self.thread_title = thread_title or display_name or client_id
+        self.thread_title = thread_title or display_name or provider_id
         self.access_token = str(access_token or "").strip()
         self._event_handler = event_handler
 
@@ -54,16 +54,16 @@ class GatewayConversationClient:
 
     @property
     def endpoint_id(self) -> str:
-        return f"{self.client_type}.{self.client_id}.ui"
+        return f"{self.provider_type}.{self.provider_id}.ui"
 
     def _build_endpoint_ws_url(self) -> str:
         query_items = {
             "thread_id": self.thread_id,
             "session_id": self.session_id,
             "endpoint_id": self.endpoint_id,
-            "provider_id": self.client_id,
+            "provider_id": self.provider_id,
             "workspace_id": self.workspace_id,
-            "provider_type": self.client_type,
+            "provider_type": self.provider_type,
             "display_name": self.display_name,
         }
         query_string = urlencode(
@@ -106,7 +106,7 @@ class GatewayConversationClient:
         async with self._context_lock:
             if self.thread_id and self.session_id:
                 return
-            workspaces = await self.request_json("GET", "/client/workspaces")
+            workspaces = await self.request_json("GET", "/runtime/workspaces")
             if not isinstance(workspaces, list) or not workspaces:
                 raise GatewayClientError("No available workspaces")
             workspace = next((item for item in workspaces if item.get("workspace_id") == self.workspace_id), workspaces[0])
@@ -115,7 +115,7 @@ class GatewayConversationClient:
             if not self.thread_id:
                 thread = await self.request_json(
                     "POST",
-                    "/client/threads",
+                    "/runtime/threads",
                     json_body={
                         "workspace_id": self.workspace_id,
                         "title": self.thread_title,
@@ -125,12 +125,12 @@ class GatewayConversationClient:
                 self.thread_id = str(thread.get("thread_id") or "")
             session = await self.request_json(
                 "POST",
-                "/client/sessions",
+                "/runtime/sessions",
                 json_body={
                     "thread_id": self.thread_id,
                     "workspace_id": self.workspace_id,
-                    "client_id": self.client_id,
-                    "client_type": self.client_type,
+                    "endpoint_id": self.endpoint_id,
+                    "endpoint_type": self.provider_type,
                     "display_name": self.display_name,
                 },
             )
@@ -175,15 +175,15 @@ class GatewayConversationClient:
                 "endpoint_id": self.endpoint_id,
                 "payload": {
                     "provider": {
-                        "provider_type": self.client_type,
-                        "provider_id": self.client_id,
+                        "provider_type": self.provider_type,
+                        "provider_id": self.provider_id,
                         "display_name": self.display_name,
                         "transport_profile": "ui_ws",
                     },
                     "endpoints": [
                         {
                             "endpoint_id": self.endpoint_id,
-                            "endpoint_type": f"{self.client_type}_ui",
+                            "endpoint_type": f"{self.provider_type}_ui",
                             "roles": ["input", "output"],
                             "workspace_ids": [self.workspace_id],
                         }
@@ -234,25 +234,25 @@ class GatewayConversationClient:
         metadata: dict[str, Any] | None = None,
         preferred_mode: str | None = None,
         options: dict[str, Any] | None = None,
-        client_message_id: str | None = None,
+        endpoint_message_id: str | None = None,
     ) -> dict[str, Any]:
         await self.start()
         payload = await self.request_json(
             "POST",
-            "/client/messages",
+            "/runtime/messages",
             json_body={
                 "thread_id": self.thread_id,
                 "workspace_id": self.workspace_id,
-                "client_id": self.client_id,
+                "endpoint_id": self.endpoint_id,
                 "session_id": self.session_id,
-                "client_type": self.client_type,
+                "endpoint_type": self.provider_type,
                 "display_name": self.display_name,
                 "role": role,
                 "content": content,
                 "metadata": dict(metadata or {}),
                 "preferred_mode": preferred_mode,
                 "options": dict(options or {}),
-                "client_message_id": client_message_id,
+                "endpoint_message_id": endpoint_message_id,
             },
         )
         return dict(payload)
@@ -282,12 +282,12 @@ class GatewayConversationClient:
         await self.ensure_context()
         payload = await self.request_json(
             "POST",
-            f"/client/sessions/{self.session_id}/confirm-response",
+            f"/runtime/sessions/{self.session_id}/confirm-response",
             json_body={
                 "request_id": request_id,
                 "accepted": accepted,
                 "reason": reason,
-                "client_id": self.client_id,
+                "endpoint_id": self.endpoint_id,
             },
         )
         return dict(payload)
@@ -302,12 +302,12 @@ class GatewayConversationClient:
         await self.ensure_context()
         payload = await self.request_json(
             "POST",
-            f"/client/sessions/{self.session_id}/human-input-response",
+            f"/runtime/sessions/{self.session_id}/human-input-response",
             json_body={
                 "request_id": request_id,
                 "answer_text": answer_text,
                 "selected_option": selected_option,
-                "client_id": self.client_id,
+                "endpoint_id": self.endpoint_id,
             },
         )
         return dict(payload)

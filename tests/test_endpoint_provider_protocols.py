@@ -18,7 +18,7 @@ from edge_client.protocol import build_tools_snapshot as build_edge_tools_snapsh
 
 class EndpointProviderProtocolTests(unittest.TestCase):
     def test_desktop_provider_advertises_endpoint_identity_and_capabilities(self):
-        config = DesktopClientConfig(client_id="desktop-main", workspace_ids=["desktop-main"])
+        config = DesktopClientConfig(provider_id="desktop-main", workspace_ids=["desktop-main"])
 
         hello = build_desktop_hello(config)
         snapshot = build_desktop_tools_snapshot(config)
@@ -31,7 +31,7 @@ class EndpointProviderProtocolTests(unittest.TestCase):
         self.assertTrue(all(str(item["tool_id"]).startswith("endpoint.desktop.desktop-main.executor.") for item in snapshot["payload"]["capabilities"]))
 
     def test_edge_provider_uses_endpoint_schema(self):
-        config = EdgeClientConfig(client_id="edge-one", workspace_ids=["home-lab"], client_type="edge")
+        config = EdgeClientConfig(provider_id="edge-one", workspace_ids=["home-lab"], provider_type="edge")
 
         hello = build_edge_hello(config)
         snapshot = build_edge_tools_snapshot(config)
@@ -62,7 +62,7 @@ class EndpointProviderProtocolTests(unittest.TestCase):
             },
         )()
         runtime = DesktopClientMCPRuntime(
-            DesktopClientConfig(client_id="desktop-main", workspace_ids=["desktop-main"]),
+            DesktopClientConfig(provider_id="desktop-main", workspace_ids=["desktop-main"]),
             manager=manager,
         )
 

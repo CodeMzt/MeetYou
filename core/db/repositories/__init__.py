@@ -3,7 +3,6 @@ from core.db.repositories.attachment import AttachmentRepository
 from core.db.repositories.attachment_upload_ticket import AttachmentUploadTicketRepository
 from core.db.repositories.actor import ActorRepository
 from core.db.repositories.capability import CapabilityRepository
-from core.db.repositories.client import ClientRepository
 from core.db.repositories.config_entry import ConfigEntryRepository
 from core.db.repositories.context_pool import ContextPoolRepository
 from core.db.repositories.endpoint import (
@@ -32,7 +31,6 @@ __all__ = [
     "AttachmentUploadTicketRepository",
     "ActorRepository",
     "CapabilityRepository",
-    "ClientRepository",
     "ConfigEntryRepository",
     "ContextPoolRepository",
     "DeliveryAttemptRepository",

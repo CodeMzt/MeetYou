@@ -129,10 +129,11 @@ class AcceptanceError(RuntimeError):
 
 
 class V4Acceptance:
-    def __init__(self, *, base_url: str, ui_url: str, skip_ui: bool = False):
+    def __init__(self, *, base_url: str, ui_url: str, skip_ui: bool = False, desktop_tool_endpoint: str = ""):
         self.base_url = base_url.rstrip("/")
         self.ui_url = ui_url.rstrip("/")
         self.skip_ui = skip_ui
+        self.desktop_tool_endpoint = str(desktop_tool_endpoint or "").strip()
         self.marker = f"V4OK_{utcnow_compact()}_{uuid4().hex[:6]}"
         self.headers = bearer_headers()
         self.client = httpx.AsyncClient(base_url=self.base_url, headers=self.headers, timeout=90)
@@ -185,13 +186,13 @@ class V4Acceptance:
             self.ok("/client/ws removed", {"status": "connection rejected"})
 
     async def first_workspace_id(self) -> str:
-        workspaces = as_list(await self.request("GET", "/client/workspaces"))
+        workspaces = as_list(await self.request("GET", "/runtime/workspaces"))
         for item in workspaces:
             if isinstance(item, dict) and str(item.get("workspace_id") or "").strip():
                 workspace_id = str(item["workspace_id"]).strip()
                 self.ok("workspace discovered", {"workspace_id": workspace_id})
                 return workspace_id
-        self.fail("workspace discovered", "no workspace_id returned by /client/workspaces")
+        self.fail("workspace discovered", "no workspace_id returned by /runtime/workspaces")
         return ""
 
     async def receiver(self, ws, state: ProbeState) -> None:
@@ -326,7 +327,7 @@ class V4Acceptance:
     async def create_thread_and_session(self, state: ProbeState) -> tuple[str, str]:
         thread = await self.request(
             "POST",
-            "/client/threads",
+            "/runtime/threads",
             json_body={
                 "workspace_id": state.workspace_id,
                 "title": f"V4 acceptance {self.marker}",
@@ -336,12 +337,12 @@ class V4Acceptance:
         thread_id = str(thread.get("thread_id") or "")
         session = await self.request(
             "POST",
-            "/client/sessions",
+            "/runtime/sessions",
             json_body={
                 "thread_id": thread_id,
                 "workspace_id": state.workspace_id,
-                "client_id": state.ui_endpoint_id,
-                "client_type": "acceptance",
+                "endpoint_id": state.ui_endpoint_id,
+                "endpoint_type": "acceptance",
                 "display_name": "V4 Acceptance",
             },
         )
@@ -380,11 +381,11 @@ class V4Acceptance:
         prompt = f"测试，请只回复这个唯一标识，不要重复，不要添加其他内容：{self.marker}"
         await self.request(
             "POST",
-            "/client/messages",
+            "/runtime/messages",
             json_body={
                 "thread_id": thread_id,
                 "workspace_id": state.workspace_id,
-                "client_id": state.ui_endpoint_id,
+                "endpoint_id": state.ui_endpoint_id,
                 "session_id": session_id,
                 "role": "user",
                 "content": prompt,
@@ -400,7 +401,8 @@ class V4Acceptance:
         await self.wait_for(
             state,
             lambda item: item.get("type") == "delivery.run_event"
-            and item.get("payload", {}).get("type") == "assistant.progress_notice",
+            and item.get("payload", {}).get("type") == "assistant.progress_notice"
+            and self.marker in json.dumps(item.get("payload", {}), ensure_ascii=False),
             timeout=45,
             name="assistant.progress_notice",
         )
@@ -408,11 +410,12 @@ class V4Acceptance:
             state,
             lambda item: item.get("type") == "delivery.message"
             and item.get("payload", {}).get("role") == "assistant"
-            and item.get("payload", {}).get("thread_id") == thread_id,
+            and item.get("payload", {}).get("thread_id") == thread_id
+            and self.marker in str(item.get("payload", {}).get("content") or ""),
             timeout=120,
             name="assistant final message delivery",
         )
-        messages = as_list(await self.request("GET", f"/client/threads/{thread_id}/messages"))
+        messages = as_list(await self.request("GET", f"/runtime/threads/{thread_id}/messages"))
         assistant_messages = [
             item
             for item in messages
@@ -442,14 +445,84 @@ class V4Acceptance:
         )
         return {"messages": messages, "assistant": assistant_messages[0]}
 
-    async def check_tool_router(self, state: ProbeState, thread_id: str, session_id: str) -> None:
-        operation = await self.request(
+    async def post_streaming_message_and_wait(self, state: ProbeState, thread_id: str, session_id: str) -> dict[str, Any]:
+        stream_marker = f"V4STREAM_{utcnow_compact()}_{uuid4().hex[:6]}"
+        await self.request(
             "POST",
-            "/client/operations",
+            "/runtime/messages",
             json_body={
                 "thread_id": thread_id,
                 "workspace_id": state.workspace_id,
-                "client_id": state.ui_endpoint_id,
+                "endpoint_id": state.ui_endpoint_id,
+                "session_id": session_id,
+                "role": "user",
+                "content": f"测试流式输出。请只回复这个唯一标识，不要重复，不要添加其他内容：{stream_marker}",
+                "metadata": {
+                    "supports_streaming_reply": True,
+                    "progress_notice_autostart": True,
+                    "progress_notice_content": f"正在验证 V4 流式链路 {stream_marker}",
+                    "acceptance_marker": stream_marker,
+                },
+            },
+        )
+        await self.wait_for(
+            state,
+            lambda item: item.get("type") == "delivery.run_event"
+            and item.get("payload", {}).get("type") == "assistant.progress_notice"
+            and stream_marker in json.dumps(item.get("payload", {}), ensure_ascii=False),
+            timeout=45,
+            name="streaming assistant.progress_notice",
+        )
+        await self.wait_for(
+            state,
+            lambda item: item.get("type") == "delivery.run_event"
+            and item.get("payload", {}).get("type") == "message.delta",
+            timeout=120,
+            name="message.delta",
+        )
+        await self.wait_for(
+            state,
+            lambda item: item.get("type") == "delivery.run_event"
+            and item.get("payload", {}).get("type") == "message.completed",
+            timeout=120,
+            name="message.completed",
+        )
+        await self.wait_for(
+            state,
+            lambda item: item.get("type") == "delivery.message"
+            and item.get("payload", {}).get("role") == "assistant"
+            and stream_marker in str(item.get("payload", {}).get("content") or ""),
+            timeout=30,
+            name="streaming final delivery.message",
+        )
+        messages = as_list(await self.request("GET", f"/runtime/threads/{thread_id}/messages"))
+        assistant_messages = [
+            item
+            for item in messages
+            if isinstance(item, dict) and item.get("role") == "assistant" and stream_marker in str(item.get("content") or "")
+        ]
+        if len(assistant_messages) != 1:
+            self.fail("streaming final persistence", f"expected one persisted assistant message with marker, got {len(assistant_messages)}")
+        content = str(assistant_messages[0].get("content") or "")
+        if content.count(stream_marker) != 1:
+            self.fail("streaming duplicate guard", f"marker occurrence count={content.count(stream_marker)} content={content!r}")
+        self.ok(
+            "streaming delivery",
+            {
+                "message_id": assistant_messages[0].get("message_id"),
+                "content": content,
+            },
+        )
+        return {"messages": messages, "assistant": assistant_messages[0], "marker": stream_marker}
+
+    async def check_tool_router(self, state: ProbeState, thread_id: str, session_id: str) -> None:
+        operation = await self.request(
+            "POST",
+            "/runtime/operations",
+            json_body={
+                "thread_id": thread_id,
+                "workspace_id": state.workspace_id,
+                "endpoint_id": state.ui_endpoint_id,
                 "session_id": session_id,
                 "title": "V4 acceptance endpoint echo",
                 "operation_type": "tool_call",
@@ -473,6 +546,68 @@ class V4Acceptance:
         if request_payload.get("tool_key") != "utility.echo":
             self.fail("tool router", f"unexpected tool_key: {request_payload.get('tool_key')}")
         self.ok("tool router", {"operation_id": operation_id, "target": state.executor_endpoint_id})
+
+    async def check_real_desktop_tool(self, state: ProbeState, thread_id: str, session_id: str) -> None:
+        if not self.desktop_tool_endpoint:
+            self.ok("real desktop tool skipped", {"reason": "desktop_tool_endpoint not provided"})
+            return
+        endpoints = as_list(
+            await self.request(
+                "GET",
+                f"/runtime/workspaces/{state.workspace_id}/endpoints?include_tools=true",
+            )
+        )
+        endpoint = next(
+            (
+                item
+                for item in endpoints
+                if isinstance(item, dict)
+                and str(item.get("endpoint_id") or "").strip() == self.desktop_tool_endpoint
+            ),
+            None,
+        )
+        if endpoint is None:
+            self.fail("real desktop tool", f"endpoint not connected: {self.desktop_tool_endpoint}")
+        executable_tools = [str(item) for item in endpoint.get("executable_tools", [])]
+        if "utility.echo" not in executable_tools:
+            self.fail("real desktop tool", f"utility.echo is not executable on {self.desktop_tool_endpoint}: {executable_tools}")
+        marker = f"DESKTOP_TOOL_{utcnow_compact()}_{uuid4().hex[:6]}"
+        operation = await self.request(
+            "POST",
+            "/runtime/operations",
+            json_body={
+                "thread_id": thread_id,
+                "workspace_id": state.workspace_id,
+                "endpoint_id": state.ui_endpoint_id,
+                "session_id": session_id,
+                "title": "V4 acceptance real desktop echo",
+                "operation_type": "tool_call",
+                "tool_key": "utility.echo",
+                "target_endpoint_id": self.desktop_tool_endpoint,
+                "arguments": {"text": marker},
+            },
+        )
+        operation_id = str(operation.get("operation_id") or "")
+        completed = await self.wait_for(
+            state,
+            lambda item: item.get("type") == "delivery.operation_update"
+            and item.get("payload", {}).get("operation_id") == operation_id
+            and item.get("payload", {}).get("phase") == "completed",
+            timeout=60,
+            name="real desktop operation completed",
+        )
+        persisted = await self.request("GET", f"/runtime/operations/{operation_id}")
+        if str(persisted.get("status") or "") not in {"succeeded", "completed"}:
+            self.fail("real desktop tool", f"operation did not persist as completed: {persisted}")
+        self.ok(
+            "real desktop tool",
+            {
+                "operation_id": operation_id,
+                "target": self.desktop_tool_endpoint,
+                "marker": marker,
+                "phase": completed.get("payload", {}).get("phase"),
+            },
+        )
 
     async def check_scheduler(self) -> None:
         jobs = as_list(await self.request("GET", "/operator/scheduled-jobs"))
@@ -566,8 +701,10 @@ class V4Acceptance:
                 await self.register_endpoint(ws, state)
                 thread_id, session_id = await self.create_thread_and_session(state)
                 await self.subscribe_thread(ws, state, thread_id)
+                await self.post_streaming_message_and_wait(state, thread_id, session_id)
                 await self.post_message_and_wait(state, thread_id, session_id)
                 await self.check_tool_router(state, thread_id, session_id)
+                await self.check_real_desktop_tool(state, thread_id, session_id)
                 await self.check_scheduler()
                 await self.check_reconnect_replay(state, thread_id)
                 await ws.send(
@@ -602,10 +739,16 @@ async def amain() -> int:
     parser.add_argument("--base-url", default=os.environ.get("MEETYOU_CORE_BASE_URL", "http://127.0.0.1:8000"))
     parser.add_argument("--ui-url", default=os.environ.get("MEETYOU_UI_BASE_URL", "http://127.0.0.1:5173"))
     parser.add_argument("--skip-ui", action="store_true")
+    parser.add_argument("--desktop-tool-endpoint", default=os.environ.get("MEETYOU_ACCEPTANCE_DESKTOP_TOOL_ENDPOINT", ""))
     parser.add_argument("--json-out", default="")
     args = parser.parse_args()
 
-    acceptance = V4Acceptance(base_url=args.base_url, ui_url=args.ui_url, skip_ui=args.skip_ui)
+    acceptance = V4Acceptance(
+        base_url=args.base_url,
+        ui_url=args.ui_url,
+        skip_ui=args.skip_ui,
+        desktop_tool_endpoint=args.desktop_tool_endpoint,
+    )
     try:
         results = await acceptance.run()
     finally:

@@ -392,13 +392,13 @@ export default function GraphView({ graph }: { graph: MemoryGraph | null }) {
       <div className="graph-main">
         <div className="card graph-toolbar">
           <div className="graph-toolbar-copy">
-            <div className="graph-toolbar-kicker">Memory Force Graph</div>
+            <div className="graph-toolbar-kicker">记忆引力图谱</div>
             <div className="graph-toolbar-head">
               <h3 className="graph-toolbar-title">动态引力图谱</h3>
               <span className="graph-toolbar-badge">{graph.nodes.length} 节点</span>
               <span className="graph-toolbar-badge subtle">{graph.edges.length} 连接</span>
             </div>
-            <div className="graph-toolbar-subtitle">利用 Canvas 与 d3-force 底层的高性能引力引擎渲染，支持 60FPS 流畅缩放与物理碰撞。</div>
+            <div className="graph-toolbar-subtitle">使用高性能引力引擎渲染，支持流畅缩放与物理碰撞。</div>
           </div>
           <div className="graph-toolbar-side">
             <div className="graph-toolbar-actions">
@@ -480,7 +480,7 @@ export default function GraphView({ graph }: { graph: MemoryGraph | null }) {
               </div>
             </div>
             
-            {/* Inspector Overlay */}
+            {/* 检查浮层 */}
             {selectedNode && (
               <div className="graph-inspector-overlay">
                 <h4>{selectedNode.typeLabel}</h4>

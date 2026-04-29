@@ -13,7 +13,7 @@ DEFAULT_LOCAL_BRIDGE_PORT = 38951
 DEFAULT_ENV_PATH = Path(".env")
 
 
-def _default_client_id() -> str:
+def _default_provider_id() -> str:
     return f"{socket.gethostname().lower()}-desktop-client"
 
 
@@ -26,7 +26,7 @@ class DesktopClientConfig:
     core_base_url: str = "http://127.0.0.1:8000"
     core_access_token: str = ""
     gateway_access_token: str = ""
-    client_id: str = field(default_factory=_default_client_id)
+    provider_id: str = field(default_factory=_default_provider_id)
     display_name: str = field(default_factory=_default_display_name)
     workspace_ids: list[str] = field(default_factory=lambda: ["personal", "desktop-main", "study"])
     enabled_endpoint_tools: list[str] = field(default_factory=list)
@@ -131,7 +131,7 @@ def load_desktop_client_config(config_file_path: str | None = None) -> DesktopCl
         payload = json.loads(file_path.read_text(encoding="utf-8-sig"))
 
     workspace_ids = payload.get("workspace_ids") if isinstance(payload.get("workspace_ids"), list) else None
-    env_workspace_ids = os.environ.get("MEETYOU_CLIENT_WORKSPACES", "").strip()
+    env_workspace_ids = os.environ.get("MEETYOU_DESKTOP_PROVIDER_WORKSPACES", "").strip()
 
     return DesktopClientConfig(
         core_base_url=str(os.environ.get("MEETYOU_CORE_BASE_URL") or payload.get("core_base_url") or "http://127.0.0.1:8000").strip(),
@@ -141,8 +141,8 @@ def load_desktop_client_config(config_file_path: str | None = None) -> DesktopCl
             or payload.get("gateway_access_token")
             or ""
         ).strip(),
-        client_id=str(os.environ.get("MEETYOU_CLIENT_ID") or payload.get("client_id") or _default_client_id()).strip(),
-        display_name=str(os.environ.get("MEETYOU_CLIENT_DISPLAY_NAME") or payload.get("display_name") or _default_display_name()).strip(),
+        provider_id=str(os.environ.get("MEETYOU_DESKTOP_PROVIDER_ID") or payload.get("provider_id") or _default_provider_id()).strip(),
+        display_name=str(os.environ.get("MEETYOU_DESKTOP_PROVIDER_DISPLAY_NAME") or payload.get("display_name") or _default_display_name()).strip(),
         workspace_ids=[item for item in (env_workspace_ids.split(",") if env_workspace_ids else workspace_ids or ["personal", "desktop-main", "study"]) if str(item).strip()],
         enabled_endpoint_tools=_string_list(payload, "enabled_endpoint_tools", []),
         read_roots=[str(item) for item in (payload.get("read_roots") if isinstance(payload.get("read_roots"), list) else ["."])],
@@ -153,12 +153,12 @@ def load_desktop_client_config(config_file_path: str | None = None) -> DesktopCl
         max_parallel_calls=max(
             1,
             min(
-                int(os.environ.get("MEETYOU_CLIENT_MAX_PARALLEL_CALLS") or payload.get("max_parallel_calls") or 2),
+                int(os.environ.get("MEETYOU_ENDPOINT_MAX_PARALLEL_CALLS") or payload.get("max_parallel_calls") or 2),
                 4,
             ),
         ),
-        heartbeat_interval_seconds=int(os.environ.get("MEETYOU_CLIENT_HEARTBEAT_SECONDS") or payload.get("heartbeat_interval_seconds") or 20),
-        reconnect_delay_seconds=int(os.environ.get("MEETYOU_CLIENT_RECONNECT_SECONDS") or payload.get("reconnect_delay_seconds") or 3),
+        heartbeat_interval_seconds=int(os.environ.get("MEETYOU_ENDPOINT_HEARTBEAT_SECONDS") or payload.get("heartbeat_interval_seconds") or 20),
+        reconnect_delay_seconds=int(os.environ.get("MEETYOU_ENDPOINT_RECONNECT_SECONDS") or payload.get("reconnect_delay_seconds") or 3),
         supports_offline_cache=bool(payload.get("supports_offline_cache", True)),
         transport_profile=str(payload.get("transport_profile") or "desktop_wss"),
         local_bridge_enabled=_to_bool(

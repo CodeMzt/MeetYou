@@ -27,8 +27,8 @@ _LOCAL_SECRET_KEYS = {"gateway_access_token", "core_access_token"}
 _LOCAL_CONFIG_FIELDS = [
     {
         "key": "core_base_url",
-        "title": "Desktop Core Service URL",
-        "description": "HTTP base URL used by this desktop backend when it proxies UI requests to Core Service.",
+        "title": "桌面端核心服务地址",
+        "description": "桌面后端代理界面请求到核心服务时使用的 HTTP 基础地址。",
         "group": "advanced",
         "input": "text",
         "placeholder": "https://core.example.com",
@@ -36,16 +36,16 @@ _LOCAL_CONFIG_FIELDS = [
     },
     {
         "key": "gateway_access_token",
-        "title": "Desktop Gateway Access Token",
-        "description": "Bearer token used by this desktop backend for Core HTTP and client WebSocket requests.",
+        "title": "桌面网关访问令牌",
+        "description": "桌面后端访问核心 HTTP 与端点实时通道时使用的 Bearer 令牌。",
         "group": "secrets",
         "input": "password",
         "advanced": False,
     },
     {
         "key": "core_access_token",
-        "title": "Desktop Endpoint Provider Access Token",
-        "description": "Bearer token used by the packaged desktop provider when it connects to Core /endpoint/ws.",
+        "title": "桌面端点提供方访问令牌",
+        "description": "打包桌面端点提供方连接核心服务 /endpoint/ws 时使用的 Bearer 令牌。",
         "group": "secrets",
         "input": "password",
         "advanced": True,
@@ -66,13 +66,13 @@ _LOCAL_SCHEMA_ENVELOPE = {
         "config_groups": [
             {
                 "key": "secrets",
-                "title": "Secrets",
-                "description": "Local credentials used by the desktop backend.",
+                "title": "凭据",
+                "description": "桌面后端使用的本地访问凭据。",
             },
             {
                 "key": "advanced",
-                "title": "Desktop Runtime",
-                "description": "Local desktop backend connection settings.",
+                "title": "桌面运行时",
+                "description": "本地桌面后端连接设置。",
             },
         ],
         "config_fields": _LOCAL_CONFIG_FIELDS,
@@ -138,40 +138,40 @@ async def _cors_middleware(request: web.Request, handler):
 def _desktop_routes() -> list[DesktopApiRoute]:
     return [
         DesktopApiRoute("GET", "/desktop/health", lambda _request: "/health"),
-        DesktopApiRoute("GET", "/desktop/workspaces", lambda _request: "/client/workspaces"),
-        DesktopApiRoute("GET", "/desktop/workspaces/{workspace_id}/endpoints", lambda request: f"/client/workspaces/{request.match_info['workspace_id']}/endpoints?include_tools=true"),
-        DesktopApiRoute("GET", "/desktop/context-pool/query", lambda _request: "/client/context-pool/query"),
-        DesktopApiRoute("POST", "/desktop/threads", lambda _request: "/client/threads"),
-        DesktopApiRoute("POST", "/desktop/sessions", lambda _request: "/client/sessions", starts_runtime=True),
-        DesktopApiRoute("PATCH", "/desktop/sessions/{session_id}/active-workspace", lambda request: f"/client/sessions/{request.match_info['session_id']}/active-workspace"),
-        DesktopApiRoute("POST", "/desktop/messages", lambda _request: "/client/messages"),
-        DesktopApiRoute("GET", "/desktop/threads/{thread_id}/messages", lambda request: f"/client/threads/{request.match_info['thread_id']}/messages"),
-        DesktopApiRoute("POST", "/desktop/operations", lambda _request: "/client/operations"),
-        DesktopApiRoute("POST", "/desktop/approvals/{approval_id}/decision", lambda request: f"/client/approvals/{request.match_info['approval_id']}/decision"),
-        DesktopApiRoute("POST", "/desktop/sessions/{session_id}/confirm-response", lambda request: f"/client/sessions/{request.match_info['session_id']}/confirm-response"),
-        DesktopApiRoute("POST", "/desktop/sessions/{session_id}/human-input-response", lambda request: f"/client/sessions/{request.match_info['session_id']}/human-input-response"),
-        DesktopApiRoute("POST", "/desktop/attachments/upload-ticket", lambda _request: "/client/attachments/upload-ticket", rewrite_json=rewrite_attachment_ticket),
-        DesktopApiRoute("PUT", "/desktop/attachments/upload/{ticket_id}", lambda request: f"/client/attachments/upload/{request.match_info['ticket_id']}", binary_response=True),
-        DesktopApiRoute("POST", "/desktop/attachments/{attachment_id}/complete", lambda request: f"/client/attachments/{request.match_info['attachment_id']}/complete"),
-        DesktopApiRoute("GET", "/desktop/threads/{thread_id}/attachments", lambda request: f"/client/threads/{request.match_info['thread_id']}/attachments"),
-        DesktopApiRoute("DELETE", "/desktop/attachments/{attachment_id}", lambda request: f"/client/attachments/{request.match_info['attachment_id']}"),
-        DesktopApiRoute("GET", "/desktop/attachments/{attachment_id}/download-ticket", lambda request: f"/client/attachments/{request.match_info['attachment_id']}/download-ticket", rewrite_json=rewrite_download_ticket),
-        DesktopApiRoute("GET", "/desktop/attachments/content/{attachment_id}", lambda request: f"/client/attachments/content/{request.match_info['attachment_id']}", binary_response=True),
-        DesktopApiRoute("GET", "/desktop/danxi/session", lambda _request: "/client/danxi/session"),
-        DesktopApiRoute("POST", "/desktop/danxi/session/login", lambda _request: "/client/danxi/session/login"),
-        DesktopApiRoute("PATCH", "/desktop/danxi/session/webvpn-cookie", lambda _request: "/client/danxi/session/webvpn-cookie"),
-        DesktopApiRoute("GET", "/desktop/danxi/profile", lambda _request: "/client/danxi/profile"),
-        DesktopApiRoute("GET", "/desktop/danxi/divisions", lambda _request: "/client/danxi/divisions"),
-        DesktopApiRoute("GET", "/desktop/danxi/posts", lambda _request: "/client/danxi/posts"),
-        DesktopApiRoute("GET", "/desktop/danxi/posts/{hole_id}", lambda request: f"/client/danxi/posts/{request.match_info['hole_id']}"),
-        DesktopApiRoute("GET", "/desktop/danxi/posts/{hole_id}/floors", lambda request: f"/client/danxi/posts/{request.match_info['hole_id']}/floors"),
-        DesktopApiRoute("POST", "/desktop/danxi/posts/{hole_id}/replies", lambda request: f"/client/danxi/posts/{request.match_info['hole_id']}/replies"),
-        DesktopApiRoute("PATCH", "/desktop/danxi/floors/{floor_id}", lambda request: f"/client/danxi/floors/{request.match_info['floor_id']}"),
-        DesktopApiRoute("DELETE", "/desktop/danxi/floors/{floor_id}", lambda request: f"/client/danxi/floors/{request.match_info['floor_id']}"),
-        DesktopApiRoute("GET", "/desktop/danxi/posts/{hole_id}/summary", lambda request: f"/client/danxi/posts/{request.match_info['hole_id']}/summary"),
-        DesktopApiRoute("GET", "/desktop/danxi/search", lambda _request: "/client/danxi/search"),
-        DesktopApiRoute("GET", "/desktop/danxi/messages", lambda _request: "/client/danxi/messages"),
-        DesktopApiRoute("GET", "/desktop/danxi/floors/{floor_id}/target", lambda request: f"/client/danxi/floors/{request.match_info['floor_id']}/target"),
+        DesktopApiRoute("GET", "/desktop/workspaces", lambda _request: "/runtime/workspaces"),
+        DesktopApiRoute("GET", "/desktop/workspaces/{workspace_id}/endpoints", lambda request: f"/runtime/workspaces/{request.match_info['workspace_id']}/endpoints?include_tools=true"),
+        DesktopApiRoute("GET", "/desktop/context-pool/query", lambda _request: "/runtime/context-pool/query"),
+        DesktopApiRoute("POST", "/desktop/threads", lambda _request: "/runtime/threads"),
+        DesktopApiRoute("POST", "/desktop/sessions", lambda _request: "/runtime/sessions", starts_runtime=True),
+        DesktopApiRoute("PATCH", "/desktop/sessions/{session_id}/active-workspace", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/active-workspace"),
+        DesktopApiRoute("POST", "/desktop/messages", lambda _request: "/runtime/messages"),
+        DesktopApiRoute("GET", "/desktop/threads/{thread_id}/messages", lambda request: f"/runtime/threads/{request.match_info['thread_id']}/messages"),
+        DesktopApiRoute("POST", "/desktop/operations", lambda _request: "/runtime/operations"),
+        DesktopApiRoute("POST", "/desktop/approvals/{approval_id}/decision", lambda request: f"/runtime/approvals/{request.match_info['approval_id']}/decision"),
+        DesktopApiRoute("POST", "/desktop/sessions/{session_id}/confirm-response", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/confirm-response"),
+        DesktopApiRoute("POST", "/desktop/sessions/{session_id}/human-input-response", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/human-input-response"),
+        DesktopApiRoute("POST", "/desktop/attachments/upload-ticket", lambda _request: "/runtime/attachments/upload-ticket", rewrite_json=rewrite_attachment_ticket),
+        DesktopApiRoute("PUT", "/desktop/attachments/upload/{ticket_id}", lambda request: f"/runtime/attachments/upload/{request.match_info['ticket_id']}", binary_response=True),
+        DesktopApiRoute("POST", "/desktop/attachments/{attachment_id}/complete", lambda request: f"/runtime/attachments/{request.match_info['attachment_id']}/complete"),
+        DesktopApiRoute("GET", "/desktop/threads/{thread_id}/attachments", lambda request: f"/runtime/threads/{request.match_info['thread_id']}/attachments"),
+        DesktopApiRoute("DELETE", "/desktop/attachments/{attachment_id}", lambda request: f"/runtime/attachments/{request.match_info['attachment_id']}"),
+        DesktopApiRoute("GET", "/desktop/attachments/{attachment_id}/download-ticket", lambda request: f"/runtime/attachments/{request.match_info['attachment_id']}/download-ticket", rewrite_json=rewrite_download_ticket),
+        DesktopApiRoute("GET", "/desktop/attachments/content/{attachment_id}", lambda request: f"/runtime/attachments/content/{request.match_info['attachment_id']}", binary_response=True),
+        DesktopApiRoute("GET", "/desktop/danxi/session", lambda _request: "/runtime/danxi/session"),
+        DesktopApiRoute("POST", "/desktop/danxi/session/login", lambda _request: "/runtime/danxi/session/login"),
+        DesktopApiRoute("PATCH", "/desktop/danxi/session/webvpn-cookie", lambda _request: "/runtime/danxi/session/webvpn-cookie"),
+        DesktopApiRoute("GET", "/desktop/danxi/profile", lambda _request: "/runtime/danxi/profile"),
+        DesktopApiRoute("GET", "/desktop/danxi/divisions", lambda _request: "/runtime/danxi/divisions"),
+        DesktopApiRoute("GET", "/desktop/danxi/posts", lambda _request: "/runtime/danxi/posts"),
+        DesktopApiRoute("GET", "/desktop/danxi/posts/{hole_id}", lambda request: f"/runtime/danxi/posts/{request.match_info['hole_id']}"),
+        DesktopApiRoute("GET", "/desktop/danxi/posts/{hole_id}/floors", lambda request: f"/runtime/danxi/posts/{request.match_info['hole_id']}/floors"),
+        DesktopApiRoute("POST", "/desktop/danxi/posts/{hole_id}/replies", lambda request: f"/runtime/danxi/posts/{request.match_info['hole_id']}/replies"),
+        DesktopApiRoute("PATCH", "/desktop/danxi/floors/{floor_id}", lambda request: f"/runtime/danxi/floors/{request.match_info['floor_id']}"),
+        DesktopApiRoute("DELETE", "/desktop/danxi/floors/{floor_id}", lambda request: f"/runtime/danxi/floors/{request.match_info['floor_id']}"),
+        DesktopApiRoute("GET", "/desktop/danxi/posts/{hole_id}/summary", lambda request: f"/runtime/danxi/posts/{request.match_info['hole_id']}/summary"),
+        DesktopApiRoute("GET", "/desktop/danxi/search", lambda _request: "/runtime/danxi/search"),
+        DesktopApiRoute("GET", "/desktop/danxi/messages", lambda _request: "/runtime/danxi/messages"),
+        DesktopApiRoute("GET", "/desktop/danxi/floors/{floor_id}/target", lambda request: f"/runtime/danxi/floors/{request.match_info['floor_id']}/target"),
         DesktopApiRoute("GET", "/desktop/memory", lambda _request: "/operator/memory"),
         DesktopApiRoute("GET", "/desktop/memory/graph", lambda _request: "/operator/memory/graph"),
         DesktopApiRoute("DELETE", "/desktop/memory", lambda _request: "/operator/memory"),
@@ -189,7 +189,7 @@ class DesktopApiServer:
         self,
         config: DesktopClientConfig,
         *,
-        on_client_session_created: Callable[[], Awaitable[None]] | None = None,
+        on_endpoint_session_created: Callable[[], Awaitable[None]] | None = None,
     ):
         self._config = config
         self._runner: web.AppRunner | None = None
@@ -200,7 +200,7 @@ class DesktopApiServer:
             component="desktop_backend",
             package_version="0.0.0",
         )
-        self._on_client_session_created = on_client_session_created
+        self._on_endpoint_session_created = on_endpoint_session_created
 
     async def start(self) -> None:
         if self._runner is not None:
@@ -210,7 +210,7 @@ class DesktopApiServer:
         routes = [
             web.get(LOCAL_BRIDGE_STATUS_PATH, self._handle_status),
             web.get(LEGACY_LOCAL_BRIDGE_STATUS_PATH, self._handle_status),
-            web.get(DESKTOP_WS_PATH, self._handle_client_ws),
+            web.get(DESKTOP_WS_PATH, self._handle_endpoint_ws_bridge),
             web.get("/desktop/config/schema", self._handle_config_schema),
             web.get("/desktop/config", self._handle_config_get),
             web.patch("/desktop/config", self._handle_config_patch),
@@ -325,7 +325,7 @@ class DesktopApiServer:
                 "raw_value": None if secret else value,
                 "is_secret": secret,
                 "has_value": bool(str(value or "").strip()),
-                "source": "desktop_client",
+                "source": "desktop_endpoint_provider",
                 "env_key": env_keys.get(key),
             }
         return items
@@ -431,7 +431,7 @@ class DesktopApiServer:
             restart_required_keys: list[str] = []
             warnings: list[str] = []
             if "core_access_token" in applied:
-                warnings.append("The running client websocket will use the updated client token on its next reconnect.")
+                warnings.append("当前端点实时连接会在下次重连时使用新的端点访问令牌。")
             if core_updates:
                 body = json.dumps({"updates": core_updates}, ensure_ascii=False).encode("utf-8")
                 response = await self._core_client.request_with_body(
@@ -483,8 +483,8 @@ class DesktopApiServer:
             if content_type.lower().startswith("application/json") and payload and route.rewrite_json is not None:
                 parsed = json.loads(payload.decode("utf-8"))
                 payload = json.dumps(route.rewrite_json(parsed, self._config), ensure_ascii=False).encode("utf-8")
-            if response.status < 400 and route.starts_runtime and self._on_client_session_created is not None:
-                await self._on_client_session_created()
+            if response.status < 400 and route.starts_runtime and self._on_endpoint_session_created is not None:
+                await self._on_endpoint_session_created()
             return web.Response(status=response.status, body=payload, headers=response.headers)
         except Exception as exc:
             logger.exception("Desktop backend request failed: %s", exc)
@@ -513,12 +513,12 @@ class DesktopApiServer:
                 retryable=True,
             )
 
-    async def _handle_client_ws(self, request: web.Request) -> web.StreamResponse:
+    async def _handle_endpoint_ws_bridge(self, request: web.Request) -> web.StreamResponse:
         auth_error = self._check_local_auth(request)
         if auth_error is not None:
             return auth_error
         try:
-            upstream_ws = await self._core_client.connect_client_ws(
+            upstream_ws = await self._core_client.connect_endpoint_ws(
                 request,
                 local_access_token=str(self._config.local_bridge_access_token or "").strip(),
             )
@@ -532,11 +532,11 @@ class DesktopApiServer:
                 retryable=True,
             )
 
-        client_ws = web.WebSocketResponse(autoping=True)
-        await client_ws.prepare(request)
+        ui_ws = web.WebSocketResponse(autoping=True)
+        await ui_ws.prepare(request)
 
-        async def _client_to_upstream() -> None:
-            async for message in client_ws:
+        async def _ui_to_upstream() -> None:
+            async for message in ui_ws:
                 if message.type == aiohttp.WSMsgType.TEXT:
                     await upstream_ws.send_str(message.data)
                 elif message.type == aiohttp.WSMsgType.BINARY:
@@ -545,22 +545,22 @@ class DesktopApiServer:
                     await upstream_ws.close()
                     return
 
-        async def _upstream_to_client() -> None:
+        async def _upstream_to_ui() -> None:
             async for message in upstream_ws:
                 if message.type == aiohttp.WSMsgType.TEXT:
-                    await client_ws.send_str(message.data)
+                    await ui_ws.send_str(message.data)
                 elif message.type == aiohttp.WSMsgType.BINARY:
-                    await client_ws.send_bytes(message.data)
+                    await ui_ws.send_bytes(message.data)
                 elif message.type == aiohttp.WSMsgType.CLOSE:
-                    await client_ws.close(code=upstream_ws.close_code or 1000)
+                    await ui_ws.close(code=upstream_ws.close_code or 1000)
                     return
                 elif message.type == aiohttp.WSMsgType.ERROR:
-                    await client_ws.close(code=1011)
+                    await ui_ws.close(code=1011)
                     return
 
         tasks = {
-            asyncio.create_task(_client_to_upstream()),
-            asyncio.create_task(_upstream_to_client()),
+            asyncio.create_task(_ui_to_upstream()),
+            asyncio.create_task(_upstream_to_ui()),
         }
         try:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -573,8 +573,8 @@ class DesktopApiServer:
                 task.result()
         finally:
             await upstream_ws.close()
-            await client_ws.close()
-        return client_ws
+            await ui_ws.close()
+        return ui_ws
 
 
 DesktopUiBridge = DesktopApiServer

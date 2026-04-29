@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import copy
 import json
@@ -2176,40 +2176,7 @@ class TaskManager(TaskRepository):
             del history[:-8]
 
     async def backfill_scheduled_tasks(self) -> int:
-        changed = 0
-        now = _utcnow_iso()
-        now_dt = _iso_to_dt(now) or _utcnow()
-        for record in self._iter_all_active_tasks(task_domain="assistant_schedule"):
-            original = json.dumps(self._compact_task(record), ensure_ascii=False, sort_keys=True, default=str)
-            derived = self._schedule_payload(
-                summary=_normalize_text(record.get("content")),
-                deadline=_normalize_text(record.get("deadline")),
-                timezone_name=record.get("timezone") or _DEFAULT_TIMEZONE,
-                schedule_kind=record.get("schedule_kind") or "none",
-                due_at=record.get("due_at"),
-                recurrence=record.get("recurrence"),
-                auto_run=record.get("auto_run"),
-                job_prompt=record.get("job_prompt"),
-                notify_policy=record.get("notify_policy"),
-                existing=record,
-            )
-            for key, value in derived.items():
-                record[key] = value
-            record["schedule_anchor_at"] = _normalize_text(record.get("schedule_anchor_at")) or _normalize_text(record.get("created_at")) or _normalize_text(record.get("last_updated_at")) or now
-            record["last_completed_at"] = _normalize_text(record.get("last_completed_at")) or None
-            record["last_triggered_at"] = _normalize_text(record.get("last_triggered_at")) or None
-            record["active_claim_token"] = _normalize_text(record.get("active_claim_token")) or None
-            record["next_run_at"] = self._schedule_state(record, now=now_dt)["next_run_at"]
-            self._sync_orchestration_state(record, now=now_dt)
-            if record.get("delivery_target") is None and record.get("origin_session_id"):
-                record["delivery_target"] = {"kind": "current_session", "id": "", "session_id": record.get("origin_session_id", "")}
-            updated = json.dumps(self._compact_task(record), ensure_ascii=False, sort_keys=True, default=str)
-            if updated != original:
-                record["last_updated_at"] = now
-                changed += 1
-        if changed:
-            await self._persist()
-        return changed
+        return 0
 
     async def claim_due_tasks(
         self,
@@ -2218,55 +2185,8 @@ class TaskManager(TaskRepository):
         lease_seconds: int = _DEFAULT_LEASE_SECONDS,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        with self._acquire_store_lock():
-            if self._store_backend is not None or self._task_file_path:
-                self._store = self._load_store()
-            current = now or _utcnow()
-            claimed: list[dict[str, Any]] = []
-            for record in self._sort_tasks(self._iter_all_active_tasks(task_domain="assistant_schedule")):
-                if len(claimed) >= limit:
-                    break
-                if _normalize_text(record.get("task_status")).lower() != "open":
-                    continue
-                if not self._is_task_due(record, now=current):
-                    continue
-                if record.get("schedule_kind") not in {"once", "recurring"} and not record.get("auto_run"):
-                    continue
-                current_text = _dt_to_iso(current)
-                claim_token = uuid4().hex
-                record["run_lock_until"] = _dt_to_iso(current + timedelta(seconds=max(lease_seconds, 10)))
-                record["active_claim_token"] = claim_token
-                record["last_triggered_at"] = current_text
-                record["last_run_status"] = "queued" if record.get("auto_run") else "due"
-                self._update_task_job(
-                    record,
-                    status="queued",
-                    runtime_source="heart.scheduler",
-                    started_at=current_text,
-                    next_retry_at=None,
-                    increment_attempt=True,
-                    last_result={
-                        "status": record["last_run_status"],
-                        "summary": "Task was claimed by the scheduler.",
-                        "at": current_text,
-                    },
-                )
-                record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
-                self._sync_orchestration_state(record, now=current)
-                record["last_updated_at"] = current_text
-                self._append_run_history(
-                    record,
-                    {
-                        "timestamp": current_text,
-                        "status": record["last_run_status"],
-                        "summary": "Task was claimed by the scheduler for execution." if record.get("auto_run") else "Task was claimed by the scheduler for notification.",
-                        "runtime_source": "heart.scheduler",
-                    },
-                )
-                claimed.append(copy.deepcopy(record))
-            if claimed:
-                await self._persist()
-            return claimed
+        del limit, lease_seconds, now
+        return []
 
     async def complete_due_notification(
         self,
@@ -2279,93 +2199,8 @@ class TaskManager(TaskRepository):
         delivery_details: dict[str, Any] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        record = self._find_task_by_key_any_user(task_key)
-        if record is None:
-            raise ValueError(f"task_key not found: {task_key}")
-        current = now or _utcnow()
-        cycle_key = _cycle_key(
-            record.get("schedule_kind"),
-            record.get("next_run_at") or record.get("due_at"),
-            None,
-            fallback=record.get("due_at"),
-        )
-        event_id = _cycle_event_id(record.get("task_key"), cycle_key, "task_due")
-        record["last_run_at"] = _dt_to_iso(current)
-        record["last_run_status"] = "notified" if delivered else "pending_delivery"
-        record["last_run_summary"] = _normalize_text(summary)
-        record["last_triggered_at"] = _dt_to_iso(current)
-        record["run_lock_until"] = None
-        record["active_claim_token"] = None
-        notify_policy = _normalize_text(record.get("notify_policy")).lower()
-        if not delivered and record.get("notify_policy") != "silent":
-            record["pending_delivery"] = {
-                "created_at": _dt_to_iso(current),
-                "message": _normalize_text(summary),
-                "kind": "task_due",
-                "event_id": event_id,
-                "source_event_id": event_id,
-                "cycle_key": cycle_key,
-            }
-        else:
-            record["pending_delivery"] = None
-        if notify_policy == "silent":
-            delivery_state = "suppressed"
-            job_status = "completed"
-            last_failure = None
-        elif delivered:
-            delivery_state = "delivered"
-            job_status = "completed"
-            last_failure = None
-        else:
-            delivery_state = "pending_redelivery"
-            job_status = "awaiting_delivery"
-            last_failure = failure_payload(
-                category="delivery",
-                code="scheduled_reminder_delivery_pending",
-                message=record["last_run_summary"],
-                at=_dt_to_iso(current),
-                details={"task_key": task_key, "event_id": event_id},
-            )
-        self._update_task_job(
-            record,
-            status=job_status,
-            runtime_source=_normalize_text(runtime_source) or "app.scheduled_reminder",
-            finished_at=_dt_to_iso(current),
-            success_at=_dt_to_iso(current),
-            next_retry_at=None,
-            retry_count=0,
-            last_failure=last_failure,
-            last_result={
-                "status": record["last_run_status"],
-                "summary": record["last_run_summary"],
-                "at": _dt_to_iso(current),
-            },
-            last_delivery=delivery_payload(
-                state=delivery_state,
-                delivered=(delivered or notify_policy == "silent"),
-                channel=delivery_channel,
-                message=record["last_run_summary"],
-                event_id=event_id,
-                source_event_id=event_id,
-                at=_dt_to_iso(current),
-                details=delivery_details or {},
-            ),
-        )
-        record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
-        self._sync_orchestration_state(record, now=current)
-        record["last_updated_at"] = _dt_to_iso(current)
-        self._append_run_history(
-            record,
-            {
-                "timestamp": _dt_to_iso(current),
-                "status": record["last_run_status"],
-                "summary": record["last_run_summary"],
-                "runtime_source": _normalize_text(runtime_source) or "app.scheduled_reminder",
-                "delivery_state": delivery_state,
-            },
-        )
-        await self._persist()
-        return copy.deepcopy(record)
+        del task_key, summary, delivered, runtime_source, delivery_channel, delivery_details, now
+        raise RuntimeError("Legacy TaskManager scheduled reminders are removed; use V4 Scheduler jobs and Delivery.")
 
     async def complete_task_run(
         self,
@@ -2385,122 +2220,23 @@ class TaskManager(TaskRepository):
         delivery_details: dict[str, Any] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        record = self._find_task_by_key_any_user(task_key)
-        if record is None:
-            raise ValueError(f"task_key not found: {task_key}")
-        current = now or _utcnow()
-        cycle_key = _cycle_key(
-            record.get("schedule_kind"),
-            record.get("next_run_at") or record.get("due_at"),
-            None,
-            fallback=record.get("due_at"),
+        del (
+            task_key,
+            succeeded,
+            summary,
+            next_retry_seconds,
+            delivered,
+            completed,
+            failure_category,
+            failure_retryable,
+            failure_code,
+            failure_details,
+            runtime_source,
+            delivery_channel,
+            delivery_details,
+            now,
         )
-        event_id = _cycle_event_id(record.get("task_key"), cycle_key, "task_completion")
-        record["last_run_at"] = _dt_to_iso(current)
-        record["last_run_status"] = "succeeded" if succeeded else "failed"
-        record["last_run_summary"] = _normalize_text(summary)
-        record["last_triggered_at"] = _dt_to_iso(current)
-        record["active_claim_token"] = None
-        notify_policy = _normalize_text(record.get("notify_policy")).lower()
-        if succeeded:
-            record["run_lock_until"] = None
-        else:
-            record["run_lock_until"] = _dt_to_iso(current + timedelta(seconds=max(next_retry_seconds, 60)))
-        if not delivered and record.get("notify_policy") == "on_completion":
-            record["pending_delivery"] = {
-                "created_at": _dt_to_iso(current),
-                "message": record["last_run_summary"],
-                "kind": "task_completion",
-                "event_id": event_id,
-                "source_event_id": event_id,
-                "cycle_key": cycle_key,
-            }
-        elif delivered and record.get("notify_policy") == "on_completion":
-            record["pending_delivery"] = None
-        if notify_policy != "on_completion":
-            delivery_state = "not_applicable"
-        elif delivered:
-            delivery_state = "delivered"
-        else:
-            delivery_state = "pending_redelivery"
-
-        last_failure = None
-        if succeeded:
-            if delivery_state == "pending_redelivery":
-                job_status = "awaiting_delivery"
-                last_failure = failure_payload(
-                    category="delivery",
-                    code="scheduled_task_delivery_pending",
-                    message=record["last_run_summary"],
-                    at=_dt_to_iso(current),
-                    details={"task_key": task_key, "event_id": event_id},
-                )
-            elif completed:
-                job_status = "completed"
-            else:
-                job_status = "succeeded"
-        else:
-            normalized_failure_category = _normalize_text(failure_category).lower() or "retryable"
-            retryable = normalized_failure_category == "retryable" if failure_retryable is None else bool(failure_retryable)
-            if not retryable and normalized_failure_category == "retryable":
-                normalized_failure_category = "non_retryable"
-            if normalized_failure_category not in {"retryable", "non_retryable", "manual_intervention", "delivery"}:
-                normalized_failure_category = "retryable" if retryable else "non_retryable"
-            job_status = "retry_waiting" if retryable else "failed"
-            last_failure = failure_payload(
-                category=normalized_failure_category,
-                retryable=retryable,
-                code=failure_code or "scheduled_task_run_failed",
-                message=record["last_run_summary"],
-                at=_dt_to_iso(current),
-                details=failure_details or {},
-            )
-
-        current_retry_count = int(record.get("job", {}).get("retry_count", 0) or 0)
-        next_retry_at = record.get("run_lock_until") if not succeeded and job_status == "retry_waiting" else None
-        self._update_task_job(
-            record,
-            status=job_status,
-            runtime_source=_normalize_text(runtime_source) or "app.scheduled_task",
-            finished_at=_dt_to_iso(current),
-            success_at=_dt_to_iso(current) if succeeded else _UNSET,
-            next_retry_at=next_retry_at,
-            retry_count=0 if succeeded else current_retry_count + 1,
-            last_failure=last_failure,
-            last_result={
-                "status": record["last_run_status"],
-                "summary": record["last_run_summary"],
-                "at": _dt_to_iso(current),
-                "completed": bool(completed),
-            },
-            last_delivery=delivery_payload(
-                state=delivery_state,
-                delivered=(delivered or notify_policy != "on_completion"),
-                channel=delivery_channel,
-                message=record["last_run_summary"],
-                event_id=event_id,
-                source_event_id=event_id,
-                at=_dt_to_iso(current),
-                details=delivery_details or {},
-            ),
-        )
-        record["next_run_at"] = self._schedule_state(record, now=current)["next_run_at"]
-        self._sync_orchestration_state(record, now=current)
-        record["last_updated_at"] = _dt_to_iso(current)
-        self._append_run_history(
-            record,
-            {
-                "timestamp": _dt_to_iso(current),
-                "status": record["last_run_status"],
-                "summary": record["last_run_summary"],
-                "runtime_source": _normalize_text(runtime_source) or "app.scheduled_task",
-                "job_status": job_status,
-                "failure_category": last_failure.get("category") if last_failure else None,
-                "delivery_state": delivery_state,
-            },
-        )
-        await self._persist()
-        return copy.deepcopy(record)
+        raise RuntimeError("Legacy TaskManager scheduled task runs are removed; use V4 Scheduler jobs and RunEventLog.")
 
     async def _pending_delivery_messages(self, source=None, *, clear: bool) -> list[dict[str, Any]]:
         user_id = self._memory._resolve_user_id(source)
@@ -2682,21 +2418,6 @@ class TaskManager(TaskRepository):
         return 1 if _normalize_text(record.get("last_run_status")).lower() == "failed" else 0
 
     def build_background_status(self) -> dict[str, Any]:
-        now = _utcnow()
-        scheduled: list[dict[str, Any]] = []
-        due_count = 0
-        overdue_count = 0
-        awaiting_completion_count = 0
-        run_succeeded_pending_completion_count = 0
-        recent_failures: list[dict[str, Any]] = []
-        recent_runs: list[dict[str, Any]] = []
-        pending_delivery_count = 0
-        due_candidates: list[tuple[datetime, dict[str, Any]]] = []
-        urgent_due_tasks: list[tuple[datetime, dict[str, Any]]] = []
-        repeated_failure_tasks: list[dict[str, Any]] = []
-        awaiting_completion_tasks: list[dict[str, Any]] = []
-        pending_delivery_tasks: list[dict[str, Any]] = []
-        retry_waiting_tasks: list[dict[str, Any]] = []
         failure_category_counts = {
             "retryable": 0,
             "non_retryable": 0,
@@ -2711,161 +2432,55 @@ class TaskManager(TaskRepository):
             "failed": 0,
             "not_applicable": 0,
         }
-        job_status_counts: dict[str, int] = {}
-        background_status_sources = ["task_manager.schedule", "task_manager.execution", "task_manager.delivery"]
-
-        for record in self._iter_all_active_tasks():
-            schedule_kind = record.get("schedule_kind")
-            if schedule_kind not in {"once", "recurring"} and not record.get("auto_run"):
-                continue
-            scheduled.append(record)
-            schedule_state = self._schedule_state(record, now=now)
-            job = normalize_job_record(
-                record.get("job"),
-                kind=self._task_job_kind(record),
-                name=self._task_job_name(record),
-                max_retries=self._task_job_max_retries(record),
-                status_source="task_manager.defaults",
-            )
-            last_failure = normalize_failure(job.get("last_failure"))
-            last_delivery = normalize_delivery(job.get("last_delivery"))
-            job_status = _normalize_text(job.get("status")).lower() or "idle"
-            job_status_counts[job_status] = int(job_status_counts.get(job_status, 0) or 0) + 1
-            delivery_state = _normalize_text(last_delivery.get("state")).lower() or "not_applicable"
-            delivery_state_counts[delivery_state] = int(delivery_state_counts.get(delivery_state, 0) or 0) + 1
-            if last_failure:
-                category = _normalize_text(last_failure.get("category")).lower() or "retryable"
-                failure_category_counts[category] = int(failure_category_counts.get(category, 0) or 0) + 1
-            next_run_dt = _iso_to_dt(record.get("next_run_at"))
-            actionable_user_follow_up = bool(
-                not record.get("auto_run")
-                and not schedule_state.get("awaiting_completion")
-            )
-            if bool(schedule_state.get("is_due")):
-                due_count += 1
-            if bool(schedule_state.get("is_due")) and next_run_dt is not None and next_run_dt <= now - timedelta(minutes=5):
-                overdue_count += 1
-            if schedule_state.get("awaiting_completion"):
-                awaiting_completion_count += 1
-                awaiting_completion_tasks.append(self._background_task_snapshot(record, now))
-                if _normalize_text(record.get("last_run_status")).lower() == "succeeded":
-                    run_succeeded_pending_completion_count += 1
-            if actionable_user_follow_up and next_run_dt is not None:
-                snapshot = self._background_task_snapshot(record, now)
-                due_candidates.append((next_run_dt, snapshot))
-                if next_run_dt <= now + _URGENT_DUE_WINDOW:
-                    urgent_due_tasks.append((next_run_dt, snapshot))
-            if record.get("pending_delivery"):
-                pending_delivery_count += 1
-                pending_delivery_tasks.append(
-                    {
-                        **self._background_task_snapshot(record, now),
-                        "pending_delivery": copy.deepcopy(record.get("pending_delivery")),
-                    }
-                )
-            if job_status == "retry_waiting":
-                retry_waiting_tasks.append(self._background_task_snapshot(record, now))
-            status = _normalize_text(record.get("last_run_status")).lower()
-            if status == "failed":
-                recent_failures.append(
-                    {
-                        "task_key": _normalize_text(record.get("task_key")),
-                        "last_run_at": _normalize_text(record.get("last_run_at")),
-                        "summary": _normalize_text(record.get("last_run_summary")),
-                        "failure_category": last_failure.get("category") if last_failure else None,
-                        "retryable": bool(last_failure.get("retryable")) if last_failure else False,
-                    }
-                )
-            consecutive_failures = self._consecutive_failures(record)
-            if consecutive_failures >= _REPEATED_FAILURE_THRESHOLD:
-                repeated_failure_tasks.append(
-                    {
-                        **self._background_task_snapshot(record, now),
-                        "consecutive_failures": consecutive_failures,
-                        "last_run_at": _normalize_text(record.get("last_run_at")),
-                        "last_run_summary": _normalize_text(record.get("last_run_summary")),
-                    }
-                )
-            if status:
-                recent_runs.append(
-                    {
-                        "task_key": _normalize_text(record.get("task_key")),
-                        "status": status,
-                        "last_run_at": _normalize_text(record.get("last_run_at")),
-                        "summary": _normalize_text(record.get("last_run_summary")),
-                        "job_status": job_status,
-                        "status_source": job.get("status_source"),
-                    }
-                )
-
-        recent_failures.sort(key=lambda item: item.get("last_run_at", ""), reverse=True)
-        recent_runs.sort(key=lambda item: item.get("last_run_at", ""), reverse=True)
-        due_candidates.sort(key=lambda item: item[0])
-        urgent_due_tasks.sort(key=lambda item: item[0])
-        repeated_failure_tasks.sort(
-            key=lambda item: (
-                -int(item.get("consecutive_failures", 0) or 0),
-                str(item.get("last_run_at") or ""),
-            ),
-            reverse=False,
-        )
-        nearest_due_task = due_candidates[0][1] if due_candidates else None
-        nearest_due_in_minutes = (
-            int(nearest_due_task.get("minutes_until_due"))
-            if isinstance(nearest_due_task, dict) and nearest_due_task.get("minutes_until_due") is not None
-            else None
-        )
         schedule_layer = {
-            "scheduled_task_count": len(scheduled),
-            "due_task_count": due_count,
-            "overdue_task_count": overdue_count,
-            "nearest_due_task": nearest_due_task,
-            "nearest_due_in_minutes": nearest_due_in_minutes,
-            "urgent_due_tasks": [item[1] for item in urgent_due_tasks[:_BACKGROUND_DUE_LIST_LIMIT]],
-            "urgent_due_task_count": len(urgent_due_tasks),
+            "scheduled_task_count": 0,
+            "due_task_count": 0,
+            "overdue_task_count": 0,
+            "nearest_due_task": None,
+            "nearest_due_in_minutes": None,
+            "urgent_due_tasks": [],
+            "urgent_due_task_count": 0,
         }
         execution_layer = {
-            "awaiting_completion_count": awaiting_completion_count,
-            "run_succeeded_pending_completion_count": run_succeeded_pending_completion_count,
-            "awaiting_completion_tasks": awaiting_completion_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
-            "retry_waiting_tasks": retry_waiting_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
-            "job_status_counts": job_status_counts,
-            "repeated_failure_tasks": repeated_failure_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
+            "awaiting_completion_count": 0,
+            "run_succeeded_pending_completion_count": 0,
+            "awaiting_completion_tasks": [],
+            "retry_waiting_tasks": [],
+            "job_status_counts": {},
+            "repeated_failure_tasks": [],
             "failure_summary": {"by_category": failure_category_counts},
-            "recent_failures": recent_failures[:5],
-            "recent_runs": recent_runs[:8],
+            "recent_failures": [],
+            "recent_runs": [],
         }
         delivery_layer = {
-            "pending_redelivery_count": pending_delivery_count,
-            "pending_redelivery_tasks": pending_delivery_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
+            "pending_redelivery_count": 0,
+            "pending_redelivery_tasks": [],
             "delivery_state_counts": delivery_state_counts,
         }
-
         return {
             "schedule": schedule_layer,
             "execution": execution_layer,
             "delivery": delivery_layer,
             "system": {},
-            "background_status_sources": background_status_sources,
-            "scheduled_task_count": len(scheduled),
-            "due_task_count": due_count,
-            "overdue_task_count": overdue_count,
-            "awaiting_completion_count": awaiting_completion_count,
-            "run_succeeded_pending_completion_count": run_succeeded_pending_completion_count,
-            "pending_delivery_count": pending_delivery_count,
-            "nearest_due_task": nearest_due_task,
-            "nearest_due_in_minutes": nearest_due_in_minutes,
-            "urgent_due_tasks": [item[1] for item in urgent_due_tasks[:_BACKGROUND_DUE_LIST_LIMIT]],
-            "urgent_due_task_count": len(urgent_due_tasks),
-            "job_status_counts": job_status_counts,
-            "retry_waiting_tasks": retry_waiting_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
+            "background_status_sources": ["task_manager.user_todo"],
+            "scheduled_task_count": 0,
+            "due_task_count": 0,
+            "overdue_task_count": 0,
+            "awaiting_completion_count": 0,
+            "run_succeeded_pending_completion_count": 0,
+            "pending_delivery_count": 0,
+            "nearest_due_task": None,
+            "nearest_due_in_minutes": None,
+            "urgent_due_tasks": [],
+            "urgent_due_task_count": 0,
+            "job_status_counts": {},
+            "retry_waiting_tasks": [],
             "failure_summary": {"by_category": failure_category_counts},
             "delivery_state_counts": delivery_state_counts,
-            "repeated_failure_tasks": repeated_failure_tasks[:_BACKGROUND_DUE_LIST_LIMIT],
-            "recent_failures": recent_failures[:5],
-            "recent_runs": recent_runs[:8],
+            "repeated_failure_tasks": [],
+            "recent_failures": [],
+            "recent_runs": [],
         }
-
     def get_task_by_key(self, task_key: str) -> dict[str, Any] | None:
         record = self._find_task_by_key_any_user(task_key)
         return self._compact_task(record) if record is not None else None

@@ -22,9 +22,10 @@ external endpoints -----------------------/        v        Memory / Operation /
 - Final assistant reply 必须是 MessageService 持久化的 assistant message。
 - Streaming 必须走 RunEventLog + Delivery fan-out。
 - Tool 调度必须走 ToolRouter + ExecutionTarget；权限挂在 Actor / Workspace / RunPolicy，执行能力挂在 EndpointCapability。
+- V4 HTTP facade 是 `/runtime/*`；桌面本地 `/desktop/*` 只代理到 `/runtime/*`、`/operator/*`、`/developer/*`，不代理旧 `/client/*`。
 - V4 不保留 `/client/ws`、`source_client_id`、`target_client_id`、`ClientToolDispatchService` 兼容路径。
 - 运行态助手模式只保留 `general` / `automation` / `danxi`；旧 `normal` / `office` 等输入只在边界归一化。
-- Procedure 已删除；可复用工作流统一通过 SKILL（`list_skills` / `load_skill` / `create_skill`）和能力注册表暴露。
+- Procedure 已删除；可复用工作流统一通过 SKILL（`list_skills` / `load_skill` / `create_skill`）和能力注册表暴露，SKILL 查询会按标题、摘要、场景和推荐工具匹配。
 
 当前生效的设计与计划文档在 `docs/v4/`；`docs/v3/` 和 `docs/archive/v2/` 是历史参考。
 
@@ -37,7 +38,7 @@ Core 是服务端主链：
 - FastAPI HTTP / WebSocket Gateway
 - Thread / Message / Run runtime
 - Scheduler / Heartbeat / Memory / Operation / Delivery
-- workspace、procedure、approval、RunPolicy
+- workspace、approval、RunPolicy、SKILL capability governance
 - PostgreSQL 持久化与 Alembic migration
 - ToolRouter / ExecutionTarget 调度与权限判断
 
@@ -80,7 +81,7 @@ python main.py desktop-client
 `edge_client/` 是按 workspace 接入的边缘运行时：
 
 - 通过 `GET /endpoint/ws` 接入 Core
-- 以 `workspace_ids`、`client_type`、`transport_profile`、endpoint capabilities 描述边缘能力
+- 以 `workspace_ids`、`provider_type`、`transport_profile`、endpoint capabilities 描述边缘能力
 - 执行被 Core 调度到该 Endpoint 的 execution target tools
 
 生产入口：
@@ -174,7 +175,7 @@ Operation 公共字段：
 - `requested_by_actor_id`
 - `requested_by_run_id`
 
-Workspace / procedure governance 公共字段：
+Workspace / RunPolicy governance 公共字段：
 
 - `preferred_execution_target_ids`
 - `preferred_endpoint_types`
@@ -246,9 +247,9 @@ MEETYOU_DATABASE_URL=
 MEETYOU_GATEWAY_ACCESS_TOKEN=
 MEETYOU_CLIENT_ACCESS_TOKEN=
 MEETYOU_CORE_BASE_URL=http://127.0.0.1:8000
-MEETYOU_CLIENT_ID=desktop-main
-MEETYOU_CLIENT_DISPLAY_NAME=Desktop Endpoint Provider
-MEETYOU_CLIENT_WORKSPACES=desktop-main
+MEETYOU_DESKTOP_PROVIDER_ID=desktop-main-provider
+MEETYOU_DESKTOP_PROVIDER_DISPLAY_NAME=Desktop Endpoint Provider
+MEETYOU_DESKTOP_PROVIDER_WORKSPACES=desktop-main
 MEETYOU_CREDENTIAL_SECRET=
 ```
 
@@ -346,3 +347,4 @@ scripts\manual-acceptance.cmd start
 ## 版本迭代线
 
 - V4 当前线：Core-owned Runtime + Endpoint Routing；`/endpoint/ws`、RunEvent + Delivery fan-out、ToolRouter + ExecutionTarget、Scheduler-owned `system.heartbeat`、SKILL-first workflows；运行态模式收敛为 `general` / `automation` / `danxi`，Procedure 与 V3 Client 兼容路径下线。
+- V4 调度线：`App.scheduler_processor()` 是唯一系统级调度入口；Heart 只执行 Scheduler 调起的单次 `system.heartbeat`，不再拥有重复调度/心跳时钟。真实验收脚本可用 `--desktop-tool-endpoint` 验证本地 Desktop Provider 工具链路。

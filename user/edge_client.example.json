@@ -1,9 +1,9 @@
 {
   "core_base_url": "http://127.0.0.1:8000",
   "core_access_token": "",
-  "client_id": "edge-home-lab-client",
+  "provider_id": "edge-home-lab-provider",
   "display_name": "Home Lab Edge Endpoint Provider",
-  "client_type": "edge",
+  "provider_type": "edge",
   "workspace_ids": ["home-lab"],
   "enabled_endpoint_tools": ["utility.echo", "math.add", "math.divide"],
   "heartbeat_interval_seconds": 20,

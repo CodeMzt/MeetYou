@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Paperclip } from 'lucide-react'
 import { normalizeAttachmentObject } from './attachmentObject'
 import { triggerAttachmentDownload } from './attachmentTransfers'
-import { deleteClientAttachment, listClientThreadAttachments } from './clientApi'
+import { deleteRuntimeAttachment, listRuntimeThreadAttachments } from './runtimeApi'
 import type { AttachmentObjectView } from './types'
 import SubWindow from './components/layout/SubWindow'
 import AttachmentManagerPanel from './components/attachments/AttachmentManagerPanel'
@@ -13,7 +13,7 @@ import styles from './AttachmentsWindow.module.css'
 type AttachmentWindowPayload = {
   baseUrl: string
   threadId: string
-  clientId: string
+  endpointId: string
   workspaceTitle: string
   attachmentInventoryVersion: number
 }
@@ -21,7 +21,7 @@ type AttachmentWindowPayload = {
 const EMPTY_PAYLOAD: AttachmentWindowPayload = {
   baseUrl: DEFAULT_BASE_URL,
   threadId: '',
-  clientId: '',
+  endpointId: '',
   workspaceTitle: '',
   attachmentInventoryVersion: 0,
 }
@@ -43,7 +43,7 @@ export default function AttachmentsWindow() {
     setLoading(true)
     setError(null)
     try {
-      const records = await listClientThreadAttachments(payload.baseUrl, payload.threadId)
+      const records = await listRuntimeThreadAttachments(payload.baseUrl, payload.threadId)
       const normalized = records
         .map((item) => normalizeAttachmentObject(item))
         .filter((item): item is AttachmentObjectView => Boolean(item))
@@ -88,12 +88,12 @@ export default function AttachmentsWindow() {
 
   const handleDownload = useCallback(async (attachmentId: string) => {
     try {
-      await triggerAttachmentDownload(payload.baseUrl, attachmentId, payload.clientId)
+      await triggerAttachmentDownload(payload.baseUrl, attachmentId, payload.endpointId)
       setError(null)
     } catch (downloadError) {
       setError(downloadError instanceof Error ? downloadError.message : '附件下载失败')
     }
-  }, [payload.baseUrl, payload.clientId])
+  }, [payload.baseUrl, payload.endpointId])
 
   const handleDelete = useCallback((attachmentId: string) => {
     setConfirmDeleteId(attachmentId)
@@ -105,7 +105,7 @@ export default function AttachmentsWindow() {
     setConfirmDeleteId(null)
     setDeletingAttachmentId(attachmentId)
     try {
-      await deleteClientAttachment(payload.baseUrl, attachmentId)
+      await deleteRuntimeAttachment(payload.baseUrl, attachmentId)
       setAttachments((current) => current.filter((item) => item.attachmentId !== attachmentId))
       setError(null)
     } catch (deleteError) {

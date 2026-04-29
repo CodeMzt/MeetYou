@@ -205,7 +205,7 @@ class Memory(MemoryRepository):
             "source_id": str(self._source_value(source, "id") or context.get("source_id") or "").strip(),
             "source_display_name": str(self._source_value(source, "display_name") or "").strip(),
             "source_metadata": source_metadata,
-            "client_id": str(context.get("client_id") or source_metadata.get("client_id") or "").strip(),
+            "endpoint_id": str(context.get("endpoint_id") or source_metadata.get("endpoint_id") or "").strip(),
             "session_id": str(context.get("session_id") or "").strip(),
             "thread_id": str(context.get("thread_id") or "").strip(),
             "workspace_id": str(context.get("workspace_id") or "").strip(),

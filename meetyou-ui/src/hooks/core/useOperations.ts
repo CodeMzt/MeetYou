@@ -1,9 +1,9 @@
 import { startTransition, useCallback, useState } from 'react'
-import { decideClientApproval } from '../../clientApi'
+import { decideRuntimeApproval } from '../../runtimeApi'
 import { normalizeAttachmentObjects } from '../../attachmentObject'
 import { createSystemTurn } from '../../chatState'
-import { parseClientWsPayload } from '../../protocolClient'
-import type { ClientContext } from './useClientContext'
+import { parseEndpointWsPayload } from '../../protocolClient'
+import type { EndpointContext } from './useEndpointContext'
 import type { OperationView } from '../../types'
 
 function upsertOperationView(operations: OperationView[], operation: OperationView): OperationView[] {
@@ -25,7 +25,7 @@ function deriveOperationTone(status: string): OperationView['tone'] {
 
 function deriveOperationSummary(result: Record<string, unknown>, error: Record<string, unknown>, detail: string, phase: string, status: string): string {
   if (status === 'waiting_approval') {
-    return detail || '绛夊緟瀹℃壒'
+    return detail || '等待审批'
   }
   if (typeof result.summary === 'string' && result.summary) {
     return result.summary
@@ -41,7 +41,7 @@ function deriveOperationSummary(result: Record<string, unknown>, error: Record<s
 
 function applyOperationEvent(
   operations: OperationView[],
-  event: Extract<import('../../types').ClientWsEvent, { kind: 'operation_updated' }>,
+  event: Extract<import('../../types').EndpointWsEvent, { kind: 'operation_updated' }>,
 ): OperationView[] {
   const existing = operations.find((item) => item.operation_id === event.operationId)
   const nextResult = event.result || {}
@@ -61,7 +61,7 @@ function applyOperationEvent(
     workspace_id: event.workspaceId || existing?.workspace_id || '',
     title: event.title || existing?.title || event.operationId,
     operation_type: event.operationType || existing?.operation_type || 'tool_call',
-    execution_target: event.executionTarget || existing?.execution_target || 'specific_endpoint',
+    execution_target: event.executionTarget || existing?.execution_target || 'endpoint',
     target_endpoint_id: event.targetEndpointId || existing?.target_endpoint_id || '',
     tool_key: event.toolKey || existing?.tool_key || '',
     tool_id: event.toolId || existing?.tool_id || '',
@@ -84,18 +84,18 @@ function applyOperationEvent(
 
 export function useOperations(
   baseUrl: string,
-  clientContext: ClientContext | null,
-  initializeClientContext: () => Promise<ClientContext>,
+  endpointContext: EndpointContext | null,
+  initializeEndpointContext: () => Promise<EndpointContext>,
   dispatchChat: any
 ) {
   const [operations, setOperations] = useState<OperationView[]>([])
 
   const decideOperationApproval = useCallback(
     async (approvalId: string, decision: 'approve' | 'reject') => {
-      const context = clientContext ?? (await initializeClientContext())
-      await decideClientApproval(baseUrl, approvalId, {
+      const context = endpointContext ?? (await initializeEndpointContext())
+      await decideRuntimeApproval(baseUrl, approvalId, {
         decision,
-        client_id: context.clientId,
+        endpoint_id: context.endpointId,
       })
       startTransition(() => {
         dispatchChat({
@@ -117,10 +117,10 @@ export function useOperations(
         )
       })
     },
-    [baseUrl, clientContext, initializeClientContext, dispatchChat],
+    [baseUrl, endpointContext, initializeEndpointContext, dispatchChat],
   )
 
-  const processWsUpdateForOperations = useCallback((update: ReturnType<typeof parseClientWsPayload>) => {
+  const processWsUpdateForOperations = useCallback((update: ReturnType<typeof parseEndpointWsPayload>) => {
     if (update.kind === 'operation_updated') {
       startTransition(() => {
         setOperations((current) => applyOperationEvent(current, update))

@@ -31,13 +31,13 @@ class DesktopEndpointBridgeTests(unittest.TestCase):
         core_client = DesktopCoreClient(config)
 
         url = core_client._build_core_http_url(
-            "/client/workspaces/personal/endpoints?include_tools=true",
+            "/runtime/workspaces/personal/endpoints?include_tools=true",
             "include_tools=true&status=online",
         )
 
         self.assertEqual(
             url,
-            "https://core.example.test/client/workspaces/personal/endpoints?include_tools=true&status=online",
+            "https://core.example.test/runtime/workspaces/personal/endpoints?include_tools=true&status=online",
         )
 
     def test_desktop_local_surface_keeps_ui_paths_stable(self):
@@ -64,9 +64,9 @@ class DesktopEndpointBackendTests(unittest.IsolatedAsyncioTestCase):
                 events.append("runtime.stop")
 
         class _FakeApiServer:
-            def __init__(self, config, on_client_session_created=None):
+            def __init__(self, config, on_endpoint_session_created=None):
                 self.config = config
-                self.on_client_session_created = on_client_session_created
+                self.on_endpoint_session_created = on_endpoint_session_created
 
             async def start(self):
                 events.append("api.start")

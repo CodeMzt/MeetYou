@@ -43,12 +43,12 @@ class _GatewayConfirmEventBus:
         accepted: bool,
         request_id: str = "",
         session_id: str = "",
-        client_id: str = "",
+        endpoint_id: str = "",
         approval_id: str = "",
         reason: str = "",
     ) -> bool:
         del reason
-        self.calls.append((accepted, request_id, session_id, client_id, approval_id))
+        self.calls.append((accepted, request_id, session_id, endpoint_id, approval_id))
         return True
 
 
@@ -58,11 +58,11 @@ class GatewayConfirmResponseTests(unittest.TestCase):
         gateway = FastAPIGateway(bus, SessionManager(), access_token="ws-token")
         with TestClient(gateway.app) as client:
             response = client.post(
-                "/client/sessions/web:test/confirm-response",
+                "/runtime/sessions/web:test/confirm-response",
                 headers={"Authorization": "Bearer ws-token"},
                 json={
                     "action": "confirm_response",
-                    "client_id": "desktop",
+                    "endpoint_id": "desktop",
                     "request_id": "req-123",
                     "accepted": True,
                 },

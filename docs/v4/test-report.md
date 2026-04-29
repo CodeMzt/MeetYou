@@ -1,63 +1,71 @@
 # MeetYou V4 Test Report
 
-Status: in progress
+Status: local V4 validation passed; commit / CI / deploy / remote / external human confirmation pending.
 
 ## Build Under Test
 
-- Commit sha: pending
-- Branch: main
-- CI status: pending
-- Deploy status: pending
+- Branch: `main`
+- Commit sha: pending commit for this V4 batch
+- Local validation date: 2026-04-29
+- Local Core database: `meetyou_v4_local_20260429080852`
+- `.env` note: repository `.env` was not edited; local runs used process-level overrides because `.env` mainly points to remote Core.
 
 ## Local Automated Tests
 
-- Python tests: passed (`python -m unittest discover -s tests -p "test_*.py"`, 504 tests, 7 skipped)
+- Python tests: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 502 tests, 1 skipped)
 - Frontend typecheck: passed (`npm run typecheck`)
-- Frontend build: passed (`npm run build`; build completed with existing chunk-size / metadata warnings)
 - Frontend tests: passed (`npm run test`, 17 files / 71 tests)
-- Migration tests: passed (`tests.test_db_bootstrap`, `tests.test_db_phase1` through full discovery and V4 targeted ladder)
-- Endpoint protocol tests: passed (`tests.test_endpoint_protocol_v4`, `tests.test_endpoint_provider_protocols`, `tests.test_gateway_surface_routes`, `tests.test_endpoint_tool_protocol`)
-- Scheduler tests: passed (`tests.test_scheduler_job_runtime_v4`, `tests.test_scheduler_tools_v4`)
-- Tool router tests: passed (`tests.test_tool_router_v4`)
-- Delivery tests: passed (`tests.test_delivery_v4`)
+- Frontend build: passed (`npm run build`; existing Electron metadata and Vite chunk warnings only)
+- Migration tests: passed through full Python discovery (`tests.test_db_bootstrap`, `tests.test_db_phase1`)
+- Endpoint protocol tests: passed through full Python discovery (`tests.test_endpoint_provider_protocols`, `tests.test_endpoint_tool_protocol`, gateway runtime tests)
+- Scheduler tests: passed through full Python discovery (`tests.test_scheduler_v4`, `tests.test_scheduler_tools_v4`, heartbeat guardrail tests)
+- Tool router tests: passed through full Python discovery (`tests.test_tool_router_v4`, `tests.test_tool_runtime`, execution-boundary tests)
+- Delivery tests: passed through full Python discovery (`tests.test_delivery_v4`, `tests.test_thread_delivery_bridge`)
+- Feishu / MeetWeChat non-streaming duplicate regression tests: passed (`tests.test_feishu_output_adapter`, `tests.test_meetwechat_adapter`)
 
 ## Local Core + Desktop + UI Real Tests
 
-- Core target: local Core `http://127.0.0.1:8000` with process-level local DB override; `.env` remote Core values were not edited.
-- Desktop/UI target: local Desktop bridge reported `core_base_url=http://127.0.0.1:8000`.
-- Endpoint provider: `/operator/endpoints` showed both `desktop.mzt-desktop-client.ui` and `desktop.mzt-desktop-client.executor` connected.
-- Real acceptance script: passed (`.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url http://127.0.0.1:8000 --ui-url http://localhost:5173`)
-- Unique marker: `V4OK_20260428173924_5391e3`
-- Thread: passed (`thr_ce922defd260453cb9602576faf1aa89`)
-- Non-streaming final delivery: passed (`delivery.message` delivered once; persisted assistant message `msg_3bf832a57b7f41beb3d672bac8ca5776`; marker appeared once, not duplicated)
-- `assistant.progress_notice`: passed (received `assistant.progress_notice` RunEvent before final message)
-- Final assistant Message persistence: passed (final reply came from MessageService-persisted assistant message)
-- ToolRouter: passed (`utility.echo` routed to synthetic V4 endpoint provider `desktop.v4check-5d9ea2a8.executor`; operation `op_3c70806f85ed49bcb0a5ca70736b9264`; `delivery.operation_update` completed)
-- Scheduler: passed (`system.heartbeat` interval round-trip and disposable user scheduled job create / delete)
-- `system.heartbeat`: passed (non-deletable; delete rejected; interval `600`)
-- Endpoint heartbeat separation: passed (`endpoint.heartbeat` was accepted as connection keepalive and did not trigger system heartbeat behavior)
-- Disconnect / reconnect: passed (new endpoint subscription replayed durable RunEventLog event, seq `15`)
-- UI dev server: passed (`http://localhost:5173/` returned 200; stale waiting placeholder was not present in HTML)
-- Note: one preceding run timed out waiting for final model output after progress notice; rerun passed with the marker above. No duplicate delivery was observed in the passing non-streaming run.
+- Core target: local Core `http://127.0.0.1:8000`, started with `MEETYOU_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/meetyou_v4_local_20260429080852`
+- External adapters during local validation: disabled with process env `MEETYOU_FEISHU_ENABLE=false`, `MEETYOU_MEETWECHAT_ENABLE=false`
+- Desktop Provider target: local Desktop bridge `http://127.0.0.1:38952`, provider id `local-final-20260429080852`, connected to local Core
+- UI target: `http://127.0.0.1:5173`, with `VITE_MEETYOU_DESKTOP_BASE_URL=http://127.0.0.1:38952`
+- Endpoint provider registration: passed; `desktop.local-final-20260429080852.ui` and `desktop.local-final-20260429080852.executor` were online, executor exposed `utility.echo`, `file.read`, `file.write`, `shell.exec`, and `workspace.analyze`
+- Real acceptance command: passed (`.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url http://127.0.0.1:8000 --ui-url http://127.0.0.1:5173 --desktop-tool-endpoint desktop.local-final-20260429080852.executor --json-out logs\v4-local-final-acceptance.json`)
+- Latest local acceptance rerun: passed (`logs\v4-local-final-acceptance-rerun.json`, marker `V4OK_20260429003714_359bee`, real Desktop tool marker `DESKTOP_TOOL_20260429003728_6e9894`)
+- Unique marker: `V4OK_20260429001701_e294ee`
+- Thread / session: passed (`thr_bab0f0552bcd4164bf35b41be52a7862`, `sess_42bf900fa4654eed9f899d4a457d24eb`)
+- Streaming: passed (`V4STREAM_20260429001702_b1a8e2`; RunEvent `message.delta` + `message.completed`; persisted assistant message `msg_c0ac554aaeae4da4809589f36fe42a51`)
+- Non-streaming final delivery: passed (persisted assistant message `msg_c7528c465014449bb5089aecc09bbcb6`; marker appeared once; exactly one `delivery.message`)
+- `assistant.progress_notice`: passed (RunEvent observed before final reply; not persisted as final assistant message)
+- ToolRouter synthetic endpoint: passed (`utility.echo`, operation `op_7d029ee1c24f48daa174602689afcd23`)
+- Real Desktop tool through ToolRouter + ExecutionTarget: passed (`utility.echo` routed to `desktop.local-final-20260429080852.executor`, operation `op_d63a2f21eece413fb053a4abf4b2b925`, marker `DESKTOP_TOOL_20260429001713_ac1d4f`)
+- Scheduler / `system.heartbeat`: passed (`system.heartbeat` interval round-trip, delete rejected, disposable ordinary job `acceptance.v4ok_20260429001701_e294ee` created and deleted)
+- Endpoint heartbeat separation: passed (`endpoint.heartbeat` used as connection keepalive only)
+- Disconnect / reconnect: passed (durable RunEventLog replay, seq `17`)
+- UI stale placeholder: passed (served HTML did not contain “等待后端服务启动后即可使用”)
+- Legacy protocol guard: passed (`/client/ws` rejected with HTTP 403 during WebSocket handshake)
 
 ## Remote Core Verification
 
-- `/health`: pending
-- Version / commit sha: pending
+- CI status: pending
+- Deploy status: pending
+- Remote Core `/health`: pending
+- Remote Core version / commit sha: pending
 
 ## Local Desktop -> Remote Core Real Tests
 
-- Conversation: pending
-- Streaming: pending
-- `assistant.progress_notice`: pending
-- Local tools: pending
-- Scheduler: pending
-- Heartbeat: pending
-- Disconnect / reconnect: pending
+- Conversation / Streaming / `assistant.progress_notice`: pending
+- Real Desktop Provider tool through remote Core: pending
+- Scheduler / Heartbeat / disconnect-reconnect: pending
 
 ## External Delivery Human Feedback
 
-- Feishu unique message: pending
-- Feishu human confirmation: pending
-- WeChatBot unique message: pending
-- WeChatBot human confirmation: pending
+- Feishu unique real-message test: pending human confirmation
+- WeChatBot unique real-message test: pending human confirmation
+
+## Static V4 Guardrails
+
+- Runtime scan found no active `ClientToolDispatchService`, `source_client_id`, `target_client_id`, directed `short_reply`, `manage_procedures`, `manage_scheduled_tasks`, `core_only`, or `specific_endpoint` usage outside removed-route guards, migrations, tests, and legacy docs.
+- UTF-8 / UI text scan found no mojibake markers and no stale startup placeholder. Remaining English matches in UI source are internal logs, test names, type names, or build metadata fields.
+- `service_runtime` compatibility path now starts `App.scheduler_processor()` and does not start Heart scheduler / heartbeat loops.
+- External Feishu / MeetWeChat provider imports are lazy inside provider startup, so disabled or failing external providers do not block Core import.

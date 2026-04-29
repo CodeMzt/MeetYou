@@ -448,7 +448,7 @@ class MemoryViewLayer:
                 if isinstance(attribution, dict):
                     source_values.update(
                         str(attribution.get(key) or "").strip()
-                        for key in ("source_id", "client_id", "principal_key", "principal_id")
+                        for key in ("source_id", "endpoint_id", "principal_key", "principal_id")
                     )
                 attributions = record.get("source_attributions")
                 if isinstance(attributions, list):
@@ -456,7 +456,7 @@ class MemoryViewLayer:
                         if isinstance(item, dict):
                             source_values.update(
                                 str(item.get(key) or "").strip()
-                                for key in ("source_id", "client_id", "principal_key", "principal_id")
+                                for key in ("source_id", "endpoint_id", "principal_key", "principal_id")
                             )
                 if requested_user_id not in {value for value in source_values if value}:
                     continue
@@ -1003,7 +1003,7 @@ class MemoryConsolidatorLayer:
                 "principal_id",
                 "source_kind",
                 "source_id",
-                "client_id",
+                "endpoint_id",
                 "session_id",
                 "thread_id",
             )

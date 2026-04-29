@@ -40,9 +40,8 @@ from gateway.models import (
     UiProtocolSchemaResponse,
 )
 from gateway.serialization import make_json_safe
-from gateway.routes import build_client_router, build_developer_router, build_endpoint_router, build_operator_router
+from gateway.routes import build_developer_router, build_endpoint_router, build_operator_router, build_runtime_router
 from service_runtime.models import RuntimeError, RuntimeErrorCategory
-from gateway.ws_manager import WebSocketManager, WebSocketOutputAdapter
 
 
 _HTTP_SCHEMA = "meetyou.http.v1"
@@ -72,10 +71,9 @@ class FastAPIGateway:
         runtime_usage_getter=None,
         runtime_debug_getter=None,
         health_getter=None,
-        ws_delivery_observer=None,
         core_domain=None,
-        client_connection_prompt_getter=None,
-        client_connection_event_handler=None,
+        endpoint_connection_prompt_getter=None,
+        endpoint_connection_event_handler=None,
         access_token: str = "",
         cors_origins: list[str] | tuple[str, ...] | None = None,
     ):
@@ -112,8 +110,8 @@ class FastAPIGateway:
         self._runtime_usage_getter = runtime_usage_getter
         self._runtime_debug_getter = runtime_debug_getter
         self._health_getter = health_getter
-        self._client_connection_prompt_getter = client_connection_prompt_getter
-        self._client_connection_event_handler = client_connection_event_handler
+        self._endpoint_connection_prompt_getter = endpoint_connection_prompt_getter
+        self._endpoint_connection_event_handler = endpoint_connection_event_handler
         self._access_token = str(access_token or "").strip()
         self._cors_origins = tuple(
             origin
@@ -123,9 +121,7 @@ class FastAPIGateway:
             }
             if origin
         )
-        self.ws_manager = WebSocketManager(delivery_observer=ws_delivery_observer)
         self.endpoint_ws_manager = EndpointWebSocketManager()
-        self.output_adapter = WebSocketOutputAdapter(self.ws_manager)
         self.app = FastAPI(title="MeetYou Gateway")
         self.app.add_middleware(
             CORSMiddleware,
@@ -291,45 +287,45 @@ class FastAPIGateway:
     async def dispatch_endpoint_call(self, *, endpoint_id: str, payload: dict) -> bool:
         return bool(await self.endpoint_ws_manager.send_to_endpoint(endpoint_id, payload))
 
-    async def build_client_connection_prompt(
+    async def build_endpoint_connection_prompt(
         self,
         *,
-        client_id: str,
-        client_type: str,
+        endpoint_id: str,
+        endpoint_type: str,
         display_name: str,
         transport_profile: str,
         workspace_ids: list[str] | tuple[str, ...] | None = None,
     ) -> dict | None:
-        getter = self._client_connection_prompt_getter
+        getter = self._endpoint_connection_prompt_getter
         if getter is None:
             return None
         payload = await self._resolve(
             getter,
-            client_id=client_id,
-            client_type=client_type,
+            endpoint_id=endpoint_id,
+            endpoint_type=endpoint_type,
             display_name=display_name,
             transport_profile=transport_profile,
             workspace_ids=list(workspace_ids or []),
         )
         return dict(payload or {}) if isinstance(payload, dict) else None
 
-    async def notify_client_connected(
+    async def notify_endpoint_connected(
         self,
         *,
-        client_id: str,
-        client_type: str,
+        endpoint_id: str,
+        endpoint_type: str,
         display_name: str,
         transport_profile: str,
         workspace_ids: list[str] | tuple[str, ...] | None = None,
         connection_prompt: dict | None = None,
     ) -> None:
-        handler = self._client_connection_event_handler
+        handler = self._endpoint_connection_event_handler
         if handler is None:
             return
         await self._resolve(
             handler,
-            client_id=client_id,
-            client_type=client_type,
+            endpoint_id=endpoint_id,
+            endpoint_type=endpoint_type,
             display_name=display_name,
             transport_profile=transport_profile,
             workspace_ids=list(workspace_ids or []),
@@ -442,7 +438,7 @@ class FastAPIGateway:
             return False
 
     def _setup_routes(self):
-        self.app.include_router(build_client_router(self))
+        self.app.include_router(build_runtime_router(self))
         self.app.include_router(build_endpoint_router(self))
         self.app.include_router(build_operator_router(self))
         self.app.include_router(build_developer_router(self))

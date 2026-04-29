@@ -3,18 +3,18 @@ import { triggerAttachmentDownload } from '../attachmentTransfers'
 import type { StatusFeedback } from '../types'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
 import {
-  DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS,
-  useClientContext,
+  DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
+  useEndpointContext,
   useMeetYouSocket,
   useChatSession,
   useOperations,
 } from './core'
-import { parseClientWsPayload } from '../protocolClient'
+import { parseEndpointWsPayload } from '../protocolClient'
 import {
-  completeClientAttachment,
-  createClientAttachmentUploadTicket,
-  uploadClientAttachmentContent
-} from '../clientApi'
+  completeRuntimeAttachment,
+  createRuntimeAttachmentUploadTicket,
+  uploadRuntimeAttachmentContent
+} from '../runtimeApi'
 
 const STATUS_FEEDBACK_TTL_MS = 6000
 
@@ -24,29 +24,29 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const [attachmentInventoryVersion, setAttachmentInventoryVersion] = useState(0)
 
   const {
-    clientContext,
-    desktopToolClientId,
+    endpointContext,
+    desktopToolEndpointId,
     transportState,
     dispatchTransport,
     sessionId,
-    clientId,
-    initializeClientContext,
-    refreshDesktopToolClient,
+    endpointId,
+    initializeEndpointContext,
+    refreshDesktopToolEndpoint,
     refreshWorkspace,
-  } = useClientContext(baseUrl, (threadId) => {
+  } = useEndpointContext(baseUrl, (threadId) => {
     void loadThreadHistory(threadId)
   }, (turn) => {
     dispatchChat({ type: 'append_system_turn', turn })
   })
 
   const {
-    clientConnectionState,
-    sendClientWsCommand,
+    endpointConnectionState,
+    sendEndpointWsCommand,
     refreshHealth,
   } = useMeetYouSocket(
     baseUrl,
-    clientContext,
-    (rawPayload) => applyClientWsUpdate(rawPayload),
+    endpointContext,
+    (rawPayload) => applyEndpointWsUpdate(rawPayload),
     dispatchTransport
   )
 
@@ -64,12 +64,12 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     pendingHumanInput,
   } = useChatSession(
     baseUrl,
-    clientContext,
+    endpointContext,
     sessionId,
-    clientId,
-    sendClientWsCommand,
+    endpointId,
+    sendEndpointWsCommand,
     dispatchTransport,
-    initializeClientContext
+    initializeEndpointContext
   )
 
   const {
@@ -78,8 +78,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     processWsUpdateForOperations,
   } = useOperations(
     baseUrl,
-    clientContext,
-    initializeClientContext,
+    endpointContext,
+    initializeEndpointContext,
     dispatchChat
   )
 
@@ -102,8 +102,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     })
   }, [])
 
-  const applyClientWsUpdate = useCallback((rawPayload: unknown) => {
-    const update = parseClientWsPayload(rawPayload)
+  const applyEndpointWsUpdate = useCallback((rawPayload: unknown) => {
+    const update = parseEndpointWsPayload(rawPayload)
     
     // Transport level handlers
     if (update.kind === 'connection') {
@@ -123,7 +123,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
 
     if (update.kind === 'workspace_changed') {
       void refreshWorkspace(update.workspaceId || update.activeWorkspaceId)
-      void refreshDesktopToolClient()
+      void refreshDesktopToolEndpoint()
     }
 
     if (
@@ -133,58 +133,58 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     ) {
       return
     }
-  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, refreshDesktopToolClient, refreshWorkspace])
+  }, [dispatchTransport, processWsUpdateForChat, processWsUpdateForOperations, refreshDesktopToolEndpoint, refreshWorkspace])
 
   useEffect(() => {
     if (autoInitializeAttemptedRef.current) {
       return
     }
     autoInitializeAttemptedRef.current = true
-    void initializeClientContext()
-  }, [initializeClientContext])
+    void initializeEndpointContext()
+  }, [initializeEndpointContext])
 
   useEffect(() => {
-    if (!clientContext || transportState.connectionState !== 'connected') {
+    if (!endpointContext || transportState.connectionState !== 'connected') {
       return
     }
     void refreshHealth()
-  }, [clientContext, refreshHealth, transportState.connectionState])
+  }, [endpointContext, refreshHealth, transportState.connectionState])
 
   useEffect(() => {
-    if (!clientContext) {
+    if (!endpointContext) {
       return
     }
-    void refreshDesktopToolClient(clientContext)
+    void refreshDesktopToolEndpoint(endpointContext)
     const timer = window.setInterval(() => {
-      void refreshDesktopToolClient(clientContext)
-    }, DESKTOP_TOOL_CLIENT_REFRESH_INTERVAL_MS)
+      void refreshDesktopToolEndpoint(endpointContext)
+    }, DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [clientContext, refreshDesktopToolClient])
+  }, [endpointContext, refreshDesktopToolEndpoint])
 
   const effectiveConnectionState = useMemo(() => {
-    if (!clientContext || clientConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
+    if (!endpointContext || endpointConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
       return 'connecting' as const
     }
-    if (clientConnectionState === 'disconnected' || transportState.connectionState === 'disconnected') {
+    if (endpointConnectionState === 'disconnected' || transportState.connectionState === 'disconnected') {
       return 'disconnected' as const
     }
     return 'connected' as const
-  }, [clientConnectionState, clientContext, transportState.connectionState])
+  }, [endpointConnectionState, endpointContext, transportState.connectionState])
 
   const uploadAttachment = useCallback(async (file: File) => {
     try {
-      const context = clientContext ?? (await initializeClientContext())
-      const ticket = await createClientAttachmentUploadTicket(baseUrl, {
+      const context = endpointContext ?? (await initializeEndpointContext())
+      const ticket = await createRuntimeAttachmentUploadTicket(baseUrl, {
         owner_type: 'thread',
         owner_id: context.threadId,
         kind: file.type.startsWith('image/') ? 'image' : 'file',
         mime_type: file.type || 'application/octet-stream',
         file_name: file.name,
         size_bytes: file.size,
-        client_id: context.clientId,
+        endpoint_id: context.endpointId,
       })
-      const uploadResult = await uploadClientAttachmentContent(ticket.upload_url, file)
-      const attachment = await completeClientAttachment(baseUrl, ticket.attachment_id, {
+      const uploadResult = await uploadRuntimeAttachmentContent(ticket.upload_url, file)
+      const attachment = await completeRuntimeAttachment(baseUrl, ticket.attachment_id, {
         ticket_id: ticket.ticket_id,
         sha256: uploadResult.sha256,
         size_bytes: uploadResult.size_bytes,
@@ -196,18 +196,18 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       publishStatusFeedback(`附件上传失败：${error instanceof Error ? error.message : '未知错误'}`, 'error')
       return null
     }
-  }, [baseUrl, clientContext, initializeClientContext, publishStatusFeedback])
+  }, [baseUrl, endpointContext, initializeEndpointContext, publishStatusFeedback])
 
   const downloadAttachment = useCallback(async (attachmentId: string) => {
     try {
-      const context = clientContext ?? (await initializeClientContext())
-      await triggerAttachmentDownload(baseUrl, attachmentId, context.clientId)
+      const context = endpointContext ?? (await initializeEndpointContext())
+      await triggerAttachmentDownload(baseUrl, attachmentId, context.endpointId)
       return true
     } catch (error) {
       publishStatusFeedback(`附件下载失败：${error instanceof Error ? error.message : '未知错误'}`, 'error')
       return null
     }
-  }, [baseUrl, clientContext, initializeClientContext, publishStatusFeedback])
+  }, [baseUrl, endpointContext, initializeEndpointContext, publishStatusFeedback])
 
   useEffect(() => {
     window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.runtimeDebug.update, { sessionId, baseUrl })
@@ -222,10 +222,10 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   useEffect(() => {
     window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.workspace.update, {
       baseUrl,
-      threadId: clientContext?.threadId || '',
-      workspace: clientContext?.workspace || null,
+      threadId: endpointContext?.threadId || '',
+      workspace: endpointContext?.workspace || null,
       connectionState: effectiveConnectionState,
-      desktopToolsAvailable: Boolean(desktopToolClientId),
+      desktopToolsAvailable: Boolean(desktopToolEndpointId),
       operations,
       approvalDisplay,
       pendingHumanInput,
@@ -233,9 +233,9 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   }, [
     approvalDisplay,
     baseUrl,
-    clientContext?.threadId,
-    clientContext?.workspace,
-    desktopToolClientId,
+    endpointContext?.threadId,
+    endpointContext?.workspace,
+    desktopToolEndpointId,
     effectiveConnectionState,
     operations,
     pendingHumanInput,
@@ -244,21 +244,21 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   useEffect(() => {
     window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.attachments.update, {
       baseUrl,
-      threadId: clientContext?.threadId || '',
-      clientId,
-      workspaceTitle: clientContext?.workspace?.title || clientContext?.workspace?.workspace_id || '',
+      threadId: endpointContext?.threadId || '',
+      endpointId,
+      workspaceTitle: endpointContext?.workspace?.title || endpointContext?.workspace?.workspace_id || '',
       attachmentInventoryVersion,
     })
-  }, [attachmentInventoryVersion, baseUrl, clientContext?.threadId, clientContext?.workspace, clientId])
+  }, [attachmentInventoryVersion, baseUrl, endpointContext?.threadId, endpointContext?.workspace, endpointId])
 
   return {
     messages: chatState.messages,
     operations,
-    workspace: clientContext?.workspace || null,
-    threadId: clientContext?.threadId || '',
+    workspace: endpointContext?.workspace || null,
+    threadId: endpointContext?.threadId || '',
     sessionId,
-    workspaceId: clientContext?.workspace.workspace_id || '',
-    desktopToolsAvailable: Boolean(desktopToolClientId),
+    workspaceId: endpointContext?.workspace.workspace_id || '',
+    desktopToolsAvailable: Boolean(desktopToolEndpointId),
     connectionState: effectiveConnectionState,
     connected: effectiveConnectionState === 'connected',
     runtimeSnapshot: chatState.runtimeSnapshot,
@@ -284,6 +284,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     refreshWorkspace,
     setStatusFeedback,
     baseUrl,
-    clientId,
+    endpointId,
   }
 }

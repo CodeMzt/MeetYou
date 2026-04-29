@@ -35,7 +35,7 @@ def import_task_state(task_file_path: str, *, principal_id, workspaces: dict[str
                 "task_type": str(task.get("type") or "task"),
                 "status": str(task.get("status") or "active"),
                 "title": str(task.get("content") or task.get("summary") or task.get("task_key") or ""),
-                "execution_target": str(task.get("execution_target") or "core_only"),
+                "execution_target": str(task.get("execution_target") or "core.local"),
                 "due_at": str(task.get("due_at") or ""),
                 "next_run_at": str(task.get("next_run_at") or ""),
                 "raw_record": task,

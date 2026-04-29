@@ -21,7 +21,7 @@ class TaskState(TimestampMixin, Base):
     task_type: Mapped[str] = mapped_column(String(32), nullable=False, default="task")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     title: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    execution_target: Mapped[str] = mapped_column(String(64), nullable=False, default="core_only")
+    execution_target: Mapped[str] = mapped_column(String(64), nullable=False, default="core.local")
     due_at: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     next_run_at: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     raw_record: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

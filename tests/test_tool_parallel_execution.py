@@ -13,7 +13,7 @@ from core.tool_runtime import ToolCallResult, ToolSourceType
 from core.tools_manager import _ORDER_REQUIRED_TOOLS
 
 
-class _FakeClientSession:
+class _FakeRuntimeSession:
     async def close(self):
         return None
 

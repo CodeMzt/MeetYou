@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 
-import { clearDesktopMemory, deleteDesktopMemoryRecord, updateDesktopMemoryRecordStatus } from '../clientApi'
+import { clearDesktopMemory, deleteDesktopMemoryRecord, updateDesktopMemoryRecordStatus } from '../runtimeApi'
 import { fetchWithAuth, readErrorMessage } from '../apiClient'
 import { DEFAULT_BASE_URL } from '../windowBridge'
 

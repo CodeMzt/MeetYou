@@ -101,7 +101,7 @@ class CLIInputAdapter:
                 accepted,
                 request_id=interaction_responses.get_pending_confirmation_request_id(session_id=self.session_id),
                 session_id=self.session_id,
-                client_id="cil",
+                endpoint_id="cil",
             )
             return
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 飞书输入适配器。
 """
 
@@ -82,14 +82,14 @@ class FeishuInputAdapter:
         if client is None:
             client = GatewayConversationClient(
                 base_url=self._gateway_base_url,
-                client_id=f"feishu-{chat_id}",
-                client_type="feishu",
+                provider_id=f"feishu-{chat_id}",
+                provider_type="feishu",
                 display_name=f"Feishu {chat_id}",
                 workspace_id="personal",
                 access_token=self._gateway_access_token,
                 thread_title=f"Feishu Chat {chat_id}",
                 event_handler=(
-                    (lambda payload, cid=chat_id: self._output_adapter.send_client_event(cid, payload))
+                    (lambda payload, cid=chat_id: self._output_adapter.send_runtime_event(cid, payload))
                     if self._output_adapter is not None
                     else None
                 ),

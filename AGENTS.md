@@ -8,6 +8,7 @@
 - Core is not Client. `core.local` is an in-process `ExecutionTarget`, not a Client. Core-owned endpoints such as `core.local`, `core.scheduler`, `core.inbox`, and `core.notification` are runtime targets inside Core.
 - Scheduler is the only system-level scheduling clock.
 - `system.heartbeat` is a Scheduler-owned system preset Job. It is non-deletable, can be enabled or disabled, and can have its interval changed.
+- Heart may execute a single `system.heartbeat` run when Scheduler calls it, but Heart must not own a repeating scheduler or heartbeat clock. `service_runtime` compatibility paths must start `App.scheduler_processor()`, not Heart scheduler / heartbeat loops.
 - `endpoint.heartbeat` is connection keepalive only. It must not trigger `system.heartbeat`.
 - `short_reply` is no longer a directed tool. Replace it with `assistant.progress_notice` RunEvent / Runtime Action.
 - `assistant.progress_notice` must not go through ToolRouter, must not create Operation / OperationCall, and must not become final assistant message content.
@@ -16,10 +17,11 @@
 - Streaming must flow through RunEventLog plus Delivery fan-out.
 - Tool dispatch must flow through ToolRouter plus ExecutionTarget.
 - Permissions live on Actor / Workspace / RunPolicy. Execution ability lives on EndpointCapability.
+- V4 HTTP facade is `/runtime/*`; local Desktop `/desktop/*` may proxy to `/runtime/*`, `/operator/*`, or `/developer/*`, never to old `/client/*`.
 - Do not keep `/client/ws`, `source_client_id`, `target_client_id`, or `ClientToolDispatchService` compatibility paths.
 - Runtime assistant modes are limited to `general`, `automation`, and `danxi`. Legacy `normal` / `auto` / `documents` / `research` / `study` inputs normalize to `general`; legacy `office` normalizes to `automation`. Do not persist or expose `normal` / `office` as runtime modes.
 - Procedure is removed in V4. Do not reintroduce Procedure API, table, tool, prompt layer, pinned Procedure fields, or UI. Reusable workflow guidance must use SKILL.
-- SKILL is the only reusable workflow guide layer. Public workflow discovery and authoring go through `list_skills`, `load_skill`, and `create_skill`; capability exposure flows through `CapabilityRegistry`, semantic routing, ToolRouter, and ExecutionTarget.
+- SKILL is the only reusable workflow guide layer. Public workflow discovery and authoring go through `list_skills`, `load_skill`, and `create_skill`; skill lookup must match titles, summaries, scenarios, and recommended tools; capability exposure flows through `CapabilityRegistry`, semantic routing, ToolRouter, and ExecutionTarget.
 
 ## Runtime Shape
 
@@ -34,7 +36,7 @@
 
 - Runtime main chain: `main.py`, `service_runtime/service.py`, `core/app.py`, `core/app_lifecycle.py`.
 - Core assembly and lifecycle: `core/app.py`, `core/app_lifecycle.py`.
-- Endpoint protocol surface: `gateway/`, `gateway/client_ws.py` until it is replaced, endpoint protocol SDK files, and endpoint connection services.
+- Endpoint protocol surface: `gateway/`, endpoint protocol SDK files, and endpoint connection services. Do not add a `/client/ws` adapter.
 - Desktop provider runtime: `desktop_client/`, especially `desktop_client/runtime.py`, `desktop_client/desktop_api.py`, and `desktop_client/core_client.py`.
 - Edge provider runtime: `edge_client/`, especially `edge_client/runtime.py`.
 - UI entrypoints: `meetyou-ui/electron/main.ts` for Electron main process and `meetyou-ui/src/main.tsx` for renderer.
@@ -45,6 +47,7 @@
 ## Protocol Rules
 
 - The only V4 real-time provider entrypoint is `GET /endpoint/ws`.
+- The formal V4 HTTP facade is `/runtime/*`. `/client/*` is removed and may only return a removed response; it must not adapt or forward to V4.
 - V4 WebSocket protocol is `meetyou.endpoint.ws.v4`.
 - `/client/ws` is removed for V4. If a route remains during cleanup, it must return a clear removed response such as `410 Gone`; it must not adapt or forward to V4.
 - Endpoint lifecycle frames are `endpoint.hello`, `endpoint.capabilities.snapshot`, `endpoint.ready`, `endpoint.heartbeat`, and `endpoint.goodbye`.
@@ -61,7 +64,7 @@
 - `user/` is local runtime state; Git should keep only `*.example.json` templates and `user/README.md`.
 - `user/core_mcp_servers.json` is for Core-side safe MCP only. `user/mcp_servers.json` is for Desktop Provider local MCP only.
 - Desktop Provider defaults to `user/desktop_client.json`; local capability boundaries are `read_roots`, `trusted_write_roots`, `cmd_policy_path`, `mcp_servers_path`, and local bridge settings.
-- Edge Provider defaults to `user/edge_client.json`; edge boundaries are `workspace_ids`, `client_type`, `transport_profile`, and endpoint capabilities.
+- Edge Provider defaults to `user/edge_client.json`; edge boundaries are `workspace_ids`, provider identity/type, `transport_profile`, and endpoint capabilities.
 - Core / providers should use `MEETYOU_CLIENT_ACCESS_TOKEN` or Gateway/Core access tokens unless a V4 rename is intentionally implemented across config, docs, and deployment. Do not reintroduce `MEETYOU_AGENT_*`.
 - PostgreSQL is the formal persistence layer. `bootstrap_core_domain()` runs Alembic migration on service startup. Do not treat `user/*.json` as the only source of truth.
 - Danxi credential and WebVPN cookie updates accept encrypted transport only. Never expose plaintext email, password, cookie, or token in logs, error objects, debug output, snapshots, tests, or docs examples.
@@ -72,12 +75,12 @@
 - Frontend-only tasks usually live in `meetyou-ui/`; do not invent backend protocol names from UI assumptions.
 - Endpoint provider runtime tasks live in `desktop_client/` or `edge_client/`; do not bypass endpoint execution by changing Core directly.
 - Treat changes as cross-surface if they touch gateway routes, WebSocket payloads, config loading, attachment streams, `core/db/*`, `desktop_client/runtime.py`, `edge_client/runtime.py`, or `meetyou-ui/src/hooks/useMeetYou.ts`.
-- Danxi-related tasks usually touch `tools/danxi_tools.py`, `core/public_contract.py`, `core/assistant_modes.py`, `core/credential_transport.py`, `gateway/models.py`, `gateway/routes/client.py`, `gateway/routes/operator.py`, `meetyou-ui/src/`, `meetyou-ui/electron/`, and `docs/`. Do not put Danxi forum access into Desktop Provider or temporary MCP.
+- Danxi-related tasks usually touch `tools/danxi_tools.py`, `core/public_contract.py`, `core/assistant_modes.py`, `core/credential_transport.py`, `gateway/models.py`, `gateway/routes/runtime.py`, `gateway/routes/operator.py`, `meetyou-ui/src/`, `meetyou-ui/electron/`, and `docs/`. Do not put Danxi forum access into Desktop Provider or temporary MCP.
 
 ## High Risk Areas
 
 - `core/app.py`, `core/app_lifecycle.py`: Core assembly and lifecycle.
-- `gateway/routes/client.py`, `gateway/client_ws.py`: old Client protocol surface that must be replaced by Endpoint V4.
+- `gateway/routes/runtime.py`, `gateway/routes/endpoint.py`: HTTP facade and V4 Endpoint protocol surface; `/client/ws` must not be restored.
 - `core/services/tool_router_service.py`: V4 ToolRouter / ExecutionTarget dispatch path.
 - `core/db/*`, `alembic/versions/*`: persistence and migration surface.
 - `desktop_client/runtime.py`, `edge_client/runtime.py`: provider execution and protocol connection paths.

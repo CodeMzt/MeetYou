@@ -185,11 +185,11 @@ python -m pytest tests/db tests/core -q
 
 ## 验收
 
-- [ ] Alembic migration 完成。
-- [ ] ORM / service models 完成。
-- [ ] bootstrap 幂等。
-- [ ] system actors 存在。
-- [ ] core endpoints 存在。
-- [ ] system.heartbeat scheduled job 存在且不可删除。
-- [ ] 旧 Client 数据能迁移成 Endpoint。
-- [ ] 新代码不依赖 source_client_id / target_client_id。
+- [x] Alembic migration 完成。
+- [x] ORM / service models 完成。
+- [x] bootstrap 幂等。
+- [x] system actors 存在。
+- [x] core endpoints 存在。
+- [x] system.heartbeat scheduled job 存在且不可删除。
+- [x] 旧 Client 数据能迁移成 Endpoint。
+- [x] 新代码不依赖 source_client_id / target_client_id。

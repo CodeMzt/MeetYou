@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import sys
 import types
@@ -7,7 +7,7 @@ import unittest
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-class _FakeClientSession:
+class _FakeRuntimeSession:
     async def close(self):
         return None
 
@@ -15,7 +15,7 @@ class _FakeClientSession:
 try:
     import aiohttp  # noqa: F401
 except ImportError:
-    sys.modules.setdefault("aiohttp", types.SimpleNamespace(ClientSession=_FakeClientSession))
+    sys.modules.setdefault("aiohttp", types.SimpleNamespace(RuntimeSession=_FakeRuntimeSession))
 
 from adapters.base import StreamEvent, ToolCallInfo
 from core.assistant_modes import RouteDecision
@@ -1364,7 +1364,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         "workspace_title": "Study",
                         "workspace_base_mode": "general",
                         "workspace_prompt_overlay": "Prefer teaching-oriented explanations.",
-                        "workspace_default_execution_target": "core_only",
+                        "workspace_default_execution_target": "core.local",
                         "workspace_preferred_source_profiles": ["policy_global"],
                         "workspace_memory_ranking_policy": "workspace_first",
                     },
@@ -1427,7 +1427,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         "workspace_title": "Personal",
                         "workspace_base_mode": "general",
                         "workspace_prompt_overlay": "Prefer local grounding when possible.",
-                        "workspace_default_execution_target": "core_only",
+                        "workspace_default_execution_target": "core.local",
                         "workspace_preferred_source_profiles": ["workspace_local"],
                         "workspace_memory_ranking_policy": "workspace_first",
                     },
