@@ -32,19 +32,30 @@ class _WorkspaceService:
 
 
 class _EndpointService:
+    def __init__(self):
+        self.get_by_endpoint_id_calls = 0
+        self.get_by_id_calls = 0
+
     def get_by_endpoint_id(self, endpoint_id):
+        self.get_by_endpoint_id_calls += 1
         if endpoint_id == "desktop.local.executor":
             return SimpleNamespace(id="endpoint-row", endpoint_id=endpoint_id, provider_type="desktop", status="online")
         return None
 
     def get_by_id(self, row_id):
+        self.get_by_id_calls += 1
         if row_id == "endpoint-row":
             return SimpleNamespace(id="endpoint-row", endpoint_id="desktop.local.executor", provider_type="desktop", status="online")
         return None
 
 
 class _EndpointCapabilityService:
+    def __init__(self):
+        self.list_for_endpoint_calls = 0
+        self.list_enabled_for_tool_calls = 0
+
     def list_for_endpoint(self, *, endpoint_row_id):
+        self.list_for_endpoint_calls += 1
         if endpoint_row_id != "endpoint-row":
             return []
         return [
@@ -59,6 +70,7 @@ class _EndpointCapabilityService:
         ]
 
     def list_enabled_for_tool(self, tool_key):
+        self.list_enabled_for_tool_calls += 1
         if tool_key == "utility.echo":
             return [self.list_for_endpoint(endpoint_row_id="endpoint-row")[0]]
         return []
@@ -198,6 +210,75 @@ class ToolRouterV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(envelope["execution_target_id"], "desktop.local.executor")
         self.assertEqual(envelope["result"], {"echo": "envelope"})
         self.assertEqual(operation_service.rows[-1].thread_id, None)
+
+    async def test_execution_target_resolution_uses_cache_and_invalidation(self):
+        endpoint_service = _EndpointService()
+        capability_service = _EndpointCapabilityService()
+        router = ToolRouterService(
+            actor_service=_NoopService(),
+            workspace_service=_WorkspaceService(),
+            endpoint_service=endpoint_service,
+            endpoint_capability_service=capability_service,
+            session_service=_NoopService(),
+            thread_service=_NoopService(),
+            operation_service=_OperationService(),
+            operation_call_service=_OperationCallService(),
+        )
+
+        first = router.resolve_execution_target(
+            tool_key="utility.echo",
+            workspace_id="personal",
+            endpoint_id="desktop.local.executor",
+        )
+        second = router.resolve_execution_target(
+            tool_key="utility.echo",
+            workspace_id="personal",
+            endpoint_id="desktop.local.executor",
+        )
+        router.invalidate_cache(endpoint_id="desktop.local.executor")
+        third = router.resolve_execution_target(
+            tool_key="utility.echo",
+            workspace_id="personal",
+            endpoint_id="desktop.local.executor",
+        )
+
+        self.assertEqual(first.target_id, "desktop.local.executor")
+        self.assertIs(first, second)
+        self.assertEqual(third.target_id, "desktop.local.executor")
+        self.assertEqual(capability_service.list_for_endpoint_calls, 2)
+        self.assertEqual(endpoint_service.get_by_endpoint_id_calls, 2)
+
+    async def test_batch_execution_target_resolution_matches_single_resolution(self):
+        router = ToolRouterService(
+            actor_service=_NoopService(),
+            workspace_service=_WorkspaceService(),
+            endpoint_service=_EndpointService(),
+            endpoint_capability_service=_EndpointCapabilityService(),
+            session_service=_NoopService(),
+            thread_service=_NoopService(),
+            operation_service=_OperationService(),
+            operation_call_service=_OperationCallService(),
+        )
+
+        batch = router.resolve_execution_targets(
+            [
+                {
+                    "tool_key": "utility.echo",
+                    "workspace_id": "personal",
+                    "endpoint_id": "desktop.local.executor",
+                },
+                {
+                    "tool_key": "missing.tool",
+                    "workspace_id": "personal",
+                    "endpoint_id": "desktop.local.executor",
+                },
+            ]
+        )
+
+        self.assertTrue(batch[0]["ok"])
+        self.assertEqual(batch[0]["target"].target_id, "desktop.local.executor")
+        self.assertFalse(batch[1]["ok"])
+        self.assertEqual(batch[1]["error"]["code"], "endpoint_capability_not_found")
 
 
 if __name__ == "__main__":

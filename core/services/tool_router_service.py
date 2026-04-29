@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
@@ -90,6 +91,8 @@ class ToolRouterService:
         self._external_transport: Callable[..., Awaitable[dict[str, Any]]] | None = None
         self._pending: dict[str, asyncio.Future] = {}
         self._lock = asyncio.Lock()
+        self._resolution_cache_ttl_seconds = 5.0
+        self._resolution_cache: dict[tuple[str, str, str, str], tuple[float, ExecutionTarget]] = {}
 
     def set_endpoint_transport(self, transport: Callable[..., Awaitable[bool]] | None) -> None:
         self._endpoint_transport = transport
@@ -99,6 +102,57 @@ class ToolRouterService:
 
     def register_core_tool(self, tool_key: str, handler: Callable[[dict[str, Any]], Any]) -> None:
         self._core_executor.register(tool_key, handler)
+        self.invalidate_cache(tool_key=tool_key)
+
+    def invalidate_cache(self, *, endpoint_id: str = "", tool_key: str = "", workspace_id: str = "") -> None:
+        normalized_endpoint_id = str(endpoint_id or "").strip()
+        normalized_tool_key = str(tool_key or "").strip()
+        normalized_workspace_id = str(workspace_id or "").strip()
+        if not normalized_endpoint_id and not normalized_tool_key and not normalized_workspace_id:
+            self._resolution_cache.clear()
+            return
+        for key, (_, target) in list(self._resolution_cache.items()):
+            key_tool, key_workspace, key_endpoint, _key_offline_policy = key
+            target_endpoint_id = str(getattr(target, "target_id", "") or "")
+            if normalized_tool_key and key_tool != normalized_tool_key:
+                continue
+            if normalized_workspace_id and key_workspace != normalized_workspace_id:
+                continue
+            if normalized_endpoint_id and key_endpoint != normalized_endpoint_id and target_endpoint_id != normalized_endpoint_id:
+                continue
+            self._resolution_cache.pop(key, None)
+
+    def _resolution_cache_key(
+        self,
+        *,
+        tool_key: str,
+        workspace_id: str,
+        execution_target: dict[str, Any] | None,
+        endpoint_id: str,
+        offline_policy: str,
+    ) -> tuple[str, str, str, str]:
+        requested = dict(execution_target or {})
+        requested_endpoint_id = str(endpoint_id or requested.get("endpoint_id") or requested.get("execution_target_id") or "").strip()
+        return (
+            str(tool_key or "").strip(),
+            str(workspace_id or "").strip(),
+            requested_endpoint_id,
+            str(offline_policy or "fail_fast").strip() or "fail_fast",
+        )
+
+    def _get_cached_resolution(self, key: tuple[str, str, str, str]) -> ExecutionTarget | None:
+        entry = self._resolution_cache.get(key)
+        if entry is None:
+            return None
+        expires_at, target = entry
+        if expires_at <= time.monotonic():
+            self._resolution_cache.pop(key, None)
+            return None
+        return target
+
+    def _cache_resolution(self, key: tuple[str, str, str, str], target: ExecutionTarget) -> ExecutionTarget:
+        self._resolution_cache[key] = (time.monotonic() + self._resolution_cache_ttl_seconds, target)
+        return target
 
     async def dispatch_workspace_tool(self, **kwargs) -> dict[str, Any]:
         return await self.dispatch_tool_call(**kwargs)
@@ -140,6 +194,34 @@ class ToolRouterService:
         )
 
     def resolve_execution_target(
+        self,
+        *,
+        tool_key: str,
+        workspace_id: str = "",
+        execution_target: dict[str, Any] | None = None,
+        endpoint_id: str = "",
+        offline_policy: str = "fail_fast",
+    ) -> ExecutionTarget:
+        cache_key = self._resolution_cache_key(
+            tool_key=tool_key,
+            workspace_id=workspace_id,
+            execution_target=execution_target,
+            endpoint_id=endpoint_id,
+            offline_policy=offline_policy,
+        )
+        cached = self._get_cached_resolution(cache_key)
+        if cached is not None:
+            return cached
+        target = self._resolve_execution_target_uncached(
+            tool_key=tool_key,
+            workspace_id=workspace_id,
+            execution_target=execution_target,
+            endpoint_id=endpoint_id,
+            offline_policy=offline_policy,
+        )
+        return self._cache_resolution(cache_key, target)
+
+    def _resolve_execution_target_uncached(
         self,
         *,
         tool_key: str,
@@ -195,6 +277,33 @@ class ToolRouterService:
             if endpoint is not None:
                 return ExecutionTarget(endpoint.endpoint_id, "endpoint", endpoint=endpoint, endpoint_capability=capability, offline_policy=offline_policy)
         raise ToolRouterError("execution_target_unavailable", f"No execution target can run tool: {normalized_tool_key}", retryable=True)
+
+    def resolve_execution_targets(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for request in requests or []:
+            payload = dict(request or {})
+            try:
+                target = self.resolve_execution_target(
+                    tool_key=str(payload.get("tool_key") or "").strip(),
+                    workspace_id=str(payload.get("workspace_id") or "").strip(),
+                    execution_target=payload.get("execution_target") if isinstance(payload.get("execution_target"), dict) else None,
+                    endpoint_id=str(payload.get("endpoint_id") or payload.get("target_endpoint_id") or "").strip(),
+                    offline_policy=str(payload.get("offline_policy") or "fail_fast"),
+                )
+                results.append({"ok": True, "target": target})
+            except ToolRouterError as exc:
+                results.append(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": exc.code,
+                            "message": exc.message,
+                            "details": dict(exc.details or {}),
+                            "retryable": exc.retryable,
+                        },
+                    }
+                )
+        return results
 
     async def route_tool_call(
         self,

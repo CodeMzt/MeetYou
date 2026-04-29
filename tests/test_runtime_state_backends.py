@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.state_backends import RuntimeStateBlobBackend
+from core.state_backends import (
+    DatabaseRuntimeStateStoreBackend,
+    FileRuntimeStateStoreBackend,
+    RuntimeStateBlobBackend,
+    RuntimeStateStore,
+)
 from tools.document_tools import DocumentTools
 from tools.memory import Memory
 from tools.office_tools import OfficeTools
@@ -57,6 +62,40 @@ class _FakeModeManager:
 
 
 class RuntimeStateBackendTests(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_state_store_partitions_db_backend_by_namespace(self):
+        service = _InMemoryStateBlobService()
+        backend = DatabaseRuntimeStateStoreBackend(service, principal_id="self")
+        memory_store = RuntimeStateStore(backend, namespace="memory")
+        task_store = RuntimeStateStore(backend, namespace="task")
+
+        memory_store.save("graph", {"records": [1]})
+        task_store.save("graph", {"tasks": [2]})
+
+        self.assertEqual(memory_store.load("graph")["records"], [1])
+        self.assertEqual(task_store.load("graph")["tasks"], [2])
+        self.assertEqual(set(key for _principal, key in service.state), {"memory:graph", "task:graph"})
+
+    async def test_runtime_state_store_file_backend_partitions_by_namespace(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            backend = FileRuntimeStateStoreBackend(tmp_dir)
+            tool_store = RuntimeStateStore(backend, namespace="tool")
+            source_store = RuntimeStateStore(backend, namespace="source")
+
+            tool_store.save("state", {"value": "tool"})
+            source_store.save("state", {"value": "source"})
+
+            self.assertEqual(tool_store.load("state")["value"], "tool")
+            self.assertEqual(source_store.load("state")["value"], "source")
+
+    async def test_runtime_state_blob_backend_keeps_legacy_state_key(self):
+        service = _InMemoryStateBlobService()
+        backend = RuntimeStateBlobBackend(service, principal_id="self", state_key="memory_graph", default_factory=dict)
+
+        backend.save({"records": []})
+
+        self.assertIn(("self", "memory_graph"), service.state)
+        self.assertNotIn(("self", "runtime:memory_graph"), service.state)
+
     async def test_memory_persists_to_blob_backend(self):
         service = _InMemoryStateBlobService()
         backend = RuntimeStateBlobBackend(service, principal_id="self", state_key="memory_graph", default_factory=dict)

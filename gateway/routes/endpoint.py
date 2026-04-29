@@ -177,6 +177,12 @@ async def _drain_endpoint_outbox(domain, endpoint) -> None:
         await drainer(target_endpoint=endpoint)
 
 
+def _invalidate_tool_router_cache(domain, *, endpoint_id: str = "") -> None:
+    invalidator = getattr(getattr(domain.services, "tool_router", None), "invalidate_cache", None)
+    if callable(invalidator):
+        invalidator(endpoint_id=str(endpoint_id or "").strip())
+
+
 async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str, Any], state: dict[str, Any]) -> None:
     if str(frame.get("schema") or "") != ENDPOINT_WS_SCHEMA:
         await _send_error(gateway, websocket, code="invalid_schema", message="expected meetyou.endpoint.ws.v4")
@@ -247,6 +253,8 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
             provider=provider,
             metadata={"endpoint_ids": created},
         )
+        for created_endpoint_id in created:
+            _invalidate_tool_router_cache(domain, endpoint_id=created_endpoint_id)
         await gateway._safe_send_json(
             websocket,
             _frame(
@@ -277,6 +285,7 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
             endpoint_public_id=endpoint.endpoint_id,
             capabilities=capabilities,
         )
+        _invalidate_tool_router_cache(domain, endpoint_id=endpoint.endpoint_id)
         await gateway._safe_send_json(
             websocket,
             _frame("endpoint.ready", endpoint_id=endpoint.endpoint_id, correlation_id=correlation_id, payload={"registered_capability_count": count}),
@@ -340,6 +349,7 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
         endpoint_id = str(frame.get("endpoint_id") or payload.get("endpoint_id") or state.get("endpoint_id") or "").strip()
         if endpoint_id:
             endpoint = domain.services.endpoint.set_status(endpoint_id=endpoint_id, status="ready")
+            _invalidate_tool_router_cache(domain, endpoint_id=endpoint_id)
             await _drain_endpoint_outbox(domain, endpoint)
         return
 
@@ -459,5 +469,13 @@ def build_endpoint_router(gateway) -> APIRouter:
             domain = getattr(getattr(gateway, "_dependencies", None), "core_domain", None)
             if domain is not None and connection_id:
                 domain.services.endpoint_connection.mark_disconnected(connection_id=connection_id)
+            if domain is not None:
+                endpoint_ids = [
+                    str(item or "").strip()
+                    for item in (metadata.get("endpoint_ids") or [metadata.get("endpoint_id")])
+                    if str(item or "").strip()
+                ]
+                for endpoint_id in endpoint_ids:
+                    _invalidate_tool_router_cache(domain, endpoint_id=endpoint_id)
 
     return router
