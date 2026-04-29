@@ -68,6 +68,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
   const [endpointContext, setEndpointContext] = useState<EndpointContext | null>(null)
   const [desktopToolEndpointId, setDesktopToolEndpointId] = useState('')
   const [runtimeThreads, setRuntimeThreads] = useState<RuntimeThread[]>([])
+  const [defaultThreadId, setDefaultThreadId] = useState('')
   const endpointInitPromiseRef = useRef<Promise<EndpointContext> | null>(null)
 
   const sessionId = endpointContext?.session.session_id || transportState.sessionId
@@ -174,6 +175,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
         title: '桌面聊天',
         mode: workspace.base_mode,
       })
+      setDefaultThreadId(thread.thread_id)
       const threads = await listRuntimeThreads(baseUrl, {
         workspace_id: workspace.workspace_id,
         limit: 50,
@@ -233,6 +235,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     sessionId,
     endpointId,
     runtimeThreads,
+    defaultThreadId,
     initializeEndpointContext,
     selectRuntimeThread,
     refreshDesktopToolEndpoint,

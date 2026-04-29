@@ -80,6 +80,11 @@ class GatewayConversationClient:
         self.thread_id = str(thread_id or "").strip()
         self.session_id = ""
 
+    def _thread_default_key(self) -> str:
+        provider_type = str(self.provider_type or "external").strip() or "external"
+        provider_id = str(self.provider_id or self.endpoint_id or "default").strip() or "default"
+        return f"endpoint.{provider_type}.{provider_id}"
+
     @property
     def endpoint_id(self) -> str:
         if self._endpoint_id_override:
@@ -145,9 +150,10 @@ class GatewayConversationClient:
             if not self.thread_id:
                 thread = await self.request_json(
                     "POST",
-                    "/runtime/threads",
+                    "/runtime/threads/default",
                     json_body={
                         "workspace_id": self.workspace_id,
+                        "default_key": self._thread_default_key(),
                         "title": self.thread_title,
                         "mode": "general",
                     },
