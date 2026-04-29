@@ -146,6 +146,63 @@ describe('chatState', () => {
     expect(state.messages[0]?.isStreaming).toBe(false)
   })
 
+  it('does not duplicate replayed completed messages after history hydration', () => {
+    let state = reduceChatState(createInitialChatState(), {
+      type: 'hydrate_messages',
+      messages: [
+        {
+          message_id: 'msg_assistant',
+          thread_id: 'thr_1',
+          session_id: 'sess_1',
+          workspace_id: 'personal',
+          active_workspace_id: 'personal',
+          endpoint_id: '',
+          role: 'assistant',
+          content: 'final answer',
+          status: 'completed',
+          channel: 'message',
+          created_at: '2026-04-08T00:00:02Z',
+        },
+      ],
+    })
+
+    state = reduceChatState(state, {
+      type: 'append_message',
+      role: 'assistant',
+      content: 'final answer',
+      streamId: 'stream-1',
+      turnId: 'turn-1',
+      channel: 'answer',
+      phase: 'chunk',
+      eventId: 'evt-replay',
+      activeTurnId: 'turn-1',
+    })
+
+    state = reduceChatState(state, {
+      type: 'complete_stream_message',
+      streamId: 'stream-1',
+      turnId: 'turn-1',
+      message: {
+        message_id: 'msg_assistant',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        workspace_id: 'personal',
+        active_workspace_id: 'personal',
+        endpoint_id: '',
+        role: 'assistant',
+        content: 'final answer',
+        status: 'completed',
+        channel: 'message',
+        created_at: '2026-04-08T00:00:02Z',
+      },
+    })
+
+    expect(state.messages).toHaveLength(1)
+    expect(state.messages[0]?.id).toBe('msg_assistant')
+    expect(state.messages[0]?.content).toBe('final answer')
+    expect(state.messages[0]?.isStreaming).toBe(false)
+  })
+
   it('keeps short replies as independent turns before the final answer', () => {
     let state = reduceChatState(createInitialChatState(), {
       type: 'sync_runtime',

@@ -10,6 +10,21 @@ import { AssistantMode, ThinkingOverride } from './types'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
 import styles from './App.module.css'
 
+function getThreadDisplayTitle(rawTitle: string, threadId: string): string {
+  const title = String(rawTitle || '').trim()
+  const normalized = title.toLowerCase()
+  if (normalized.includes('meetwechat') || normalized.includes('wechat') || normalized.includes('weixin')) {
+    return '微信会话'
+  }
+  if (normalized.includes('feishu') || normalized.includes('lark')) {
+    return '飞书会话'
+  }
+  if (normalized.includes('desktop') || normalized.includes('frontend')) {
+    return '桌面聊天'
+  }
+  return title || `会话 ${threadId.slice(-6)}`
+}
+
 export default function App() {
   const baseUrl = DEFAULT_BASE_URL
   const {
@@ -134,27 +149,31 @@ export default function App() {
 
         {threads.length > 0 && (
           <div className={styles.threadStrip} aria-label="会话线程">
-            {threads.map((thread) => {
-              const active = thread.thread_id === threadId
-              const title = thread.title || `Thread ${thread.thread_id.slice(-6)}`
-              return (
-                <button
-                  key={thread.thread_id}
-                  type="button"
-                  className={`${styles.threadButton} ${active ? styles.activeThreadButton : ''}`}
-                  onClick={() => {
-                    if (!active) {
-                      void selectThread(thread.thread_id)
-                    }
-                  }}
-                  title={title}
-                  aria-current={active ? 'true' : undefined}
-                >
-                  <MessageSquare size={14} aria-hidden="true" />
-                  <span className={styles.threadTitle}>{title}</span>
-                </button>
-              )
-            })}
+            <span className={styles.threadStripLabel}>会话</span>
+            <div className={styles.threadList}>
+              {threads.map((thread) => {
+                const active = thread.thread_id === threadId
+                const title = getThreadDisplayTitle(thread.title, thread.thread_id)
+                const rawTitle = thread.title || title
+                return (
+                  <button
+                    key={thread.thread_id}
+                    type="button"
+                    className={`${styles.threadButton} ${active ? styles.activeThreadButton : ''}`}
+                    onClick={() => {
+                      if (!active) {
+                        void selectThread(thread.thread_id)
+                      }
+                    }}
+                    title={rawTitle === title ? title : `${title} · ${rawTitle}`}
+                    aria-current={active ? 'true' : undefined}
+                  >
+                    <MessageSquare size={14} aria-hidden="true" />
+                    <span className={styles.threadTitle}>{title}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
 
