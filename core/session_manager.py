@@ -70,6 +70,7 @@ class SessionManager:
             "cli": TargetKind.CLI.value,
             "web": TargetKind.WEB.value,
             "feishu": TargetKind.FEISHU.value,
+            "wechat": TargetKind.WECHAT.value,
         }
         return EventTarget(
             kind=target_kind_map.get(source.kind, TargetKind.INTERNAL.value),

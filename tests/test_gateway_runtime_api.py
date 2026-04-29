@@ -7,6 +7,7 @@ from starlette.websockets import WebSocketDisconnect
 from core.event_bus import EventBus
 from core.session_manager import SessionManager
 from gateway.api import FastAPIGateway
+from gateway.routes.runtime import _resolve_runtime_source_kind
 
 
 class GatewayRuntimeApiTests(unittest.TestCase):
@@ -245,6 +246,32 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(payload["health"]["status"], "ready")
         self.assertTrue(payload["health"]["ready"])
         self.assertEqual(payload["health"]["components"][0]["name"], "session_execution")
+
+    def test_runtime_source_kind_uses_endpoint_provider_not_web_fallback(self):
+        self.assertEqual(
+            _resolve_runtime_source_kind(
+                endpoint_id="feishu.feishu-oc_x.ui",
+                endpoint_type="feishu",
+                metadata={"source": "feishu", "transport": "feishu"},
+            ),
+            "feishu",
+        )
+        self.assertEqual(
+            _resolve_runtime_source_kind(
+                endpoint_id="wechat.meetwechat-abc.ui",
+                endpoint_type="wechat_ui",
+                metadata={"source": "wechat"},
+            ),
+            "wechat",
+        )
+        self.assertEqual(
+            _resolve_runtime_source_kind(
+                endpoint_id="desktop.main.ui",
+                endpoint_type="desktop_ui",
+                metadata={},
+            ),
+            "web",
+        )
 
     def test_legacy_chat_http_routes_return_controlled_migration_errors(self):
         response_specs = [

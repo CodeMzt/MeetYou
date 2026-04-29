@@ -54,6 +54,63 @@ from tools.danxi_tools import DanxiError, get_shared_danxi_tools
 
 
 _HTTP_SCHEMA = "meetyou.http.v1"
+_SOURCE_KIND_ALIASES = {
+    "browser": SourceKind.WEB.value,
+    "desktop": SourceKind.WEB.value,
+    "desktop_ui": SourceKind.WEB.value,
+    "electron": SourceKind.WEB.value,
+    "electron_ui": SourceKind.WEB.value,
+    "edge": SourceKind.WEB.value,
+    "edge_ui": SourceKind.WEB.value,
+    "web": SourceKind.WEB.value,
+    "web_ui": SourceKind.WEB.value,
+    "feishu": SourceKind.FEISHU.value,
+    "feishu_ui": SourceKind.FEISHU.value,
+    "lark": SourceKind.FEISHU.value,
+    "wechat": SourceKind.WECHAT.value,
+    "wechat_ui": SourceKind.WECHAT.value,
+    "meetwechat": SourceKind.WECHAT.value,
+    "meetwechat_ui": SourceKind.WECHAT.value,
+    "cli": SourceKind.CLI.value,
+}
+_SOURCE_TO_TARGET_KIND = {
+    SourceKind.WEB.value: TargetKind.WEB.value,
+    SourceKind.FEISHU.value: TargetKind.FEISHU.value,
+    SourceKind.WECHAT.value: TargetKind.WECHAT.value,
+    SourceKind.CLI.value: TargetKind.CLI.value,
+}
+
+
+def _normalize_runtime_source_kind(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return ""
+    if "." in normalized:
+        normalized = normalized.split(".", 1)[0]
+    return _SOURCE_KIND_ALIASES.get(normalized, "")
+
+
+def _resolve_runtime_source_kind(*, endpoint_id: str = "", endpoint_type: str = "", metadata: dict | None = None) -> str:
+    meta = dict(metadata or {})
+    for candidate in (
+        meta.get("source"),
+        meta.get("transport"),
+        meta.get("provider_type"),
+        endpoint_type,
+        endpoint_id,
+    ):
+        source_kind = _normalize_runtime_source_kind(candidate)
+        if source_kind:
+            return source_kind
+    return SourceKind.WEB.value
+
+
+def _runtime_target_for_source(source_kind: str, source_id: str, metadata: dict | None = None) -> EventTarget:
+    return EventTarget(
+        kind=_SOURCE_TO_TARGET_KIND.get(str(source_kind or "").strip().lower(), TargetKind.WEB.value),
+        id=str(source_id or "").strip(),
+        metadata=dict(metadata or {}),
+    )
 
 
 def _workspace_response(workspace) -> RuntimeWorkspaceResponse:
@@ -334,6 +391,40 @@ def build_runtime_router(gateway) -> APIRouter:
             origin_endpoint_id=getattr(endpoint, "id", None),
             workspace_id=workspace.id,
         )
+        source_id = str(getattr(endpoint, "endpoint_id", "") or payload.endpoint_id or "runtime.endpoint").strip()
+        source_kind = _resolve_runtime_source_kind(
+            endpoint_id=source_id,
+            endpoint_type=payload.endpoint_type,
+            metadata={"provider_type": getattr(endpoint, "provider_type", "") if endpoint is not None else ""},
+        )
+        gateway._session_manager.bind_runtime_session(
+            make_source(
+                source_kind,
+                source_id,
+                endpoint_id=source_id,
+                endpoint_type=payload.endpoint_type,
+                display_name=payload.display_name,
+            ),
+            session_id=session.session_id,
+            default_target=_runtime_target_for_source(
+                source_kind,
+                source_id,
+                {
+                    "endpoint_id": source_id,
+                    "endpoint_type": payload.endpoint_type,
+                    "thread_id": thread.thread_id,
+                    "workspace_id": workspace.workspace_id,
+                },
+            ),
+            metadata={
+                "thread_id": thread.thread_id,
+                "workspace_id": workspace.workspace_id,
+                "active_workspace_id": workspace.workspace_id,
+                "endpoint_id": source_id,
+                "endpoint_type": payload.endpoint_type,
+                "source_kind": source_kind,
+            },
+        )
         return RuntimeSessionResponse(
             session_id=session.session_id,
             thread_id=thread.thread_id,
@@ -383,18 +474,33 @@ def build_runtime_router(gateway) -> APIRouter:
             meta=dict(payload.metadata or {}),
         )
         source_id = str(getattr(endpoint, "endpoint_id", "") or payload.endpoint_id or "ui.endpoint")
+        metadata = dict(payload.metadata or {})
+        source_kind = _resolve_runtime_source_kind(
+            endpoint_id=source_id,
+            endpoint_type=payload.endpoint_type,
+            metadata=metadata,
+        )
+        source_metadata = {
+            **metadata,
+            "endpoint_id": source_id,
+            "endpoint_type": payload.endpoint_type,
+            "display_name": payload.display_name,
+        }
         event = InboundEvent(
             session_id=getattr(session, "session_id", "") or "",
             type=EventType.MESSAGE.value,
             role=payload.role or "user",
             content=payload.content,
-            source=make_source(SourceKind.WEB.value, source_id, endpoint_id=source_id),
+            source=make_source(source_kind, source_id, **source_metadata),
             target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
             metadata={
                 "thread_id": thread.thread_id,
                 "workspace_id": workspace.workspace_id,
                 "message_id": message.message_id,
-                **dict(payload.metadata or {}),
+                "endpoint_id": source_id,
+                "endpoint_type": payload.endpoint_type,
+                "source_kind": source_kind,
+                **metadata,
             },
         )
         if getattr(session, "session_id", ""):
