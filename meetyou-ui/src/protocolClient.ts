@@ -667,6 +667,13 @@ export function parseEndpointWsPayload(payload: unknown): EndpointWsEvent {
     if (frameType === 'delivery.operation_update') {
       return toOperationUpdatedEvent(toRecord(record.payload))
     }
+    if (frameType === 'delivery.message') {
+      const body = toRecord(record.payload)
+      const message = toRuntimeMessage(body.message || body)
+      return message
+        ? { kind: 'message_created', threadId: message.thread_id, sessionId: message.session_id, message }
+        : { kind: 'ignore' }
+    }
     if (frameType !== 'delivery.run_event') {
       return { kind: 'ignore' }
     }

@@ -5,6 +5,7 @@ import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
+import { MessageSquare } from 'lucide-react'
 import { AssistantMode, ThinkingOverride } from './types'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
 import styles from './App.module.css'
@@ -27,12 +28,15 @@ export default function App() {
     lastError,
     archivedTurnCount,
     statusFeedback,
+    threads,
+    threadId,
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
     uploadAttachment,
     downloadAttachment,
     refreshWorkspace,
+    selectThread,
   } = useMeetYou(baseUrl)
 
   const [inputVal, setInputVal] = useState('')
@@ -127,6 +131,32 @@ export default function App() {
           preferredMode={preferredMode}
           danxiStatusText={danxiStatusText}
         />
+
+        {threads.length > 0 && (
+          <div className={styles.threadStrip} aria-label="会话线程">
+            {threads.map((thread) => {
+              const active = thread.thread_id === threadId
+              const title = thread.title || `Thread ${thread.thread_id.slice(-6)}`
+              return (
+                <button
+                  key={thread.thread_id}
+                  type="button"
+                  className={`${styles.threadButton} ${active ? styles.activeThreadButton : ''}`}
+                  onClick={() => {
+                    if (!active) {
+                      void selectThread(thread.thread_id)
+                    }
+                  }}
+                  title={title}
+                  aria-current={active ? 'true' : undefined}
+                >
+                  <MessageSquare size={14} aria-hidden="true" />
+                  <span className={styles.threadTitle}>{title}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         <div className={styles.contentArea}>
           <MessageList

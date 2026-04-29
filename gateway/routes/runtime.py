@@ -42,6 +42,7 @@ from gateway.models import (
     RuntimeMessageResponse,
     RuntimeOperationCreateRequest,
     RuntimeOperationResponse,
+    RuntimeDefaultThreadRequest,
     RuntimeSessionCreateRequest,
     RuntimeSessionResponse,
     RuntimeThreadCreateRequest,
@@ -358,6 +359,40 @@ def build_runtime_router(gateway) -> APIRouter:
                 )
             )
         return endpoints
+
+    @router.get("/threads", response_model=list[RuntimeThreadResponse])
+    async def list_threads(request: Request, workspace_id: str = "", limit: int = 50, cursor: str = ""):
+        del cursor
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        workspace = _find_workspace(domain, workspace_id) if str(workspace_id or "").strip() else None
+        rows = domain.services.thread.list_threads(
+            principal_id=domain.principal.id,
+            workspace_id=getattr(workspace, "id", None),
+            limit=limit,
+        )
+        workspace_cache: dict[Any, str] = {}
+        responses: list[RuntimeThreadResponse] = []
+        for thread in rows:
+            row_workspace_id = getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None)
+            if row_workspace_id not in workspace_cache:
+                row_workspace = domain.services.workspace.get_by_id(row_workspace_id)
+                workspace_cache[row_workspace_id] = str(getattr(row_workspace, "workspace_id", "") or "")
+            responses.append(_thread_response(thread, workspace_cache[row_workspace_id]))
+        return responses
+
+    @router.post("/threads/default", response_model=RuntimeThreadResponse)
+    async def ensure_default_thread(payload: RuntimeDefaultThreadRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        workspace = _find_workspace(domain, payload.workspace_id)
+        thread = domain.services.thread.ensure_default_thread(
+            principal_id=domain.principal.id,
+            workspace_id=workspace.id,
+            default_key=payload.default_key,
+            title=payload.title,
+        )
+        return _thread_response(thread, workspace.workspace_id)
 
     @router.post("/threads", response_model=RuntimeThreadResponse)
     async def create_thread(payload: RuntimeThreadCreateRequest, request: Request):

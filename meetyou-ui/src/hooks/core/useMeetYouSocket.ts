@@ -38,13 +38,16 @@ export function buildEndpointHandshakeFrames(endpointContext: EndpointContext): 
           provider_id: endpointSafeId(endpointContext.endpointId, 'desktop-app'),
           display_name: '桌面应用',
           transport_profile: 'desktop_ui_bridge',
+          supports_markdown: true,
         },
+        supports_markdown: true,
         endpoints: [
           {
             endpoint_id: endpointId,
             endpoint_type: 'desktop_ui',
             roles: ['input', 'output'],
             workspace_ids: workspaceId ? [workspaceId] : [],
+            supports_markdown: true,
           },
         ],
       },
@@ -71,6 +74,7 @@ export function useMeetYouSocket(
   dispatchTransport: any
 ) {
   const endpointWsRef = useRef<WebSocket | null>(null)
+  const endpointWsContextKeyRef = useRef('')
   const endpointReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
   const [endpointConnectionState, setEndpointConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
 
@@ -103,9 +107,21 @@ export function useMeetYouSocket(
     if (!endpointContext?.threadId) {
       return
     }
+    const contextKey = `${endpointContext.threadId}:${endpointContext.session.session_id}`
+    const currentWs = endpointWsRef.current
     if (
-      endpointWsRef.current?.readyState === WebSocket.OPEN ||
-      endpointWsRef.current?.readyState === WebSocket.CONNECTING
+      currentWs &&
+      endpointWsContextKeyRef.current !== contextKey &&
+      (currentWs.readyState === WebSocket.OPEN || currentWs.readyState === WebSocket.CONNECTING)
+    ) {
+      endpointWsRef.current = null
+      endpointWsContextKeyRef.current = ''
+      currentWs.close()
+    }
+    if (
+      endpointWsContextKeyRef.current === contextKey &&
+      (endpointWsRef.current?.readyState === WebSocket.OPEN ||
+        endpointWsRef.current?.readyState === WebSocket.CONNECTING)
     ) {
       return
     }
@@ -121,14 +137,24 @@ export function useMeetYouSocket(
         endpointType: 'electron',
         displayName: '桌面应用',
       })
-      if (endpointWsRef.current?.readyState === WebSocket.OPEN || endpointWsRef.current?.readyState === WebSocket.CONNECTING) {
+      if (
+        endpointWsContextKeyRef.current === contextKey &&
+        (endpointWsRef.current?.readyState === WebSocket.OPEN || endpointWsRef.current?.readyState === WebSocket.CONNECTING)
+      ) {
         return
+      }
+      if (endpointWsRef.current?.readyState === WebSocket.OPEN || endpointWsRef.current?.readyState === WebSocket.CONNECTING) {
+        const previousWs = endpointWsRef.current
+        endpointWsRef.current = null
+        endpointWsContextKeyRef.current = ''
+        previousWs.close()
       }
       const ws = new WebSocket(url)
       endpointWsRef.current = ws
+      endpointWsContextKeyRef.current = contextKey
 
       ws.onmessage = (event) => {
-        if (endpointWsRef.current !== ws) {
+        if (endpointWsRef.current !== ws || endpointWsContextKeyRef.current !== contextKey) {
           return
         }
 
@@ -140,7 +166,7 @@ export function useMeetYouSocket(
       }
 
       ws.onopen = () => {
-        if (endpointWsRef.current !== ws) {
+        if (endpointWsRef.current !== ws || endpointWsContextKeyRef.current !== contextKey) {
           ws.close()
           return
         }
@@ -156,6 +182,9 @@ export function useMeetYouSocket(
           return
         }
         endpointWsRef.current = null
+        if (endpointWsContextKeyRef.current === contextKey) {
+          endpointWsContextKeyRef.current = ''
+        }
         setEndpointConnectionState('disconnected')
         dispatchTransport({ type: 'set_connection_state', connectionState: 'disconnected' })
         endpointReconnectTimeoutRef.current = setTimeout(() => {
@@ -166,7 +195,7 @@ export function useMeetYouSocket(
       }
 
       ws.onerror = (error) => {
-        if (endpointWsRef.current !== ws) {
+        if (endpointWsRef.current !== ws || endpointWsContextKeyRef.current !== contextKey) {
           return
         }
         console.error('端点实时连接错误:', error)
@@ -193,6 +222,7 @@ export function useMeetYouSocket(
       clearTimeout(endpointReconnectTimeoutRef.current)
       const endpointWs = endpointWsRef.current
       endpointWsRef.current = null
+      endpointWsContextKeyRef.current = ''
       endpointWs?.close()
     }
   }, [])

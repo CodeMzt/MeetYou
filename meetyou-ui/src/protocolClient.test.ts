@@ -420,6 +420,29 @@ describe('protocolClient', () => {
     expect(event.kind === 'operation_updated' ? event.phase : '').toBe('accepted')
   })
 
+  it('parses message delivery frames from endpoint websocket', () => {
+    const event = parseEndpointWsPayload({
+      schema: 'meetyou.endpoint.ws.v4',
+      type: 'delivery.message',
+      payload: {
+        message_id: 'msg_direct_1',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        workspace_id: 'personal',
+        endpoint_id: 'desktop-app',
+        role: 'assistant',
+        content: 'done',
+        status: 'completed',
+        channel: 'message',
+        created_at: '2026-04-08T00:00:04Z',
+      },
+    })
+
+    expect(event.kind).toBe('message_created')
+    expect(event.kind === 'message_created' ? event.message.message_id : '').toBe('msg_direct_1')
+    expect(event.kind === 'message_created' ? event.message.content : '').toBe('done')
+  })
+
   it('parses runtime and activity events from endpoint websocket', () => {
     const runtimeState = parseEndpointWsPayload(endpointRunEvent({
         type: 'runtime.state',

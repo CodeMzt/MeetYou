@@ -386,6 +386,32 @@ export async function createRuntimeThread(
   return readJsonOrThrow<RuntimeThread>(response, '创建会话线程失败')
 }
 
+export async function ensureDefaultRuntimeThread(
+  baseUrl: string,
+  payload: { workspace_id?: string; default_key?: string; title?: string; mode?: string },
+): Promise<RuntimeThread> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/threads/default'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeThread>(response, '鍔犺浇榛樿浼氳瘽绾跨▼澶辫触')
+}
+
+export async function listRuntimeThreads(
+  baseUrl: string,
+  payload: { workspace_id?: string; limit?: number; cursor?: string } = {},
+): Promise<RuntimeThread[]> {
+  const url = new URL(buildDesktopUrl(baseUrl, '/threads'))
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<RuntimeThread[]>(response, '鍔犺浇浼氳瘽绾跨▼鍒楄〃澶辫触')
+}
+
 export async function createRuntimeSession(
   baseUrl: string,
   payload: {

@@ -20,11 +20,64 @@
 .contentArea {
   flex: 1;
   overflow-y: auto;
-  padding: 56px var(--spacing-md) var(--spacing-sm);
+  padding: 92px var(--spacing-md) var(--spacing-sm);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
   scrollbar-gutter: stable;
   position: relative;
+}
+
+.threadStrip {
+  position: absolute;
+  top: 52px;
+  left: var(--spacing-md);
+  right: var(--spacing-md);
+  z-index: calc(var(--z-island) - 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.threadStrip::-webkit-scrollbar {
+  display: none;
+}
+
+.threadButton {
+  height: 30px;
+  max-width: 168px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.threadButton:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+.activeThreadButton {
+  color: var(--text-primary);
+  border-color: var(--border-accent);
+  background: var(--bg-accent);
+}
+
+.threadTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 

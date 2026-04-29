@@ -141,6 +141,8 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("GET", "/desktop/workspaces", lambda _request: "/runtime/workspaces"),
         DesktopApiRoute("GET", "/desktop/workspaces/{workspace_id}/endpoints", lambda request: f"/runtime/workspaces/{request.match_info['workspace_id']}/endpoints?include_tools=true"),
         DesktopApiRoute("GET", "/desktop/context-pool/query", lambda _request: "/runtime/context-pool/query"),
+        DesktopApiRoute("GET", "/desktop/threads", lambda request: f"/runtime/threads?{request.query_string}" if request.query_string else "/runtime/threads"),
+        DesktopApiRoute("POST", "/desktop/threads/default", lambda _request: "/runtime/threads/default"),
         DesktopApiRoute("POST", "/desktop/threads", lambda _request: "/runtime/threads"),
         DesktopApiRoute("POST", "/desktop/sessions", lambda _request: "/runtime/sessions", starts_runtime=True),
         DesktopApiRoute("PATCH", "/desktop/sessions/{session_id}/active-workspace", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/active-workspace"),
