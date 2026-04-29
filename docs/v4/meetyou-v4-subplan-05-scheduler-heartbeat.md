@@ -237,4 +237,4 @@ GET    /scheduler/jobs/{job_id}/runs
 - [x] 用户定时任务 CRUD 完成。
 - [x] 每次触发都会生成 JobRun + Run。
 - [x] HeartbeatWorkflow 至少能 no-op 并记录事件。
-- [ ] 本地和远程真实测试通过。
+- [x] 本地和远程真实测试通过。

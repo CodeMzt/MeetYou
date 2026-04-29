@@ -411,6 +411,7 @@ class MeetWeChatOutputService:
         self._policy = policy or MeetWeChatProxyPolicy.from_config(config.get("meetwechat_proxy_policy") or {})
         self._sleeper = sleeper
         self._stream_buffers: dict[str, list[str]] = {}
+        self._queued_final_keys: set[str] = set()
         self._pending_replies: dict[str, _PendingReply] = {}
         self._pending_confirm_requests: dict[str, str] = {}
         self._pending_human_input_requests: dict[str, dict[str, Any]] = {}
@@ -555,6 +556,22 @@ class MeetWeChatOutputService:
                 except Exception as exc:
                     logger.warning("MeetWeChat direct notice send failed chat=%s error=%s", _mask(chat_id), exc)
             return
+        if frame_type == "delivery.message":
+            message = payload.get("payload", {}) or {}
+            role = str(message.get("role") or "").strip().lower()
+            if role and role != "assistant":
+                return
+            text = str(message.get("content") or "").strip()
+            if pending is None or not text:
+                return
+            if not self._remember_final_delivery(
+                chat_id,
+                message_id=str(message.get("message_id") or ""),
+                stream_key="",
+            ):
+                return
+            self._enqueue_outbound(pending, text)
+            return
         if frame_type != "delivery.run_event":
             return
         event = payload.get("payload", {}) or {}
@@ -624,7 +641,25 @@ class MeetWeChatOutputService:
             text = str(message.get("content") or "").strip() or buffered
             if pending is None:
                 return
+            if not self._remember_final_delivery(
+                chat_id,
+                message_id=str(message.get("message_id") or ""),
+                stream_key=stream_key,
+            ):
+                return
             self._enqueue_outbound(pending, text)
+
+    def _remember_final_delivery(self, chat_id: str, *, message_id: str = "", stream_key: str = "") -> bool:
+        key = str(message_id or stream_key or "").strip()
+        if not key:
+            return True
+        scoped_key = f"{chat_id}:{key}"
+        if scoped_key in self._queued_final_keys:
+            return False
+        if len(self._queued_final_keys) > 4096:
+            self._queued_final_keys.clear()
+        self._queued_final_keys.add(scoped_key)
+        return True
 
     def _ensure_outbound_workers(self) -> None:
         self._outbound_workers = [worker for worker in self._outbound_workers if not worker.done()]

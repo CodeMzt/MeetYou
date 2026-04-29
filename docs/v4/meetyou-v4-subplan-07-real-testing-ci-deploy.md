@@ -273,11 +273,11 @@ Feishu / WeChatBot 未确认
 
 - [x] 本地基础测试通过。
 - [x] 本地真实 Core + Desktop 测试通过。
-- [ ] 已提交推送合并 main。
-- [ ] GitHub Actions CI 通过。
-- [ ] GitHub Actions Deploy 通过。
-- [ ] 远程 Core 已确认更新。
-- [ ] 本地 Desktop 指向远程 Core 真实测试通过。
+- [x] 已提交推送合并 main。
+- [x] GitHub Actions CI 通过。
+- [x] GitHub Actions Deploy 通过。
+- [x] 远程 Core 已确认更新。
+- [x] 本地 Desktop 指向远程 Core 真实测试通过。
 - [ ] Feishu 真实投递并人类确认。
 - [ ] WeChatBot 真实投递并人类确认。
 - [ ] docs/v4/test-report.md 完成。

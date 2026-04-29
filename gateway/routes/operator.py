@@ -352,6 +352,7 @@ def build_operator_router(gateway) -> APIRouter:
         for endpoint in domain.services.endpoint.list_all():
             endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
             connections = by_endpoint.get(endpoint_id, [])
+            connected = bool(connections)
             last_seen_at = ""
             if connections:
                 last_seen_at = str(connections[-1].get("updated_at") or connections[-1].get("connected_at") or "")
@@ -363,8 +364,8 @@ def build_operator_router(gateway) -> APIRouter:
                     endpoint_type=str(getattr(endpoint, "endpoint_type", "") or ""),
                     provider_type=str(getattr(endpoint, "provider_type", "") or ""),
                     transport_type=str(getattr(endpoint, "transport_type", "") or ""),
-                    status=str(getattr(endpoint, "status", "") or ""),
-                    connected=bool(connections),
+                    status="online" if connected else "offline",
+                    connected=connected,
                     connection_count=len(connections),
                     workspace_ids=list(getattr(endpoint, "workspace_scope", []) or []),
                     capability_count=len(domain.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)),

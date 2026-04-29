@@ -33,6 +33,7 @@ class FeishuOutputAdapter:
         self._tenant_access_token_expire_at = 0.0
         self._token_lock = asyncio.Lock()
         self._stream_buffers: dict[str, list[str]] = {}
+        self._delivered_final_keys: set[str] = set()
         self._pending_confirm_requests: dict[str, str] = {}
         self._pending_human_input_requests: dict[str, dict] = {}
 
@@ -75,6 +76,18 @@ class FeishuOutputAdapter:
         if text:
             await self._send_text(chat_id, text)
 
+    def _remember_final_delivery(self, chat_id: str, *, message_id: str = "", stream_key: str = "") -> bool:
+        key = str(message_id or stream_key or "").strip()
+        if not key:
+            return True
+        scoped_key = f"{chat_id}:{key}"
+        if scoped_key in self._delivered_final_keys:
+            return False
+        if len(self._delivered_final_keys) > 4096:
+            self._delivered_final_keys.clear()
+        self._delivered_final_keys.add(scoped_key)
+        return True
+
     def get_pending_confirm_request(self, chat_id: str) -> str | None:
         return self._pending_confirm_requests.get(chat_id)
 
@@ -111,6 +124,17 @@ class FeishuOutputAdapter:
             if not content and isinstance(notice.get("message"), dict):
                 content = str(notice["message"].get("content") or "").strip()
             if content:
+                await self._send_text(chat_id, content)
+            return
+        if frame_type == "delivery.message":
+            message = payload.get("payload", {}) or {}
+            role = str(message.get("role") or "").strip().lower()
+            if role and role != "assistant":
+                return
+            content = str(message.get("content") or "").strip()
+            if not content:
+                return
+            if self._remember_final_delivery(chat_id, message_id=str(message.get("message_id") or "")):
                 await self._send_text(chat_id, content)
             return
         if frame_type != "delivery.run_event":
@@ -176,6 +200,14 @@ class FeishuOutputAdapter:
 
         if event_type == "message.completed":
             message = body.get("message", {}) if isinstance(body.get("message"), dict) else body
+            if not self._remember_final_delivery(
+                chat_id,
+                message_id=str(message.get("message_id") or ""),
+                stream_key=stream_key,
+            ):
+                if stream_key:
+                    self._stream_buffers.pop(stream_key, None)
+                return
             await self._flush_run_event_message(chat_id, stream_key, str(message.get("content") or ""))
             return
 

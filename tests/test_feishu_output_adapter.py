@@ -52,6 +52,18 @@ def _notice(content: str) -> dict:
     }
 
 
+def _message(content: str, *, message_id: str = "msg-1") -> dict:
+    return {
+        "schema": "meetyou.endpoint.ws.v4",
+        "type": "delivery.message",
+        "payload": {
+            "message_id": message_id,
+            "role": "assistant",
+            "content": content,
+        },
+    }
+
+
 class FakeConfig:
     def __init__(self, values):
         self._values = values
@@ -397,6 +409,46 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(message_calls), 1)
         content = json.loads(message_calls[0]["json"]["content"])
         self.assertEqual(content["text"], "你好")
+
+    async def test_delivery_message_is_final_reply_fallback(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
+
+        await adapter.send_runtime_event("oc_test", _message("OK", message_id="msg-final-1"))
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+        content = json.loads(message_calls[0]["json"]["content"])
+        self.assertEqual(content["text"], "OK")
+
+    async def test_run_event_and_delivery_message_do_not_duplicate_final_reply(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":0,"msg":"ok"}'),
+            ]
+        )
+
+        await adapter.send_runtime_event(
+            "oc_test",
+            _run_event(
+                {
+                    "type": "message.completed",
+                    "stream_id": "stream-1",
+                    "message": {"message_id": "msg-final-1", "content": "OK"},
+                }
+            ),
+        )
+        await adapter.send_runtime_event("oc_test", _message("OK", message_id="msg-final-1"))
+
+        message_calls = [call for call in adapter._session.calls if "im/v1/messages" in call["url"]]
+        self.assertEqual(len(message_calls), 1)
+        content = json.loads(message_calls[0]["json"]["content"])
+        self.assertEqual(content["text"], "OK")
 
 
 if __name__ == "__main__":

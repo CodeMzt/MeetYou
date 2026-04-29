@@ -1,18 +1,18 @@
 # MeetYou V4 Test Report
 
-Status: local V4 validation passed; commit / CI / deploy / remote / external human confirmation pending.
+Status: local V4 validation, CI, Deploy, remote Core verification, and local Desktop -> remote Core validation passed; external human confirmation pending.
 
 ## Build Under Test
 
 - Branch: `main`
-- Commit sha: pending commit for this V4 batch
+- Commit sha: `5e09a1c4f0c75b65f5a7f588e4f114cd297afea6`
 - Local validation date: 2026-04-29
 - Local Core database: `meetyou_v4_local_20260429080852`
 - `.env` note: repository `.env` was not edited; local runs used process-level overrides because `.env` mainly points to remote Core.
 
 ## Local Automated Tests
 
-- Python tests: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 502 tests, 1 skipped)
+- Python tests: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, latest rerun 508 tests, 1 skipped)
 - Frontend typecheck: passed (`npm run typecheck`)
 - Frontend tests: passed (`npm run test`, 17 files / 71 tests)
 - Frontend build: passed (`npm run build`; existing Electron metadata and Vite chunk warnings only)
@@ -21,7 +21,7 @@ Status: local V4 validation passed; commit / CI / deploy / remote / external hum
 - Scheduler tests: passed through full Python discovery (`tests.test_scheduler_v4`, `tests.test_scheduler_tools_v4`, heartbeat guardrail tests)
 - Tool router tests: passed through full Python discovery (`tests.test_tool_router_v4`, `tests.test_tool_runtime`, execution-boundary tests)
 - Delivery tests: passed through full Python discovery (`tests.test_delivery_v4`, `tests.test_thread_delivery_bridge`)
-- Feishu / MeetWeChat non-streaming duplicate regression tests: passed (`tests.test_feishu_output_adapter`, `tests.test_meetwechat_adapter`)
+- Feishu / MeetWeChat non-streaming duplicate and final-message fallback regression tests: passed (`tests.test_feishu_output_adapter`, `tests.test_feishu_ws_client`, `tests.test_meetwechat_adapter`)
 
 ## Local Core + Desktop + UI Real Tests
 
@@ -47,21 +47,24 @@ Status: local V4 validation passed; commit / CI / deploy / remote / external hum
 
 ## Remote Core Verification
 
-- CI status: pending
-- Deploy status: pending
-- Remote Core `/health`: pending
-- Remote Core version / commit sha: pending
+- CI status: passed (`CI`, run `25085307121`, commit `5e09a1c4f0c75b65f5a7f588e4f114cd297afea6`)
+- Deploy status: passed (`Deploy MeetYou Core`, run `25085307124`, commit `5e09a1c4f0c75b65f5a7f588e4f114cd297afea6`)
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `live=true`, `ready=true`, `degraded=false`)
+- Remote Core version / commit sha: passed (`build_info.git_commit=5e09a1c4f0c75b65f5a7f588e4f114cd297afea6`, `branch=main`, `component=core`, `build_time=2026-04-29T00:48:02Z`)
 
 ## Local Desktop -> Remote Core Real Tests
 
-- Conversation / Streaming / `assistant.progress_notice`: pending
-- Real Desktop Provider tool through remote Core: pending
-- Scheduler / Heartbeat / disconnect-reconnect: pending
+- Desktop Provider target: local bridge `http://127.0.0.1:38953`, provider id `remote-final-20260429085045`, connected to `https://core.maziteng.cn`
+- Remote acceptance command: passed (`.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://core.maziteng.cn --skip-ui --desktop-tool-endpoint desktop.remote-final-20260429085045.executor --json-out logs\v4-remote-final-acceptance.json`)
+- Conversation / Streaming / `assistant.progress_notice`: passed (marker `V4OK_20260429005204_b2affb`, streaming marker `V4STREAM_20260429005219_d0b827`, thread `thr_9cd9fef334be4320b9f596e12fcc2465`)
+- Real Desktop Provider tool through remote Core: passed (`utility.echo`, target `desktop.remote-final-20260429085045.executor`, operation `op_bf4c160ced1043e4a5190489bd3ef191`, marker `DESKTOP_TOOL_20260429005229_a3937c`)
+- Scheduler / Heartbeat / disconnect-reconnect: passed (`system.heartbeat` interval round-trip, disposable ordinary job `acceptance.v4ok_20260429005204_b2affb`, replay seq `15`)
 
 ## External Delivery Human Feedback
 
 - Feishu unique real-message test: pending human confirmation
 - WeChatBot unique real-message test: pending human confirmation
+- 2026-04-29 follow-up: human reported WeChatBot replied but Feishu did not. Remote endpoint diagnostics showed Feishu endpoint was not connected in the live WebSocket manager while WeChatBot was connected. Follow-up fix adds supervised Feishu long-connection reconnect, truthful live endpoint status (`offline` when not connected), and `delivery.message` fallback handling for non-streaming external final replies with message-id de-duplication.
 
 ## Static V4 Guardrails
 
