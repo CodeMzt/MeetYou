@@ -2,6 +2,25 @@
 
 Status: local V4 validation, CI, Deploy, remote Core verification, local Desktop -> remote Core validation, and external Feishu / WeChatBot human confirmation passed.
 
+## 2026-04-29 EndpointAddress / Scheduled Delivery Addendum
+
+- Commit sha: `cbba889fdb11cc820697460074b68831de0e606d`
+- Scope: added `EndpointAddress`, `ActorDeliveryPreference`, address-targeted Delivery payloads, provider address frames, persistent Scheduler due/lease fields, and high-level assistant tools `list_delivery_targets`, `set_delivery_preference`, `send_delivery_message`, `create_scheduled_delivery`, and `manage_scheduled_deliveries`.
+- CI status: passed (`CI`, run `25096453118`, branch `main`, push at `2026-04-29T07:31:36Z`).
+- Deploy status: passed (`Deploy MeetYou Core`, run `25096453071`, branch `main`, push at `2026-04-29T07:31:36Z`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `live=true`, `ready=true`, `build_info.git_commit=cbba889fdb11cc820697460074b68831de0e606d`, `branch=main`, `build_time=2026-04-29T07:32:05Z`).
+- Python tests: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 523 tests, 1 skipped).
+- Frontend typecheck: passed (`npm run typecheck`).
+- Frontend tests: passed (`npm run test`, 17 files / 71 tests).
+- Frontend build: passed (`npm run build`; existing Electron metadata and Vite chunk warnings only).
+- Endpoint protocol tests: passed for `endpoint.addresses.snapshot`, `endpoint.address.upsert`, `endpoint.address.delete`, and address-targeted delivery payloads (`tests.test_endpoint_address_v4`, full discovery).
+- Scheduler tests: passed for daily/cron/one-shot calculation, persistent due fields, system heartbeat guardrails, and scheduled delivery tool creation (`tests.test_schedule_time_v4`, `tests.test_scheduler_tools_v4`, full discovery).
+- Delivery tests: passed for `send_delivery_message` through `EndpointAddress` and non-streaming Feishu/MeetWeChat duplicate suppression. Address-targeted frames are handled by provider-level connections; chat-scoped thread subscriptions ignore address-targeted frames to avoid duplicate sends.
+- Remote Core real acceptance: passed with proxy bypass (`NO_PROXY=core.maziteng.cn,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://core.maziteng.cn --skip-ui --json-out logs\v4-remote-endpoint-address-scheduled-delivery-acceptance.json`).
+- Remote acceptance marker: `V4OK_20260429074025_65ec6d`; streaming marker `V4STREAM_20260429074026_69812a`; thread `thr_b0b4cbeffe994aa1872f685c777d56b5`; ToolRouter operation `op_c331d467fed34c25907f770cce29490e`; replay seq `15`.
+- Local Desktop -> remote Core: not rerun in this addendum because no desktop provider endpoint was supplied to the acceptance command; previous real Desktop validation remains recorded below.
+- Feishu / WeChatBot human confirmation: not rerun in this addendum. Previous human-confirmed external results remain recorded below; this addendum adds automated regression coverage for the Feishu/MeetWeChat non-streaming duplicate path and address-targeted provider delivery.
+
 ## Build Under Test
 
 - Branch: `main`
