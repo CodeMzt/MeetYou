@@ -114,6 +114,46 @@ class FeishuWSClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(clients)
         self.assertTrue(clients[0].stop_called)
 
+    async def test_lark_sdk_loop_is_rebound_to_worker_thread(self):
+        import lark_oapi
+        import lark_oapi.ws.client as lark_ws_client
+
+        observed = []
+        main_loop = asyncio.get_running_loop()
+        main_thread_id = threading.get_ident()
+        lark_ws_client.loop = main_loop
+
+        class _LoopInspectingLarkClient:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def start(self):
+                sdk_loop = lark_ws_client.loop
+                observed.append(
+                    {
+                        "worker_thread": threading.get_ident() != main_thread_id,
+                        "rebound": sdk_loop is not main_loop,
+                        "loop_running": sdk_loop.is_running(),
+                    }
+                )
+
+        client = feishu_ws_client.FeishuWSClient("app-id", "secret", lambda payload: None)
+        client._reconnect_base_delay_seconds = 0.01  # noqa: SLF001
+        client._reconnect_max_delay_seconds = 0.01  # noqa: SLF001
+
+        with patch.object(feishu_ws_client, "lark", lark_oapi), patch.object(lark_oapi.ws, "Client", _LoopInspectingLarkClient):
+            await client.start()
+            for _ in range(100):
+                if observed:
+                    break
+                await asyncio.sleep(0.01)
+            await client.stop()
+
+        self.assertTrue(observed)
+        self.assertTrue(observed[0]["worker_thread"])
+        self.assertTrue(observed[0]["rebound"])
+        self.assertFalse(observed[0]["loop_running"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -241,6 +241,16 @@ class FeishuOutputAdapter:
         message = str(payload.get("msg") or payload.get("message") or body)
         return code == 99991663 or "Invalid access token" in message
 
+    @staticmethod
+    def _is_success_response(status: int, body: str) -> bool:
+        if status >= 400:
+            return False
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return True
+        return int(payload.get("code", 0) or 0) == 0
+
     async def _ensure_token(self, force_refresh: bool = False) -> bool:
         if not force_refresh and self._has_valid_token():
             return True
@@ -308,7 +318,7 @@ class FeishuOutputAdapter:
             ) as resp:
                 body = await resp.text()
 
-            if resp.status < 400:
+            if self._is_success_response(resp.status, body):
                 return
 
             if attempt == 0 and self._is_invalid_token_response(resp.status, body):

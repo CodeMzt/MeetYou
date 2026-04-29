@@ -5,14 +5,14 @@ Status: local V4 validation, CI, Deploy, remote Core verification, and local Des
 ## Build Under Test
 
 - Branch: `main`
-- Commit sha: `5e09a1c4f0c75b65f5a7f588e4f114cd297afea6`
+- Commit sha: pending final deployed commit update
 - Local validation date: 2026-04-29
 - Local Core database: `meetyou_v4_local_20260429080852`
 - `.env` note: repository `.env` was not edited; local runs used process-level overrides because `.env` mainly points to remote Core.
 
 ## Local Automated Tests
 
-- Python tests: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, latest rerun 508 tests, 1 skipped)
+- Python tests: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, latest rerun 511 tests, 1 skipped)
 - Frontend typecheck: passed (`npm run typecheck`)
 - Frontend tests: passed (`npm run test`, 17 files / 71 tests)
 - Frontend build: passed (`npm run build`; existing Electron metadata and Vite chunk warnings only)
@@ -65,6 +65,9 @@ Status: local V4 validation, CI, Deploy, remote Core verification, and local Des
 - Feishu unique real-message test: pending human confirmation
 - WeChatBot unique real-message test: pending human confirmation
 - 2026-04-29 follow-up: human reported WeChatBot replied but Feishu did not. Remote endpoint diagnostics showed Feishu endpoint was not connected in the live WebSocket manager while WeChatBot was connected. Follow-up fix adds supervised Feishu long-connection reconnect, truthful live endpoint status (`offline` when not connected), and `delivery.message` fallback handling for non-streaming external final replies with message-id de-duplication.
+- 2026-04-29 Feishu root-cause follow-up: direct Feishu OpenAPI send to the recorded chat returned success and human confirmed receipt, so Feishu credentials, chat id, and outbound API are valid. A synthetic Feishu-type Endpoint connected to remote Core and received `delivery.run_event` plus `delivery.message`, so Runtime / Message / Delivery fan-out is valid for non-streaming external endpoints. The failure was isolated to Feishu inbound long connection startup.
+- Feishu inbound root cause: `lark_oapi` captures an asyncio loop at import time. V4 provider decoupling moved Feishu imports into the async Core lifecycle, so the SDK captured Core's already-running loop and then `client.start()` tried to drive that loop from a worker thread. The fix makes `FeishuWSClient` lazy-load and run the Lark SDK on a provider-owned worker thread with its own event loop, and Runtime now derives source kind from the endpoint provider instead of hardcoding `/runtime/messages` as `web`.
+- Feishu local real long-connection probe after the fix: passed; the SDK reached a live `msg-frontier.feishu.cn` WebSocket connection with the repository Feishu credentials. This only verified transport startup and did not assume a user reply was delivered.
 
 ## Static V4 Guardrails
 

@@ -182,6 +182,27 @@ class FeishuOutputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message_calls[1]["headers"]["Authorization"], "Bearer token-new")
         self.assertEqual(adapter._tenant_access_token, "token-new")
 
+    async def test_treats_feishu_json_error_code_as_send_failure(self):
+        adapter = self._build_adapter(
+            [
+                FakeResponse(json_data={"code": 0, "tenant_access_token": "token-1", "expire": 120}),
+                FakeResponse(status=200, text_data='{"code":230011,"msg":"permission denied"}'),
+            ]
+        )
+
+        await adapter._send_text("oc_test", "hello")
+
+        message_calls = [
+            call for call in adapter._session.calls if "im/v1/messages" in call["url"]
+        ]
+        auth_calls = [
+            call
+            for call in adapter._session.calls
+            if "tenant_access_token/internal" in call["url"]
+        ]
+        self.assertEqual(len(auth_calls), 1)
+        self.assertEqual(len(message_calls), 1)
+
     async def test_ignores_ephemeral_tool_chain_status_messages(self):
         adapter = self._build_adapter([])
 
