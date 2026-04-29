@@ -395,7 +395,7 @@ export async function ensureDefaultRuntimeThread(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  return readJsonOrThrow<RuntimeThread>(response, '鍔犺浇榛樿浼氳瘽绾跨▼澶辫触')
+  return readJsonOrThrow<RuntimeThread>(response, '加载默认会话线程失败')
 }
 
 export async function listRuntimeThreads(
@@ -409,7 +409,7 @@ export async function listRuntimeThreads(
     }
   })
   const response = await fetchWithAuth(url.toString())
-  return readJsonOrThrow<RuntimeThread[]>(response, '鍔犺浇浼氳瘽绾跨▼鍒楄〃澶辫触')
+  return readJsonOrThrow<RuntimeThread[]>(response, '加载会话线程列表失败')
 }
 
 export async function createRuntimeSession(
