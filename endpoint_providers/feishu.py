@@ -16,6 +16,9 @@ logger = logging.getLogger("meetyou.endpoint_provider.feishu")
 async def run() -> None:
     setup_logger(enable_console=True, component="endpoint_feishu")
     config = ConfigManager()
+    if not config.get_bool("enable_feishu_bot", False):
+        logger.info("Feishu Endpoint Provider disabled by config.")
+        return
     output = FeishuOutputAdapter(config)
     input_adapter: FeishuInputAdapter | None = None
     await output.init()

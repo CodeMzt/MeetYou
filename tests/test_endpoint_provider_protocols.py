@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from clients.gateway_client import resolve_core_base_url
 from desktop_client.config import DesktopClientConfig
 from desktop_client.config import load_desktop_client_config
 from desktop_client.mcp_runtime import DesktopClientMCPRuntime
@@ -17,6 +18,26 @@ from edge_client.protocol import build_tools_snapshot as build_edge_tools_snapsh
 
 
 class EndpointProviderProtocolTests(unittest.TestCase):
+    def test_external_provider_base_url_prefers_process_env(self):
+        config = {
+            "core_base_url": "https://config.example",
+            "gateway_host": "127.0.0.1",
+            "gateway_port": 8000,
+        }
+
+        with patch.dict("os.environ", {"MEETYOU_CORE_BASE_URL": "https://remote.example/core/"}, clear=True):
+            self.assertEqual(resolve_core_base_url(config), "https://remote.example/core")
+
+    def test_external_provider_base_url_supports_config_and_gateway_fallback(self):
+        self.assertEqual(
+            resolve_core_base_url({"core_base_url": "https://config.example"}),
+            "https://config.example",
+        )
+        self.assertEqual(
+            resolve_core_base_url({"gateway_host": "0.0.0.0", "gateway_port": 9001}),
+            "http://127.0.0.1:9001",
+        )
+
     def test_desktop_provider_advertises_endpoint_identity_and_capabilities(self):
         config = DesktopClientConfig(provider_id="desktop-main", workspace_ids=["desktop-main"])
 

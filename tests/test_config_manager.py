@@ -17,6 +17,7 @@ class ConfigManagerTests(unittest.TestCase):
             "MEETYOU_HEARTBEAT_API_KEY": os.environ.get("MEETYOU_HEARTBEAT_API_KEY"),
             "MEETYOU_EMBEDDING_API_KEY": os.environ.get("MEETYOU_EMBEDDING_API_KEY"),
             "MEETYOU_DATABASE_URL": os.environ.get("MEETYOU_DATABASE_URL"),
+            "MEETYOU_CORE_BASE_URL": os.environ.get("MEETYOU_CORE_BASE_URL"),
             "MEETYOU_FEISHU_ENABLE": os.environ.get("MEETYOU_FEISHU_ENABLE"),
             "MEETYOU_FEISHU_APP_ID": os.environ.get("MEETYOU_FEISHU_APP_ID"),
             "MEETYOU_FEISHU_APP_SECRET": os.environ.get("MEETYOU_FEISHU_APP_SECRET"),
@@ -361,6 +362,19 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(config.get("heartbeat_idle_poke_after_seconds"), 1800)
         self.assertEqual(config.get("heartbeat_idle_poke_cooldown_seconds"), 900)
         self.assertIs(config.get("heartbeat_idle_context_compaction_enabled"), True)
+
+    def test_core_base_url_is_manageable_and_can_come_from_env(self):
+        os.environ["MEETYOU_CORE_BASE_URL"] = "https://core.example.test"
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        snapshot = config.snapshot()
+
+        self.assertEqual(config.get("core_base_url"), "https://core.example.test")
+        self.assertIn("core_base_url", snapshot)
+        self.assertEqual(snapshot["core_base_url"]["env_key"], "MEETYOU_CORE_BASE_URL")
 
     def test_apply_updates_rejects_invalid_values_without_polluting_files(self):
         config = ConfigManager(

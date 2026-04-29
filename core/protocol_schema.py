@@ -561,6 +561,13 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "input": "text",
         "advanced": True,
     },
+    "core_base_url": {
+        "title": "Core 服务地址",
+        "description": "Endpoint Provider 连接 Core 的 HTTP 基础地址；未设置时回退 gateway_host/gateway_port。",
+        "group": "advanced",
+        "input": "text",
+        "advanced": True,
+    },
     "gateway_port": {
         "title": "网关端口",
         "description": "网关使用的端口号。",

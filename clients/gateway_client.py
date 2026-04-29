@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlencode
 
@@ -15,6 +16,27 @@ _HTTP_SESSION_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=5)
 
 class GatewayClientError(RuntimeError):
     pass
+
+
+def resolve_core_base_url(config: Any) -> str:
+    configured_url = str(os.environ.get("MEETYOU_CORE_BASE_URL") or "").strip()
+    if not configured_url and config is not None:
+        get_value = getattr(config, "get", None)
+        if callable(get_value):
+            configured_url = str(get_value("core_base_url") or "").strip()
+    if configured_url:
+        if configured_url.startswith(("http://", "https://")):
+            return configured_url.rstrip("/")
+        raise GatewayClientError("MEETYOU_CORE_BASE_URL/core_base_url must start with http:// or https://")
+
+    get_value = getattr(config, "get", None)
+    host_value = get_value("gateway_host") if callable(get_value) else ""
+    host = str(host_value or "127.0.0.1").strip() or "127.0.0.1"
+    if host in {"0.0.0.0", "::", "::0"}:
+        host = "127.0.0.1"
+    port_value = get_value("gateway_port") if callable(get_value) else 8000
+    port = int(port_value or 8000)
+    return f"http://{host}:{port}"
 
 
 class GatewayConversationClient:

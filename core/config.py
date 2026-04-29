@@ -126,6 +126,7 @@ _JSON_OBJECT_KEYS = {
 _LIST_KEYS = {"trusted_write_roots", "feishu_broadcast_chat_ids", "gateway_cors_origins"}
 _URL_KEYS = {
     "api_url",
+    "core_base_url",
     "embedding_api_url",
     "heartbeat_api_url",
     "mcp_registry_url",
@@ -150,6 +151,7 @@ _ENV_KEY_MAP = {
     "tavily_api_key": "TAVILY_API_KEY",
 }
 _ENV_OVERRIDE_KEY_MAP = {
+    "core_base_url": "MEETYOU_CORE_BASE_URL",
     "enable_feishu_bot": "MEETYOU_FEISHU_ENABLE",
     "enable_meetwechat_client": "MEETYOU_MEETWECHAT_ENABLE",
     "meetwechat_base_url": "MEETYOU_MEETWECHAT_BASE_URL",

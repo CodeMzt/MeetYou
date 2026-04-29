@@ -20,6 +20,7 @@ jobs:
 
             MEETYOU_ENV_BAK_REPO=""
             MEETYOU_ENV_BAK_BACKUP=""
+            MEETYOU_REPO=""
 
             restore_env_bak() {
               if [ -n "${MEETYOU_ENV_BAK_REPO}" ] && [ -n "${MEETYOU_ENV_BAK_BACKUP}" ] && [ -f "${MEETYOU_ENV_BAK_BACKUP}" ]; then
@@ -33,6 +34,7 @@ jobs:
               repo="$(dirname "${gitdir}")"
               origin="$(git -C "${repo}" remote get-url origin 2>/dev/null || true)"
               if printf '%s' "${origin}" | grep -qi 'CodeMzt/MeetYou'; then
+                MEETYOU_REPO="${repo}"
                 if git -C "${repo}" ls-files --error-unmatch .env.bak >/dev/null 2>&1; then
                   MEETYOU_ENV_BAK_REPO="${repo}"
                   if [ -f "${repo}/.env.bak" ]; then
@@ -47,3 +49,33 @@ jobs:
             done
 
             /opt/meetyou/scripts/deploy-core.sh
+
+            if [ -n "${MEETYOU_REPO}" ] && [ -d "${MEETYOU_REPO}" ]; then
+              PROVIDER_ENV_FILE="/etc/meetyou/meetyou-core.env"
+              if [ -f "/etc/meetyou/meetyou-external-provider.env" ]; then
+                PROVIDER_ENV_FILE="/etc/meetyou/meetyou-external-provider.env"
+              fi
+              if [ -x "${MEETYOU_REPO}/.venv/bin/python" ]; then
+                for provider in feishu meetwechat; do
+                  SERVICE_NAME="meetyou-${provider}-provider"
+                  INSTALL_SCRIPT="${MEETYOU_REPO}/scripts/linux/install-${provider}-provider-systemd.sh"
+                  if [ ! -f "${INSTALL_SCRIPT}" ]; then
+                    echo "Provider installer missing, skip ${SERVICE_NAME}: ${INSTALL_SCRIPT}"
+                    continue
+                  fi
+                  echo "Install/restart optional provider service: ${SERVICE_NAME}"
+                  SERVICE_NAME="${SERVICE_NAME}" \
+                    WORKDIR="${MEETYOU_REPO}" \
+                    VENV_DIR="${MEETYOU_REPO}/.venv" \
+                    ENV_FILE="${PROVIDER_ENV_FILE}" \
+                    bash "${INSTALL_SCRIPT}" || true
+                  systemctl enable "${SERVICE_NAME}.service" || true
+                  systemctl restart "${SERVICE_NAME}.service" || true
+                  systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
+                done
+              else
+                echo "Provider restart skipped: Python venv not found at ${MEETYOU_REPO}/.venv/bin/python"
+              fi
+            else
+              echo "Provider restart skipped: MeetYou repository path was not found"
+            fi
