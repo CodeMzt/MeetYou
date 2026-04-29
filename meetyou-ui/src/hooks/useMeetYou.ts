@@ -30,11 +30,13 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     dispatchTransport,
     sessionId,
     endpointId,
+    runtimeThreads,
     initializeEndpointContext,
+    selectRuntimeThread,
     refreshDesktopToolEndpoint,
     refreshWorkspace,
-  } = useEndpointContext(baseUrl, (threadId) => {
-    void loadThreadHistory(threadId)
+  } = useEndpointContext(baseUrl, async (threadId) => {
+    await loadThreadHistory(threadId)
   }, (turn) => {
     dispatchChat({ type: 'append_system_turn', turn })
   })
@@ -255,6 +257,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     messages: chatState.messages,
     operations,
     workspace: endpointContext?.workspace || null,
+    threads: runtimeThreads,
     threadId: endpointContext?.threadId || '',
     sessionId,
     workspaceId: endpointContext?.workspace.workspace_id || '',
@@ -282,6 +285,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     downloadAttachment,
     refreshHealth,
     refreshWorkspace,
+    selectThread: selectRuntimeThread,
     setStatusFeedback,
     baseUrl,
     endpointId,

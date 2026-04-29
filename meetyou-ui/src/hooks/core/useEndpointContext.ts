@@ -1,13 +1,14 @@
 import { useCallback, useRef, useState, useReducer } from 'react'
 import {
   createRuntimeSession,
-  createRuntimeThread,
+  ensureDefaultRuntimeThread,
   listAvailableEndpoints,
+  listRuntimeThreads,
   listRuntimeWorkspaces,
 } from '../../runtimeApi'
 import { createInitialTransportState, reduceTransportState } from '../../transportState'
 import { createSystemTurn } from '../../chatState'
-import type { AvailableEndpoint, RuntimeSession, RuntimeWorkspace, RuntimeErrorPayload } from '../../types'
+import type { AvailableEndpoint, RuntimeSession, RuntimeThread, RuntimeWorkspace, RuntimeErrorPayload } from '../../types'
 
 export const DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS = 10000
 
@@ -54,7 +55,7 @@ function buildTransportError(error: Error): RuntimeErrorPayload {
   }
 }
 
-export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: string) => void, onError: (turn: any) => void) {
+export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: string) => Promise<void> | void, onError: (turn: any) => void) {
   const initialSessionIdRef = useRef(`desktop-${Math.random().toString(36).substring(2, 9)}`)
   const sourceIdRef = useRef('desktop-app')
   
@@ -66,6 +67,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
   
   const [endpointContext, setEndpointContext] = useState<EndpointContext | null>(null)
   const [desktopToolEndpointId, setDesktopToolEndpointId] = useState('')
+  const [runtimeThreads, setRuntimeThreads] = useState<RuntimeThread[]>([])
   const endpointInitPromiseRef = useRef<Promise<EndpointContext> | null>(null)
 
   const sessionId = endpointContext?.session.session_id || transportState.sessionId
@@ -124,6 +126,34 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     }
   }, [baseUrl, endpointContext])
 
+  const createContextForThread = useCallback(async (workspace: RuntimeWorkspace, thread: RuntimeThread) => {
+    const session = await createRuntimeSession(baseUrl, {
+      thread_id: thread.thread_id,
+      active_workspace_id: workspace.workspace_id,
+      workspace_id: workspace.workspace_id,
+      endpoint_id: sourceIdRef.current,
+      endpoint_type: 'electron',
+      display_name: '桌面应用',
+    })
+    const nextContext: EndpointContext = {
+      workspace,
+      threadId: thread.thread_id,
+      session,
+      endpointId: sourceIdRef.current,
+    }
+    await onInitSuccess(thread.thread_id)
+    setEndpointContext(nextContext)
+    dispatchTransport({ type: 'sync_session', sessionId: session.session_id })
+    let nextEndpointId = await refreshDesktopToolEndpoint(nextContext)
+    if (!nextEndpointId) {
+      for (let attempt = 0; attempt < 4 && !nextEndpointId; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500))
+        nextEndpointId = await refreshDesktopToolEndpoint(nextContext)
+      }
+    }
+    return nextContext
+  }, [baseUrl, onInitSuccess, refreshDesktopToolEndpoint])
+
   const initializeEndpointContext = useCallback(async () => {
     if (endpointContext) {
       return endpointContext
@@ -138,38 +168,18 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
       if (!workspace) {
         throw new Error('没有可用工作空间')
       }
-      const thread = await createRuntimeThread(baseUrl, {
-        home_workspace_id: workspace.workspace_id,
+      const thread = await ensureDefaultRuntimeThread(baseUrl, {
         workspace_id: workspace.workspace_id,
+        default_key: 'frontend.default',
         title: '桌面聊天',
         mode: workspace.base_mode,
       })
-      const session = await createRuntimeSession(baseUrl, {
-        thread_id: thread.thread_id,
-        active_workspace_id: workspace.workspace_id,
+      const threads = await listRuntimeThreads(baseUrl, {
         workspace_id: workspace.workspace_id,
-        endpoint_id: sourceIdRef.current,
-        endpoint_type: 'electron',
-        display_name: '桌面应用',
+        limit: 50,
       })
-      const nextContext: EndpointContext = {
-        workspace,
-        threadId: thread.thread_id,
-        session,
-        endpointId: sourceIdRef.current,
-      }
-      setEndpointContext(nextContext)
-
-      let nextEndpointId = await refreshDesktopToolEndpoint(nextContext)
-      if (!nextEndpointId) {
-        for (let attempt = 0; attempt < 4 && !nextEndpointId; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 500))
-          nextEndpointId = await refreshDesktopToolEndpoint(nextContext)
-        }
-      }
-      dispatchTransport({ type: 'sync_session', sessionId: session.session_id })
-      onInitSuccess(thread.thread_id)
-      return nextContext
+      setRuntimeThreads(threads.some((item) => item.thread_id === thread.thread_id) ? threads : [thread, ...threads])
+      return await createContextForThread(workspace, thread)
     })()
 
     endpointInitPromiseRef.current = promise
@@ -187,7 +197,33 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
         endpointInitPromiseRef.current = null
       }
     }
-  }, [baseUrl, endpointContext, onInitSuccess, onError, refreshDesktopToolEndpoint])
+  }, [baseUrl, createContextForThread, endpointContext, onError])
+
+  const selectRuntimeThread = useCallback(async (threadId: string) => {
+    const normalizedThreadId = String(threadId || '').trim()
+    if (!normalizedThreadId) {
+      return null
+    }
+    if (endpointContext?.threadId === normalizedThreadId) {
+      return endpointContext
+    }
+    const workspaces = await listRuntimeWorkspaces(baseUrl)
+    const activeWorkspace = endpointContext?.workspace ?? chooseWorkspace(workspaces)
+    if (!activeWorkspace) {
+      throw new Error('没有可用工作空间')
+    }
+    const threads = await listRuntimeThreads(baseUrl, {
+      workspace_id: activeWorkspace.workspace_id,
+      limit: 50,
+    })
+    setRuntimeThreads(threads)
+    const thread = threads.find((item) => item.thread_id === normalizedThreadId)
+    if (!thread) {
+      throw new Error('会话线程不存在或不可见')
+    }
+    const workspace = workspaces.find((item) => item.workspace_id === (thread.workspace_id || thread.home_workspace_id)) ?? activeWorkspace
+    return await createContextForThread(workspace, thread)
+  }, [baseUrl, createContextForThread, endpointContext])
 
   return {
     endpointContext,
@@ -196,7 +232,9 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     dispatchTransport,
     sessionId,
     endpointId,
+    runtimeThreads,
     initializeEndpointContext,
+    selectRuntimeThread,
     refreshDesktopToolEndpoint,
     refreshWorkspace,
   }

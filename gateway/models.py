@@ -348,6 +348,18 @@ class RuntimeThreadCreateRequest(BaseModel):
         return to_public_assistant_mode(value)
 
 
+class RuntimeDefaultThreadRequest(BaseModel):
+    workspace_id: str = ""
+    default_key: str = "frontend.default"
+    title: str = "Desktop Chat"
+    mode: str = "general"
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: Any) -> str:
+        return to_public_assistant_mode(value)
+
+
 class RuntimeThreadResponse(BaseModel):
     thread_id: str
     home_workspace_id: str
