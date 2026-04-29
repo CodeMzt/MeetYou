@@ -5,7 +5,7 @@ import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
-import { MessageSquare } from 'lucide-react'
+import ThreadPicker from './components/thread/ThreadPicker'
 import { AssistantMode, ThinkingOverride } from './types'
 import { getVisibleRuntimeThreadItems } from './threadPresentation'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
@@ -129,42 +129,24 @@ export default function App() {
       />
 
       <div className={styles.mainContent}>
-        <StatusIsland 
-          runtimeSnapshot={runtimeSnapshot}
-          usageSnapshot={usageSnapshot}
-          healthSnapshot={healthSnapshot}
-          statusFeedback={statusFeedback}
-          preferredMode={preferredMode}
-          danxiStatusText={danxiStatusText}
-        />
+        <div className={styles.topDock}>
+          <StatusIsland
+            runtimeSnapshot={runtimeSnapshot}
+            usageSnapshot={usageSnapshot}
+            healthSnapshot={healthSnapshot}
+            statusFeedback={statusFeedback}
+            preferredMode={preferredMode}
+            danxiStatusText={danxiStatusText}
+          />
 
-        {visibleThreads.length > 0 && (
-          <div className={styles.threadStrip} aria-label="会话线程">
-            <span className={styles.threadStripLabel}>会话</span>
-            <div className={styles.threadList}>
-              {visibleThreads.map(({ thread, title, tooltip }) => {
-                const active = thread.thread_id === threadId
-                return (
-                  <button
-                    key={thread.thread_id}
-                    type="button"
-                    className={`${styles.threadButton} ${active ? styles.activeThreadButton : ''}`}
-                    onClick={() => {
-                      if (!active) {
-                        void selectThread(thread.thread_id)
-                      }
-                    }}
-                    title={tooltip}
-                    aria-current={active ? 'true' : undefined}
-                  >
-                    <MessageSquare size={14} aria-hidden="true" />
-                    <span className={styles.threadTitle}>{title}</span>
-                  </button>
-                )
-              })}
-            </div>
+          <div className={styles.threadPickerSlot}>
+            <ThreadPicker
+              items={visibleThreads}
+              activeThreadId={threadId}
+              onSelectThread={(nextThreadId) => void selectThread(nextThreadId)}
+            />
           </div>
-        )}
+        </div>
 
         <div className={styles.contentArea}>
           <MessageList

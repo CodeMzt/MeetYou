@@ -1,8 +1,5 @@
 .islandContainer {
-  position: absolute;
-  top: var(--spacing-sm);
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
   z-index: var(--z-island);
   display: flex;
   flex-direction: column;
@@ -64,7 +61,10 @@
 }
 
 .usageDropdown {
-  margin-top: 12px;
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
   width: 320px;
   padding: 16px;
   pointer-events: auto;
