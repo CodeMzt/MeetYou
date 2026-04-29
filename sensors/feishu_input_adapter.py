@@ -107,7 +107,8 @@ class FeishuInputAdapter:
             "workspace_ids": ["personal"],
             "status": "sendable",
             "capabilities": ["receive_message"],
-            "metadata": {"chat_type": normalized_type},
+            "supports_markdown": False,
+            "metadata": {"chat_type": normalized_type, "supports_markdown": False},
         }
 
     async def _get_provider_gateway_client(self) -> GatewayConversationClient:
@@ -123,6 +124,7 @@ class FeishuInputAdapter:
                 thread_title="Feishu Provider",
                 endpoint_id=self._provider_endpoint_id,
                 endpoint_addresses=[self._address_payload(chat_id) for chat_id in known_chat_ids],
+                supports_markdown=False,
                 event_handler=(
                     (lambda payload: self._output_adapter.send_runtime_event("", payload))
                     if self._output_adapter is not None
@@ -144,6 +146,7 @@ class FeishuInputAdapter:
                 access_token=self._gateway_access_token,
                 thread_title=f"Feishu Chat {chat_id}",
                 endpoint_id=self._provider_endpoint_id,
+                supports_markdown=False,
                 event_handler=(
                     (lambda payload, cid=chat_id: self._output_adapter.send_runtime_event(cid, payload))
                     if self._output_adapter is not None
@@ -338,6 +341,7 @@ class FeishuInputAdapter:
                 "transport": "feishu",
                 "response_transport": "non_streaming_external_client",
                 "supports_streaming_reply": False,
+                "supports_markdown": False,
                 "progress_notice_policy": "prefer_before_nontrivial_final",
                 "tool_scope": "basic",
                 "allowed_tool_bundle": list(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE),

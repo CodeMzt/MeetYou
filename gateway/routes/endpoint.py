@@ -44,6 +44,7 @@ def _public_run_event(row) -> dict[str, Any]:
 
 
 def _public_address(row) -> dict[str, Any]:
+    metadata = dict(getattr(row, "meta", {}) or {})
     return {
         "address_id": str(getattr(row, "address_id", "") or ""),
         "provider_type": str(getattr(row, "provider_type", "") or ""),
@@ -53,10 +54,24 @@ def _public_address(row) -> dict[str, Any]:
         "workspace_ids": list(getattr(row, "workspace_scope", []) or []),
         "status": str(getattr(row, "status", "") or "unknown"),
         "capabilities": list(getattr(row, "capabilities", []) or []),
-        "metadata": dict(getattr(row, "meta", {}) or {}),
+        "supports_markdown": _bool_value(metadata.get("supports_markdown"), default=True),
+        "metadata": metadata,
         "last_seen_at": getattr(getattr(row, "last_seen_at", None), "isoformat", lambda: "")(),
         "last_verified_at": getattr(getattr(row, "last_verified_at", None), "isoformat", lambda: "")(),
     }
+
+
+def _bool_value(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _address_payload_item(item: dict[str, Any], *, endpoint_id: str, provider_type: str) -> dict[str, Any]:
@@ -66,6 +81,13 @@ def _address_payload_item(item: dict[str, Any], *, endpoint_id: str, provider_ty
         address_type = "direct"
     if address_type in {"group_chat"}:
         address_type = "group"
+    metadata = dict(item.get("metadata") or {})
+    default_markdown = str(provider_type or "").strip().lower() not in {"feishu", "wechat", "meetwechat", "wechatbot"}
+    supports_markdown = _bool_value(
+        item.get("supports_markdown", metadata.get("supports_markdown")),
+        default=default_markdown,
+    )
+    metadata["supports_markdown"] = supports_markdown
     return {
         "address_id": str(item.get("address_id") or f"addr.{provider_type}.{address_type}.{external_ref}").strip(),
         "endpoint_id": str(item.get("endpoint_id") or endpoint_id).strip(),
@@ -76,7 +98,7 @@ def _address_payload_item(item: dict[str, Any], *, endpoint_id: str, provider_ty
         "workspace_scope": list(item.get("workspace_ids") or item.get("workspace_scope") or []),
         "status": str(item.get("status") or "sendable").strip() or "sendable",
         "capabilities": list(item.get("capabilities") or ["receive_message"]),
-        "metadata": dict(item.get("metadata") or {}),
+        "metadata": metadata,
     }
 
 
@@ -160,6 +182,12 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
 
     if frame_type == "endpoint.hello":
         provider = payload.get("provider") if isinstance(payload.get("provider"), dict) else {}
+        provider = dict(provider)
+        provider_supports_markdown = _bool_value(
+            provider.get("supports_markdown", payload.get("supports_markdown")),
+            default=True,
+        )
+        provider["supports_markdown"] = provider_supports_markdown
         endpoints = payload.get("endpoints") if isinstance(payload.get("endpoints"), list) else []
         if not endpoints:
             await _send_error(gateway, websocket, code="endpoint_required", message="endpoint.hello requires at least one endpoint", correlation_id=correlation_id)
@@ -172,6 +200,10 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
             endpoint_id = str(item.get("endpoint_id") or "").strip()
             if not endpoint_id:
                 continue
+            endpoint_supports_markdown = _bool_value(
+                item.get("supports_markdown"),
+                default=provider_supports_markdown,
+            )
             row = domain.services.endpoint.ensure_endpoint(
                 endpoint_id=endpoint_id,
                 endpoint_type=str(item.get("endpoint_type") or "endpoint"),
@@ -183,6 +215,7 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
                 metadata={
                     "provider": provider,
                     "roles": list(item.get("roles") or []),
+                    "supports_markdown": endpoint_supports_markdown,
                 },
             )
             if primary is None:

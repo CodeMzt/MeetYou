@@ -31,6 +31,7 @@ class GatewayConversationClient:
         thread_id: str = "",
         endpoint_id: str = "",
         endpoint_addresses: list[dict[str, Any]] | None = None,
+        supports_markdown: bool = True,
         event_handler: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ):
         self.base_url = base_url.rstrip("/")
@@ -44,6 +45,7 @@ class GatewayConversationClient:
         self._event_handler = event_handler
         self._endpoint_id_override = str(endpoint_id or "").strip()
         self._endpoint_addresses = list(endpoint_addresses or [])
+        self.supports_markdown = bool(supports_markdown)
 
         self._http_session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -185,6 +187,7 @@ class GatewayConversationClient:
                         "provider_id": self.provider_id,
                         "display_name": self.display_name,
                         "transport_profile": "ui_ws",
+                        "supports_markdown": self.supports_markdown,
                     },
                     "endpoints": [
                         {
@@ -192,8 +195,10 @@ class GatewayConversationClient:
                             "endpoint_type": f"{self.provider_type}_ui",
                             "roles": ["input", "output"],
                             "workspace_ids": [self.workspace_id],
+                            "supports_markdown": self.supports_markdown,
                         }
                     ],
+                    "supports_markdown": self.supports_markdown,
                 },
             }
         )

@@ -155,6 +155,7 @@ class EndpointHelloPayload(BaseModel):
     workspace_ids: list[str] = Field(default_factory=list)
     endpoints: list[dict[str, Any]] = Field(default_factory=list)
     supports_offline_cache: bool = False
+    supports_markdown: bool = True
     host: dict[str, Any] = Field(default_factory=dict)
     protocol: dict[str, Any] = Field(default_factory=dict)
 
@@ -214,7 +215,7 @@ def build_endpoint_envelope(
     ).model_dump(by_alias=True)
 
 
-def _endpoint_rows(provider_id: str, provider_type: str, workspace_ids: list[str]) -> list[dict[str, Any]]:
+def _endpoint_rows(provider_id: str, provider_type: str, workspace_ids: list[str], *, supports_markdown: bool = True) -> list[dict[str, Any]]:
     if provider_type == "edge":
         return [
             {
@@ -222,6 +223,7 @@ def _endpoint_rows(provider_id: str, provider_type: str, workspace_ids: list[str
                 "endpoint_type": "edge_executor",
                 "roles": ["execution"],
                 "workspace_ids": list(workspace_ids or []),
+                "supports_markdown": bool(supports_markdown),
             }
         ]
     return [
@@ -230,12 +232,14 @@ def _endpoint_rows(provider_id: str, provider_type: str, workspace_ids: list[str
             "endpoint_type": f"{provider_type}_ui",
             "roles": ["input", "output"],
             "workspace_ids": list(workspace_ids or []),
+            "supports_markdown": bool(supports_markdown),
         },
         {
             "endpoint_id": f"{provider_type}.{provider_id}.executor",
             "endpoint_type": f"{provider_type}_executor",
             "roles": ["execution"],
             "workspace_ids": list(workspace_ids or []),
+            "supports_markdown": bool(supports_markdown),
         },
     ]
 
@@ -254,6 +258,7 @@ def build_endpoint_hello(
     transport_profile: str,
     workspace_ids: list[str],
     supports_offline_cache: bool = False,
+    supports_markdown: bool = True,
     host: dict[str, Any] | None = None,
     protocol_features: Iterable[Any] | None = DEFAULT_ENDPOINT_TOOL_PROTOCOL_FEATURES,
     required_protocol_features: Iterable[Any] | None = None,
@@ -262,7 +267,12 @@ def build_endpoint_hello(
 ) -> dict[str, Any]:
     normalized_provider_id = str(provider_id or "").strip()
     normalized_provider_type = str(provider_type or "desktop").strip() or "desktop"
-    endpoints = _endpoint_rows(normalized_provider_id, normalized_provider_type, workspace_ids)
+    endpoints = _endpoint_rows(
+        normalized_provider_id,
+        normalized_provider_type,
+        workspace_ids,
+        supports_markdown=bool(supports_markdown),
+    )
     executor_endpoint_id = str(endpoints[-1]["endpoint_id"])
     return build_endpoint_envelope(
         envelope_type="endpoint.hello",
@@ -275,10 +285,12 @@ def build_endpoint_hello(
                 "display_name": display_name,
                 "transport_profile": transport_profile,
                 "supports_offline_cache": bool(supports_offline_cache),
+                "supports_markdown": bool(supports_markdown),
                 "host": dict(host or {}),
             },
             "endpoints": endpoints,
             "supports_offline_cache": bool(supports_offline_cache),
+            "supports_markdown": bool(supports_markdown),
             "host": dict(host or {}),
             "protocol": build_endpoint_protocol_offer(
                 schema_name=ENDPOINT_TOOL_PROTOCOL_SCHEMA,

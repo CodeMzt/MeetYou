@@ -18,6 +18,7 @@ from adapters.meetwechat_client import (
 )
 from clients.gateway_client import GatewayConversationClient
 from core.endpoint_tool_bundles import EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE
+from core.delivery_formatting import markdown_to_plain_text
 from core.interaction_response_service import InteractionResponseService
 from core.persistence import atomic_write_json, load_json_with_recovery
 
@@ -691,7 +692,7 @@ class MeetWeChatOutputService:
         delay_before_send: bool = True,
         complete_pending: bool = True,
     ) -> None:
-        content = str(text or "").strip()
+        content = markdown_to_plain_text(text)
         if not content or not pending.allow_send:
             if complete_pending:
                 self._complete_pending(pending.event.chat_id, True)
@@ -718,7 +719,7 @@ class MeetWeChatOutputService:
                 self._complete_pending(pending.event.chat_id, False, "outbound queue full")
 
     async def _send_direct_text(self, chat_id: str, text: str) -> None:
-        content = str(text or "").strip()
+        content = markdown_to_plain_text(text)
         if not chat_id or not content:
             return
         limit = _safe_positive_int(self._config.get("meetwechat_max_text_chars"), DEFAULT_MAX_TEXT_CHARS)
@@ -790,7 +791,7 @@ class MeetWeChatOutputService:
         delay_before_send: bool = True,
         message_index: int = 1,
     ) -> None:
-        content = str(text or "").strip()
+        content = markdown_to_plain_text(text)
         if not content:
             return
         if not pending.allow_send:
@@ -963,7 +964,8 @@ class MeetWeChatInputAdapter:
             "workspace_ids": ["personal"],
             "status": "sendable",
             "capabilities": ["receive_message"],
-            "metadata": {"chat_type": normalized_type},
+            "supports_markdown": False,
+            "metadata": {"chat_type": normalized_type, "supports_markdown": False},
         }
 
     async def _discover_address_snapshot(self) -> list[dict[str, Any]]:
@@ -996,6 +998,7 @@ class MeetWeChatInputAdapter:
                 thread_title="MeetWeChat Provider",
                 endpoint_id=self._provider_endpoint_id,
                 endpoint_addresses=await self._discover_address_snapshot(),
+                supports_markdown=False,
                 event_handler=lambda payload: self._output_adapter.send_runtime_event("", payload),
             )
         await self._provider_gateway_client.start()
@@ -1326,6 +1329,7 @@ class MeetWeChatInputAdapter:
                 thread_title=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
                 thread_id=thread_id,
                 endpoint_id=self._provider_endpoint_id,
+                supports_markdown=False,
                 event_handler=lambda payload, chat_id=event.chat_id: self._output_adapter.send_runtime_event(
                     chat_id,
                     payload,
@@ -1358,6 +1362,7 @@ class MeetWeChatInputAdapter:
             "transport": "meetwechat",
             "response_transport": "non_streaming_external_client",
             "supports_streaming_reply": False,
+            "supports_markdown": False,
             "progress_notice_policy": "prefer_before_nontrivial_final",
             "tool_scope": "basic",
             "allowed_tool_bundle": list(MEETWECHAT_BASIC_TOOL_BUNDLE),

@@ -23,6 +23,7 @@ class EdgeClientConfig:
     reconnect_delay_seconds: int = 3
     max_parallel_calls: int = 2
     supports_offline_cache: bool = False
+    supports_markdown: bool = True
     transport_profile: str = "edge_wss"
     config_file_path: str = str(DEFAULT_CONFIG_PATH)
 
@@ -57,6 +58,19 @@ def _string_list(payload: dict[str, object], key: str, default: list[str]) -> li
     return [str(item).strip() for item in values if str(item).strip()]
 
 
+def _to_bool(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def load_edge_client_config(config_file_path: str | None = None) -> EdgeClientConfig:
     file_path = Path(config_file_path or DEFAULT_CONFIG_PATH)
     env_root = file_path.parent.parent if file_path.parent.name == "user" else file_path.parent
@@ -88,6 +102,7 @@ def load_edge_client_config(config_file_path: str | None = None) -> EdgeClientCo
             ),
         ),
         supports_offline_cache=bool(payload.get("supports_offline_cache", False)),
+        supports_markdown=_to_bool(payload.get("supports_markdown"), default=True),
         transport_profile=str(payload.get("transport_profile") or "edge_wss"),
         config_file_path=str(file_path),
     )

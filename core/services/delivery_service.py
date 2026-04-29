@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
+from core.delivery_formatting import delivery_target_supports_markdown, format_delivery_payload_for_endpoint
 from core.services.endpoint_service import DeliveryAttemptService, EndpointOutboxService
 
 
@@ -39,6 +40,11 @@ class DeliveryService:
                 "target_external_ref": str(getattr(target_address, "external_ref", "") or ""),
             }
         enriched_payload = {**dict(payload or {}), **address_payload}
+        supports_markdown = delivery_target_supports_markdown(target_endpoint, target_address)
+        enriched_payload = format_delivery_payload_for_endpoint(
+            enriched_payload,
+            supports_markdown=supports_markdown,
+        )
         frame = {
             "schema": "meetyou.endpoint.ws.v4",
             "type": f"delivery.{message_type}",

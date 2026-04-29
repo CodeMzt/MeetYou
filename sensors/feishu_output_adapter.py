@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover - optional dependency
     aiohttp = None
 
 from core.io_protocol import EventType, StreamEventType
+from core.delivery_formatting import markdown_to_plain_text
 
 logger = logging.getLogger("meetyou.feishu_output")
 
@@ -300,6 +301,7 @@ class FeishuOutputAdapter:
             return True
 
     async def _send_text(self, chat_id: str, text: str):
+        text = markdown_to_plain_text(text)
         if not chat_id or not text:
             return
 

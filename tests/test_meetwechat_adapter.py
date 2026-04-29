@@ -305,6 +305,25 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK"])
         await output.close()
 
+    async def test_delivery_message_strips_markdown_for_wechat_text(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(config=config, client=meetwechat_client, state_store=state)
+        future = output.begin_event(self._event(), allow_send=True)
+
+        await output.send_runtime_event(
+            "chat-1",
+            _message("**bold** and [Docs](https://example.test)", message_id="msg-markdown"),
+        )
+
+        result = await asyncio.wait_for(future, timeout=1)
+        await asyncio.wait_for(output._outbound_queue.join(), timeout=1)  # noqa: SLF001
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["bold and Docs (https://example.test)"])
+        await output.close()
+
     async def test_chat_scoped_connection_ignores_address_targeted_delivery(self):
         meetwechat_client = _FakeMeetWeChatClient()
         config = _Config(meetwechat_state_file=self.state_path)
