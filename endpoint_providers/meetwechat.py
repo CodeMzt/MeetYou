@@ -21,6 +21,9 @@ logger = logging.getLogger("meetyou.endpoint_provider.meetwechat")
 async def run() -> None:
     setup_logger(enable_console=True, component="endpoint_meetwechat")
     config = ConfigManager()
+    if not config.get_bool("enable_meetwechat_client", False):
+        logger.info("MeetWeChat Endpoint Provider disabled by config.")
+        return
     client = MeetWeChatClient(
         base_url=str(config.get("meetwechat_base_url") or DEFAULT_MEETWECHAT_BASE_URL),
     )

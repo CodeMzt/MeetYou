@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from clients.gateway_client import GatewayConversationClient
+from clients.gateway_client import GatewayConversationClient, resolve_core_base_url
 from adapters.feishu_ws_client import FeishuWSClient
 from core.endpoint_tool_bundles import EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE
 from core.io_protocol import (
@@ -65,11 +65,7 @@ class FeishuInputAdapter:
         self._known_chat_ids = self._load_known_chat_ids()
         self._gateway_clients: dict[str, GatewayConversationClient] = {}
         self._provider_gateway_client: GatewayConversationClient | None = None
-        host = str(self._config.get("gateway_host") or "127.0.0.1").strip() or "127.0.0.1"
-        if host in {"0.0.0.0", "::", "::0"}:
-            host = "127.0.0.1"
-        port = int(self._config.get("gateway_port") or 8000)
-        self._gateway_base_url = f"http://{host}:{port}"
+        self._gateway_base_url = resolve_core_base_url(self._config)
         self._gateway_access_token = str(self._config.get("gateway_access_token") or "").strip()
         self._client = FeishuWSClient(
             self._app_id,

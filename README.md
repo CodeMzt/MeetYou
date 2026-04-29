@@ -345,6 +345,8 @@ MEETYOU_DATABASE_URL=
 MEETYOU_GATEWAY_ACCESS_TOKEN=
 MEETYOU_CLIENT_ACCESS_TOKEN=
 MEETYOU_CORE_BASE_URL=http://127.0.0.1:8000
+MEETYOU_FEISHU_ENABLE=false
+MEETYOU_MEETWECHAT_ENABLE=false
 MEETYOU_DESKTOP_PROVIDER_ID=desktop-main-provider
 MEETYOU_DESKTOP_PROVIDER_DISPLAY_NAME=Desktop Endpoint Provider
 MEETYOU_DESKTOP_PROVIDER_WORKSPACES=desktop-main
@@ -398,6 +400,19 @@ python -m edge_client
 python -m endpoint_providers.feishu
 python -m endpoint_providers.meetwechat
 ```
+
+Linux systemd deployment:
+
+```bash
+sudo bash scripts/linux/install-core-systemd.sh
+sudo bash scripts/linux/install-feishu-provider-systemd.sh
+sudo bash scripts/linux/install-meetwechat-provider-systemd.sh
+sudo systemctl enable --now meetyou-core.service
+sudo systemctl enable --now meetyou-feishu-provider.service
+sudo systemctl enable --now meetyou-meetwechat-provider.service
+```
+
+Feishu and WeChatBot are V4 Endpoint Provider processes. They may run on the same host as Core and use `MEETYOU_CORE_BASE_URL=http://127.0.0.1:8000`, or connect to a remote Core by setting `MEETYOU_CORE_BASE_URL=https://...`. Core deploy attempts to restart these optional provider services when present, but provider failure must not block Core deployment.
 
 桌面主链默认顺序：
 

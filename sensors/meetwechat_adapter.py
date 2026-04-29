@@ -16,7 +16,7 @@ from adapters.meetwechat_client import (
     MeetWeChatHTTPError,
     MeetWeChatSendResult,
 )
-from clients.gateway_client import GatewayConversationClient
+from clients.gateway_client import GatewayConversationClient, resolve_core_base_url
 from core.endpoint_tool_bundles import EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE
 from core.delivery_formatting import markdown_to_plain_text
 from core.interaction_response_service import InteractionResponseService
@@ -1000,11 +1000,7 @@ class MeetWeChatInputAdapter:
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._cursor = ""
 
-        host = str(self._config.get("gateway_host") or "127.0.0.1").strip() or "127.0.0.1"
-        if host in {"0.0.0.0", "::", "::0"}:
-            host = "127.0.0.1"
-        port = int(self._config.get("gateway_port") or 8000)
-        self._gateway_base_url = f"http://{host}:{port}"
+        self._gateway_base_url = resolve_core_base_url(self._config)
         self._gateway_access_token = str(self._config.get("gateway_access_token") or "").strip()
 
     @property
