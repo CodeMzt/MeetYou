@@ -20,6 +20,7 @@ Status: local V4 validation, CI, Deploy, remote Core verification, local Desktop
 - Feishu address delivery probe: passed. `send_delivery_message` executed through `/runtime/operations` as `core.local`, operation `op_00a246211b48488cba56fecaabca4a6b`, marker `FEISHU_CORE_DELIVERY_20260429_1753`.
 - External human feedback: passed. Human confirmed the Feishu validation was OK after the `FEISHU_CORE_DELIVERY_20260429_1753` probe and the Feishu inbound auto-reply check. WeChatBot remained OK as the comparison endpoint.
 - `.env.bak` handling: inspected, removed from Git tracking, and explicitly ignored. The working-tree `.env.bak` contains non-placeholder API keys, tokens, passwords, and a database URL, so the local file must remain untracked.
+- Deploy follow-up: push `886415bff5812046a85dbde1dacf609e7b2b85fc` passed CI but remote Deploy run `25102849096` failed because the remote working tree still had local changes in the formerly tracked `.env.bak`. The deploy workflow now preserves the remote local `.env.bak` outside the repository pull, lets Git remove it from tracking, then restores it as an ignored local file without printing or committing its contents.
 
 ## 2026-04-29 EndpointAddress / Scheduled Delivery Addendum
 

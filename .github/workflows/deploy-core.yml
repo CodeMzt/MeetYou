@@ -16,4 +16,34 @@ jobs:
           username: ${{ secrets.CORE_USER }}
           key: ${{ secrets.CORE_SSH_KEY }}
           script: |
+            set -e
+
+            MEETYOU_ENV_BAK_REPO=""
+            MEETYOU_ENV_BAK_BACKUP=""
+
+            restore_env_bak() {
+              if [ -n "${MEETYOU_ENV_BAK_REPO}" ] && [ -n "${MEETYOU_ENV_BAK_BACKUP}" ] && [ -f "${MEETYOU_ENV_BAK_BACKUP}" ]; then
+                cp -p "${MEETYOU_ENV_BAK_BACKUP}" "${MEETYOU_ENV_BAK_REPO}/.env.bak"
+                rm -f "${MEETYOU_ENV_BAK_BACKUP}"
+              fi
+            }
+            trap restore_env_bak EXIT
+
+            for gitdir in $(find /opt/meetyou -maxdepth 4 -type d -name .git 2>/dev/null); do
+              repo="$(dirname "${gitdir}")"
+              origin="$(git -C "${repo}" remote get-url origin 2>/dev/null || true)"
+              if printf '%s' "${origin}" | grep -qi 'CodeMzt/MeetYou'; then
+                if git -C "${repo}" ls-files --error-unmatch .env.bak >/dev/null 2>&1; then
+                  MEETYOU_ENV_BAK_REPO="${repo}"
+                  if [ -f "${repo}/.env.bak" ]; then
+                    MEETYOU_ENV_BAK_BACKUP="$(mktemp)"
+                    chmod 600 "${MEETYOU_ENV_BAK_BACKUP}"
+                    cp -p "${repo}/.env.bak" "${MEETYOU_ENV_BAK_BACKUP}"
+                  fi
+                  git -C "${repo}" checkout -- .env.bak
+                fi
+                break
+              fi
+            done
+
             /opt/meetyou/scripts/deploy-core.sh
