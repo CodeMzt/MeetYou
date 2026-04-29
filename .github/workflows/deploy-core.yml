@@ -64,14 +64,15 @@ jobs:
                     continue
                   fi
                   echo "Install/restart optional provider service: ${SERVICE_NAME}"
-                  SERVICE_NAME="${SERVICE_NAME}" \
+                  sudo -n env \
+                    SERVICE_NAME="${SERVICE_NAME}" \
                     WORKDIR="${MEETYOU_REPO}" \
                     VENV_DIR="${MEETYOU_REPO}/.venv" \
                     ENV_FILE="${PROVIDER_ENV_FILE}" \
                     bash "${INSTALL_SCRIPT}" || true
-                  systemctl enable "${SERVICE_NAME}.service" || true
-                  systemctl restart "${SERVICE_NAME}.service" || true
-                  systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
+                  sudo -n systemctl enable "${SERVICE_NAME}.service" || true
+                  sudo -n systemctl restart "${SERVICE_NAME}.service" || true
+                  sudo -n systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
                 done
               else
                 echo "Provider restart skipped: Python venv not found at ${MEETYOU_REPO}/.venv/bin/python"
