@@ -76,6 +76,32 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertNotEqual(snapshot["api_key"]["value"], "test-secret")
         self.assertEqual(config.get("api_key"), "test-secret")
 
+    def test_disabling_thinking_clears_effort_and_budget(self):
+        (self.temp_root / "user" / "config.json").write_text(
+            json.dumps(
+                {
+                    "api_provider": "openai",
+                    "model": "gpt-4o",
+                    "thinking_enabled": True,
+                    "thinking_effort": "high",
+                    "thinking_budget_tokens": 2048,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        applied, _ = config.apply_updates({"thinking_enabled": False, "thinking_effort": "未设置"})
+
+        self.assertEqual(applied, ["thinking_budget_tokens", "thinking_effort", "thinking_enabled"])
+        self.assertFalse(config.get_bool("thinking_enabled"))
+        self.assertEqual(config.get("thinking_effort"), "")
+        self.assertEqual(config.get("thinking_budget_tokens"), 0)
+
     def test_client_access_token_prefers_client_env_over_gateway_and_config(self):
         (self.temp_root / "user" / "config.json").write_text(
             json.dumps(

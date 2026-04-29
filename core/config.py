@@ -550,6 +550,8 @@ class ConfigManager(ConfigRepository):
             return self._normalize_provider(key, value)
         if key == "thinking_effort":
             text = self._normalize_text(value).lower()
+            if text in {"none", "null", "unset", "default", "未设置", "未設定", "不设置", "不設定"}:
+                return ""
             if text and text not in _THINKING_EFFORT_VALUES:
                 raise ConfigError(f"thinking_effort 仅支持: {', '.join(sorted(_THINKING_EFFORT_VALUES))}")
             return text
@@ -575,7 +577,8 @@ class ConfigManager(ConfigRepository):
         thinking_enabled = bool(merged_config.get("thinking_enabled"))
         thinking_effort = str(merged_config.get("thinking_effort") or "").strip()
         if {"thinking_enabled", "thinking_effort"}.intersection(updates) and not thinking_enabled and thinking_effort:
-            raise ConfigError("thinking_enabled=false 时不能设置 thinking_effort")
+            merged_config["thinking_effort"] = ""
+            merged_config["thinking_budget_tokens"] = 0
         gateway_cors_origins = merged_config.get("gateway_cors_origins")
         if isinstance(gateway_cors_origins, list) and "*" in gateway_cors_origins:
             raise ConfigError("gateway_cors_origins 不能包含通配符 *")
@@ -602,6 +605,11 @@ class ConfigManager(ConfigRepository):
                 secret_updates[_ENV_KEY_MAP[key]] = normalized_value
             else:
                 next_config[key] = normalized_value
+        if not bool(next_config.get("thinking_enabled")) and {"thinking_enabled", "thinking_effort", "thinking_budget_tokens"}.intersection(normalized_updates):
+            normalized_updates["thinking_effort"] = ""
+            normalized_updates["thinking_budget_tokens"] = 0
+            next_config["thinking_effort"] = ""
+            next_config["thinking_budget_tokens"] = 0
         self._validate_semantics(normalized_updates, next_config)
         next_metadata = self._normalize_config_metadata(self._config_metadata)
         next_metadata["schema_version"] = _CONFIG_SCHEMA_VERSION

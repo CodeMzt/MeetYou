@@ -61,6 +61,33 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter.get_context_limit("gpt-5.4-mini"), 400000)
         self.assertEqual(adapter.get_context_limit("gpt-5.4-nano"), 400000)
 
+    def test_chat_reasoning_disable_omits_invalid_none_effort(self):
+        adapter = OpenAIAdapter()
+        payload = {}
+
+        adapter._apply_chat_reasoning_options(
+            payload,
+            "deepseek-v4-flash",
+            request_url="https://api.deepseek.example/v1/chat/completions",
+            thinking=False,
+            thinking_effort="high",
+        )
+
+        self.assertNotIn("reasoning_effort", payload)
+        self.assertEqual(payload.get("thinking"), {"type": "disabled"})
+
+    def test_responses_reasoning_disable_omits_reasoning_block(self):
+        adapter = OpenAIAdapter()
+        payload = {}
+
+        adapter._apply_responses_reasoning_options(
+            payload,
+            thinking=False,
+            thinking_effort="high",
+        )
+
+        self.assertNotIn("reasoning", payload)
+
     def test_format_messages_drops_dangling_tool_call_sequences(self):
         adapter = OpenAIAdapter()
 

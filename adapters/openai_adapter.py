@@ -490,10 +490,11 @@ class OpenAIAdapter(LLMAdapter):
         effort = kwargs.pop("thinking_effort", None)
         kwargs.pop("thinking_budget", None)
 
+        if thinking is False:
+            effort = None
+
         if effort and self._supports_chat_reasoning_effort(request_url, model):
             payload["reasoning_effort"] = effort
-        elif thinking is False and self._supports_chat_reasoning_effort(request_url, model):
-            payload["reasoning_effort"] = "none"
 
         if thinking is not None and self._supports_chat_thinking_toggle(request_url, model):
             payload["thinking"] = {"type": "enabled" if bool(thinking) else "disabled"}
@@ -506,7 +507,7 @@ class OpenAIAdapter(LLMAdapter):
         kwargs.pop("thinking_budget", None)
 
         if thinking is False:
-            payload["reasoning"] = {"effort": "none"}
+            pass
         elif thinking:
             payload["reasoning"] = {
                 "effort": effort or "medium",
