@@ -97,6 +97,55 @@ def _normalize_schedule(schedule: dict[str, Any] | None, *, timezone_name: str =
     raise ValueError("schedule.type must be daily, interval, cron, or one_shot.")
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        normalized = str(item or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _is_scheduled_delivery_job(job) -> bool:
+    kind = str(getattr(job, "kind", "") or "").strip()
+    metadata = dict(getattr(job, "meta", {}) or {})
+    template = dict(getattr(job, "run_template", {}) or {})
+    return kind == "scheduled_delivery" or (
+        kind == "scheduled_workflow"
+        and str(metadata.get("workflow_subtype") or template.get("workflow_subtype") or "").strip() == "delivery"
+    )
+
+
+def _explicit_false(value: Any) -> bool:
+    if value is False:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"false", "0", "no", "off"}
+    return False
+
+
+def _normalize_workflow_output_policy(output: dict[str, Any]) -> dict[str, Any]:
+    if _explicit_false(output.get("persist_message", True)):
+        raise ValueError("Scheduled Workflow assistant output must be persisted as a MessageService assistant message.")
+    create_thread = not _explicit_false(output.get("create_thread", True))
+    thread_id = str(output.get("thread_id") or "").strip()
+    session_id = str(output.get("session_id") or "").strip()
+    if not create_thread and not (thread_id or session_id):
+        raise ValueError("create_thread=false requires an existing thread_id or session_id.")
+    return {
+        "persist_message": True,
+        "create_thread": create_thread,
+        "thread_id": thread_id,
+        "session_id": session_id,
+        "output_kinds": _string_list(output.get("output_kinds")) or ["assistant_message"],
+    }
+
+
 class SchedulerTools:
     def __init__(self) -> None:
         self._core_domain = None
@@ -204,6 +253,77 @@ class SchedulerTools:
             "external_ref": str(getattr(address, "external_ref", "") or ""),
             "display_name": str(getattr(address, "display_name", "") or ""),
             "status": str(getattr(address, "status", "") or "unknown"),
+        }
+
+    def _resolve_delivery_targets(
+        self,
+        targets: Any,
+        *,
+        delivery_policy: dict[str, Any] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+        if not isinstance(targets, list):
+            return [], [], None
+        policies: list[dict[str, Any]] = []
+        compact_addresses: list[dict[str, Any]] = []
+        base_policy = dict(delivery_policy or {})
+        for item in targets:
+            if not isinstance(item, dict):
+                continue
+            endpoint_id = str(item.get("endpoint_id") or "").strip()
+            if endpoint_id:
+                policies.append(
+                    {
+                        "endpoint_id": endpoint_id,
+                        "message_type": str(item.get("message_type") or "message").strip() or "message",
+                        "offline_policy": str(item.get("offline_policy") or base_policy.get("offline_policy") or "store_and_retry"),
+                    }
+                )
+                continue
+            address, binding_error = self._resolve_delivery_target(item)
+            if address is None:
+                return [], [], dict(binding_error or {})
+            compact = self._compact_address(address)
+            compact_addresses.append(compact)
+            policies.append(
+                {
+                    "address_id": compact["address_id"],
+                    "provider_type": compact["provider_type"],
+                    "address_type": compact["address_type"],
+                    "message_type": str(item.get("message_type") or "message").strip() or "message",
+                    "offline_policy": str(item.get("offline_policy") or base_policy.get("offline_policy") or "store_and_retry"),
+                }
+            )
+        return policies, compact_addresses, None
+
+    @staticmethod
+    def _workflow_tool_policy(tool_policy: dict[str, Any] | None) -> dict[str, Any]:
+        payload = dict(tool_policy or {})
+        try:
+            max_rounds = int(payload.get("max_rounds") or 6)
+        except (TypeError, ValueError):
+            max_rounds = 6
+        return {
+            "tool_bundle": _string_list(
+                payload.get("tool_bundle")
+                or [
+                    "get_current_system_time",
+                    "emit_progress_notice",
+                    "search_knowledge",
+                    "search_memory",
+                    "search_web",
+                    "read_web_page",
+                    "remember_knowledge",
+                    "summarize_text",
+                    "organize_notes",
+                    "extract_action_items",
+                ]
+            ),
+            "mcp_servers": _string_list(payload.get("mcp_servers")),
+            "preferred_tool_key": str(payload.get("preferred_tool_key") or "").strip(),
+            "preferred_target_endpoint_ids": _string_list(payload.get("preferred_target_endpoint_ids")),
+            "preferred_endpoint_provider_types": _string_list(payload.get("preferred_endpoint_provider_types")),
+            "tool_target_routing_policy": str(payload.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
+            "max_rounds": max(max_rounds, 1),
         }
 
     def _trigger_regular_job(self, job, *, workspace_id: str = "") -> dict[str, Any]:
@@ -382,6 +502,106 @@ class SchedulerTools:
 
         raise ValueError("action must be list, detail, create, update, enable, disable, delete, or trigger.")
 
+    async def create_scheduled_workflow(
+        self,
+        name: str,
+        schedule: dict[str, Any],
+        instruction: str,
+        timezone: str = "Asia/Shanghai",
+        workflow_type: str = "assistant_run",
+        mode: str = "automation",
+        tool_policy: dict[str, Any] | None = None,
+        output_policy: dict[str, Any] | None = None,
+        workspace_id: str = "personal",
+        enabled: bool = True,
+        metadata: dict[str, Any] | None = None,
+        route_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del route_context
+        text = str(instruction or "").strip()
+        if not text:
+            raise ValueError("instruction is required.")
+        workflow_kind = str(workflow_type or "assistant_run").strip() or "assistant_run"
+        if workflow_kind not in {"assistant_run", "tool_workflow", "external_workflow"}:
+            raise ValueError("workflow_type must be assistant_run, tool_workflow, or external_workflow.")
+        workspace = self._workspace_row(workspace_id or "personal")
+        if workspace is None:
+            raise ValueError("workspace_id is required.")
+        trigger_type, trigger_config, tz = _normalize_schedule(schedule, timezone_name=timezone)
+        tool_policy_payload = self._workflow_tool_policy(tool_policy)
+        output = dict(output_policy or {})
+        raw_delivery_targets = output.get("delivery_targets")
+        if raw_delivery_targets is None:
+            raw_delivery_targets = output.get("targets")
+        target_policies, compact_targets, binding_error = self._resolve_delivery_targets(
+            raw_delivery_targets,
+            delivery_policy=output.get("delivery_policy") if isinstance(output.get("delivery_policy"), dict) else {},
+        )
+        if binding_error is not None:
+            return {"ok": False, **binding_error}
+        output_settings = _normalize_workflow_output_policy(output)
+        job = self._domain().services.scheduler.create_job(
+            kind="scheduled_workflow",
+            name=str(name or text[:60] or "Scheduled workflow").strip(),
+            workspace_id=workspace.id,
+            enabled=bool(enabled),
+            trigger_type=trigger_type,
+            trigger_config=trigger_config,
+            timezone=tz,
+            action_ref="core.workflow.scheduled_workflow",
+            run_template={
+                "schema": "meetyou.scheduler.workflow.v1",
+                "workflow_type": workflow_kind,
+                "workflow_subtype": str(output.get("workflow_subtype") or "").strip(),
+                "mode": str(mode or "automation").strip() or "automation",
+                "prompt": text,
+                "instruction": text,
+                "generation_policy": "generate_at_fire_time",
+                "tool_bundle": tool_policy_payload["tool_bundle"],
+                "mcp_servers": tool_policy_payload["mcp_servers"],
+                "preferred_tool_key": tool_policy_payload["preferred_tool_key"],
+                "preferred_target_endpoint_ids": tool_policy_payload["preferred_target_endpoint_ids"],
+                "preferred_endpoint_provider_types": tool_policy_payload["preferred_endpoint_provider_types"],
+                "tool_target_routing_policy": tool_policy_payload["tool_target_routing_policy"],
+                "output_policy": {
+                    "persist_message": output_settings["persist_message"],
+                    "create_thread": output_settings["create_thread"],
+                    "delivery_targets": compact_targets,
+                    "output_kinds": output_settings["output_kinds"],
+                },
+                "max_rounds": tool_policy_payload["max_rounds"],
+                "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or "personal"),
+                "thread_id": output_settings["thread_id"],
+                "session_id": output_settings["session_id"],
+                "thread_title": str(name or "Scheduled workflow"),
+            },
+            delivery_policy={
+                **(dict(output.get("delivery_policy") or {}) if isinstance(output.get("delivery_policy"), dict) else {}),
+                "thread_id": output_settings["thread_id"],
+                "session_id": output_settings["session_id"],
+                "create_thread": output_settings["create_thread"],
+                "targets": target_policies,
+            },
+            concurrency_policy={"mode": "skip_if_running"},
+            misfire_policy={"mode": "run_once"},
+            metadata={
+                "created_by_tool": "create_scheduled_workflow",
+                "workflow_type": workflow_kind,
+                "workflow_protocol": "meetyou.scheduler.workflow.v1",
+                **dict(metadata or {}),
+            },
+        )
+        return {
+            "ok": True,
+            "job": _compact_job(job),
+            "workflow": {
+                "workflow_type": workflow_kind,
+                "schedule": {"trigger_type": trigger_type, "trigger_config": trigger_config, "timezone": tz},
+                "output_policy": dict(job.run_template.get("output_policy") or {}),
+            },
+            "delivery_targets": compact_targets,
+        }
+
     async def create_scheduled_delivery(
         self,
         name: str,
@@ -400,59 +620,44 @@ class SchedulerTools:
         text = str(instruction or "").strip()
         if not text:
             raise ValueError("instruction is required.")
-        address, binding_error = self._resolve_delivery_target(target)
-        if address is None:
-            return {"ok": False, **dict(binding_error or {})}
-        workspace = self._workspace_row(workspace_id or "personal")
-        if workspace is None:
-            raise ValueError("workspace_id is required.")
-        trigger_type, trigger_config, tz = _normalize_schedule(schedule, timezone_name=timezone)
-        target_policy = {
-            "address_id": str(getattr(address, "address_id", "") or ""),
-            "provider_type": str(getattr(address, "provider_type", "") or ""),
-            "address_type": str(getattr(address, "address_type", "") or ""),
-            "message_type": "message",
-            "offline_policy": str((delivery_policy or {}).get("offline_policy") or "store_and_retry"),
-        }
-        job = self._domain().services.scheduler.create_job(
-            kind="scheduled_delivery",
-            name=str(name or text[:60] or "Scheduled delivery").strip(),
-            workspace_id=workspace.id,
-            enabled=bool(enabled),
-            trigger_type=trigger_type,
-            trigger_config=trigger_config,
-            timezone=tz,
-            action_ref="core.workflow.scheduled_delivery",
-            run_template={
-                "mode": "general",
-                "prompt": text,
-                "instruction": text,
-                "generation_policy": str(generation_policy or "generate_at_fire_time"),
-                "target": dict(target or {}),
-                "target_address": self._compact_address(address),
+        payload = await self.create_scheduled_workflow(
+            name=name,
+            schedule=schedule,
+            instruction=text,
+            timezone=timezone,
+            workflow_type="assistant_run",
+            mode="automation",
+            tool_policy={
                 "tool_bundle": ["get_current_system_time", "emit_progress_notice"],
                 "max_rounds": 4,
-                "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or "personal"),
-                "thread_title": str(name or "Scheduled delivery"),
             },
-            delivery_policy={
-                **dict(delivery_policy or {}),
-                "targets": [target_policy],
+            output_policy={
+                "workflow_subtype": "delivery",
+                "delivery_targets": [dict(target or {})],
+                "delivery_policy": dict(delivery_policy or {}),
+                "output_kinds": ["assistant_message", "delivery.message"],
             },
+            workspace_id=workspace_id,
+            enabled=enabled,
             metadata={
                 **dict(metadata or {}),
                 "created_by_tool": "create_scheduled_delivery",
-                "target_address_id": str(getattr(address, "address_id", "") or ""),
+                "workflow_subtype": "delivery",
+                "generation_policy": str(generation_policy or "generate_at_fire_time"),
             },
         )
+        if not payload.get("ok"):
+            return payload
+        job_id = str(payload.get("job", {}).get("job_id") or "")
+        job = self._domain().services.scheduler.get_job(job_id)
         return {
             "ok": True,
             "job": _compact_job(job),
-            "target": self._compact_address(address),
+            "target": (payload.get("delivery_targets") or [{}])[0],
             "generation_policy": str(generation_policy or "generate_at_fire_time"),
         }
 
-    async def manage_scheduled_deliveries(
+    async def manage_scheduled_workflows(
         self,
         action: str = "list",
         job_id: str = "",
@@ -460,8 +665,8 @@ class SchedulerTools:
         schedule: dict[str, Any] | None = None,
         timezone: str = "",
         instruction: str = "",
-        target: dict[str, Any] | None = None,
-        delivery_policy: dict[str, Any] | None = None,
+        tool_policy: dict[str, Any] | None = None,
+        output_policy: dict[str, Any] | None = None,
         workspace_id: str = "personal",
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -469,11 +674,15 @@ class SchedulerTools:
         normalized_action = str(action or "list").strip().lower()
         domain = self._domain()
         if normalized_action == "list":
-            jobs = [_compact_job(job) for job in domain.services.scheduler.list_jobs() if str(getattr(job, "kind", "") or "") == "scheduled_delivery"]
+            jobs = [
+                _compact_job(job)
+                for job in domain.services.scheduler.list_jobs()
+                if str(getattr(job, "kind", "") or "") == "scheduled_workflow"
+            ]
             return {"ok": True, "count": len(jobs), "jobs": jobs}
         job = self._job_or_raise(job_id)
-        if str(getattr(job, "kind", "") or "") != "scheduled_delivery":
-            raise ValueError(f"Scheduled job is not a scheduled_delivery: {job_id}")
+        if str(getattr(job, "kind", "") or "") != "scheduled_workflow":
+            raise ValueError(f"Scheduled job is not a scheduled_workflow: {job_id}")
         if normalized_action == "detail":
             return {"ok": True, "job": _compact_job(job)}
         if normalized_action in {"enable", "disable"}:
@@ -493,7 +702,100 @@ class SchedulerTools:
                 updates["trigger_type"] = trigger_type
                 updates["trigger_config"] = trigger_config
                 updates["timezone"] = tz
-                updates["action_ref"] = "core.workflow.scheduled_delivery"
+                updates["action_ref"] = "core.workflow.scheduled_workflow"
+            template = dict(getattr(job, "run_template", {}) or {})
+            if instruction:
+                template["prompt"] = str(instruction or "").strip()
+                template["instruction"] = str(instruction or "").strip()
+            if tool_policy is not None:
+                normalized_policy = self._workflow_tool_policy(tool_policy)
+                template.update(
+                    {
+                        "tool_bundle": normalized_policy["tool_bundle"],
+                        "mcp_servers": normalized_policy["mcp_servers"],
+                        "preferred_tool_key": normalized_policy["preferred_tool_key"],
+                        "preferred_target_endpoint_ids": normalized_policy["preferred_target_endpoint_ids"],
+                        "preferred_endpoint_provider_types": normalized_policy["preferred_endpoint_provider_types"],
+                        "tool_target_routing_policy": normalized_policy["tool_target_routing_policy"],
+                        "max_rounds": normalized_policy["max_rounds"],
+                    }
+                )
+            if output_policy is not None:
+                output = dict(output_policy or {})
+                output_settings = _normalize_workflow_output_policy(output)
+                raw_targets = output.get("delivery_targets")
+                if raw_targets is None:
+                    raw_targets = output.get("targets")
+                target_policies, compact_targets, binding_error = self._resolve_delivery_targets(
+                    raw_targets,
+                    delivery_policy=output.get("delivery_policy") if isinstance(output.get("delivery_policy"), dict) else {},
+                )
+                if binding_error is not None:
+                    return {"ok": False, **binding_error}
+                template["output_policy"] = {
+                    "persist_message": output_settings["persist_message"],
+                    "create_thread": output_settings["create_thread"],
+                    "delivery_targets": compact_targets,
+                    "output_kinds": output_settings["output_kinds"],
+                }
+                policy = {
+                    **(dict(output.get("delivery_policy") or {}) if isinstance(output.get("delivery_policy"), dict) else {}),
+                    "thread_id": output_settings["thread_id"],
+                    "session_id": output_settings["session_id"],
+                    "create_thread": output_settings["create_thread"],
+                    "targets": target_policies,
+                }
+                updates["delivery_policy"] = policy
+            if template != dict(getattr(job, "run_template", {}) or {}):
+                updates["run_template"] = template
+            if not updates:
+                raise ValueError("update requires at least one mutable field.")
+            row = domain.services.scheduler.update_job(job_id=job.job_id, **updates)
+            return {"ok": True, "job": _compact_job(row)}
+        raise ValueError("action must be list, detail, update, enable, disable, delete, or trigger.")
+
+    async def manage_scheduled_deliveries(
+        self,
+        action: str = "list",
+        job_id: str = "",
+        enabled: bool | None = None,
+        schedule: dict[str, Any] | None = None,
+        timezone: str = "",
+        instruction: str = "",
+        target: dict[str, Any] | None = None,
+        delivery_policy: dict[str, Any] | None = None,
+        workspace_id: str = "personal",
+        route_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del route_context
+        normalized_action = str(action or "list").strip().lower()
+        domain = self._domain()
+        if normalized_action == "list":
+            jobs = [_compact_job(job) for job in domain.services.scheduler.list_jobs() if _is_scheduled_delivery_job(job)]
+            return {"ok": True, "count": len(jobs), "jobs": jobs}
+        job = self._job_or_raise(job_id)
+        if not _is_scheduled_delivery_job(job):
+            raise ValueError(f"Scheduled job is not a scheduled delivery workflow: {job_id}")
+        if normalized_action == "detail":
+            return {"ok": True, "job": _compact_job(job)}
+        if normalized_action in {"enable", "disable"}:
+            row = domain.services.scheduler.set_enabled(job_id=job.job_id, enabled=normalized_action == "enable")
+            return {"ok": True, "job": _compact_job(row)}
+        if normalized_action == "delete":
+            deleted = domain.services.scheduler.delete_job(job_id=job.job_id)
+            return {"ok": True, "job_id": job.job_id, "deleted": bool(deleted)}
+        if normalized_action == "trigger":
+            return await self.manage_scheduled_jobs(action="trigger", job_id=job.job_id, workspace_id=workspace_id)
+        if normalized_action == "update":
+            updates: dict[str, Any] = {}
+            if enabled is not None:
+                updates["enabled"] = bool(enabled)
+            if schedule is not None:
+                trigger_type, trigger_config, tz = _normalize_schedule(schedule, timezone_name=timezone or getattr(job, "timezone", "UTC"))
+                updates["trigger_type"] = trigger_type
+                updates["trigger_config"] = trigger_config
+                updates["timezone"] = tz
+                updates["action_ref"] = "core.workflow.scheduled_workflow"
             if instruction:
                 template = dict(getattr(job, "run_template", {}) or {})
                 template["prompt"] = str(instruction or "").strip()

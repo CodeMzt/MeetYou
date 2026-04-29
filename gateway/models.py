@@ -835,7 +835,7 @@ class OperatorEndpointResponse(BaseModel):
 
 class OperatorScheduledJobCreateRequest(BaseModel):
     job_id: str | None = None
-    kind: str = "workflow"
+    kind: str = "scheduled_workflow"
     name: str = ""
     workspace_id: str | None = None
     singleton_key: str | None = None
@@ -844,7 +844,7 @@ class OperatorScheduledJobCreateRequest(BaseModel):
     trigger_config: dict[str, Any] = Field(default_factory=dict)
     interval_seconds: int | None = None
     timezone: str = "UTC"
-    action_ref: str = "core.workflow.assistant_turn"
+    action_ref: str = "core.workflow.scheduled_workflow"
     run_template: dict[str, Any] = Field(default_factory=dict)
     execution_policy: dict[str, Any] = Field(default_factory=dict)
     delivery_policy: dict[str, Any] = Field(default_factory=dict)

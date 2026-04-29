@@ -634,16 +634,23 @@ class V4Acceptance:
             "/operator/scheduled-jobs",
             json_body={
                 "job_id": job_id,
-                "kind": "workflow",
-                "name": "V4 acceptance disposable job",
+                "kind": "scheduled_workflow",
+                "name": "V4 acceptance disposable workflow",
                 "workspace_id": "",
                 "enabled": False,
                 "interval_seconds": 3600,
-                "action_ref": "core.workflow.assistant_turn",
-                "run_template": {"acceptance_marker": self.marker},
+                "action_ref": "core.workflow.scheduled_workflow",
+                "run_template": {
+                    "schema": "meetyou.scheduler.workflow.v1",
+                    "workflow_type": "assistant_run",
+                    "mode": "automation",
+                    "instruction": f"V4 acceptance scheduled workflow {self.marker}",
+                    "output_policy": {"persist_message": True, "create_thread": True, "output_kinds": ["assistant_message"]},
+                    "acceptance_marker": self.marker,
+                },
             },
         )
-        if created.get("job_id") != job_id:
+        if created.get("job_id") != job_id or created.get("kind") != "scheduled_workflow":
             self.fail("scheduler user job", f"created wrong job: {created}")
         deleted = await self.request("DELETE", f"/operator/scheduled-jobs/{job_id}")
         if not deleted.get("deleted"):

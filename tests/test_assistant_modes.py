@@ -241,6 +241,8 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertEqual(route.current_mode, "general")
         self.assertIn("task_recognition", route.active_skills or [])
         self.assertIn("manage_tasks", route.tool_bundle)
+        self.assertIn("create_scheduled_workflow", route.tool_bundle)
+        self.assertIn("manage_scheduled_workflows", route.tool_bundle)
         self.assertIn("manage_scheduled_jobs", route.tool_bundle)
         prompt_text = manager.assemble_prompt_for_route(route.to_dict())
         self.assertIn("[General Mode Skill]", prompt_text)
@@ -391,6 +393,10 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "generate_flashcards",
                 "track_mastery",
                 "manage_tasks",
+                "create_scheduled_workflow",
+                "manage_scheduled_workflows",
+                "create_scheduled_delivery",
+                "manage_scheduled_deliveries",
                 "manage_scheduled_jobs",
             ],
             available_mcp_servers=["filesystem_tools"],
@@ -616,6 +622,8 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "list_delivery_targets",
                     "set_delivery_preference",
                     "send_delivery_message",
+                    "create_scheduled_workflow",
+                    "manage_scheduled_workflows",
                     "create_scheduled_delivery",
                     "manage_scheduled_deliveries",
                     "send_endpoint_message",
@@ -650,6 +658,10 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "generate_flashcards",
                     "track_mastery",
                     "manage_tasks",
+                    "create_scheduled_workflow",
+                    "manage_scheduled_workflows",
+                    "create_scheduled_delivery",
+                    "manage_scheduled_deliveries",
                     "manage_scheduled_jobs",
                     "danxi_login",
                     "danxi_logout",

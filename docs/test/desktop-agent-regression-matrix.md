@@ -18,7 +18,7 @@
 
 ## Scheduler
 
-- `manage_scheduled_jobs` ordinary Job CRUD.
+- `create_scheduled_workflow` / `manage_scheduled_workflows` ordinary scheduled workflow CRUD; `manage_scheduled_jobs` remains low-level Scheduler maintenance.
 - `system.heartbeat` list/detail/enable/disable/update interval/trigger.
 - `system.heartbeat` delete/create/shape mutation rejected.
 - `endpoint.heartbeat` does not trigger system heartbeat.

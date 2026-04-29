@@ -413,13 +413,21 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                 headers=headers,
                 json={
                     "job_id": "acceptance.job",
-                    "kind": "acceptance",
+                    "kind": "scheduled_workflow",
                     "name": "Acceptance job",
                     "workspace_id": "desktop-main",
                     "interval_seconds": 90,
+                    "action_ref": "core.workflow.scheduled_workflow",
+                    "run_template": {
+                        "schema": "meetyou.scheduler.workflow.v1",
+                        "instruction": "Run acceptance workflow.",
+                        "output_policy": {"persist_message": True, "create_thread": True},
+                    },
                 },
             )
             self.assertEqual(create_resp.status_code, 200)
+            self.assertEqual(create_resp.json()["kind"], "scheduled_workflow")
+            self.assertEqual(create_resp.json()["action_ref"], "core.workflow.scheduled_workflow")
             self.assertEqual(create_resp.json()["trigger_config"]["interval_seconds"], 90)
 
             list_resp = client.get("/operator/scheduled-jobs", headers=headers)

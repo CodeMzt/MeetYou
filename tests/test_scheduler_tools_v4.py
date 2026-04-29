@@ -324,6 +324,49 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["requires_binding"])
         self.assertEqual(payload["provider_type"], "feishu")
 
+    async def test_create_scheduled_workflow_creates_generic_job_without_delivery_target(self):
+        tools, scheduler, *_ = self._tools()
+
+        payload = await tools.create_scheduled_workflow(
+            name="Daily document digest",
+            schedule={"type": "daily", "time_of_day": "09:30", "timezone": "Asia/Shanghai"},
+            instruction="Summarize new project notes and persist the result.",
+            tool_policy={"tool_bundle": ["get_current_system_time", "summarize_text"], "max_rounds": 3},
+            output_policy={"output_kinds": ["assistant_message"]},
+        )
+
+        self.assertTrue(payload["ok"])
+        job = scheduler.jobs[payload["job"]["job_id"]]
+        self.assertEqual(job.kind, "scheduled_workflow")
+        self.assertEqual(job.action_ref, "core.workflow.scheduled_workflow")
+        self.assertEqual(job.delivery_policy["targets"], [])
+        self.assertEqual(job.run_template["schema"], "meetyou.scheduler.workflow.v1")
+        self.assertEqual(job.run_template["workflow_type"], "assistant_run")
+        self.assertEqual(job.run_template["tool_bundle"], ["get_current_system_time", "summarize_text"])
+        self.assertEqual(job.run_template["output_policy"]["output_kinds"], ["assistant_message"])
+
+    async def test_create_scheduled_workflow_rejects_non_persisted_assistant_output(self):
+        tools, *_ = self._tools()
+
+        with self.assertRaisesRegex(ValueError, "must be persisted"):
+            await tools.create_scheduled_workflow(
+                name="Ephemeral digest",
+                schedule={"type": "daily", "time_of_day": "09:30"},
+                instruction="Summarize notes.",
+                output_policy={"persist_message": False},
+            )
+
+    async def test_create_scheduled_workflow_requires_thread_when_not_creating_one(self):
+        tools, *_ = self._tools()
+
+        with self.assertRaisesRegex(ValueError, "create_thread=false requires"):
+            await tools.create_scheduled_workflow(
+                name="Existing thread only",
+                schedule={"type": "daily", "time_of_day": "09:30"},
+                instruction="Summarize notes.",
+                output_policy={"create_thread": False},
+            )
+
     async def test_create_scheduled_delivery_creates_address_targeted_job(self):
         tools, scheduler, *_ = self._tools()
 
@@ -337,13 +380,19 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(payload["ok"])
         job = scheduler.jobs[payload["job"]["job_id"]]
-        self.assertEqual(job.kind, "scheduled_delivery")
-        self.assertEqual(job.action_ref, "core.workflow.scheduled_delivery")
+        self.assertEqual(job.kind, "scheduled_workflow")
+        self.assertEqual(job.action_ref, "core.workflow.scheduled_workflow")
         self.assertEqual(job.trigger_type, "daily")
         self.assertEqual(job.trigger_config["time_of_day"], "08:00")
         self.assertEqual(job.delivery_policy["targets"][0]["address_id"], "addr.feishu.direct.chat-1")
+        self.assertEqual(job.run_template["workflow_subtype"], "delivery")
         self.assertEqual(job.run_template["generation_policy"], "generate_at_fire_time")
         self.assertEqual(job.run_template["instruction"], "Say good morning.")
+
+        deliveries = await tools.manage_scheduled_deliveries(action="list")
+        workflows = await tools.manage_scheduled_workflows(action="list")
+        self.assertEqual(deliveries["count"], 1)
+        self.assertEqual(workflows["count"], 1)
 
 
 if __name__ == "__main__":

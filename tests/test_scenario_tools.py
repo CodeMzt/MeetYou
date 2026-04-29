@@ -453,7 +453,7 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(failed, ToolCallResult)
         self.assertFalse(failed.ok)
         self.assertIn("manage_tasks only manages user TODO items", failed.error.message)
-        self.assertIn("manage_scheduled_jobs", failed.error.message)
+        self.assertIn("create_scheduled_workflow", failed.error.message)
 
         todo = json.loads(
             await tools.manage_tasks(

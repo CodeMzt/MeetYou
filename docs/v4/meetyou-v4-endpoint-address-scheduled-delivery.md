@@ -1,4 +1,4 @@
-# MeetYou V4 EndpointAddress And Scheduled Delivery
+# MeetYou V4 EndpointAddress And Scheduled Delivery Output
 
 ## Goal
 
@@ -9,6 +9,8 @@ V4 separates provider identity from provider-internal destinations:
 - `ActorDeliveryPreference` binds an actor alias such as `me` to a provider address.
 
 This lets a user say from one provider, "send this to me on Feishu tomorrow morning", without requiring Feishu to first create a new conversation in the same moment.
+
+Scheduling itself is documented in `docs/v4/meetyou-v4-scheduled-workflows.md`. Scheduled delivery is now a delivery-flavored Scheduled Workflow, not the only Scheduler use case.
 
 ## Data Model
 
@@ -71,6 +73,8 @@ High-level user-facing tools:
 - `list_delivery_targets`
 - `set_delivery_preference`
 - `send_delivery_message`
+- `create_scheduled_workflow`
+- `manage_scheduled_workflows`
 - `create_scheduled_delivery`
 - `manage_scheduled_deliveries`
 
@@ -82,16 +86,18 @@ Assistant behavior:
 
 - Use `list_delivery_targets(actor_ref="me", provider_type="feishu")` before creating cross-provider scheduled delivery.
 - If no binding exists, ask the user to choose and confirm an address, then call `set_delivery_preference`.
-- Use `create_scheduled_delivery` for natural-language recurring delivery requests.
+- Use `create_scheduled_workflow` for ordinary scheduled work. Use `create_scheduled_delivery` only when the scheduled workflow must deliver its generated assistant Message to an EndpointAddress.
 - Keep final generated content as a persisted assistant Message; Delivery only transports it.
 
 ## Scheduled Delivery Runtime
 
-A scheduled delivery is a normal Scheduler job:
+A scheduled delivery is a Scheduled Workflow with a delivery output:
 
 ```text
-kind = scheduled_delivery
-action_ref = core.workflow.scheduled_delivery
+kind = scheduled_workflow
+action_ref = core.workflow.scheduled_workflow
+run_template.schema = meetyou.scheduler.workflow.v1
+run_template.workflow_subtype = delivery
 trigger_type = daily | interval | cron | one_shot
 ```
 
@@ -99,9 +105,9 @@ At fire time Core:
 
 1. Acquires a Scheduler lease.
 2. Creates `Run(trigger_type="scheduled_job")`.
-3. Executes a Core-owned assistant background turn.
+3. Executes a Core-owned Scheduled Workflow background turn.
 4. Persists the final assistant reply with `MessageService`.
-5. Delivers the message through `DeliveryService` to `EndpointAddress`.
+5. Applies `delivery_policy.targets` and delivers the message through `DeliveryService` to `EndpointAddress`.
 6. Stores `last_fire_at` and computes the next `next_fire_at`.
 
 `system.heartbeat` remains a non-deletable Scheduler preset and is still restricted to enable/disable and interval changes.
@@ -119,7 +125,7 @@ Expected assistant flow:
 1. Resolve `me + feishu` with `list_delivery_targets`.
 2. If not bound, ask the user to select a Feishu address.
 3. Bind with `set_delivery_preference`.
-4. Create a daily scheduled delivery at the confirmed time, defaulting to `08:00 Asia/Shanghai` only after confirmation.
+4. Create a daily Scheduled Workflow with delivery output at the confirmed time, defaulting to `08:00 Asia/Shanghai` only after confirmation.
 5. At each fire time, generate the greeting, persist the assistant Message, and deliver it to the Feishu address.
 
 ## Verification
@@ -130,5 +136,5 @@ Minimum checks for this layer:
 - Endpoint protocol accepts address snapshot/upsert/delete.
 - `list_delivery_targets`, `set_delivery_preference`, and `send_delivery_message` work through `EndpointAddress`.
 - Daily, interval, cron, and one-shot scheduling compute persistent next fire times.
-- Scheduled delivery manual trigger creates Run, Message, and address-targeted Delivery.
+- Scheduled delivery manual trigger creates Run, Message, and address-targeted Delivery through the Scheduled Workflow runtime.
 - Feishu/WeChat non-streaming outputs receive only one final message.

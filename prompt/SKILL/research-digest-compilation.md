@@ -8,7 +8,8 @@
     "analyze_workspace",
     "write_local_document",
     "compile_report",
-    "manage_scheduled_jobs"
+    "create_scheduled_workflow",
+    "manage_scheduled_workflows"
   ],
   "applicable_modes": [
     "general"
@@ -59,7 +60,7 @@
 - 命名规范：`daily_research_digest_` + 日期后缀，便于版本管理
 
 ### 5. 定时任务集成
-- 通过 `manage_scheduled_jobs` 创建 Core Scheduler Job
+- 通过 `create_scheduled_workflow` 创建 Core Scheduled Workflow
 - 建议每天10:00执行
 - 包含自动执行提示：`job_prompt` 设置为 "执行每日研究动态汇编任务"
 - 通知策略：可选择静默或完成后通知
@@ -70,7 +71,7 @@
 3. `analyze_workspace` 确认保存目录
 4. `compile_report` 或直接 `write_local_document`
 5. `create_skill` 固化工作流（一次性）
-6. `manage_scheduled_jobs` 创建定时任务
+6. `create_scheduled_workflow` 创建定时 workflow
 
 ## 文档模板
 ```markdown
