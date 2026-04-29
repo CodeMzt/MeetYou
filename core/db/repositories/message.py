@@ -49,5 +49,25 @@ class MessageRepository(RepositoryBase):
             .all()
         )
 
+    def get_by_endpoint_message_id(
+        self,
+        *,
+        thread_id,
+        endpoint_message_id: str,
+        origin_endpoint_id=None,
+        role: str = "user",
+    ) -> Message | None:
+        normalized = str(endpoint_message_id or "").strip()
+        if not normalized:
+            return None
+        query = self.session.query(Message).filter_by(thread_id=thread_id, role=role)
+        if origin_endpoint_id is not None:
+            query = query.filter_by(origin_endpoint_id=origin_endpoint_id)
+        for row in query.order_by(Message.created_at.asc()).all():
+            meta = dict(row.meta or {})
+            if str(meta.get("endpoint_message_id") or "").strip() == normalized:
+                return row
+        return None
+
     def get_by_message_id(self, message_id: str) -> Message | None:
         return self.session.query(Message).filter_by(message_id=message_id).one_or_none()

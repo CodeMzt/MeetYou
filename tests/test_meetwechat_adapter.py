@@ -102,6 +102,7 @@ class _FakeGatewayClient:
         self.confirm_responses = []
         self.human_input_responses = []
         self.commands = []
+        self.message_response = kwargs.get("message_response") or {"ok": True, "message_id": "core-msg-1"}
         self.reply_payload = kwargs.get("reply_payload") or _run_event(
             {
                 "type": "message.completed",
@@ -117,7 +118,7 @@ class _FakeGatewayClient:
         self.messages.append({"content": content, **kwargs})
         if self.event_handler and self.reply_payload is not None:
             await self.event_handler(self.reply_payload)
-        return {"ok": True}
+        return dict(self.message_response)
 
     async def submit_confirm_response(self, **kwargs):
         self.confirm_responses.append(kwargs)
@@ -155,7 +156,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         payload.update(overrides)
         return MeetWeChatEvent.from_payload(payload)
 
-    def _build_adapter(self, *, config=None, meetwechat_client=None, reply_payload=None, gateway_clients=None):
+    def _build_adapter(self, *, config=None, meetwechat_client=None, reply_payload=None, gateway_clients=None, message_response=None):
         config = config or _Config(meetwechat_state_file=self.state_path)
         state = MeetWeChatStateStore(self.state_path)
         meetwechat_client = meetwechat_client or _FakeMeetWeChatClient()
@@ -167,7 +168,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         gateway_clients = gateway_clients if gateway_clients is not None else []
 
         def factory(**kwargs):
-            client = _FakeGatewayClient(**{**kwargs, "reply_payload": reply_payload})
+            client = _FakeGatewayClient(**{**kwargs, "reply_payload": reply_payload, "message_response": message_response})
             gateway_clients.append(client)
             return client
 
@@ -681,7 +682,7 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["events"]["evt-1"]["acked"])
         await output.close()
 
-    async def test_uncertain_send_failure_retries_same_idempotency_without_ack(self):
+    async def test_uncertain_send_failure_does_not_resubmit_core_message(self):
         class _UncertainSendClient(_FakeMeetWeChatClient):
             async def send_text(self, **kwargs):
                 self.sent.append(dict(kwargs))
@@ -717,14 +718,14 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
             {item["idempotency_key"] for item in meetwechat_client.sent},
             {"meetyou:evt-1:1"},
         )
-        self.assertEqual(meetwechat_client.acked, [])
-        self.assertEqual(state.get_event_status("evt-1"), "failed")
+        self.assertEqual(meetwechat_client.acked, ["evt-1"])
+        self.assertEqual(state.get_event_status("evt-1"), "submitted")
         with open(self.state_path, encoding="utf-8") as handle:
             payload = json.load(handle)
         self.assertIn("sidecar is unreachable", payload["events"]["evt-1"]["reason"])
         await output.close()
 
-    async def test_core_bridge_timeout_clears_pending_without_ack(self):
+    async def test_reply_timeout_does_not_resubmit_core_message(self):
         config = _Config(
             meetwechat_state_file=self.state_path,
             meetwechat_proxy_policy={
@@ -746,12 +747,12 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(gateway_clients[0].messages), 1)
         self.assertEqual(meetwechat_client.sent, [])
-        self.assertEqual(meetwechat_client.acked, [])
-        self.assertEqual(state.get_event_status("evt-1"), "failed")
+        self.assertEqual(meetwechat_client.acked, ["evt-1"])
+        self.assertEqual(state.get_event_status("evt-1"), "submitted")
         self.assertEqual(output._pending_replies, {})  # noqa: SLF001
         with open(self.state_path, encoding="utf-8") as handle:
             payload = json.load(handle)
-        self.assertEqual(payload["events"]["evt-1"]["reason"], "bridge:TimeoutError")
+        self.assertEqual(payload["events"]["evt-1"]["reason"], "reply:TimeoutError")
         await output.close()
 
     async def test_cursor_does_not_advance_for_failed_events(self):
@@ -762,6 +763,9 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(adapter._events_are_complete_for_cursor_advance([event]))  # noqa: SLF001
 
         await state.mark_event_status("evt-1", "sent", chat_id="chat-1")
+        self.assertTrue(adapter._events_are_complete_for_cursor_advance([event]))  # noqa: SLF001
+
+        await state.mark_event_status("evt-1", "submitted", chat_id="chat-1")
         self.assertTrue(adapter._events_are_complete_for_cursor_advance([event]))  # noqa: SLF001
 
     async def test_ack_failure_leaves_pending_for_retry_without_duplicate_core_send(self):
@@ -788,6 +792,32 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(gateway_clients[0].messages), 1)
         self.assertEqual(meetwechat_client.acked, ["evt-1"])
+
+    async def test_redelivered_event_with_new_event_id_uses_stable_identity(self):
+        adapter, _, meetwechat_client, gateway_clients, state = self._build_adapter()
+        first = self._event(event_id="evt-1", message_id="msg-stable", dedup_key="mid:stable")
+        redelivered = self._event(event_id="evt-2", message_id="msg-stable", dedup_key="mid:stable")
+
+        await adapter.handle_events([first])
+        await adapter.handle_events([redelivered])
+
+        self.assertEqual(len(gateway_clients[0].messages), 1)
+        self.assertEqual(meetwechat_client.acked, ["evt-1", "evt-2"])
+        self.assertEqual(state.get_event_status("evt-2"), "acked")
+
+    async def test_runtime_idempotent_replay_is_acked_without_waiting_for_reply(self):
+        adapter, output, meetwechat_client, gateway_clients, state = self._build_adapter(
+            reply_payload=_run_event({"type": "activity.status", "content": "already running"}),
+            message_response={"ok": True, "message_id": "core-existing", "idempotent_replay": True},
+        )
+
+        await adapter.handle_events([self._event()])
+
+        self.assertEqual(len(gateway_clients[0].messages), 1)
+        self.assertEqual(meetwechat_client.sent, [])
+        self.assertEqual(meetwechat_client.acked, ["evt-1"])
+        self.assertEqual(state.get_event_status("evt-1"), "submitted")
+        self.assertEqual(output._pending_replies, {})  # noqa: SLF001
 
     def test_split_text_prefers_natural_boundaries(self):
         self.assertEqual(split_text_naturally("hello world again", limit=8), ["hello", "world", "again"])

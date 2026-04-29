@@ -97,6 +97,35 @@ def _hash_suffix(*parts: str, length: int = 4) -> str:
     return digest[:length]
 
 
+def _event_identity_key(event: MeetWeChatEvent) -> str:
+    scoped_parts = [
+        str(event.chat_type or "").strip().lower(),
+        str(event.chat_id or "").strip(),
+        str(event.sender_id or "").strip(),
+    ]
+    for label, value in (
+        ("dedup", event.dedup_key),
+        ("message", event.message_id),
+        ("raw", event.raw_hash),
+        ("event", event.event_id),
+    ):
+        normalized = str(value or "").strip()
+        if not normalized:
+            continue
+        digest = hashlib.sha256("\n".join([*scoped_parts, label, normalized]).encode("utf-8")).hexdigest()[:32]
+        return f"meetwechat:{label}:{digest}"
+    fallback = "\n".join(
+        [
+            *scoped_parts,
+            str(event.timestamp or "").strip(),
+            str(event.content_type or "").strip().lower(),
+            hashlib.sha256(str(event.text or "").encode("utf-8")).hexdigest(),
+        ]
+    )
+    digest = hashlib.sha256(fallback.encode("utf-8")).hexdigest()[:32]
+    return f"meetwechat:fallback:{digest}"
+
+
 def split_text_naturally(text: str, *, limit: int = DEFAULT_MAX_TEXT_CHARS) -> list[str]:
     content = str(text or "").strip()
     if not content:
@@ -217,6 +246,7 @@ class MeetWeChatStateStore:
         return {
             "schema_version": 1,
             "events": {},
+            "event_identities": {},
             "ack_pending": [],
             "threads": {},
             "sender_aliases": {},
@@ -231,6 +261,8 @@ class MeetWeChatStateStore:
         )
         if not isinstance(payload.get("events"), dict):
             payload["events"] = {}
+        if not isinstance(payload.get("event_identities"), dict):
+            payload["event_identities"] = {}
         if not isinstance(payload.get("ack_pending"), list):
             payload["ack_pending"] = []
         if not isinstance(payload.get("threads"), dict):
@@ -247,6 +279,14 @@ class MeetWeChatStateStore:
                 key=lambda item: str((item[1] or {}).get("updated_at") or ""),
             )
             self._payload["events"] = dict(ordered[-_MAX_STATE_EVENTS:])
+        identities = self._payload.setdefault("event_identities", {})
+        if isinstance(identities, dict):
+            live_event_ids = set((self._payload.get("events") or {}).keys())
+            self._payload["event_identities"] = {
+                str(identity): str(event_id)
+                for identity, event_id in identities.items()
+                if str(event_id) in live_event_ids
+            }
         self._payload["updated_at"] = _utcnow_iso()
         atomic_write_json(str(self.path), self._payload)
 
@@ -284,15 +324,27 @@ class MeetWeChatStateStore:
     async def close(self) -> None:
         await self.flush()
 
-    def get_event_status(self, event_id: str) -> str:
-        event = self._payload.get("events", {}).get(str(event_id or ""), {})
+    def _event_record(self, event_id: str, *, identity_key: str = "") -> dict[str, Any]:
+        events = self._payload.get("events", {})
+        event = events.get(str(event_id or ""), {})
+        if event:
+            return dict(event or {})
+        identity = str(identity_key or "").strip()
+        if identity:
+            canonical_event_id = str(self._payload.get("event_identities", {}).get(identity) or "").strip()
+            if canonical_event_id:
+                return dict(events.get(canonical_event_id, {}) or {})
+        return {}
+
+    def get_event_status(self, event_id: str, *, identity_key: str = "") -> str:
+        event = self._event_record(event_id, identity_key=identity_key)
         return str(event.get("status") or "")
 
     def list_ack_pending(self) -> list[str]:
         return [str(item) for item in self._payload.get("ack_pending", []) if str(item).strip()]
 
-    def event_is_acked(self, event_id: str) -> bool:
-        event = self._payload.get("events", {}).get(str(event_id or ""), {})
+    def event_is_acked(self, event_id: str, *, identity_key: str = "") -> bool:
+        event = self._event_record(event_id, identity_key=identity_key)
         return bool(event.get("acked"))
 
     async def mark_event_status(
@@ -302,10 +354,13 @@ class MeetWeChatStateStore:
         *,
         chat_id: str = "",
         reason: str = "",
+        identity_key: str = "",
+        core_message_id: str = "",
     ) -> None:
         event_key = str(event_id or "").strip()
         if not event_key:
             return
+        identity = str(identity_key or "").strip()
         async with self._lock:
             events = self._payload.setdefault("events", {})
             current = dict(events.get(event_key) or {})
@@ -317,6 +372,11 @@ class MeetWeChatStateStore:
                     "updated_at": _utcnow_iso(),
                 }
             )
+            if identity:
+                current["identity_key"] = identity
+                self._payload.setdefault("event_identities", {})[identity] = event_key
+            if core_message_id:
+                current["core_message_id"] = str(core_message_id)
             events[event_key] = current
             await self._persist_locked()
 
@@ -1079,8 +1139,8 @@ class MeetWeChatInputAdapter:
         for event in events:
             if not event.event_id:
                 continue
-            status = self._state_store.get_event_status(event.event_id)
-            if status not in {"acked", "sent", "skipped", "read_only", "blocked"}:
+            status = self._state_store.get_event_status(event.event_id, identity_key=_event_identity_key(event))
+            if status not in {"acked", "sent", "skipped", "read_only", "blocked", "submitted"}:
                 return False
         return True
 
@@ -1141,18 +1201,30 @@ class MeetWeChatInputAdapter:
         if not event.event_id:
             logger.debug("MeetWeChat skipped event without event_id chat=%s", _mask(event.chat_id))
             return
-        status = self._state_store.get_event_status(event.event_id)
-        if status in {"acked", "sent", "skipped", "read_only", "blocked"}:
+        identity_key = _event_identity_key(event)
+        status = self._state_store.get_event_status(event.event_id, identity_key=identity_key)
+        if status in {"acked", "sent", "skipped", "read_only", "blocked", "submitted"}:
             await self._ack_event(event.event_id, status=status)
             return
         if event.is_self or event.content_type != "text" or not event.text.strip():
-            await self._state_store.mark_event_status(event.event_id, "skipped", chat_id=event.chat_id)
+            await self._state_store.mark_event_status(
+                event.event_id,
+                "skipped",
+                chat_id=event.chat_id,
+                identity_key=identity_key,
+            )
             await self._ack_event(event.event_id, status="skipped")
             return
 
         mode = self._policy.mode_for(event)
         if mode in {"mute", "manual_only"}:
-            await self._state_store.mark_event_status(event.event_id, "skipped", chat_id=event.chat_id, reason=mode)
+            await self._state_store.mark_event_status(
+                event.event_id,
+                "skipped",
+                chat_id=event.chat_id,
+                reason=mode,
+                identity_key=identity_key,
+            )
             await self._ack_event(event.event_id, status="skipped")
             return
         participant_key = self._output_adapter.participant_key(event)
@@ -1164,7 +1236,12 @@ class MeetWeChatInputAdapter:
             client = await self._get_gateway_client(event)
             await self._submit_confirm(client, pending_confirm, confirm_value, event)
             self._output_adapter.clear_pending_confirm_request(participant_key, pending_confirm)
-            await self._state_store.mark_event_status(event.event_id, "sent", chat_id=event.chat_id)
+            await self._state_store.mark_event_status(
+                event.event_id,
+                "sent",
+                chat_id=event.chat_id,
+                identity_key=identity_key,
+            )
             await self._ack_event(event.event_id, status="sent")
             return
 
@@ -1172,7 +1249,12 @@ class MeetWeChatInputAdapter:
         if pending_human_input is not None:
             client = await self._get_gateway_client(event)
             await self._submit_human_input(client, pending_human_input, event)
-            await self._state_store.mark_event_status(event.event_id, "sent", chat_id=event.chat_id)
+            await self._state_store.mark_event_status(
+                event.event_id,
+                "sent",
+                chat_id=event.chat_id,
+                identity_key=identity_key,
+            )
             await self._ack_event(event.event_id, status="sent")
             return
 
@@ -1182,11 +1264,17 @@ class MeetWeChatInputAdapter:
                 "skipped",
                 chat_id=event.chat_id,
                 reason="group_not_mentioned",
+                identity_key=identity_key,
             )
             await self._ack_event(event.event_id, status="skipped")
             return
 
-        await self._state_store.mark_event_status(event.event_id, "processing", chat_id=event.chat_id)
+        await self._state_store.mark_event_status(
+            event.event_id,
+            "processing",
+            chat_id=event.chat_id,
+            identity_key=identity_key,
+        )
         client = await self._get_gateway_client(event)
         with contextlib.suppress(Exception):
             await client.upsert_address(
@@ -1200,13 +1288,12 @@ class MeetWeChatInputAdapter:
         allow_send = self._policy.allow_send(event)
         future = self._output_adapter.begin_event(event, allow_send=allow_send)
         try:
-            await client.send_message(
+            message_response = await client.send_message(
                 self._format_inbound_text(event),
                 metadata=self._metadata_for(event),
                 preferred_mode=_infer_preferred_mode(text),
-                endpoint_message_id=event.event_id,
+                endpoint_message_id=identity_key,
             )
-            result = await asyncio.wait_for(future, timeout=self._policy.reply_timeout_seconds)
         except Exception as exc:
             self._output_adapter.discard_pending(event.chat_id, event.event_id)
             reason = f"bridge:{exc.__class__.__name__}"
@@ -1217,7 +1304,56 @@ class MeetWeChatInputAdapter:
                 exc.__class__.__name__,
                 exc,
             )
-            await self._state_store.mark_event_status(event.event_id, "failed", chat_id=event.chat_id, reason=reason)
+            await self._state_store.mark_event_status(
+                event.event_id,
+                "failed",
+                chat_id=event.chat_id,
+                reason=reason,
+                identity_key=identity_key,
+            )
+            return
+        core_message_id = str((message_response or {}).get("message_id") or "")
+        if bool((message_response or {}).get("idempotent_replay")):
+            self._output_adapter.discard_pending(event.chat_id, event.event_id)
+            await self._state_store.mark_event_status(
+                event.event_id,
+                "submitted",
+                chat_id=event.chat_id,
+                reason="core_idempotent_replay",
+                identity_key=identity_key,
+                core_message_id=core_message_id,
+            )
+            await self._ack_event(event.event_id, status="submitted")
+            return
+        await self._state_store.mark_event_status(
+            event.event_id,
+            "submitted",
+            chat_id=event.chat_id,
+            reason="core_accepted",
+            identity_key=identity_key,
+            core_message_id=core_message_id,
+        )
+        try:
+            result = await asyncio.wait_for(future, timeout=self._policy.reply_timeout_seconds)
+        except Exception as exc:
+            self._output_adapter.discard_pending(event.chat_id, event.event_id)
+            reason = f"reply:{exc.__class__.__name__}"
+            logger.warning(
+                "MeetWeChat reply delivery wait failed chat=%s event=%s error=%s:%s",
+                _mask(event.chat_id),
+                _mask(event.event_id),
+                exc.__class__.__name__,
+                exc,
+            )
+            await self._state_store.mark_event_status(
+                event.event_id,
+                "submitted",
+                chat_id=event.chat_id,
+                reason=reason,
+                identity_key=identity_key,
+                core_message_id=core_message_id,
+            )
+            await self._ack_event(event.event_id, status="submitted")
             return
         if not bool(result.get("ok")):
             reason = str(result.get("detail") or "reply")
@@ -1227,13 +1363,29 @@ class MeetWeChatInputAdapter:
                     "blocked",
                     chat_id=event.chat_id,
                     reason=reason,
+                    identity_key=identity_key,
+                    core_message_id=core_message_id,
                 )
                 await self._ack_event(event.event_id, status="blocked")
                 return
-            await self._state_store.mark_event_status(event.event_id, "failed", chat_id=event.chat_id, reason=reason)
+            await self._state_store.mark_event_status(
+                event.event_id,
+                "submitted",
+                chat_id=event.chat_id,
+                reason=reason,
+                identity_key=identity_key,
+                core_message_id=core_message_id,
+            )
+            await self._ack_event(event.event_id, status="submitted")
             return
         final_status = "sent" if allow_send else "read_only"
-        await self._state_store.mark_event_status(event.event_id, final_status, chat_id=event.chat_id)
+        await self._state_store.mark_event_status(
+            event.event_id,
+            final_status,
+            chat_id=event.chat_id,
+            identity_key=identity_key,
+            core_message_id=core_message_id,
+        )
         await self._ack_event(event.event_id, status=final_status)
 
     async def _submit_confirm(self, client: Any, request_id: str, accepted: bool, event: MeetWeChatEvent) -> None:

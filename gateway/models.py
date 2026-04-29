@@ -435,6 +435,7 @@ class RuntimeMessageResponse(BaseModel):
     status: str = "completed"
     channel: str = "message"
     created_at: str = ""
+    idempotent_replay: bool = False
 
 
 class RuntimeConfirmResponseRequest(BaseModel):

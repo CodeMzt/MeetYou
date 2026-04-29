@@ -273,6 +273,97 @@ class GatewayRuntimeApiTests(unittest.TestCase):
             "web",
         )
 
+    def test_runtime_messages_are_idempotent_by_endpoint_message_id(self):
+        class _MessageService:
+            def __init__(self):
+                self.rows = []
+
+            def get_by_endpoint_message_id(self, *, thread_id, endpoint_message_id, origin_endpoint_id=None, role="user"):
+                for row in self.rows:
+                    if row.thread_id != thread_id or row.role != role:
+                        continue
+                    if origin_endpoint_id is not None and row.origin_endpoint_id != origin_endpoint_id:
+                        continue
+                    if row.meta.get("endpoint_message_id") == endpoint_message_id:
+                        return row
+                return None
+
+            def create_message(self, **kwargs):
+                row = SimpleNamespace(
+                    id=f"row-{len(self.rows) + 1}",
+                    message_id=f"msg-{len(self.rows) + 1}",
+                    channel=kwargs.get("channel", "message"),
+                    status=kwargs.get("status", "completed"),
+                    created_at=None,
+                    **kwargs,
+                )
+                self.rows.append(row)
+                return row
+
+        message_service = _MessageService()
+        domain = SimpleNamespace(
+            services=SimpleNamespace(
+                workspace=SimpleNamespace(
+                    get_by_workspace_id=lambda workspace_id: SimpleNamespace(
+                        id="workspace-row",
+                        workspace_id=workspace_id,
+                        title="Personal",
+                        status="active",
+                        base_mode="general",
+                        prompt_overlay="",
+                        default_execution_target="core.local",
+                        meta={},
+                    )
+                ),
+                thread=SimpleNamespace(
+                    get_by_thread_id=lambda thread_id: SimpleNamespace(
+                        id="thread-row",
+                        thread_id=thread_id,
+                        title="Thread",
+                        status="active",
+                        summary="",
+                    )
+                ),
+                session=SimpleNamespace(
+                    get_by_session_id=lambda session_id: SimpleNamespace(id="session-row", session_id=session_id)
+                ),
+                endpoint=SimpleNamespace(
+                    get_by_endpoint_id=lambda endpoint_id: SimpleNamespace(id="endpoint-row", endpoint_id=endpoint_id)
+                ),
+                message=message_service,
+            )
+        )
+        event_bus = EventBus()
+        gateway = FastAPIGateway(
+            event_bus,
+            SessionManager(),
+            core_domain=domain,
+            access_token=self.access_token,
+        )
+        client = TestClient(gateway.app)
+        self.addCleanup(client.close)
+        payload = {
+            "thread_id": "thr-1",
+            "workspace_id": "personal",
+            "session_id": "sess-1",
+            "endpoint_id": "wechat.provider.ui",
+            "endpoint_type": "wechat",
+            "content": "hello",
+            "metadata": {"source": "wechat"},
+            "endpoint_message_id": "meetwechat:dedup:stable",
+        }
+
+        first = client.post("/runtime/messages", json=payload, headers=self._auth_headers())
+        second = client.post("/runtime/messages", json=payload, headers=self._auth_headers())
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertFalse(first.json()["idempotent_replay"])
+        self.assertTrue(second.json()["idempotent_replay"])
+        self.assertEqual(second.json()["message_id"], first.json()["message_id"])
+        self.assertEqual(len(message_service.rows), 1)
+        self.assertEqual(event_bus.inbound_queue.qsize(), 1)
+
     def test_legacy_chat_http_routes_return_controlled_migration_errors(self):
         response_specs = [
             ("/inputs", self.client.post("/inputs", json={"content": "hello"}, headers=self._auth_headers()), "/runtime/messages"),
