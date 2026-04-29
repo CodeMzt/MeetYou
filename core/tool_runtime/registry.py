@@ -229,6 +229,44 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "metadata": {"action_risk": "local_write", "safe_parallel": False},
         },
     },
+    "manage_model_reasoning": {
+        "type": "function",
+        "function": {
+            "name": "manage_model_reasoning",
+            "description": (
+                "Read, update, or reset the global default model reasoning/thinking settings used by Core. "
+                "Use this when the user wants to enable thinking, disable thinking, or change reasoning effort."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["get", "set", "reset"],
+                        "description": "Use get to inspect current defaults, set to update selected fields, or reset to disable thinking and clear effort/budget.",
+                    },
+                    "thinking_enabled": {
+                        "type": "boolean",
+                        "description": "Global default thinking toggle. When false, effort and budget are cleared.",
+                    },
+                    "thinking_effort": {
+                        "type": "string",
+                        "enum": ["", "low", "medium", "high", "xhigh", "max"],
+                        "description": "Reasoning effort when thinking is enabled. Empty means unset; never use the string none.",
+                        "default": "",
+                    },
+                    "thinking_budget_tokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Optional thinking token budget. Use 0 to leave unset.",
+                        "default": 0,
+                    },
+                },
+                "required": ["action"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
     "manage_scheduled_jobs": {
         "type": "function",
         "function": {

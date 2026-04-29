@@ -6,6 +6,7 @@ import AttachmentList from './AttachmentList'
 import ReasoningBlock from './ReasoningBlock'
 import MarkdownRenderer from './MarkdownRenderer'
 import styles from './TurnBody.module.css'
+import { normalizeAssistantDisplayText } from '../../utils/displayText'
 
 interface TurnBodyProps {
   turn: ChatTurn
@@ -17,6 +18,7 @@ interface TurnBodyProps {
 
 export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, onRegenerate, onDownloadAttachment }: TurnBodyProps) {
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
+  const displayContent = turn.role === 'assistant' ? normalizeAssistantDisplayText(turn.content) : turn.content
 
   const placeholderText =
     turn.isStreaming && !turn.content && !turn.reasoning && (!turn.activities || turn.activities.length === 0)
@@ -38,7 +40,7 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, o
       {turn.content ? (
         <div className={styles.content}>
           {turn.temporary ? <span className={styles.temporaryBadge}>临时回复</span> : null}
-          {turn.isStreaming ? <span className={styles.streamingText}>{turn.content}</span> : <MarkdownRenderer content={turn.content} />}
+          {turn.isStreaming ? <span className={styles.streamingText}>{displayContent}</span> : <MarkdownRenderer content={displayContent} />}
         </div>
       ) : placeholderText ? (
         <div className={styles.placeholder}>{placeholderText}</div>

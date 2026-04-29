@@ -139,6 +139,7 @@ class ToolsManager:
             "get_sys_vitals": system_tools_module.get_sys_vitals,
             "get_background_status": getattr(system_tools_module, "get_background_status", None),
             "manage_heartbeat_settings": getattr(system_tools_module, "manage_heartbeat_settings", None),
+            "manage_model_reasoning": getattr(system_tools_module, "manage_model_reasoning", None),
             "restart_core": getattr(system_tools_module, "restart_core", None),
             "emit_progress_notice": getattr(system_tools_module, "emit_progress_notice", None),
             "list_active_endpoints": self._endpoint_tools.list_active_endpoints,

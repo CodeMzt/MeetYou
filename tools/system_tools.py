@@ -23,6 +23,8 @@ _event_bus = None
 _background_status_provider = None
 _heartbeat_settings_provider = None
 _heartbeat_settings_updater = None
+_model_reasoning_settings_provider = None
+_model_reasoning_settings_updater = None
 _progress_notice_emitter = None
 _core_restart_handler = None
 _tool_router = None
@@ -91,6 +93,16 @@ def set_heartbeat_settings_provider(provider):
 def set_heartbeat_settings_updater(updater):
     global _heartbeat_settings_updater
     _heartbeat_settings_updater = updater
+
+
+def set_model_reasoning_settings_provider(provider):
+    global _model_reasoning_settings_provider
+    _model_reasoning_settings_provider = provider
+
+
+def set_model_reasoning_settings_updater(updater):
+    global _model_reasoning_settings_updater
+    _model_reasoning_settings_updater = updater
 
 
 def set_progress_notice_emitter(emitter):
@@ -408,6 +420,67 @@ async def manage_heartbeat_settings(action: str = "get", updates: dict | None = 
     if updater is None:
         return json.dumps(
             {"ok": False, "error": "heartbeat settings updater is not available", "rejected_keys": rejected},
+            ensure_ascii=False,
+            indent=2,
+        )
+    result = updater(sanitized)
+    if asyncio.iscoroutine(result):
+        result = await result
+    return json.dumps(
+        {"ok": True, "requested_keys": sorted(sanitized), "rejected_keys": rejected, "result": result or {}},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+async def manage_model_reasoning(
+    action: str = "get",
+    thinking_enabled=None,
+    thinking_effort=None,
+    thinking_budget_tokens=None,
+    updates: dict | None = None,
+) -> str:
+    normalized_action = str(action or "get").strip().lower()
+    if normalized_action not in {"get", "set", "reset"}:
+        return json.dumps(
+            {"ok": False, "error": "action must be get, set, or reset"},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    if normalized_action == "get":
+        provider = _model_reasoning_settings_provider
+        payload = provider() if provider is not None else {}
+        if asyncio.iscoroutine(payload):
+            payload = await payload
+        return json.dumps({"ok": True, **(payload if isinstance(payload, dict) else {})}, ensure_ascii=False, indent=2)
+
+    requested = dict(updates or {})
+    if thinking_enabled is not None:
+        requested["thinking_enabled"] = thinking_enabled
+    if thinking_effort is not None:
+        requested["thinking_effort"] = thinking_effort
+    if thinking_budget_tokens is not None:
+        requested["thinking_budget_tokens"] = thinking_budget_tokens
+
+    if normalized_action == "reset":
+        requested = {
+            "thinking_enabled": False,
+            "thinking_effort": "",
+            "thinking_budget_tokens": 0,
+        }
+
+    allowed = {"thinking_enabled", "thinking_effort", "thinking_budget_tokens"}
+    sanitized = {key: value for key, value in requested.items() if key in allowed}
+    rejected = sorted(str(key) for key in requested if key not in allowed)
+    if sanitized.get("thinking_enabled") is False:
+        sanitized["thinking_effort"] = ""
+        sanitized["thinking_budget_tokens"] = 0
+
+    updater = _model_reasoning_settings_updater
+    if updater is None:
+        return json.dumps(
+            {"ok": False, "error": "model reasoning settings updater is not available", "rejected_keys": rejected},
             ensure_ascii=False,
             indent=2,
         )

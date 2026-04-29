@@ -184,6 +184,8 @@ async def setup_app_runtime(app) -> None:
     system_tools.set_background_status_provider(app.heart.get_background_status)
     system_tools.set_heartbeat_settings_provider(app.get_heartbeat_settings)
     system_tools.set_heartbeat_settings_updater(app.update_heartbeat_settings)
+    system_tools.set_model_reasoning_settings_provider(app.get_model_reasoning_settings)
+    system_tools.set_model_reasoning_settings_updater(app.update_model_reasoning_settings)
 
     host = app.config.get("gateway_host") or "127.0.0.1"
     port = int(app.config.get("gateway_port") or 8000)

@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Check, Copy } from 'lucide-react';
 import styles from './MarkdownRenderer.module.css';
+import { normalizeAssistantDisplayText } from '../../utils/displayText';
 
 interface MarkdownRendererProps {
   content: string;
@@ -56,13 +57,15 @@ const markdownComponents = {
 };
 
 function MarkdownRenderer({ content }: MarkdownRendererProps) {
+  const displayContent = normalizeAssistantDisplayText(content);
+
   return (
     <div className={styles.markdownBody}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={markdownComponents}
       >
-        {content}
+        {displayContent}
       </ReactMarkdown>
     </div>
   );

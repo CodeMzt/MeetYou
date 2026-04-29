@@ -401,14 +401,18 @@ class App:
         default_effort = self.config.get("thinking_effort") or None
         default_budget = self._safe_int(self.config.get("thinking_budget_tokens"))
 
-        thinking = {
-            "enabled": thinking_override.get("enabled", default_enabled),
-            "effort": thinking_override.get("effort", default_effort),
-            "budget_tokens": self._safe_int(
-                thinking_override.get("budget_tokens"),
-                default_budget,
-            ),
-        }
+        thinking_enabled = bool(thinking_override.get("enabled", default_enabled))
+        if thinking_enabled:
+            thinking = {
+                "enabled": True,
+                "effort": thinking_override.get("effort", default_effort) or None,
+                "budget_tokens": self._safe_int(
+                    thinking_override.get("budget_tokens"),
+                    default_budget,
+                ),
+            }
+        else:
+            thinking = {"enabled": False, "effort": None, "budget_tokens": None}
         return {"thinking": thinking}
 
     async def _log_error(self, error: MeetYouError):
@@ -2155,6 +2159,40 @@ class App:
             "scheduler_applied_keys": scheduler_updates,
             "rejected_keys": rejected,
             "snapshot": await self.get_heartbeat_settings(),
+        }
+
+    async def get_model_reasoning_settings(self) -> dict[str, Any]:
+        return {
+            "scope": "global_default",
+            "settings": {
+                "thinking_enabled": self.config.get_bool("thinking_enabled", False),
+                "thinking_effort": str(self.config.get("thinking_effort") or ""),
+                "thinking_budget_tokens": self._safe_int(self.config.get("thinking_budget_tokens"), 0) or 0,
+            },
+            "allowed_efforts": ["low", "medium", "high", "xhigh", "max"],
+            "notes": [
+                "When thinking_enabled is false, thinking_effort and thinking_budget_tokens are cleared and omitted from provider requests."
+            ],
+        }
+
+    async def update_model_reasoning_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"thinking_enabled", "thinking_effort", "thinking_budget_tokens"}
+        requested = dict(updates or {})
+        sanitized = {key: value for key, value in requested.items() if key in allowed}
+        rejected = sorted(str(key) for key in requested if key not in allowed)
+        if sanitized.get("thinking_enabled") is False:
+            sanitized["thinking_effort"] = ""
+            sanitized["thinking_budget_tokens"] = 0
+        result = await self.apply_config_updates(sanitized) if sanitized else {
+            "applied_keys": [],
+            "reloaded_components": [],
+            "restart_required_keys": [],
+            "warnings": [],
+        }
+        return {
+            **result,
+            "rejected_keys": rejected,
+            "snapshot": await self.get_model_reasoning_settings(),
         }
 
     async def emit_progress_notice(
