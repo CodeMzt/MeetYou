@@ -64,6 +64,7 @@ class FeishuInputAdapter:
         )
         self._known_chat_ids = self._load_known_chat_ids()
         self._gateway_clients: dict[str, GatewayConversationClient] = {}
+        self._provider_gateway_client: GatewayConversationClient | None = None
         host = str(self._config.get("gateway_host") or "127.0.0.1").strip() or "127.0.0.1"
         if host in {"0.0.0.0", "::", "::0"}:
             host = "127.0.0.1"
@@ -77,17 +78,72 @@ class FeishuInputAdapter:
         )
         logger.info("Feishu 输入使用 Endpoint API + /endpoint/ws 主链。")
 
+    @property
+    def _provider_endpoint_id(self) -> str:
+        return "feishu.provider.ui"
+
+    def _configured_chat_ids(self) -> set[str]:
+        values: list[str] = []
+        default_chat_id = str(self._config.get("feishu_default_chat_id") or "").strip()
+        if default_chat_id:
+            values.append(default_chat_id)
+        raw_broadcast = self._config.get("feishu_broadcast_chat_ids") or []
+        if isinstance(raw_broadcast, str):
+            values.extend(item.strip() for item in raw_broadcast.split(","))
+        elif isinstance(raw_broadcast, list):
+            values.extend(str(item).strip() for item in raw_broadcast)
+        return {item for item in values if item}
+
+    def _address_payload(self, chat_id: str, *, chat_type: str = "", display_name: str = "") -> dict:
+        normalized_chat_id = str(chat_id or "").strip()
+        normalized_type = str(chat_type or "").strip().lower()
+        address_type = "group" if normalized_type in {"group", "group_chat"} else "direct"
+        return {
+            "address_id": f"addr.feishu.{address_type}.{normalized_chat_id}",
+            "provider_type": "feishu",
+            "address_type": address_type,
+            "external_ref": normalized_chat_id,
+            "display_name": display_name or f"Feishu {normalized_chat_id}",
+            "workspace_ids": ["personal"],
+            "status": "sendable",
+            "capabilities": ["receive_message"],
+            "metadata": {"chat_type": normalized_type},
+        }
+
+    async def _get_provider_gateway_client(self) -> GatewayConversationClient:
+        if self._provider_gateway_client is None:
+            known_chat_ids = sorted(self._known_chat_ids | self._configured_chat_ids())
+            self._provider_gateway_client = GatewayConversationClient(
+                base_url=self._gateway_base_url,
+                provider_id="feishu-provider",
+                provider_type="feishu",
+                display_name="Feishu Provider",
+                workspace_id="personal",
+                access_token=self._gateway_access_token,
+                thread_title="Feishu Provider",
+                endpoint_id=self._provider_endpoint_id,
+                endpoint_addresses=[self._address_payload(chat_id) for chat_id in known_chat_ids],
+                event_handler=(
+                    (lambda payload: self._output_adapter.send_runtime_event("", payload))
+                    if self._output_adapter is not None
+                    else None
+                ),
+            )
+        await self._provider_gateway_client.start()
+        return self._provider_gateway_client
+
     async def _get_gateway_client(self, chat_id: str) -> GatewayConversationClient:
         client = self._gateway_clients.get(chat_id)
         if client is None:
             client = GatewayConversationClient(
                 base_url=self._gateway_base_url,
-                provider_id=f"feishu-{chat_id}",
+                provider_id=f"feishu-chat-{chat_id}",
                 provider_type="feishu",
                 display_name=f"Feishu {chat_id}",
                 workspace_id="personal",
                 access_token=self._gateway_access_token,
                 thread_title=f"Feishu Chat {chat_id}",
+                endpoint_id=self._provider_endpoint_id,
                 event_handler=(
                     (lambda payload, cid=chat_id: self._output_adapter.send_runtime_event(cid, payload))
                     if self._output_adapter is not None
@@ -208,6 +264,9 @@ class FeishuInputAdapter:
             or ""
         )
         self._record_chat_id(chat_id, message, sender_id)
+        client = await self._get_gateway_client(chat_id)
+        with __import__("contextlib").suppress(Exception):
+            await client.upsert_address(self._address_payload(chat_id, chat_type=message.get("chat_type", "")))
         source = make_source(
             SourceKind.FEISHU.value,
             chat_id,
@@ -231,7 +290,6 @@ class FeishuInputAdapter:
                 message_id,
                 f"feishu-endpoint:{message_id}",
             )
-        client = await self._get_gateway_client(chat_id)
         confirm_value = _parse_confirm_response(text)
         pending_confirm = (
             self._output_adapter.get_pending_confirm_request(chat_id)
@@ -292,11 +350,15 @@ class FeishuInputAdapter:
         )
 
     async def run(self):
+        await self._get_provider_gateway_client()
         await self._client.start()
 
     async def close(self):
         for client in self._gateway_clients.values():
             await client.close()
         self._gateway_clients.clear()
+        if self._provider_gateway_client is not None:
+            await self._provider_gateway_client.close()
+            self._provider_gateway_client = None
         await self._client.stop()
 

@@ -42,6 +42,16 @@ def _compact_job(job) -> dict[str, Any]:
         "delivery_policy": dict(getattr(job, "delivery_policy", {}) or {}),
         "concurrency_policy": dict(getattr(job, "concurrency_policy", {}) or {}),
         "misfire_policy": dict(getattr(job, "misfire_policy", {}) or {}),
+        "next_fire_at": getattr(job, "next_fire_at", "").isoformat()
+        if getattr(job, "next_fire_at", None) is not None
+        else "",
+        "last_fire_at": getattr(job, "last_fire_at", "").isoformat()
+        if getattr(job, "last_fire_at", None) is not None
+        else "",
+        "lease_owner": str(getattr(job, "lease_owner", "") or ""),
+        "lease_until_at": getattr(job, "lease_until_at", "").isoformat()
+        if getattr(job, "lease_until_at", None) is not None
+        else "",
         "metadata": dict(getattr(job, "meta", {}) or {}),
         "created_at": getattr(job, "created_at", "").isoformat()
         if getattr(job, "created_at", None) is not None
@@ -58,6 +68,33 @@ def _is_system_heartbeat_definition(*, job_id: str = "", kind: str = "", action_
         or str(kind or "").strip() == "system_heartbeat"
         or str(action_ref or "").strip() == "core.workflow.heartbeat"
     )
+
+
+def _normalize_schedule(schedule: dict[str, Any] | None, *, timezone_name: str = "") -> tuple[str, dict[str, Any], str]:
+    payload = dict(schedule or {})
+    schedule_type = str(payload.get("type") or payload.get("schedule") or "daily").strip().lower() or "daily"
+    tz = str(payload.get("timezone") or timezone_name or "Asia/Shanghai").strip() or "Asia/Shanghai"
+    if schedule_type == "daily":
+        return "daily", {
+            "type": "daily",
+            "time_of_day": str(payload.get("time_of_day") or payload.get("at") or "08:00").strip() or "08:00",
+        }, tz
+    if schedule_type == "interval":
+        interval_seconds = _positive_int(payload.get("interval_seconds"))
+        if interval_seconds is None:
+            raise ValueError("schedule.interval_seconds is required for interval schedules.")
+        return "interval", {"type": "interval", "interval_seconds": interval_seconds}, tz
+    if schedule_type == "cron":
+        expression = str(payload.get("expression") or payload.get("cron") or "").strip()
+        if not expression:
+            raise ValueError("schedule.expression is required for cron schedules.")
+        return "cron", {"type": "cron", "expression": expression}, tz
+    if schedule_type == "one_shot":
+        run_at = str(payload.get("run_at") or payload.get("at") or "").strip()
+        if not run_at:
+            raise ValueError("schedule.run_at is required for one_shot schedules.")
+        return "one_shot", {"type": "one_shot", "run_at": run_at}, tz
+    raise ValueError("schedule.type must be daily, interval, cron, or one_shot.")
 
 
 class SchedulerTools:
@@ -102,6 +139,72 @@ class SchedulerTools:
         if job is None:
             raise ValueError(f"Unknown scheduled job: {normalized}")
         return job
+
+    def _current_actor(self):
+        domain = self._domain()
+        principal = getattr(domain, "principal", None)
+        principal_key = str(getattr(principal, "principal_key", "") or "self").strip() or "self"
+        actor = domain.services.actor.get_by_actor_id(f"user:{principal_key}")
+        if actor is None:
+            actor = domain.services.actor.ensure_actor(
+                actor_id=f"user:{principal_key}",
+                actor_type="user",
+                owner_user_id=principal_key,
+                display_name=str(getattr(principal, "display_name", "") or principal_key),
+                permission_profile_id="profile.default_user",
+                metadata={"principal_key": principal_key},
+            )
+        return actor
+
+    def _resolve_delivery_target(self, target: dict[str, Any] | None) -> tuple[Any | None, dict[str, Any] | None]:
+        domain = self._domain()
+        payload = dict(target or {})
+        address_id = str(payload.get("address_id") or "").strip()
+        if address_id:
+            address = domain.services.endpoint_address.get_by_address_id(address_id)
+            if address is None:
+                raise ValueError(f"Unknown delivery address: {address_id}")
+            return address, None
+        actor_ref = str(payload.get("actor_ref") or "").strip().lower()
+        provider_type = str(payload.get("provider_type") or "").strip().lower()
+        alias = str(payload.get("alias") or "me").strip() or "me"
+        if actor_ref in {"me", "self", "我"} and provider_type:
+            actor = self._current_actor()
+            preference = domain.services.actor_delivery_preference.get_default(
+                actor_row_id=actor.id,
+                provider_type=provider_type,
+                alias=alias,
+            )
+            if preference is None:
+                return None, {
+                    "requires_binding": True,
+                    "actor_ref": "me",
+                    "provider_type": provider_type,
+                    "alias": alias,
+                    "message": "No default delivery preference is bound for this actor/provider.",
+                }
+            address = domain.services.endpoint_address.get_by_id(getattr(preference, "address_id", None))
+            if address is None:
+                return None, {
+                    "requires_binding": True,
+                    "actor_ref": "me",
+                    "provider_type": provider_type,
+                    "alias": alias,
+                    "message": "The bound delivery address no longer exists.",
+                }
+            return address, None
+        raise ValueError("target requires address_id or actor_ref=me with provider_type.")
+
+    @staticmethod
+    def _compact_address(address) -> dict[str, Any]:
+        return {
+            "address_id": str(getattr(address, "address_id", "") or ""),
+            "provider_type": str(getattr(address, "provider_type", "") or ""),
+            "address_type": str(getattr(address, "address_type", "") or ""),
+            "external_ref": str(getattr(address, "external_ref", "") or ""),
+            "display_name": str(getattr(address, "display_name", "") or ""),
+            "status": str(getattr(address, "status", "") or "unknown"),
+        }
 
     def _trigger_regular_job(self, job, *, workspace_id: str = "") -> dict[str, Any]:
         domain = self._domain()
@@ -278,3 +381,141 @@ class SchedulerTools:
             return {"ok": True, **self._trigger_regular_job(job, workspace_id=workspace_id)}
 
         raise ValueError("action must be list, detail, create, update, enable, disable, delete, or trigger.")
+
+    async def create_scheduled_delivery(
+        self,
+        name: str,
+        schedule: dict[str, Any],
+        target: dict[str, Any],
+        instruction: str,
+        timezone: str = "Asia/Shanghai",
+        generation_policy: str = "generate_at_fire_time",
+        delivery_policy: dict[str, Any] | None = None,
+        workspace_id: str = "personal",
+        enabled: bool = True,
+        metadata: dict[str, Any] | None = None,
+        route_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del route_context
+        text = str(instruction or "").strip()
+        if not text:
+            raise ValueError("instruction is required.")
+        address, binding_error = self._resolve_delivery_target(target)
+        if address is None:
+            return {"ok": False, **dict(binding_error or {})}
+        workspace = self._workspace_row(workspace_id or "personal")
+        if workspace is None:
+            raise ValueError("workspace_id is required.")
+        trigger_type, trigger_config, tz = _normalize_schedule(schedule, timezone_name=timezone)
+        target_policy = {
+            "address_id": str(getattr(address, "address_id", "") or ""),
+            "provider_type": str(getattr(address, "provider_type", "") or ""),
+            "address_type": str(getattr(address, "address_type", "") or ""),
+            "message_type": "message",
+            "offline_policy": str((delivery_policy or {}).get("offline_policy") or "store_and_retry"),
+        }
+        job = self._domain().services.scheduler.create_job(
+            kind="scheduled_delivery",
+            name=str(name or text[:60] or "Scheduled delivery").strip(),
+            workspace_id=workspace.id,
+            enabled=bool(enabled),
+            trigger_type=trigger_type,
+            trigger_config=trigger_config,
+            timezone=tz,
+            action_ref="core.workflow.scheduled_delivery",
+            run_template={
+                "mode": "general",
+                "prompt": text,
+                "instruction": text,
+                "generation_policy": str(generation_policy or "generate_at_fire_time"),
+                "target": dict(target or {}),
+                "target_address": self._compact_address(address),
+                "tool_bundle": ["get_current_system_time", "emit_progress_notice"],
+                "max_rounds": 4,
+                "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or "personal"),
+                "thread_title": str(name or "Scheduled delivery"),
+            },
+            delivery_policy={
+                **dict(delivery_policy or {}),
+                "targets": [target_policy],
+            },
+            metadata={
+                **dict(metadata or {}),
+                "created_by_tool": "create_scheduled_delivery",
+                "target_address_id": str(getattr(address, "address_id", "") or ""),
+            },
+        )
+        return {
+            "ok": True,
+            "job": _compact_job(job),
+            "target": self._compact_address(address),
+            "generation_policy": str(generation_policy or "generate_at_fire_time"),
+        }
+
+    async def manage_scheduled_deliveries(
+        self,
+        action: str = "list",
+        job_id: str = "",
+        enabled: bool | None = None,
+        schedule: dict[str, Any] | None = None,
+        timezone: str = "",
+        instruction: str = "",
+        target: dict[str, Any] | None = None,
+        delivery_policy: dict[str, Any] | None = None,
+        workspace_id: str = "personal",
+        route_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del route_context
+        normalized_action = str(action or "list").strip().lower()
+        domain = self._domain()
+        if normalized_action == "list":
+            jobs = [_compact_job(job) for job in domain.services.scheduler.list_jobs() if str(getattr(job, "kind", "") or "") == "scheduled_delivery"]
+            return {"ok": True, "count": len(jobs), "jobs": jobs}
+        job = self._job_or_raise(job_id)
+        if str(getattr(job, "kind", "") or "") != "scheduled_delivery":
+            raise ValueError(f"Scheduled job is not a scheduled_delivery: {job_id}")
+        if normalized_action == "detail":
+            return {"ok": True, "job": _compact_job(job)}
+        if normalized_action in {"enable", "disable"}:
+            row = domain.services.scheduler.set_enabled(job_id=job.job_id, enabled=normalized_action == "enable")
+            return {"ok": True, "job": _compact_job(row)}
+        if normalized_action == "delete":
+            deleted = domain.services.scheduler.delete_job(job_id=job.job_id)
+            return {"ok": True, "job_id": job.job_id, "deleted": bool(deleted)}
+        if normalized_action == "trigger":
+            return await self.manage_scheduled_jobs(action="trigger", job_id=job.job_id, workspace_id=workspace_id)
+        if normalized_action == "update":
+            updates: dict[str, Any] = {}
+            if enabled is not None:
+                updates["enabled"] = bool(enabled)
+            if schedule is not None:
+                trigger_type, trigger_config, tz = _normalize_schedule(schedule, timezone_name=timezone or getattr(job, "timezone", "UTC"))
+                updates["trigger_type"] = trigger_type
+                updates["trigger_config"] = trigger_config
+                updates["timezone"] = tz
+                updates["action_ref"] = "core.workflow.scheduled_delivery"
+            if instruction:
+                template = dict(getattr(job, "run_template", {}) or {})
+                template["prompt"] = str(instruction or "").strip()
+                template["instruction"] = str(instruction or "").strip()
+                updates["run_template"] = template
+            if target is not None:
+                address, binding_error = self._resolve_delivery_target(target)
+                if address is None:
+                    return {"ok": False, **dict(binding_error or {})}
+                policy = dict(getattr(job, "delivery_policy", {}) or {})
+                policy["targets"] = [{
+                    "address_id": str(getattr(address, "address_id", "") or ""),
+                    "provider_type": str(getattr(address, "provider_type", "") or ""),
+                    "address_type": str(getattr(address, "address_type", "") or ""),
+                    "message_type": "message",
+                    "offline_policy": str((delivery_policy or {}).get("offline_policy") or "store_and_retry"),
+                }]
+                updates["delivery_policy"] = policy
+            elif delivery_policy is not None:
+                updates["delivery_policy"] = dict(delivery_policy or {})
+            if not updates:
+                raise ValueError("update requires at least one mutable field.")
+            row = domain.services.scheduler.update_job(job_id=job.job_id, **updates)
+            return {"ok": True, "job": _compact_job(row)}
+        raise ValueError("action must be list, detail, update, enable, disable, delete, or trigger.")

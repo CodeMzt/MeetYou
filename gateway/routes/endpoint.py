@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from core.db.base import utcnow
 from gateway.endpoint_ws import ENDPOINT_WS_SCHEMA
 
 
@@ -39,6 +40,43 @@ def _public_run_event(row) -> dict[str, Any]:
         "payload": dict(getattr(row, "payload", {}) or {}),
         "durable": bool(getattr(row, "durable", True)),
         "created_at": getattr(getattr(row, "created_at", None), "isoformat", lambda: "")(),
+    }
+
+
+def _public_address(row) -> dict[str, Any]:
+    return {
+        "address_id": str(getattr(row, "address_id", "") or ""),
+        "provider_type": str(getattr(row, "provider_type", "") or ""),
+        "address_type": str(getattr(row, "address_type", "") or ""),
+        "external_ref": str(getattr(row, "external_ref", "") or ""),
+        "display_name": str(getattr(row, "display_name", "") or ""),
+        "workspace_ids": list(getattr(row, "workspace_scope", []) or []),
+        "status": str(getattr(row, "status", "") or "unknown"),
+        "capabilities": list(getattr(row, "capabilities", []) or []),
+        "metadata": dict(getattr(row, "meta", {}) or {}),
+        "last_seen_at": getattr(getattr(row, "last_seen_at", None), "isoformat", lambda: "")(),
+        "last_verified_at": getattr(getattr(row, "last_verified_at", None), "isoformat", lambda: "")(),
+    }
+
+
+def _address_payload_item(item: dict[str, Any], *, endpoint_id: str, provider_type: str) -> dict[str, Any]:
+    external_ref = str(item.get("external_ref") or item.get("chat_id") or item.get("room_id") or item.get("id") or "").strip()
+    address_type = str(item.get("address_type") or item.get("chat_type") or "direct").strip().lower() or "direct"
+    if address_type in {"private", "p2p", "person"}:
+        address_type = "direct"
+    if address_type in {"group_chat"}:
+        address_type = "group"
+    return {
+        "address_id": str(item.get("address_id") or f"addr.{provider_type}.{address_type}.{external_ref}").strip(),
+        "endpoint_id": str(item.get("endpoint_id") or endpoint_id).strip(),
+        "provider_type": str(item.get("provider_type") or provider_type).strip(),
+        "address_type": address_type,
+        "external_ref": external_ref,
+        "display_name": str(item.get("display_name") or item.get("name") or external_ref).strip(),
+        "workspace_scope": list(item.get("workspace_ids") or item.get("workspace_scope") or []),
+        "status": str(item.get("status") or "sendable").strip() or "sendable",
+        "capabilities": list(item.get("capabilities") or ["receive_message"]),
+        "metadata": dict(item.get("metadata") or {}),
     }
 
 
@@ -203,6 +241,58 @@ async def _handle_endpoint_frame(gateway, websocket: WebSocket, frame: dict[str,
         await gateway._safe_send_json(
             websocket,
             _frame("endpoint.ready", endpoint_id=endpoint.endpoint_id, correlation_id=correlation_id, payload={"registered_capability_count": count}),
+        )
+        return
+
+    if frame_type in {"endpoint.addresses.snapshot", "endpoint.address.upsert"}:
+        endpoint_id = str(payload.get("endpoint_id") or frame.get("endpoint_id") or state.get("endpoint_id") or "").strip()
+        endpoint = domain.services.endpoint.get_by_endpoint_id(endpoint_id)
+        if endpoint is None:
+            await _send_error(gateway, websocket, code="endpoint_not_found", message=f"unknown endpoint: {endpoint_id}", correlation_id=correlation_id)
+            return
+        provider_type = str(getattr(endpoint, "provider_type", "") or "").strip()
+        raw_addresses = payload.get("addresses") if frame_type == "endpoint.addresses.snapshot" else [payload.get("address") or payload]
+        if not isinstance(raw_addresses, list):
+            raw_addresses = []
+        saved = []
+        for item in raw_addresses:
+            if not isinstance(item, dict):
+                continue
+            normalized = _address_payload_item(item, endpoint_id=endpoint.endpoint_id, provider_type=provider_type)
+            if not normalized["external_ref"]:
+                continue
+            row = domain.services.endpoint_address.upsert_address(
+                endpoint_row_id=endpoint.id,
+                provider_type=normalized["provider_type"],
+                address_type=normalized["address_type"],
+                external_ref=normalized["external_ref"],
+                address_id=normalized["address_id"],
+                display_name=normalized["display_name"],
+                workspace_scope=normalized["workspace_scope"],
+                status=normalized["status"],
+                capabilities=normalized["capabilities"],
+                last_seen_at=utcnow(),
+                last_verified_at=utcnow() if normalized["status"] == "sendable" else None,
+                metadata=normalized["metadata"],
+            )
+            saved.append(_public_address(row))
+        await gateway._safe_send_json(
+            websocket,
+            _frame(
+                "endpoint.addresses.ack",
+                endpoint_id=endpoint.endpoint_id,
+                correlation_id=correlation_id,
+                payload={"count": len(saved), "addresses": saved},
+            ),
+        )
+        return
+
+    if frame_type == "endpoint.address.delete":
+        address_id = str(payload.get("address_id") or "").strip()
+        deleted = domain.services.endpoint_address.delete_address(address_id=address_id) if address_id else False
+        await gateway._safe_send_json(
+            websocket,
+            _frame("endpoint.address.delete.ack", correlation_id=correlation_id, payload={"address_id": address_id, "deleted": bool(deleted)}),
         )
         return
 

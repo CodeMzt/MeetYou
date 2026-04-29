@@ -344,6 +344,12 @@ scripts\manual-acceptance.cmd start
 - `docs/v3/operations/desktop-client-acceptance.md`
 - `user/README.md`
 
+## V4 EndpointAddress / Scheduled Delivery
+
+- Endpoint represents Provider runtime health; Feishu/WeChat chats and groups are `EndpointAddress` destinations.
+- User-facing recurring delivery uses `create_scheduled_delivery` / `manage_scheduled_deliveries`.
+- Actor alias `me` resolves through explicit `ActorDeliveryPreference` bindings.
+
 ## 版本迭代线
 
 - V4 当前线：Core-owned Runtime + Endpoint Routing；`/endpoint/ws`、RunEvent + Delivery fan-out、ToolRouter + ExecutionTarget、Scheduler-owned `system.heartbeat`、SKILL-first workflows；运行态模式收敛为 `general` / `automation` / `danxi`，Procedure 与 V3 Client 兼容路径下线。

@@ -57,12 +57,53 @@ class EndpointCapability(TimestampMixin, Base):
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
 
+class EndpointAddress(TimestampMixin, Base):
+    __tablename__ = "endpoint_addresses"
+    __table_args__ = (
+        UniqueConstraint("address_id", name="uq_endpoint_addresses_address_id"),
+        UniqueConstraint("endpoint_id", "address_type", "external_ref", name="uq_endpoint_addresses_endpoint_type_external_ref"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    address_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    endpoint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoints.id"), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    address_type: Mapped[str] = mapped_column(String(64), nullable=False, default="direct")
+    external_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    workspace_scope: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    capabilities: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    last_seen_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_verified_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
+class ActorDeliveryPreference(TimestampMixin, Base):
+    __tablename__ = "actor_delivery_preferences"
+    __table_args__ = (
+        UniqueConstraint("preference_id", name="uq_actor_delivery_preferences_preference_id"),
+        UniqueConstraint("actor_id", "provider_type", "alias", name="uq_actor_delivery_preferences_actor_provider_alias"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    preference_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("actors.id"), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    address_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoint_addresses.id"), nullable=False)
+    alias: Mapped[str] = mapped_column(String(128), nullable=False, default="me")
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
 class EndpointOutbox(TimestampMixin, Base):
     __tablename__ = "endpoint_outbox"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     outbox_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     target_endpoint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoints.id"), nullable=False)
+    target_address_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoint_addresses.id"), nullable=True)
     message_type: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
@@ -79,6 +120,7 @@ class DeliveryAttempt(TimestampMixin, Base):
     delivery_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     outbox_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoint_outbox.id"), nullable=True)
     target_endpoint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoints.id"), nullable=False)
+    target_address_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoint_addresses.id"), nullable=True)
     message_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

@@ -4,7 +4,15 @@ from core.db.models.actor import Actor
 from core.db.models.capability import Capability, CapabilityWorkspaceBinding
 from core.db.models.config_entry import ConfigEntry
 from core.db.models.context_pool import ContextPoolItem
-from core.db.models.endpoint import DeliveryAttempt, Endpoint, EndpointCapability, EndpointConnection, EndpointOutbox
+from core.db.models.endpoint import (
+    ActorDeliveryPreference,
+    DeliveryAttempt,
+    Endpoint,
+    EndpointAddress,
+    EndpointCapability,
+    EndpointConnection,
+    EndpointOutbox,
+)
 from core.db.models.memory_record import MemoryRecordModel, MemoryWorkspaceTag
 from core.db.models.message import Message
 from core.db.models.operation import Operation, OperationCall
@@ -22,12 +30,14 @@ __all__ = [
     "Attachment",
     "AttachmentUploadTicket",
     "Actor",
+    "ActorDeliveryPreference",
     "Capability",
     "CapabilityWorkspaceBinding",
     "ConfigEntry",
     "ContextPoolItem",
     "DeliveryAttempt",
     "Endpoint",
+    "EndpointAddress",
     "EndpointCapability",
     "EndpointConnection",
     "EndpointOutbox",

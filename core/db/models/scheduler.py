@@ -31,6 +31,10 @@ class ScheduledJob(TimestampMixin, Base):
     delivery_policy: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     concurrency_policy: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     misfire_policy: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    next_fire_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_fire_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    lease_until_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
 

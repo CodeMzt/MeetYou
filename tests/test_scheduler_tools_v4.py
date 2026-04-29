@@ -113,12 +113,44 @@ class _JobRunService:
         return row
 
 
+class _EndpointAddressService:
+    def __init__(self):
+        self.address = SimpleNamespace(
+            id="address-row-1",
+            address_id="addr.feishu.direct.chat-1",
+            endpoint_id="endpoint-feishu.provider.ui",
+            provider_type="feishu",
+            address_type="direct",
+            external_ref="chat-1",
+            display_name="Feishu Chat",
+            status="sendable",
+            meta={},
+        )
+
+    def get_by_address_id(self, address_id):
+        return self.address if address_id == self.address.address_id else None
+
+    def get_by_id(self, row_id):
+        return self.address if row_id == self.address.id else None
+
+
+class _PreferenceService:
+    def __init__(self):
+        self.preference = None
+
+    def get_default(self, **kwargs):
+        return self.preference
+
+
 class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
     def _tools(self):
         scheduler = _SchedulerService()
         run = _RunService()
         events = _EventService()
         job_runs = _JobRunService()
+        addresses = _EndpointAddressService()
+        preferences = _PreferenceService()
+        actor = SimpleNamespace(id="actor-user:self", actor_id="user:self")
         services = SimpleNamespace(
             scheduler=scheduler,
             workspace=SimpleNamespace(
@@ -126,16 +158,21 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
                 get_by_id=lambda row_id: SimpleNamespace(id=row_id, workspace_id="personal"),
             ),
             actor=SimpleNamespace(
-                get_by_actor_id=lambda actor_id: SimpleNamespace(id=f"actor-{actor_id}", actor_id=actor_id),
+                get_by_actor_id=lambda actor_id: actor if actor_id == "user:self" else SimpleNamespace(id=f"actor-{actor_id}", actor_id=actor_id),
                 ensure_actor=lambda **kwargs: SimpleNamespace(id=f"actor-{kwargs['actor_id']}", **kwargs),
             ),
-            endpoint=SimpleNamespace(get_by_endpoint_id=lambda endpoint_id: SimpleNamespace(id=f"endpoint-{endpoint_id}", endpoint_id=endpoint_id)),
+            endpoint=SimpleNamespace(
+                get_by_endpoint_id=lambda endpoint_id: SimpleNamespace(id=f"endpoint-{endpoint_id}", endpoint_id=endpoint_id),
+                get_by_id=lambda row_id: SimpleNamespace(id=row_id, endpoint_id="feishu.provider.ui"),
+            ),
+            endpoint_address=addresses,
+            actor_delivery_preference=preferences,
             run=run,
             scheduled_job_run=job_runs,
             run_event=events,
         )
         tools = SchedulerTools()
-        tools.set_core_domain(SimpleNamespace(services=services))
+        tools.set_core_domain(SimpleNamespace(principal=SimpleNamespace(principal_key="self", display_name="Self"), services=services))
         return tools, scheduler, run, events, job_runs
 
     async def test_manage_scheduled_jobs_updates_system_heartbeat_interval(self):
@@ -272,6 +309,41 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(run_service.created), 0)
         self.assertEqual(len(event_service.events), 0)
         self.assertEqual(len(job_run_service.created), 0)
+
+    async def test_create_scheduled_delivery_requires_me_binding(self):
+        tools, *_ = self._tools()
+
+        payload = await tools.create_scheduled_delivery(
+            name="Morning greeting",
+            schedule={"type": "daily", "time_of_day": "08:00"},
+            target={"actor_ref": "me", "provider_type": "feishu"},
+            instruction="Say good morning.",
+        )
+
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["requires_binding"])
+        self.assertEqual(payload["provider_type"], "feishu")
+
+    async def test_create_scheduled_delivery_creates_address_targeted_job(self):
+        tools, scheduler, *_ = self._tools()
+
+        payload = await tools.create_scheduled_delivery(
+            name="Morning greeting",
+            schedule={"type": "daily", "time_of_day": "08:00", "timezone": "Asia/Shanghai"},
+            target={"address_id": "addr.feishu.direct.chat-1"},
+            instruction="Say good morning.",
+            generation_policy="generate_at_fire_time",
+        )
+
+        self.assertTrue(payload["ok"])
+        job = scheduler.jobs[payload["job"]["job_id"]]
+        self.assertEqual(job.kind, "scheduled_delivery")
+        self.assertEqual(job.action_ref, "core.workflow.scheduled_delivery")
+        self.assertEqual(job.trigger_type, "daily")
+        self.assertEqual(job.trigger_config["time_of_day"], "08:00")
+        self.assertEqual(job.delivery_policy["targets"][0]["address_id"], "addr.feishu.direct.chat-1")
+        self.assertEqual(job.run_template["generation_policy"], "generate_at_fire_time")
+        self.assertEqual(job.run_template["instruction"], "Say good morning.")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,8 @@ class GatewayConversationClient:
         access_token: str = "",
         thread_title: str = "",
         thread_id: str = "",
+        endpoint_id: str = "",
+        endpoint_addresses: list[dict[str, Any]] | None = None,
         event_handler: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ):
         self.base_url = base_url.rstrip("/")
@@ -40,6 +42,8 @@ class GatewayConversationClient:
         self.thread_title = thread_title or display_name or provider_id
         self.access_token = str(access_token or "").strip()
         self._event_handler = event_handler
+        self._endpoint_id_override = str(endpoint_id or "").strip()
+        self._endpoint_addresses = list(endpoint_addresses or [])
 
         self._http_session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -54,6 +58,8 @@ class GatewayConversationClient:
 
     @property
     def endpoint_id(self) -> str:
+        if self._endpoint_id_override:
+            return self._endpoint_id_override
         return f"{self.provider_type}.{self.provider_id}.ui"
 
     def _build_endpoint_ws_url(self) -> str:
@@ -191,6 +197,18 @@ class GatewayConversationClient:
                 },
             }
         )
+        if self._endpoint_addresses:
+            await self._ws.send_json(
+                {
+                    "schema": "meetyou.endpoint.ws.v4",
+                    "type": "endpoint.addresses.snapshot",
+                    "endpoint_id": self.endpoint_id,
+                    "payload": {
+                        "endpoint_id": self.endpoint_id,
+                        "addresses": list(self._endpoint_addresses),
+                    },
+                }
+            )
         await self._ws.send_json(
             {
                 "schema": "meetyou.endpoint.ws.v4",
@@ -203,6 +221,21 @@ class GatewayConversationClient:
                     "last_seen_event_seq": 0,
                     "replay": False,
                 },
+            }
+        )
+
+    async def upsert_address(self, address: dict[str, Any]) -> None:
+        await self.start()
+        if self._ws is None or self._ws.closed:
+            raise GatewayClientError("Endpoint websocket is not connected")
+        payload = dict(address or {})
+        payload["endpoint_id"] = self.endpoint_id
+        await self._ws.send_json(
+            {
+                "schema": "meetyou.endpoint.ws.v4",
+                "type": "endpoint.address.upsert",
+                "endpoint_id": self.endpoint_id,
+                "payload": {"endpoint_id": self.endpoint_id, "address": payload},
             }
         )
 

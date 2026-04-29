@@ -98,6 +98,78 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "metadata": {"action_risk": "external_write", "safe_parallel": False},
         },
     },
+    "list_delivery_targets": {
+        "type": "function",
+        "function": {
+            "name": "list_delivery_targets",
+            "description": (
+                "List V4 delivery addresses inside endpoint providers, such as Feishu chats or WeChat private/group chats. "
+                "Use actor_ref=me plus provider_type to check whether the current user has a bound default address."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "provider_type": {"type": "string", "description": "Optional provider filter, e.g. feishu or wechat.", "default": ""},
+                    "actor_ref": {"type": "string", "enum": ["", "me"], "description": "Use me to resolve the current actor's bindings.", "default": ""},
+                    "address_type": {"type": "string", "enum": ["", "direct", "group", "channel", "room", "inbox"], "default": ""},
+                    "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
+                    "include_unavailable": {"type": "boolean", "default": False},
+                },
+                "required": [],
+            },
+            "metadata": {"action_risk": "read", "safe_parallel": True},
+        },
+    },
+    "set_delivery_preference": {
+        "type": "function",
+        "function": {
+            "name": "set_delivery_preference",
+            "description": (
+                "Bind the current actor ('me') to a provider-specific EndpointAddress, such as the user's default Feishu chat. "
+                "Call this only after the user has confirmed which address should be used."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "provider_type": {"type": "string", "description": "Provider type, e.g. feishu or wechat."},
+                    "address_id": {"type": "string", "description": "EndpointAddress id selected by the user."},
+                    "actor_ref": {"type": "string", "enum": ["me"], "default": "me"},
+                    "alias": {"type": "string", "description": "Alias for this binding. Default is me.", "default": "me"},
+                    "verified": {"type": "boolean", "default": True},
+                    "is_default": {"type": "boolean", "default": True},
+                    "metadata": {"type": "object", "default": {}},
+                },
+                "required": ["provider_type", "address_id"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
+    "send_delivery_message": {
+        "type": "function",
+        "function": {
+            "name": "send_delivery_message",
+            "description": (
+                "Send a one-off message to a V4 delivery address or to actor_ref=me on a provider. "
+                "This uses Delivery and EndpointAddress, not the endpoint-only send_endpoint_message path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Message text to deliver."},
+                    "address_id": {"type": "string", "description": "Direct EndpointAddress id.", "default": ""},
+                    "actor_ref": {"type": "string", "enum": ["", "me"], "default": ""},
+                    "provider_type": {"type": "string", "description": "Provider type when actor_ref=me.", "default": ""},
+                    "alias": {"type": "string", "default": "me"},
+                    "message_type": {"type": "string", "enum": ["notice", "message"], "default": "notice"},
+                    "offline_policy": {"type": "string", "enum": ["store_and_retry", "store_in_outbox", "queue_until_online", "drop"], "default": "store_and_retry"},
+                    "workspace_id": {"type": "string", "default": ""},
+                    "session_id": {"type": "string", "default": ""},
+                },
+                "required": ["content"],
+            },
+            "metadata": {"action_risk": "external_write", "safe_parallel": False},
+        },
+    },
     "emit_progress_notice": {
         "type": "function",
         "function": {
@@ -177,7 +249,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "job_id": {"type": "string", "description": "Stable Scheduler job id, for example system.heartbeat."},
                     "kind": {
                         "type": "string",
-                        "enum": ["workflow", "user_task", "maintenance"],
+                        "enum": ["workflow", "user_task", "maintenance", "scheduled_delivery"],
                         "description": "Job kind for create. system.heartbeat is a built-in Scheduler preset and cannot be created here.",
                         "default": "workflow",
                     },
@@ -187,7 +259,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "enabled": {"type": "boolean", "description": "Enabled state for create/update."},
                     "trigger_type": {
                         "type": "string",
-                        "enum": ["interval", "cron", "manual", "event"],
+                        "enum": ["interval", "daily", "cron", "one_shot", "manual", "event"],
                         "default": "interval",
                     },
                     "trigger_config": {
@@ -203,7 +275,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "timezone": {"type": "string", "description": "IANA timezone name for ordinary jobs. Do not set this when updating system.heartbeat.", "default": "UTC"},
                     "action_ref": {
                         "type": "string",
-                        "enum": ["core.workflow.assistant_turn", "core.workflow.noop", ""],
+                        "enum": ["core.workflow.assistant_turn", "core.workflow.scheduled_delivery", "core.workflow.noop", ""],
                         "description": "Core workflow/action reference for ordinary jobs. Use core.workflow.assistant_turn for scheduled assistant work; omit this field when updating system.heartbeat.",
                         "default": "core.workflow.assistant_turn",
                     },
@@ -250,6 +322,75 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "concurrency_policy": {"type": "object", "description": "Concurrency policy, e.g. {\"mode\":\"skip_if_running\"}.", "default": {}},
                     "misfire_policy": {"type": "object", "description": "Misfire policy, e.g. {\"mode\":\"run_once\"}.", "default": {}},
                     "metadata": {"type": "object", "description": "Additional metadata.", "default": {}},
+                },
+                "required": ["action"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
+    "create_scheduled_delivery": {
+        "type": "function",
+        "function": {
+            "name": "create_scheduled_delivery",
+            "description": (
+                "Create a user-facing V4 scheduled delivery. Use this for requests like daily Feishu/WeChat reminders. "
+                "The scheduled run generates the message at fire time, persists the assistant Message, then Delivery sends it to an EndpointAddress."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short job name."},
+                    "schedule": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["daily", "interval", "cron", "one_shot"], "default": "daily"},
+                            "time_of_day": {"type": "string", "description": "HH:MM for daily schedules. If the user says only morning, confirm 08:00 Asia/Shanghai first.", "default": "08:00"},
+                            "interval_seconds": {"type": "integer", "minimum": 1},
+                            "expression": {"type": "string", "description": "Five-field cron expression."},
+                            "run_at": {"type": "string", "description": "ISO datetime for one_shot schedules."},
+                            "timezone": {"type": "string", "default": "Asia/Shanghai"},
+                        },
+                        "required": ["type"],
+                    },
+                    "target": {
+                        "type": "object",
+                        "properties": {
+                            "address_id": {"type": "string", "description": "EndpointAddress id."},
+                            "actor_ref": {"type": "string", "enum": ["me"]},
+                            "provider_type": {"type": "string", "description": "Provider type when actor_ref=me, e.g. feishu."},
+                            "alias": {"type": "string", "default": "me"},
+                        },
+                    },
+                    "instruction": {"type": "string", "description": "What the assistant should generate at each fire time."},
+                    "timezone": {"type": "string", "default": "Asia/Shanghai"},
+                    "generation_policy": {"type": "string", "enum": ["generate_at_fire_time"], "default": "generate_at_fire_time"},
+                    "delivery_policy": {"type": "object", "default": {}},
+                    "workspace_id": {"type": "string", "default": "personal"},
+                    "enabled": {"type": "boolean", "default": True},
+                    "metadata": {"type": "object", "default": {}},
+                },
+                "required": ["name", "schedule", "target", "instruction"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
+    "manage_scheduled_deliveries": {
+        "type": "function",
+        "function": {
+            "name": "manage_scheduled_deliveries",
+            "description": "List, inspect, update, enable, disable, delete, or manually trigger V4 scheduled_delivery jobs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "detail", "update", "enable", "disable", "delete", "trigger"], "default": "list"},
+                    "job_id": {"type": "string", "description": "Scheduled delivery job id."},
+                    "enabled": {"type": "boolean"},
+                    "schedule": {"type": "object", "description": "Replacement schedule config."},
+                    "timezone": {"type": "string", "default": ""},
+                    "instruction": {"type": "string", "default": ""},
+                    "target": {"type": "object", "default": {}},
+                    "delivery_policy": {"type": "object", "default": {}},
+                    "workspace_id": {"type": "string", "default": "personal"},
                 },
                 "required": ["action"],
             },
@@ -532,6 +673,7 @@ class ToolRegistry:
             "track_source_updates",
             "manage_scheduled_jobs",
             "get_current_system_time",
+            "emit_progress_notice",
             "remember_knowledge",
             "analyze_workspace",
             "read_local_documents",

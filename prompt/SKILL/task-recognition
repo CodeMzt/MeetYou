@@ -3,7 +3,7 @@ Detect when the user is creating, listing, updating, blocking, rescheduling, or 
 
 Purpose:
 - Turn user TODO language into persistent TODO tracking only when the user actually wants durable task state.
-- Route any time-triggered, recurring, scheduled, reminder-at-a-time, or assistant-background job request into the V4 Scheduler job tool instead of the user TODO tool.
+- Route ordinary time-triggered, recurring, scheduled, reminder-at-a-time, or cross-endpoint delivery requests into the V4 scheduled delivery tools instead of the user TODO tool.
 
 When to use:
 - Treat explicit TODOs, follow-ups, blockers, status updates, and completion updates as user task-management work.
@@ -12,7 +12,9 @@ When to use:
 
 Tool paths:
 - manage_tasks for persisted user TODO creation, listing, status changes, and completion.
-- manage_scheduled_jobs for assistant-owned single-run or recurring scheduled work backed by Core Scheduler.
+- create_scheduled_delivery for ordinary assistant-owned scheduled delivery that may generate content at fire time and deliver to an ActorContact/EndpointAddress.
+- manage_scheduled_deliveries for listing, updating, enabling, disabling, deleting, or manually triggering scheduled deliveries.
+- manage_scheduled_jobs only for advanced Scheduler maintenance such as system.heartbeat and low-level job inspection.
 
 Boundaries:
 - When the user only wants planning advice without tracking, answer directly and avoid unnecessary task writes.

@@ -114,6 +114,17 @@ class FeishuOutputAdapter:
         if payload.get("schema") != "meetyou.endpoint.ws.v4":
             return
         frame_type = str(payload.get("type") or "")
+        body_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        target_chat_id = str(body_payload.get("target_external_ref") or "").strip()
+        if target_chat_id:
+            # Explicit EndpointAddress delivery is handled by the provider-level
+            # connection. Chat-scoped subscriptions share the provider endpoint
+            # id, so they ignore address-targeted frames to avoid duplicate sends.
+            if chat_id:
+                return
+            chat_id = target_chat_id
+        if not chat_id and frame_type.startswith("delivery."):
+            return
         if frame_type == "endpoint.error":
             error = payload.get("payload", {}) or {}
             await self._send_text(chat_id, f"[系统错误] {error.get('message', '')}")

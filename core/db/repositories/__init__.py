@@ -6,7 +6,9 @@ from core.db.repositories.capability import CapabilityRepository
 from core.db.repositories.config_entry import ConfigEntryRepository
 from core.db.repositories.context_pool import ContextPoolRepository
 from core.db.repositories.endpoint import (
+    ActorDeliveryPreferenceRepository,
     DeliveryAttemptRepository,
+    EndpointAddressRepository,
     EndpointCapabilityRepository,
     EndpointConnectionRepository,
     EndpointOutboxRepository,
@@ -27,6 +29,7 @@ from core.db.repositories.workspace import WorkspaceRepository
 
 __all__ = [
     "ApprovalRepository",
+    "ActorDeliveryPreferenceRepository",
     "AttachmentRepository",
     "AttachmentUploadTicketRepository",
     "ActorRepository",
@@ -35,6 +38,7 @@ __all__ = [
     "ContextPoolRepository",
     "DeliveryAttemptRepository",
     "EndpointCapabilityRepository",
+    "EndpointAddressRepository",
     "EndpointConnectionRepository",
     "EndpointOutboxRepository",
     "EndpointRepository",

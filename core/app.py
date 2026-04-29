@@ -64,6 +64,14 @@ from tools.task_manager import TaskManager
 
 logger = logging.getLogger("meetyou.app")
 
+
+def _ensure_utc_datetime(value):
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
 if TYPE_CHECKING:
     from sensors.feishu_input_adapter import FeishuInputAdapter
     from sensors.feishu_output_adapter import FeishuOutputAdapter
@@ -1717,24 +1725,38 @@ class App:
             if not isinstance(target, dict):
                 continue
             endpoint_id = str(target.get("endpoint_id") or "").strip()
+            address_id = str(target.get("address_id") or "").strip()
+            address = None
+            endpoint = None
+            if address_id:
+                address = services.endpoint_address.get_by_address_id(address_id)
+                if address is None:
+                    results.append({"address_id": address_id, "status": "missing"})
+                    continue
+                endpoint = services.endpoint.get_by_id(getattr(address, "endpoint_id", None))
+                endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
+            elif endpoint_id:
+                endpoint = services.endpoint.get_by_endpoint_id(endpoint_id)
             if not endpoint_id:
+                results.append({"status": "missing_endpoint", "address_id": address_id})
                 continue
-            endpoint = services.endpoint.get_by_endpoint_id(endpoint_id)
             if endpoint is None:
                 results.append({"endpoint_id": endpoint_id, "status": "missing"})
                 continue
             result = await services.delivery.deliver(
                 target_endpoint=endpoint,
+                target_address=address,
                 message_type=str(target.get("message_type") or "message").strip() or "message",
                 payload={
                     "job_id": str(getattr(job, "job_id", "") or ""),
                     "run_id": str(getattr(run, "run_id", "") or ""),
                     "message_id": str(getattr(message, "message_id", "") or "") if message is not None else "",
+                    "role": "assistant",
                     "content": str(getattr(message, "content", "") or "") if message is not None else "",
                 },
                 offline_policy=str(target.get("offline_policy") or "store_and_retry"),
             )
-            results.append({"endpoint_id": endpoint_id, **dict(result or {})})
+            results.append({"endpoint_id": endpoint_id, "address_id": address_id, **dict(result or {})})
         return results
 
     @staticmethod
@@ -1999,7 +2021,7 @@ class App:
 
     async def scheduler_processor(self):
         shutdown = self.event_bus.shutdown_event
-        last_run_at: dict[str, datetime] = {}
+        lease_owner = f"core.scheduler.{id(self)}"
         while True:
             if shutdown.is_set():
                 break
@@ -2015,16 +2037,26 @@ class App:
                         interval_seconds = self._scheduler_interval_seconds(job)
                         if interval_seconds > 0:
                             wait_seconds = max(1, min(wait_seconds, interval_seconds))
-                        if not job_id or not bool(getattr(job, "enabled", True)) or interval_seconds <= 0:
+                        if not job_id or not bool(getattr(job, "enabled", True)):
                             continue
-                        previous = last_run_at.get(job_id)
-                        if previous is None:
-                            last_run_at[job_id] = now
+                        if getattr(job, "next_fire_at", None) is None:
+                            job = self.core_domain.services.scheduler.ensure_next_fire_at(job_id=job_id)
+                        next_fire_at = _ensure_utc_datetime(getattr(job, "next_fire_at", None))
+                        if next_fire_at is None or next_fire_at > now:
                             continue
-                        if (now - previous).total_seconds() < interval_seconds:
+                        leased_job = self.core_domain.services.scheduler.acquire_due_lease(
+                            job_id=job_id,
+                            lease_owner=lease_owner,
+                            lease_seconds=300,
+                        )
+                        if leased_job is None:
                             continue
-                        last_run_at[job_id] = now
-                        await self._run_scheduler_job_once(job)
+                        try:
+                            await self._run_scheduler_job_once(leased_job)
+                            self.core_domain.services.scheduler.mark_fired(job_id=job_id, fired_at=now)
+                        except Exception:
+                            self.core_domain.services.scheduler.release_lease(job_id=job_id)
+                            raise
             except Exception as exc:
                 logger.error("Scheduler tick failed: %s", exc)
 

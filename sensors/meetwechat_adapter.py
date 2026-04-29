@@ -532,6 +532,17 @@ class MeetWeChatOutputService:
         if payload.get("schema") != "meetyou.endpoint.ws.v4":
             return
         frame_type = str(payload.get("type") or "")
+        body_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        target_chat_id = str(body_payload.get("target_external_ref") or "").strip()
+        if target_chat_id:
+            # Explicit EndpointAddress delivery is handled by the provider-level
+            # connection. Chat-scoped subscriptions share the provider endpoint
+            # id, so they ignore address-targeted frames to avoid duplicate sends.
+            if chat_id:
+                return
+            chat_id = target_chat_id
+        if not chat_id and frame_type.startswith("delivery."):
+            return
         pending = self._pending_replies.get(chat_id)
         if frame_type == "endpoint.error":
             self._complete_pending(chat_id, False, "endpoint websocket error")
@@ -562,13 +573,19 @@ class MeetWeChatOutputService:
             if role and role != "assistant":
                 return
             text = str(message.get("content") or "").strip()
-            if pending is None or not text:
+            if not text:
                 return
             if not self._remember_final_delivery(
                 chat_id,
                 message_id=str(message.get("message_id") or ""),
                 stream_key="",
             ):
+                return
+            if pending is None:
+                try:
+                    await self._send_direct_text(chat_id, text)
+                except Exception as exc:
+                    logger.warning("MeetWeChat direct message send failed chat=%s error=%s", _mask(chat_id), exc)
                 return
             self._enqueue_outbound(pending, text)
             return
@@ -899,6 +916,7 @@ class MeetWeChatInputAdapter:
             policy=self._policy,
         )
         self._gateway_clients: dict[str, Any] = {}
+        self._provider_gateway_client: Any | None = None
         self._gateway_client_last_used: dict[str, float] = {}
         self._gateway_endpoint_idle_ttl_seconds = _safe_positive_int(
             config.get("meetwechat_gateway_endpoint_idle_ttl_seconds"),
@@ -928,10 +946,66 @@ class MeetWeChatInputAdapter:
         self._gateway_base_url = f"http://{host}:{port}"
         self._gateway_access_token = str(self._config.get("gateway_access_token") or "").strip()
 
+    @property
+    def _provider_endpoint_id(self) -> str:
+        return "wechat.provider.ui"
+
+    def _address_payload(self, *, chat_id: str, chat_type: str = "", display_name: str = "") -> dict[str, Any]:
+        normalized_chat_id = str(chat_id or "").strip()
+        normalized_type = str(chat_type or "private").strip().lower() or "private"
+        address_type = "group" if normalized_type == "group" else "direct"
+        return {
+            "address_id": f"addr.wechat.{address_type}.{normalized_chat_id}",
+            "provider_type": "wechat",
+            "address_type": address_type,
+            "external_ref": normalized_chat_id,
+            "display_name": display_name or f"WeChat {normalized_type} {_mask(normalized_chat_id)}",
+            "workspace_ids": ["personal"],
+            "status": "sendable",
+            "capabilities": ["receive_message"],
+            "metadata": {"chat_type": normalized_type},
+        }
+
+    async def _discover_address_snapshot(self) -> list[dict[str, Any]]:
+        addresses: list[dict[str, Any]] = []
+        with contextlib.suppress(Exception):
+            for item in await self._client.list_chats():
+                if not isinstance(item, dict):
+                    continue
+                chat_id = str(item.get("chat_id") or item.get("id") or "").strip()
+                if not chat_id:
+                    continue
+                addresses.append(
+                    self._address_payload(
+                        chat_id=chat_id,
+                        chat_type=str(item.get("chat_type") or item.get("type") or "private"),
+                        display_name=str(item.get("display_name") or item.get("name") or ""),
+                    )
+                )
+        return addresses
+
+    async def _get_provider_gateway_client(self) -> Any:
+        if self._provider_gateway_client is None:
+            self._provider_gateway_client = self._gateway_client_factory(
+                base_url=self._gateway_base_url,
+                provider_id="meetwechat-provider",
+                provider_type="wechat",
+                display_name="MeetWeChat Provider",
+                workspace_id="personal",
+                access_token=self._gateway_access_token,
+                thread_title="MeetWeChat Provider",
+                endpoint_id=self._provider_endpoint_id,
+                endpoint_addresses=await self._discover_address_snapshot(),
+                event_handler=lambda payload: self._output_adapter.send_runtime_event("", payload),
+            )
+        await self._provider_gateway_client.start()
+        return self._provider_gateway_client
+
     async def run(self) -> None:
         self._closed = False
         self._persistent_workers = True
         await self._client.init()
+        await self._get_provider_gateway_client()
         self._ensure_inbound_workers()
         if self._poll_task is None or self._poll_task.done():
             self._poll_task = asyncio.create_task(self._run_poll_loop())
@@ -951,6 +1025,11 @@ class MeetWeChatInputAdapter:
             if callable(close):
                 await close()
         self._gateway_clients.clear()
+        if self._provider_gateway_client is not None:
+            close = getattr(self._provider_gateway_client, "close", None)
+            if callable(close):
+                await close()
+            self._provider_gateway_client = None
         self._gateway_client_last_used.clear()
         await self._output_adapter.close()
         await self._state_store.close()
@@ -1106,6 +1185,14 @@ class MeetWeChatInputAdapter:
 
         await self._state_store.mark_event_status(event.event_id, "processing", chat_id=event.chat_id)
         client = await self._get_gateway_client(event)
+        with contextlib.suppress(Exception):
+            await client.upsert_address(
+                self._address_payload(
+                    chat_id=event.chat_id,
+                    chat_type=event.chat_type,
+                    display_name=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
+                )
+            )
         await self._sleep(self._policy.merge_window_seconds)
         allow_send = self._policy.allow_send(event)
         future = self._output_adapter.begin_event(event, allow_send=allow_send)
@@ -1238,6 +1325,7 @@ class MeetWeChatInputAdapter:
                 access_token=self._gateway_access_token,
                 thread_title=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
                 thread_id=thread_id,
+                endpoint_id=self._provider_endpoint_id,
                 event_handler=lambda payload, chat_id=event.chat_id: self._output_adapter.send_runtime_event(
                     chat_id,
                     payload,

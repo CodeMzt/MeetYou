@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from core.db.base import utcnow
-from core.db.models.endpoint import DeliveryAttempt, Endpoint, EndpointCapability, EndpointConnection, EndpointOutbox
+from core.db.models.endpoint import (
+    ActorDeliveryPreference,
+    DeliveryAttempt,
+    Endpoint,
+    EndpointAddress,
+    EndpointCapability,
+    EndpointConnection,
+    EndpointOutbox,
+)
 from core.db.repositories.base import RepositoryBase
 
 
@@ -193,12 +201,177 @@ class EndpointCapabilityRepository(RepositoryBase):
         )
 
 
+class EndpointAddressRepository(RepositoryBase):
+    def upsert(
+        self,
+        *,
+        endpoint_id,
+        provider_type: str,
+        address_type: str,
+        external_ref: str,
+        address_id: str = "",
+        display_name: str = "",
+        workspace_scope: list | None = None,
+        status: str = "sendable",
+        capabilities: list | None = None,
+        last_seen_at=None,
+        last_verified_at=None,
+        metadata: dict | None = None,
+    ) -> EndpointAddress:
+        normalized_external_ref = str(external_ref or "").strip()
+        normalized_address_type = str(address_type or "direct").strip() or "direct"
+        row = None
+        normalized_address_id = str(address_id or "").strip()
+        if normalized_address_id:
+            row = self.get_by_address_id(normalized_address_id)
+        if row is None:
+            row = (
+                self.session.query(EndpointAddress)
+                .filter_by(endpoint_id=endpoint_id, address_type=normalized_address_type, external_ref=normalized_external_ref)
+                .one_or_none()
+            )
+        if row is None:
+            row = EndpointAddress(
+                address_id=normalized_address_id,
+                endpoint_id=endpoint_id,
+                provider_type=str(provider_type or "").strip(),
+                address_type=normalized_address_type,
+                external_ref=normalized_external_ref,
+                display_name=str(display_name or "").strip(),
+                workspace_scope=list(workspace_scope or []),
+                status=str(status or "unknown").strip() or "unknown",
+                capabilities=list(capabilities or []),
+                last_seen_at=last_seen_at,
+                last_verified_at=last_verified_at,
+                meta=dict(metadata or {}),
+            )
+            if not row.address_id:
+                row.address_id = f"addr.{row.provider_type}.{row.address_type}.{row.external_ref}"
+            self.session.add(row)
+        else:
+            row.provider_type = str(provider_type or row.provider_type or "").strip()
+            row.address_type = normalized_address_type
+            row.external_ref = normalized_external_ref or row.external_ref
+            if display_name is not None:
+                row.display_name = str(display_name or row.display_name or "").strip()
+            row.workspace_scope = list(workspace_scope or row.workspace_scope or [])
+            row.status = str(status or row.status or "unknown").strip() or "unknown"
+            row.capabilities = list(capabilities or row.capabilities or [])
+            if last_seen_at is not None:
+                row.last_seen_at = last_seen_at
+            if last_verified_at is not None:
+                row.last_verified_at = last_verified_at
+            row.meta = dict(metadata or row.meta or {})
+        self.session.flush()
+        return row
+
+    def get_by_address_id(self, address_id: str) -> EndpointAddress | None:
+        return self.session.query(EndpointAddress).filter_by(address_id=str(address_id or "").strip()).one_or_none()
+
+    def get_by_id(self, row_id) -> EndpointAddress | None:
+        return self.session.query(EndpointAddress).filter_by(id=row_id).one_or_none()
+
+    def get_by_endpoint_external_ref(self, *, endpoint_id, external_ref: str) -> EndpointAddress | None:
+        return (
+            self.session.query(EndpointAddress)
+            .filter_by(endpoint_id=endpoint_id, external_ref=str(external_ref or "").strip())
+            .one_or_none()
+        )
+
+    def list_all(
+        self,
+        *,
+        provider_type: str = "",
+        address_type: str = "",
+        workspace_id: str = "",
+        status: str = "",
+    ) -> list[EndpointAddress]:
+        query = self.session.query(EndpointAddress)
+        if provider_type:
+            query = query.filter_by(provider_type=provider_type)
+        if address_type:
+            query = query.filter_by(address_type=address_type)
+        if status:
+            query = query.filter_by(status=status)
+        rows = list(query.order_by(EndpointAddress.provider_type.asc(), EndpointAddress.display_name.asc()).all())
+        if workspace_id:
+            rows = [
+                row
+                for row in rows
+                if not list(row.workspace_scope or []) or workspace_id in list(row.workspace_scope or []) or "*" in list(row.workspace_scope or [])
+            ]
+        return rows
+
+    def delete(self, *, address_id: str) -> bool:
+        row = self.get_by_address_id(address_id)
+        if row is None:
+            return False
+        row.status = "unavailable"
+        row.capabilities = []
+        self.session.flush()
+        return True
+
+
+class ActorDeliveryPreferenceRepository(RepositoryBase):
+    def upsert(
+        self,
+        *,
+        actor_id,
+        provider_type: str,
+        address_id,
+        alias: str = "me",
+        preference_id: str = "",
+        is_default: bool = True,
+        verified: bool = False,
+        metadata: dict | None = None,
+    ) -> ActorDeliveryPreference:
+        normalized_provider = str(provider_type or "").strip()
+        normalized_alias = str(alias or "me").strip() or "me"
+        row = (
+            self.session.query(ActorDeliveryPreference)
+            .filter_by(actor_id=actor_id, provider_type=normalized_provider, alias=normalized_alias)
+            .one_or_none()
+        )
+        if row is None:
+            row = ActorDeliveryPreference(
+                preference_id=str(preference_id or "").strip() or f"pref.{actor_id}.{normalized_provider}.{normalized_alias}",
+                actor_id=actor_id,
+                provider_type=normalized_provider,
+                address_id=address_id,
+                alias=normalized_alias,
+                is_default=bool(is_default),
+                verified=bool(verified),
+                meta=dict(metadata or {}),
+            )
+            self.session.add(row)
+        else:
+            row.address_id = address_id
+            row.is_default = bool(is_default)
+            row.verified = bool(verified)
+            row.meta = dict(metadata or row.meta or {})
+        self.session.flush()
+        return row
+
+    def list_for_actor(self, *, actor_id, provider_type: str = "", alias: str = "") -> list[ActorDeliveryPreference]:
+        query = self.session.query(ActorDeliveryPreference).filter_by(actor_id=actor_id)
+        if provider_type:
+            query = query.filter_by(provider_type=str(provider_type or "").strip())
+        if alias:
+            query = query.filter_by(alias=str(alias or "").strip())
+        return list(query.order_by(ActorDeliveryPreference.provider_type.asc(), ActorDeliveryPreference.alias.asc()).all())
+
+    def get_default(self, *, actor_id, provider_type: str, alias: str = "me") -> ActorDeliveryPreference | None:
+        rows = self.list_for_actor(actor_id=actor_id, provider_type=provider_type, alias=alias or "me")
+        return next((row for row in rows if bool(row.is_default)), rows[0] if rows else None)
+
+
 class EndpointOutboxRepository(RepositoryBase):
     def create(
         self,
         *,
         outbox_id: str,
         target_endpoint_id,
+        target_address_id=None,
         message_type: str,
         payload: dict,
         status: str = "pending",
@@ -208,6 +381,7 @@ class EndpointOutboxRepository(RepositoryBase):
         row = EndpointOutbox(
             outbox_id=outbox_id,
             target_endpoint_id=target_endpoint_id,
+            target_address_id=target_address_id,
             message_type=message_type,
             payload=dict(payload or {}),
             status=status,
@@ -225,6 +399,7 @@ class DeliveryAttemptRepository(RepositoryBase):
         *,
         delivery_id: str,
         target_endpoint_id,
+        target_address_id=None,
         message_type: str,
         payload: dict,
         outbox_id=None,
@@ -236,6 +411,7 @@ class DeliveryAttemptRepository(RepositoryBase):
             delivery_id=delivery_id,
             outbox_id=outbox_id,
             target_endpoint_id=target_endpoint_id,
+            target_address_id=target_address_id,
             message_type=message_type,
             status=status,
             payload=dict(payload or {}),

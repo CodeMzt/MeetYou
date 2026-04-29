@@ -76,7 +76,12 @@ _DEFAULT_REUSABLE_SKILL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "file_name": "task-recognition",
         "applicable_modes": ["general", "automation"],
         "scenarios": ["提醒", "跟进", "任务更新", "阻塞记录"],
-        "recommended_tools": ["manage_tasks", "manage_scheduled_jobs"],
+        "recommended_tools": [
+            "manage_tasks",
+            "create_scheduled_delivery",
+            "manage_scheduled_deliveries",
+            "manage_scheduled_jobs",
+        ],
     },
     "research_grounding": {
         "id": "research_grounding",

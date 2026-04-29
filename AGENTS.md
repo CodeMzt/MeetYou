@@ -5,6 +5,8 @@
 - V4 is a development-period replacement, not a V3 compatibility layer.
 - Core owns Thread / Message / Run / Scheduler / Heartbeat / Memory / Operation / Delivery.
 - Client is only Endpoint Provider. Desktop, Edge, Feishu, WeChatBot, webhook, email, and similar surfaces provide endpoints; they do not own conversations, runs, scheduler state, heartbeat, memory, operations, or delivery semantics.
+- Endpoint represents a Provider runtime and its connection/capability health. Provider-internal destinations such as Feishu chats and WeChat private/group chats are `EndpointAddress` records, not separate Clients.
+- Actor-to-channel routing uses explicit `ActorDeliveryPreference` bindings. The alias `me` must resolve through an actor binding; if no binding exists, the assistant must ask the user to choose/confirm a delivery address.
 - Core is not Client. `core.local` is an in-process `ExecutionTarget`, not a Client. Core-owned endpoints such as `core.local`, `core.scheduler`, `core.inbox`, and `core.notification` are runtime targets inside Core.
 - Scheduler is the only system-level scheduling clock.
 - `system.heartbeat` is a Scheduler-owned system preset Job. It is non-deletable, can be enabled or disabled, and can have its interval changed.
@@ -13,6 +15,7 @@
 - `short_reply` is no longer a directed tool. Replace it with `assistant.progress_notice` RunEvent / Runtime Action.
 - `assistant.progress_notice` must not go through ToolRouter, must not create Operation / OperationCall, and must not become final assistant message content.
 - Delivery is responsible for delivering `message`, `run_event`, `notice`, and `operation_update`. Delivery must not generate replies.
+- Cross-provider human-visible delivery must target `EndpointAddress` through Delivery. Do not expand `send_endpoint_message` into a cross-channel user delivery abstraction; use `send_delivery_message` / scheduled delivery tools.
 - Final assistant reply must be an assistant Message persisted by MessageService.
 - Streaming must flow through RunEventLog plus Delivery fan-out.
 - Tool dispatch must flow through ToolRouter plus ExecutionTarget.
@@ -51,11 +54,14 @@
 - V4 WebSocket protocol is `meetyou.endpoint.ws.v4`.
 - `/client/ws` is removed for V4. If a route remains during cleanup, it must return a clear removed response such as `410 Gone`; it must not adapt or forward to V4.
 - Endpoint lifecycle frames are `endpoint.hello`, `endpoint.capabilities.snapshot`, `endpoint.ready`, `endpoint.heartbeat`, and `endpoint.goodbye`.
+- Endpoint address frames are `endpoint.addresses.snapshot`, `endpoint.address.upsert`, and `endpoint.address.delete`.
 - Subscription frames are `subscription.start`, `subscription.update`, and `subscription.stop`.
 - Delivery frames are `delivery.message`, `delivery.run_event`, `delivery.notice`, `delivery.operation_update`, and `delivery.inbox_item`.
+- Address-targeted `delivery.message` and `delivery.notice` payloads include `target_address_id`, `target_provider_type`, `target_address_type`, and `target_external_ref`.
 - Tool frames are `tool.call.request`, `tool.call.result`, `tool.call.error`, and `tool.call.cancel`.
 - Use `origin_endpoint_id`, `target_endpoint_id`, and `execution_target_id` in V4 data paths. Do not add new runtime usage of `source_client_id` or `target_client_id`.
 - Capability/provider ids should be endpoint-oriented. Permissions are checked against abstract tool keys on Actor / Workspace / RunPolicy, not against a Client allowlist.
+- Scheduler-facing assistant tools should prefer `create_scheduled_delivery` and `manage_scheduled_deliveries` for user-facing recurring deliveries. Keep `manage_scheduled_jobs` as the low-level maintenance surface for Scheduler jobs and `system.heartbeat`.
 - Gateway auth may accept `Authorization: Bearer ...` or `X-API-Key` when enabled.
 
 ## Configuration And State

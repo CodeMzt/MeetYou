@@ -11,6 +11,7 @@ from core.db.engine import create_db_engine, create_session_factory, get_databas
 from core.storage.object_store import build_object_store
 from core.services import (
     ActorService,
+    ActorDeliveryPreferenceService,
     ApprovalService,
     AttachmentService,
     CapabilityService,
@@ -19,6 +20,7 @@ from core.services import (
     CoreServices,
     DeliveryAttemptService,
     DeliveryService,
+    EndpointAddressService,
     EndpointCapabilityService,
     EndpointConnectionService,
     EndpointOutboxService,
@@ -144,6 +146,8 @@ def build_core_services(session_factory) -> CoreServices:
     actor = ActorService(session_factory)
     workspace = WorkspaceService(session_factory)
     endpoint = EndpointRegistryService(session_factory)
+    endpoint_address = EndpointAddressService(session_factory)
+    actor_delivery_preference = ActorDeliveryPreferenceService(session_factory)
     endpoint_capability = EndpointCapabilityService(session_factory)
     operation = OperationService(session_factory)
     operation_call = OperationCallService(session_factory)
@@ -156,6 +160,8 @@ def build_core_services(session_factory) -> CoreServices:
         endpoint=endpoint,
         endpoint_connection=EndpointConnectionService(session_factory),
         endpoint_capability=endpoint_capability,
+        endpoint_address=endpoint_address,
+        actor_delivery_preference=actor_delivery_preference,
         endpoint_outbox=endpoint_outbox,
         delivery_attempt=delivery_attempt,
         delivery=DeliveryService(outbox_service=endpoint_outbox, attempt_service=delivery_attempt),

@@ -461,6 +461,11 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "switch_workspace",
     "list_active_endpoints",
     "list_endpoint_tool_targets",
+    "list_delivery_targets",
+    "set_delivery_preference",
+    "send_delivery_message",
+    "create_scheduled_delivery",
+    "manage_scheduled_deliveries",
     "send_endpoint_message",
     "emit_progress_notice",
     "restart_core",
@@ -542,7 +547,7 @@ _MODE_PROMPT_FALLBACKS = {
         "- danxi: FDU campus-forum browsing, thread search, favorites or subscriptions, messages, and normal-user post or reply actions through the Danxi tool suite\n"
         "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
         "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, endpoint tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
-        "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs and manage_scheduled_jobs for Scheduler-owned work.\n"
+        "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs, create_scheduled_delivery/manage_scheduled_deliveries for ordinary scheduled delivery, and manage_scheduled_jobs only for advanced Scheduler maintenance.\n"
         "Legacy documents/research/study requests remain in general and should use skills/tools instead of switching modes."
     ),
     "general": (
@@ -551,7 +556,7 @@ _MODE_PROMPT_FALLBACKS = {
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
         "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
         "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, endpoint tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
-        "When the user's message clearly contains user TODO or scheduled-task work, the task_recognition skill can activate manage_tasks or manage_scheduled_jobs.\n"
+        "When the user's message clearly contains user TODO or scheduled-delivery work, the task_recognition skill can activate manage_tasks, create_scheduled_delivery, or manage_scheduled_deliveries; reserve manage_scheduled_jobs for advanced Scheduler maintenance.\n"
         "Stay in general mode unless the next immediate step clearly requires automation coordination or Danxi forum tools."
     ),
     "automation": (
@@ -559,7 +564,7 @@ _MODE_PROMPT_FALLBACKS = {
         "You are operating as an automation and coordination specialist.\n"
         "Favor schedules, drafts, task state, meeting notes, and note synchronization.\n"
         "Start with the shared basic tools for knowledge lookup, memory lookup, and lightweight page reading before assuming an external system already acted. Call emit_progress_notice before page reads, endpoint messaging, endpoint tool calls, or other slow I/O, then use automation-specific tools when coordination artifacts must be produced.\n"
-        "Task-style requests can also activate the task_recognition skill so user TODO and scheduled-task tools stay available inside automation workflows.\n"
+        "Task-style requests can also activate the task_recognition skill so user TODO and scheduled-delivery tools stay available inside automation workflows.\n"
         "External side effects stay draft-first. Do not pretend that a message or calendar entry has been sent unless the tool confirms it."
     ),
     "danxi": (
@@ -575,7 +580,7 @@ _SKILL_PROMPT_FALLBACKS = {
     "task-recognition": (
         "[Task Recognition Skill]\n"
         "Detect when the user is creating, listing, updating, blocking, rescheduling, or completing actionable tasks.\n"
-        "Use manage_tasks for user TODOs and manage_scheduled_jobs for Scheduler-owned jobs when scheduled work is actually requested, instead of keeping task tracking only in free-form chat."
+        "Use manage_tasks for user TODOs. Use create_scheduled_delivery for ordinary scheduled delivery/reminders, manage_scheduled_deliveries for follow-up maintenance, and manage_scheduled_jobs only for advanced Scheduler/system.heartbeat inspection."
     ),
     "research-grounding": (
         "[Research Grounding Skill]\n"
@@ -666,7 +671,7 @@ _DEFAULT_PROMPT_REGISTRY = {
 _DEFAULT_SKILL_REGISTRY = {
     "task_recognition": {
         "prompts": ["skill:task-recognition"],
-        "tools": ["manage_tasks", "manage_scheduled_jobs"],
+        "tools": ["manage_tasks", "manage_scheduled_jobs", "create_scheduled_delivery", "manage_scheduled_deliveries"],
         "mcp_servers": [],
         "activation_keywords": list(_TASK_RECOGNITION_HINTS),
     },
@@ -925,6 +930,16 @@ _DEFAULT_RUNTIME_NATIVE_TOOL_EXCEPTIONS = [
         "tool_name": "manage_scheduled_jobs",
         "category": "core_state",
         "reason": "直接管理 V4 SchedulerService / scheduled_jobs，不是外部集成。",
+    },
+    {
+        "tool_name": "create_scheduled_delivery",
+        "category": "core_state",
+        "reason": "创建基于 V4 Scheduler + Delivery 的高层定时投递任务。",
+    },
+    {
+        "tool_name": "manage_scheduled_deliveries",
+        "category": "core_state",
+        "reason": "管理 V4 scheduled_delivery 任务。",
     },
 ]
 
