@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import uuid4
 
 from core.db.repositories import ThreadRepository
 from core.services.base import ServiceBase
+
+
+@dataclass(slots=True)
+class ThreadDeleteResult:
+    thread: object | None
+    deleted: bool
+    reason: str = ""
+    default_thread: bool = False
 
 
 class ThreadService(ServiceBase):
@@ -28,6 +37,13 @@ class ThreadService(ServiceBase):
 
     def get_by_thread_id(self, thread_id: str):
         with self.session_scope() as session:
+            row = ThreadRepository(session).get_by_thread_id(thread_id)
+            if row is not None and str(getattr(row, "status", "") or "") == "deleted":
+                return None
+            return row
+
+    def get_any_by_thread_id(self, thread_id: str):
+        with self.session_scope() as session:
             return ThreadRepository(session).get_by_thread_id(thread_id)
 
     def get_by_id(self, row_id):
@@ -40,6 +56,20 @@ class ThreadService(ServiceBase):
                 principal_id=principal_id,
                 workspace_id=workspace_id,
                 limit=limit,
+            )
+
+    def delete_thread(self, *, principal_id, thread_id: str, force: bool = False) -> ThreadDeleteResult:
+        with self.session_scope() as session:
+            row, reason = ThreadRepository(session).soft_delete(
+                principal_id=principal_id,
+                thread_id=thread_id,
+                force_default=bool(force),
+            )
+            return ThreadDeleteResult(
+                thread=row,
+                deleted=reason in {"deleted", "already_deleted"},
+                reason=reason,
+                default_thread=bool(dict(getattr(row, "meta", {}) or {}).get("default_key")) if row is not None else False,
             )
 
     def ensure_default_thread(

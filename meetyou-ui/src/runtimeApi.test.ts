@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   clearDesktopMemory,
   createDanxiReply,
+  deleteRuntimeThread,
   deleteDesktopMemoryRecord,
   deleteDanxiReply,
   ensureDefaultRuntimeThread,
@@ -231,6 +232,30 @@ describe('runtimeApi', () => {
     await expect(
       listRuntimeThreads('http://127.0.0.1:8000', { workspace_id: 'personal' }),
     ).rejects.toThrow('加载会话线程列表失败（HTTP 404）')
+  })
+
+  it('deletes runtime threads through desktop runtime API', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          thread_id: 'thr_1',
+          deleted: true,
+          status: 'deleted',
+          reason: 'deleted',
+          default_thread: false,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const result = await deleteRuntimeThread('http://127.0.0.1:8000', 'thr_1')
+
+    expect(result.deleted).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/desktop/threads/thr_1',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
   })
 
   it('logs into Danxi session and patches WebVPN cookie through runtime API', async () => {

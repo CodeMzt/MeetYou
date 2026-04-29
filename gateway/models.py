@@ -369,6 +369,15 @@ class RuntimeThreadResponse(BaseModel):
     summary: str = ""
 
 
+class RuntimeThreadDeleteResponse(BaseModel):
+    ok: bool = True
+    thread_id: str
+    deleted: bool = False
+    status: str = ""
+    reason: str = ""
+    default_thread: bool = False
+
+
 class RuntimeSessionCreateRequest(BaseModel):
     thread_id: str
     active_workspace_id: str = ""

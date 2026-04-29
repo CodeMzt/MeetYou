@@ -19,6 +19,7 @@ import type {
   OperatorSourceProfile,
   RuntimeSession,
   RuntimeThread,
+  RuntimeThreadDeleteResult,
   RuntimeUsageSnapshot,
   RuntimeWorkspace,
 } from './types'
@@ -410,6 +411,21 @@ export async function listRuntimeThreads(
   })
   const response = await fetchWithAuth(url.toString())
   return readJsonOrThrow<RuntimeThread[]>(response, '加载会话线程列表失败')
+}
+
+export async function deleteRuntimeThread(
+  baseUrl: string,
+  threadId: string,
+  payload: { force?: boolean } = {},
+): Promise<RuntimeThreadDeleteResult> {
+  const url = new URL(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}`))
+  if (payload.force) {
+    url.searchParams.set('force', 'true')
+  }
+  const response = await fetchWithAuth(url.toString(), {
+    method: 'DELETE',
+  })
+  return readJsonOrThrow<RuntimeThreadDeleteResult>(response, '删除会话线程失败')
 }
 
 export async function createRuntimeSession(

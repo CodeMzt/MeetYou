@@ -26,6 +26,7 @@ from tools.office_tools import OfficeTools
 from tools.scheduler_tools import SchedulerTools
 from tools.scenario_tools import ScenarioTools
 from tools.study_tools import StudyTools
+from tools.thread_tools import ThreadTools
 from tools.web_search import WebSearchTools
 from tools.workspace_tools import WorkspaceTools
 
@@ -50,6 +51,7 @@ _ORDER_REQUIRED_TOOLS = {
     "send_delivery_message",
     "set_delivery_preference",
     "emit_progress_notice",
+    "manage_threads",
     "restart_core",
     "danxi_login",
     "danxi_logout",
@@ -114,6 +116,7 @@ class ToolsManager:
         self._endpoint_tools = EndpointTools()
         self._lightweight_tools = LightweightTools()
         self._scheduler_tools = SchedulerTools()
+        self._thread_tools = ThreadTools()
         self._workspace_tools = WorkspaceTools()
         self._scenario_tools = ScenarioTools(
             memory,
@@ -140,6 +143,7 @@ class ToolsManager:
             "get_background_status": getattr(system_tools_module, "get_background_status", None),
             "manage_heartbeat_settings": getattr(system_tools_module, "manage_heartbeat_settings", None),
             "manage_model_reasoning": getattr(system_tools_module, "manage_model_reasoning", None),
+            "manage_threads": self._thread_tools.manage_threads,
             "restart_core": getattr(system_tools_module, "restart_core", None),
             "emit_progress_notice": getattr(system_tools_module, "emit_progress_notice", None),
             "list_active_endpoints": self._endpoint_tools.list_active_endpoints,
@@ -271,6 +275,7 @@ class ToolsManager:
     def set_core_domain(self, core_domain) -> None:
         self._attachment_tools.set_core_domain(core_domain)
         self._scheduler_tools.set_core_domain(core_domain)
+        self._thread_tools.set_core_domain(core_domain)
         self._workspace_tools.set_core_domain(core_domain)
         self._endpoint_tools.set_core_domain(core_domain)
 
@@ -279,6 +284,7 @@ class ToolsManager:
 
     def set_runtime_bridge(self, *, session_manager=None, gateway_getter=None) -> None:
         self._workspace_tools.set_runtime(session_manager=session_manager, gateway_getter=gateway_getter)
+        self._thread_tools.set_runtime(session_manager=session_manager, gateway_getter=gateway_getter)
         self._endpoint_tools.set_runtime(gateway_getter=gateway_getter)
 
     def set_state_backends(self, *, office_backend=None, study_backend=None, danxi_backend=None) -> None:

@@ -267,6 +267,37 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "metadata": {"action_risk": "local_write", "safe_parallel": False},
         },
     },
+    "manage_threads": {
+        "type": "function",
+        "function": {
+            "name": "manage_threads",
+            "description": (
+                "List, create, switch, or delete Core-owned V4 conversation threads. "
+                "Switch publishes a client thread switch event when the current endpoint is subscribed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "create", "switch", "delete"],
+                        "description": "Thread action.",
+                        "default": "list",
+                    },
+                    "thread_id": {"type": "string", "description": "Target thread id for switch/delete.", "default": ""},
+                    "title": {"type": "string", "description": "Title for create.", "default": ""},
+                    "workspace_id": {"type": "string", "description": "Workspace id. Defaults to current workspace or personal.", "default": ""},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+                    "switch_after_create": {"type": "boolean", "description": "After create, ask the current endpoint to switch to the new thread.", "default": False},
+                    "force": {"type": "boolean", "description": "Allow deleting a default thread. Use only after explicit user confirmation.", "default": False},
+                    "reason": {"type": "string", "description": "Optional human-readable reason.", "default": ""},
+                    "session_id": {"type": "string", "description": "Current runtime session id; normally inferred.", "default": ""},
+                },
+                "required": ["action"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
     "manage_scheduled_jobs": {
         "type": "function",
         "function": {

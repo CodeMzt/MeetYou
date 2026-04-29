@@ -52,6 +52,15 @@ export interface RuntimeThread {
   summary: string
 }
 
+export interface RuntimeThreadDeleteResult {
+  ok: boolean
+  thread_id: string
+  deleted: boolean
+  status: string
+  reason: string
+  default_thread: boolean
+}
+
 export interface RuntimeSession {
   session_id: string
   thread_id: string
@@ -227,6 +236,8 @@ export type EndpointWsEvent =
   | { kind: 'human_input_requested'; sessionId: string; payload: HumanInputRequestPayload }
   | { kind: 'human_input_resolved'; sessionId: string; requestId: string; answerText: string; selectedOption?: string }
   | { kind: 'workspace_changed'; threadId: string; sessionId: string; activeWorkspaceId: string; workspaceId: string }
+  | { kind: 'thread_switched'; threadId: string; sessionId: string; targetThreadId: string; workspaceId: string }
+  | { kind: 'thread_deleted'; threadId: string; sessionId: string; deletedThreadId: string; fallbackThreadId: string; workspaceId: string }
   | {
       kind: 'operation_updated'
       threadId: string
