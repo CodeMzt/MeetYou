@@ -229,190 +229,22 @@ async def setup_app_runtime(app) -> None:
 
 
 async def start_external_endpoint_providers(app) -> None:
-    await _start_external_endpoint_provider(
-        app,
-        provider_name="feishu",
-        enabled_key="enable_feishu_bot",
-        starter=_start_feishu_endpoint_provider,
-    )
-    await _start_external_endpoint_provider(
-        app,
-        provider_name="meetwechat",
-        enabled_key="enable_meetwechat_client",
-        starter=_start_meetwechat_endpoint_provider,
-    )
-
-
-async def _start_external_endpoint_provider(app, *, provider_name: str, enabled_key: str, starter) -> None:
-    if not app.config.get_bool(enabled_key):
-        return
-    try:
-        await starter(app)
-        logger.info("%s endpoint provider started.", provider_name)
-    except Exception:
-        logger.exception(
-            "%s endpoint provider failed to start; Core will keep supervising this external endpoint.",
-            provider_name,
-        )
-        await _close_external_endpoint_provider(app, provider_name=provider_name)
-        _schedule_external_endpoint_provider_recovery(
-            app,
-            provider_name=provider_name,
-            enabled_key=enabled_key,
-            starter=starter,
-        )
-
-
-def _external_endpoint_provider_tasks(app) -> dict[str, asyncio.Task]:
-    tasks = getattr(app, "_external_endpoint_provider_tasks", None)
-    if not isinstance(tasks, dict):
-        tasks = {}
-        setattr(app, "_external_endpoint_provider_tasks", tasks)
-    return tasks
-
-
-def _external_endpoint_shutdown_requested(app) -> bool:
-    shutdown_event = getattr(getattr(app, "event_bus", None), "shutdown_event", None)
-    if shutdown_event is None:
-        return False
-    is_set = getattr(shutdown_event, "is_set", None)
-    return bool(is_set()) if callable(is_set) else False
-
-
-def _schedule_external_endpoint_provider_recovery(app, *, provider_name: str, enabled_key: str, starter) -> None:
-    tasks = _external_endpoint_provider_tasks(app)
-    existing = tasks.get(provider_name)
-    if existing is not None and not existing.done():
-        return
-    tasks[provider_name] = asyncio.create_task(
-        _recover_external_endpoint_provider(
-            app,
-            provider_name=provider_name,
-            enabled_key=enabled_key,
-            starter=starter,
-        ),
-        name=f"meetyou-{provider_name}-endpoint-provider-supervisor",
-    )
-
-
-async def _recover_external_endpoint_provider(app, *, provider_name: str, enabled_key: str, starter) -> None:
-    try:
-        delay = float(getattr(app, "_external_endpoint_provider_retry_initial_delay_seconds", 5.0))
-    except (TypeError, ValueError):
-        delay = 5.0
-    try:
-        max_delay = float(getattr(app, "_external_endpoint_provider_retry_max_delay_seconds", 60.0))
-    except (TypeError, ValueError):
-        max_delay = 60.0
-    try:
-        while not _external_endpoint_shutdown_requested(app):
-            await asyncio.sleep(max(delay, 0.0))
-            if not app.config.get_bool(enabled_key):
-                return
-            try:
-                await starter(app)
-                logger.info("%s endpoint provider recovered and started.", provider_name)
-                return
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("%s endpoint provider recovery attempt failed.", provider_name)
-                await _close_external_endpoint_provider(app, provider_name=provider_name)
-                delay = min(max(delay * 2, 1.0), max_delay)
-    finally:
-        tasks = _external_endpoint_provider_tasks(app)
-        current = asyncio.current_task()
-        if tasks.get(provider_name) is current:
-            tasks.pop(provider_name, None)
+    provider_commands = {
+        "enable_feishu_bot": "python -m endpoint_providers.feishu",
+        "enable_meetwechat_client": "python -m endpoint_providers.meetwechat",
+    }
+    for enabled_key, command in provider_commands.items():
+        if app.config.get_bool(enabled_key):
+            logger.info(
+                "%s is enabled, but external channels are no longer started inside Core. Start it separately with `%s`.",
+                enabled_key,
+                command,
+            )
 
 
 async def stop_external_endpoint_providers(app) -> None:
-    tasks = _external_endpoint_provider_tasks(app)
-    pending = [task for task in tasks.values() if task is not None and not task.done()]
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-    tasks.clear()
-    await _close_external_endpoint_provider(app, provider_name="feishu")
-    await _close_external_endpoint_provider(app, provider_name="meetwechat")
-
-
-async def _start_feishu_endpoint_provider(app) -> None:
-    if app.config.get_bool("enable_feishu_bot"):
-        from sensors.feishu_input_adapter import FeishuInputAdapter
-        from sensors.feishu_output_adapter import FeishuOutputAdapter
-
-        app.feishu_output = FeishuOutputAdapter(app.config)
-        await app.feishu_output.init()
-        app.feishu_input = FeishuInputAdapter(
-            app.event_bus,
-            app.session_manager,
-            app.config,
-            output_adapter=app.feishu_output,
-        )
-        app._register_feishu_broadcast_targets()
-        await app.feishu_input.run()
-        logger.info("Feishu Bot is connected through the V4 Endpoint/Delivery chain.")
-
-
-async def _start_meetwechat_endpoint_provider(app) -> None:
-    if app.config.get_bool("enable_meetwechat_client"):
-        from adapters.meetwechat_client import DEFAULT_MEETWECHAT_BASE_URL, MeetWeChatClient
-        from sensors.meetwechat_adapter import (
-            DEFAULT_STATE_FILE,
-            MeetWeChatInputAdapter,
-            MeetWeChatOutputService,
-            MeetWeChatStateStore,
-        )
-
-        wechat_client = MeetWeChatClient(
-            base_url=str(app.config.get("meetwechat_base_url") or DEFAULT_MEETWECHAT_BASE_URL),
-        )
-        wechat_state_store = MeetWeChatStateStore(
-            str(app.config.get("meetwechat_state_file") or DEFAULT_STATE_FILE),
-            flush_interval_ms=int(app.config.get("meetwechat_state_flush_interval_ms") or 500),
-        )
-        app.wechat_output = MeetWeChatOutputService(
-            config=app.config,
-            client=wechat_client,
-            state_store=wechat_state_store,
-        )
-        app.wechat_input = MeetWeChatInputAdapter(
-            app.event_bus,
-            app.session_manager,
-            app.config,
-            client=wechat_client,
-            state_store=wechat_state_store,
-            output_adapter=app.wechat_output,
-        )
-        await app.wechat_input.run()
-        logger.info("MeetWeChat endpoint is connected through the V4 Endpoint/Delivery chain.")
-
-
-async def _close_external_endpoint_provider(app, *, provider_name: str) -> None:
-    if provider_name == "feishu":
-        if app.feishu_input is not None:
-            await _close_external_endpoint_component(app.feishu_input, "feishu_input")
-            app.feishu_input = None
-        if app.feishu_output is not None:
-            await _close_external_endpoint_component(app.feishu_output, "feishu_output")
-            app.feishu_output = None
-        return
-    if provider_name == "meetwechat":
-        if app.wechat_input is not None:
-            await _close_external_endpoint_component(app.wechat_input, "wechat_input")
-            app.wechat_input = None
-        if app.wechat_output is not None:
-            await _close_external_endpoint_component(app.wechat_output, "wechat_output")
-            app.wechat_output = None
-
-
-async def _close_external_endpoint_component(component, label: str) -> None:
-    try:
-        await component.close()
-    except Exception:
-        logger.warning("Failed to close partial external endpoint component %s", label, exc_info=True)
+    del app
+    return
 
 
 def build_runtime_processors(app) -> tuple[Any, ...]:

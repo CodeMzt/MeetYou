@@ -152,6 +152,103 @@ meetyou.endpoint.ws.v4
 - endpoint capabilities
 - host / transport metadata
 
+### 外接 Endpoint Provider 协议
+
+外接 Provider 是独立进程，不由 Core 生命周期启动。Core 只负责 `/runtime/*`、`GET /endpoint/ws`、Endpoint/Address 状态、Delivery fan-out、ToolRouter 调度和 Outbox 重试。Provider 崩溃或重启不应阻塞 Core 启动。
+
+认证支持：
+
+- `Authorization: Bearer <MEETYOU_CLIENT_ACCESS_TOKEN>`
+- `X-API-Key: <MEETYOU_CLIENT_ACCESS_TOKEN>`
+
+连接顺序：
+
+1. `GET /endpoint/ws` 建立 WebSocket，schema 固定为 `meetyou.endpoint.ws.v4`。
+2. 发送 `endpoint.hello`，声明 provider、endpoint、workspace、roles、`supports_markdown`。
+3. 发送 `endpoint.capabilities.snapshot`，声明可执行 tool key。
+4. 发送 `endpoint.ready`，然后按需发送 `endpoint.heartbeat`。
+5. 需要接收线程事件时发送 `subscription.start`；需要暴露 Feishu/WeChat 群聊等 provider 内部目的地时发送 `endpoint.addresses.snapshot` 或 `endpoint.address.upsert`。
+
+`supports_markdown` 默认是 `true`。Feishu、WeChatBot、短信、邮件纯文本模板等不支持 Markdown 的 Provider 必须在 `provider`、`endpoints[]` 或 `address.metadata` 中声明 `supports_markdown=false`；Delivery 在投递 `message`、`notice`、`assistant.progress_notice` 和 final run event 前会降级为纯文本。
+
+最小 hello 示例：
+
+```json
+{
+  "schema": "meetyou.endpoint.ws.v4",
+  "type": "endpoint.hello",
+  "message_id": "hello-1",
+  "payload": {
+    "connection_id": "conn-provider-1",
+    "provider": {
+      "provider_type": "wechat",
+      "provider_id": "wechat-provider",
+      "display_name": "WeChat Provider",
+      "transport_profile": "external_ws",
+      "supports_markdown": false
+    },
+    "endpoints": [
+      {
+        "endpoint_id": "wechat.provider.ui",
+        "endpoint_type": "wechat_ui",
+        "roles": ["input", "output"],
+        "workspace_ids": ["personal"],
+        "supports_markdown": false
+      }
+    ]
+  }
+}
+```
+
+最小能力与地址示例：
+
+```json
+{
+  "schema": "meetyou.endpoint.ws.v4",
+  "type": "endpoint.capabilities.snapshot",
+  "endpoint_id": "wechat.provider.ui",
+  "payload": {
+    "endpoint_id": "wechat.provider.ui",
+    "capabilities": [
+      {
+        "tool_key": "send_delivery_message",
+        "risk_level": "write",
+        "requires_confirmation": false,
+        "enabled": true
+      }
+    ]
+  }
+}
+```
+
+```json
+{
+  "schema": "meetyou.endpoint.ws.v4",
+  "type": "endpoint.address.upsert",
+  "endpoint_id": "wechat.provider.ui",
+  "payload": {
+    "endpoint_id": "wechat.provider.ui",
+    "address": {
+      "address_id": "addr.wechat.group.example",
+      "provider_type": "wechat",
+      "address_type": "group",
+      "external_ref": "example",
+      "display_name": "Example Group",
+      "workspace_ids": ["personal"],
+      "status": "sendable",
+      "supports_markdown": false,
+      "metadata": { "supports_markdown": false }
+    }
+  }
+}
+```
+
+禁止事项：
+
+- 不要连接或恢复 `/client/ws`。
+- 不要发送 `source_client_id` / `target_client_id`。
+- 不要把 provider 内部聊天对象建成 Client；它们必须是 `EndpointAddress`。
+
 ## Tool 模型
 
 所有工具调用都先经 ToolRouter 解析 ExecutionTarget，再由对应 executor 执行：
@@ -190,6 +287,7 @@ service_runtime/      Core 生产运行入口
 endpoint_tool_sdk/    Endpoint protocol / runtime SDK 正式入口
 desktop_client/       桌面本地后端与 Endpoint tool runtime
 edge_client/          边缘 Endpoint Provider runtime
+endpoint_providers/  Feishu / WeChatBot 等独立外部 Endpoint Provider runtime
 meetyou-ui/           Electron + React 桌面端
 tools/                Core tool 集合
 adapters/             LLM 与外部服务适配器
@@ -271,6 +369,8 @@ python main.py service
 python main.py cil
 python main.py desktop-client
 python main.py edge-client
+python -m endpoint_providers.feishu
+python -m endpoint_providers.meetwechat
 ```
 
 Launcher：
@@ -295,6 +395,8 @@ exit
 python -m service_runtime
 python -m desktop_client
 python -m edge_client
+python -m endpoint_providers.feishu
+python -m endpoint_providers.meetwechat
 ```
 
 桌面主链默认顺序：
@@ -309,6 +411,7 @@ service -> UI -> desktop backend(由 UI 托管) -> desktop provider session -> /
 
 ```powershell
 python -m compileall core gateway tools desktop_client edge_client endpoint_tool_sdk service_runtime main.py endpoint_tool_protocol.py
+python -m compileall endpoint_providers
 python -m unittest tests.test_runtime_entrypoints tests.test_config_manager
 ```
 
@@ -356,4 +459,4 @@ scripts\manual-acceptance.cmd start
 
 - V4 当前线：Core-owned Runtime + Endpoint Routing；`/endpoint/ws`、RunEvent + Delivery fan-out、ToolRouter + ExecutionTarget、Scheduler-owned `system.heartbeat`、SKILL-first workflows；运行态模式收敛为 `general` / `automation` / `danxi`，Procedure 与 V3 Client 兼容路径下线。
 - V4 调度线：`App.scheduler_processor()` 是唯一系统级调度入口；Heart 只执行 Scheduler 调起的单次 `system.heartbeat`，不再拥有重复调度/心跳时钟。真实验收脚本可用 `--desktop-tool-endpoint` 验证本地 Desktop Provider 工具链路。
-- V4 Endpoint 线：Gateway 必须在 Uvicorn ready 后才允许外部 Provider 自连；Feishu / WeChat Provider 由 Core 生命周期监督，单次启动竞态或瞬时失败不能导致 Provider 永久离线。
+- V4 Endpoint 线：Gateway 必须在 Uvicorn ready 后才允许外部 Provider 自连；Feishu / WeChat Provider 是独立 Endpoint Provider 进程，Core 不再硬编码启动或监督外部渠道。
