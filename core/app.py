@@ -11,7 +11,7 @@ import logging
 import os
 import traceback
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 from adapters.base import create_adapter
@@ -71,11 +71,6 @@ def _ensure_utc_datetime(value):
     if getattr(value, "tzinfo", None) is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
-
-if TYPE_CHECKING:
-    from sensors.feishu_input_adapter import FeishuInputAdapter
-    from sensors.feishu_output_adapter import FeishuOutputAdapter
-    from sensors.meetwechat_adapter import MeetWeChatInputAdapter, MeetWeChatOutputService
 
 _CONTEXT_POOL_TOOL_SKIPLIST = {
     "search_memory",
@@ -260,11 +255,6 @@ class App:
         self.db_engine = None
         self.db_session_factory = None
         self.core_services = None
-        self.feishu_input: FeishuInputAdapter | None = None
-        self.feishu_output: FeishuOutputAdapter | None = None
-        self.wechat_input: MeetWeChatInputAdapter | None = None
-        self.wechat_output: MeetWeChatOutputService | None = None
-        self._external_endpoint_provider_tasks: dict[str, asyncio.Task] = {}
         self.proprioceptor = Proprioceptor(self.platform, self.context_manager, self.event_bus)
         self._health_getter = health_getter
         self._telemetry_recorder = telemetry_recorder
@@ -749,26 +739,6 @@ class App:
                 target=EventTarget(kind=TargetKind.BROADCAST.value),
             )
         )
-
-    def _register_feishu_broadcast_targets(self):
-        raw_chat_ids = self.config.get("feishu_broadcast_chat_ids") or []
-        if isinstance(raw_chat_ids, str):
-            chat_ids = [item.strip() for item in raw_chat_ids.split(",") if item.strip()]
-        elif isinstance(raw_chat_ids, list):
-            chat_ids = [str(item).strip() for item in raw_chat_ids if str(item).strip()]
-        else:
-            chat_ids = []
-
-        default_chat_id = self.config.get("feishu_default_chat_id") or ""
-        if default_chat_id:
-            chat_ids.append(str(default_chat_id).strip())
-
-        for chat_id in list(dict.fromkeys(chat_ids)):
-            source = make_source(SourceKind.FEISHU.value, chat_id)
-            self.session_manager.bind_runtime_session(
-                source,
-                session_id=f"feishu:chat:{chat_id}",
-            )
 
     async def _refresh_brain_runtime(self):
         self.main_adapter = create_adapter(self._get_main_provider())
