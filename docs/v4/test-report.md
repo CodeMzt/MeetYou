@@ -1,11 +1,11 @@
 # MeetYou V4 Test Report
 
-Status: local V4 validation, CI, Deploy, remote Core verification, and local Desktop -> remote Core validation passed; external human confirmation pending.
+Status: local V4 validation, CI, Deploy, remote Core verification, local Desktop -> remote Core validation, and external Feishu / WeChatBot human confirmation passed.
 
 ## Build Under Test
 
 - Branch: `main`
-- Commit sha: pending final deployed commit update
+- Functional fix commit sha: `376ff4ce85efa7bb844acd2a67c55b814f9605e5`
 - Local validation date: 2026-04-29
 - Local Core database: `meetyou_v4_local_20260429080852`
 - `.env` note: repository `.env` was not edited; local runs used process-level overrides because `.env` mainly points to remote Core.
@@ -47,23 +47,23 @@ Status: local V4 validation, CI, Deploy, remote Core verification, and local Des
 
 ## Remote Core Verification
 
-- CI status: passed (`CI`, run `25085307121`, commit `5e09a1c4f0c75b65f5a7f588e4f114cd297afea6`)
-- Deploy status: passed (`Deploy MeetYou Core`, run `25085307124`, commit `5e09a1c4f0c75b65f5a7f588e4f114cd297afea6`)
+- CI status: passed (`CI`, run `25089783209`, commit `376ff4ce85efa7bb844acd2a67c55b814f9605e5`)
+- Deploy status: passed (`Deploy MeetYou Core`, run `25089783172`, commit `376ff4ce85efa7bb844acd2a67c55b814f9605e5`)
 - Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `live=true`, `ready=true`, `degraded=false`)
-- Remote Core version / commit sha: passed (`build_info.git_commit=5e09a1c4f0c75b65f5a7f588e4f114cd297afea6`, `branch=main`, `component=core`, `build_time=2026-04-29T00:48:02Z`)
+- Remote Core version / commit sha: passed (`build_info.git_commit=376ff4ce85efa7bb844acd2a67c55b814f9605e5`, `branch=main`, `component=core`, `build_time=2026-04-29T03:43:15Z`)
 
 ## Local Desktop -> Remote Core Real Tests
 
-- Desktop Provider target: local bridge `http://127.0.0.1:38953`, provider id `remote-final-20260429085045`, connected to `https://core.maziteng.cn`
-- Remote acceptance command: passed (`.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://core.maziteng.cn --skip-ui --desktop-tool-endpoint desktop.remote-final-20260429085045.executor --json-out logs\v4-remote-final-acceptance.json`)
-- Conversation / Streaming / `assistant.progress_notice`: passed (marker `V4OK_20260429005204_b2affb`, streaming marker `V4STREAM_20260429005219_d0b827`, thread `thr_9cd9fef334be4320b9f596e12fcc2465`)
-- Real Desktop Provider tool through remote Core: passed (`utility.echo`, target `desktop.remote-final-20260429085045.executor`, operation `op_bf4c160ced1043e4a5190489bd3ef191`, marker `DESKTOP_TOOL_20260429005229_a3937c`)
-- Scheduler / Heartbeat / disconnect-reconnect: passed (`system.heartbeat` interval round-trip, disposable ordinary job `acceptance.v4ok_20260429005204_b2affb`, replay seq `15`)
+- Desktop Provider target: local bridge `http://127.0.0.1:38954`, provider id `remote-hotfix-20260429094734`, connected to `https://core.maziteng.cn`
+- Remote acceptance command: passed with local proxy bypass (`NO_PROXY=core.maziteng.cn,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://core.maziteng.cn --skip-ui --desktop-tool-endpoint desktop.remote-hotfix-20260429094734.executor --json-out logs\v4-remote-feishu-loopfix-acceptance.json`)
+- Conversation / Streaming / `assistant.progress_notice`: passed (marker `V4OK_20260429035007_92927e`, streaming marker `V4STREAM_20260429035009_de4258`, thread `thr_5f379c36d5e748fea1909ff5496d404a`)
+- Real Desktop Provider tool through remote Core: passed (`utility.echo`, target `desktop.remote-hotfix-20260429094734.executor`, operation `op_da45a75ee8594df7ad1e4776140675d4`, marker `DESKTOP_TOOL_20260429035017_035cc0`)
+- Scheduler / Heartbeat / disconnect-reconnect: passed (`system.heartbeat` interval round-trip, disposable ordinary job `acceptance.v4ok_20260429035007_92927e`, replay seq `14`)
 
 ## External Delivery Human Feedback
 
-- Feishu unique real-message test: pending human confirmation
-- WeChatBot unique real-message test: pending human confirmation
+- Feishu unique real-message test: passed. Direct prompt marker `FEISHU_FIX_20260429_115118`; human confirmed receiving MeetYou's automatic reply after replying in Feishu.
+- WeChatBot unique real-message test: passed by human feedback during the same external validation pass; human reported WeChatBot was responding while Feishu was the remaining failing channel.
 - 2026-04-29 follow-up: human reported WeChatBot replied but Feishu did not. Remote endpoint diagnostics showed Feishu endpoint was not connected in the live WebSocket manager while WeChatBot was connected. Follow-up fix adds supervised Feishu long-connection reconnect, truthful live endpoint status (`offline` when not connected), and `delivery.message` fallback handling for non-streaming external final replies with message-id de-duplication.
 - 2026-04-29 Feishu root-cause follow-up: direct Feishu OpenAPI send to the recorded chat returned success and human confirmed receipt, so Feishu credentials, chat id, and outbound API are valid. A synthetic Feishu-type Endpoint connected to remote Core and received `delivery.run_event` plus `delivery.message`, so Runtime / Message / Delivery fan-out is valid for non-streaming external endpoints. The failure was isolated to Feishu inbound long connection startup.
 - Feishu inbound root cause: `lark_oapi` captures an asyncio loop at import time. V4 provider decoupling moved Feishu imports into the async Core lifecycle, so the SDK captured Core's already-running loop and then `client.start()` tried to drive that loop from a worker thread. The fix makes `FeishuWSClient` lazy-load and run the Lark SDK on a provider-owned worker thread with its own event loop, and Runtime now derives source kind from the endpoint provider instead of hardcoding `/runtime/messages` as `web`.
