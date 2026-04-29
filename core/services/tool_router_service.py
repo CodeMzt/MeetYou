@@ -34,6 +34,9 @@ class CoreToolExecutor:
     def register(self, tool_key: str, handler: Callable[[dict[str, Any]], Any]) -> None:
         self._handlers[str(tool_key or "").strip()] = handler
 
+    def has_tool(self, tool_key: str) -> bool:
+        return str(tool_key or "").strip() in self._handlers
+
     async def execute(self, *, tool_key: str, arguments: dict[str, Any]) -> dict[str, Any]:
         handler = self._handlers.get(str(tool_key or "").strip())
         if handler is None:
@@ -41,6 +44,23 @@ class CoreToolExecutor:
         result = handler(dict(arguments or {}))
         if asyncio.iscoroutine(result):
             result = await result
+        if getattr(result, "ok", None) is False:
+            error = getattr(result, "error", None)
+            raise ToolRouterError(
+                str(getattr(error, "code", "") or "core_tool_failed"),
+                str(getattr(error, "message", "") or f"Core tool failed: {tool_key}"),
+                details=dict(getattr(error, "details", {}) or {}),
+                retryable=bool(getattr(error, "retryable", False)),
+            )
+        if getattr(result, "ok", None) is True and hasattr(result, "content"):
+            content = getattr(result, "content", None)
+            data = getattr(content, "data", None)
+            if isinstance(data, dict):
+                return dict(data)
+            if data is not None:
+                return {"result": data}
+            text = str(getattr(content, "text", "") or "").strip()
+            return {"content": text} if text else {}
         return dict(result or {})
 
 
@@ -152,7 +172,7 @@ class ToolRouterService:
             target_type = "external" if provider_type in {"external", "webhook", "feishu", "wechatbot", "email"} else "endpoint"
             return ExecutionTarget(requested_endpoint_id, target_type, endpoint=endpoint, endpoint_capability=capability, offline_policy=offline_policy)
 
-        if normalized_tool_key.startswith("core.") or normalized_tool_key in {"get_current_system_time", "summarize_text"}:
+        if self._core_executor.has_tool(normalized_tool_key) or normalized_tool_key.startswith("core."):
             endpoint = self._endpoint_service.get_by_endpoint_id("core.local")
             return ExecutionTarget("core.local", "core", endpoint=endpoint)
 
