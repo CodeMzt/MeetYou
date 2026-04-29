@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
+from sqlalchemy import or_
+
 from core.db.base import utcnow
 from core.db.models.endpoint import (
     ActorDeliveryPreference,
@@ -389,6 +393,66 @@ class EndpointOutboxRepository(RepositoryBase):
             meta=dict(metadata or {}),
         )
         self.session.add(row)
+        self.session.flush()
+        return row
+
+    def get_by_id(self, row_id) -> EndpointOutbox | None:
+        return self.session.query(EndpointOutbox).filter_by(id=row_id).one_or_none()
+
+    def get_by_outbox_id(self, outbox_id: str) -> EndpointOutbox | None:
+        return self.session.query(EndpointOutbox).filter_by(outbox_id=str(outbox_id or "").strip()).one_or_none()
+
+    def list_due(self, *, target_endpoint_id=None, limit: int = 50, now=None) -> list[EndpointOutbox]:
+        due_at = now or utcnow()
+        query = self.session.query(EndpointOutbox).filter(EndpointOutbox.status.in_(["pending", "retry"]))
+        if target_endpoint_id is not None:
+            query = query.filter_by(target_endpoint_id=target_endpoint_id)
+        query = query.filter(or_(EndpointOutbox.available_at.is_(None), EndpointOutbox.available_at <= due_at))
+        limit = max(1, min(int(limit or 50), 500))
+        return list(query.order_by(EndpointOutbox.available_at.asc(), EndpointOutbox.created_at.asc()).limit(limit).all())
+
+    def mark_inflight(self, *, outbox_id) -> EndpointOutbox | None:
+        row = self.get_by_id(outbox_id)
+        if row is None:
+            return None
+        row.status = "sending"
+        row.attempt_count = int(row.attempt_count or 0) + 1
+        self.session.flush()
+        return row
+
+    def mark_sent(self, *, outbox_id) -> EndpointOutbox | None:
+        row = self.get_by_id(outbox_id)
+        if row is None:
+            return None
+        row.status = "sent"
+        row.last_error = ""
+        self.session.flush()
+        return row
+
+    def reschedule_failure(
+        self,
+        *,
+        outbox_id,
+        error: str,
+        max_attempts: int = 5,
+        base_delay_seconds: int = 2,
+        max_delay_seconds: int = 300,
+    ) -> EndpointOutbox | None:
+        row = self.get_by_id(outbox_id)
+        if row is None:
+            return None
+        attempts = int(row.attempt_count or 0)
+        row.last_error = str(error or "")
+        if attempts >= max(1, int(max_attempts or 1)):
+            row.status = "dead_letter"
+            row.available_at = None
+        else:
+            delay_seconds = min(
+                max(1, int(max_delay_seconds or 300)),
+                max(1, int(base_delay_seconds or 2)) * (2 ** max(0, attempts - 1)),
+            )
+            row.status = "retry"
+            row.available_at = utcnow() + timedelta(seconds=delay_seconds)
         self.session.flush()
         return row
 

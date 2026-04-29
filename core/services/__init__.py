@@ -8,6 +8,7 @@ from core.services.actor_service import ActorService
 from core.services.capability_service import CapabilityService
 from core.services.config_state_service import ConfigStateService
 from core.services.context_pool_service import ContextPoolService
+from core.services.delivery_queue import DatabaseDeliveryQueueBackend, DeliveryQueueBackend
 from core.services.delivery_service import DeliveryService
 from core.services.endpoint_service import (
     ActorDeliveryPreferenceService,
@@ -76,8 +77,10 @@ __all__ = [
     "CapabilityService",
     "ConfigStateService",
     "ContextPoolService",
+    "DatabaseDeliveryQueueBackend",
     "CoreServices",
     "DeliveryAttemptService",
+    "DeliveryQueueBackend",
     "DeliveryService",
     "EndpointCapabilityService",
     "EndpointAddressService",
