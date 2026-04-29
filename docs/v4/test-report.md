@@ -2,6 +2,20 @@
 
 Status: local V4 validation, CI, Deploy, remote Core verification, local Desktop -> remote Core validation, and external Feishu / WeChatBot human confirmation passed.
 
+## 2026-04-29 V4 Optimization / External Provider Deploy Addendum
+
+- Commit sha: `82bdb8849915451baf85f6a641a1b10e92162f3d`
+- Scope: implemented the V4 optimization batch for reasoning controls, markdown-aware endpoint delivery, thread-first UI, Delivery Outbox, ToolRouter cache/batch routing, namespaced RuntimeStateStore, and external Feishu / WeChatBot Endpoint Provider decoupling. Follow-up deploy fixes added provider systemd units and made Core deploy restart optional external providers without blocking Core.
+- Local focused backend tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_endpoint_provider_protocols tests.test_config_manager tests.test_meetwechat_adapter tests.test_feishu_output_adapter`, 66 tests).
+- Local compile check: passed (`.venv\Scripts\python.exe -m compileall clients core sensors endpoint_providers`).
+- CI status: passed (`CI`, run `25110659977`, commit `82bdb8849915451baf85f6a641a1b10e92162f3d`).
+- Deploy status: passed (`Deploy MeetYou Core`, run `25110659925`, commit `82bdb8849915451baf85f6a641a1b10e92162f3d`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=82bdb8849915451baf85f6a641a1b10e92162f3d`, `branch=main`, `build_time=2026-04-29T13:07:43Z`).
+- Remote endpoint status after deploy: `desktop.mzt-desktop-client.executor` online, `desktop.mzt-desktop-client.ui` online, `feishu.provider.ui` online, and `wechat.provider.ui` online.
+- Remote Core + local Desktop real acceptance: passed (`logs\v4-remote-provider-deploy-acceptance.json`, marker `V4OK_20260429130949_3a305f`, streaming marker `V4STREAM_20260429130949_7b2f81`, real Desktop tool marker `DESKTOP_TOOL_20260429130956_1443d7`, replay seq `17`).
+- Root cause for Feishu / WeChatBot no-response report: V4 correctly removed external adapter startup from Core lifecycle, but deployment still only restarted `meetyou-core.service`; therefore external provider processes were offline. The first deploy follow-up installed provider systemd units, the second added non-interactive sudo, and the third aligned provider `User/Group` with the running Core service user.
+- External human feedback: passed. Human sent `FEISHU_PROVIDER_20260429_2111` and `WECHAT_PROVIDER_20260429_2111`; both Feishu and WeChatBot returned automatic replies.
+
 ## 2026-04-29 ToolRouter Core Tool / Feishu Root-Cause Addendum
 
 - Commit sha: `3546f8fbce8f4102091105bac98bceea43038327`
