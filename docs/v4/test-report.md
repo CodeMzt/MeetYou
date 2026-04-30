@@ -2,6 +2,21 @@
 
 Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
 
+## 2026-04-30 Desktop Reply Control / Heartbeat Streaming Addendum
+
+- Functional commit sha: `de103e1957dd564ad2ce3dcd0a48d01e3107a225`.
+- Scope: restored Desktop UI `stop` / `regenerate` reply controls by adding the V4 Runtime HTTP entrypoint `POST /runtime/sessions/{session_id}/reply-control` and proxying it through `/desktop/sessions/{session_id}/reply-control`. The UI no longer sends bare control payloads over `/endpoint/ws`, avoiding `expected meetyou.endpoint.ws.v4` endpoint-frame errors.
+- Heartbeat UI fix: Desktop chat state now treats `heartbeat`, `initializing`, and `shutting_down` as non-streaming statuses for existing assistant turns, so heartbeat output does not leave the UI stuck in an output state.
+- Local focused backend test: passed (`.venv\Scripts\python.exe -m unittest tests.test_gateway_runtime_api`, 15 tests).
+- Local frontend typecheck: passed (`npm run typecheck`).
+- Local frontend tests: passed (`npm run test`, 21 files / 87 tests).
+- Local desktop rebuild: passed in order (`scripts\build-desktop-backend.ps1 -SkipInstall`, then `npm run build`). Backend executable: `meetyou-ui\resources\desktop-backend\desktop_client\desktop_client.exe`; installer: `meetyou-ui\release\MeetYou Setup 1.0.0.exe`.
+- CI status: passed (`CI`, run `25165729420`, commit `de103e1957dd564ad2ce3dcd0a48d01e3107a225`).
+- Deploy status: passed (`Deploy MeetYou Core`, run `25165729374`, commit `de103e1957dd564ad2ce3dcd0a48d01e3107a225`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=de103e1957dd564ad2ce3dcd0a48d01e3107a225`, `branch=main`, `build_time=2026-04-30T12:37:47Z`).
+- Local Desktop -> remote Core real acceptance: not rerun for this focused UI/runtime control fix.
+- External Feishu / WeChatBot human confirmation: not rerun for this focused UI/runtime control fix.
+
 ## 2026-04-30 Endpoint Thread Deletion Rebind Addendum
 
 - Commit sha: `53cfdb5545dabdc8c116eb9b152b3fe746da2801`.
