@@ -191,6 +191,8 @@ class SkillRecord:
     applicable_modes: list[str] = field(default_factory=list)
     scenarios: list[str] = field(default_factory=list)
     recommended_tools: list[str] = field(default_factory=list)
+    editable: bool = False
+    source: str = "builtin"
 
     def to_dict(self, *, include_content: bool = False) -> dict[str, Any]:
         payload = {
@@ -199,6 +201,8 @@ class SkillRecord:
             "title": self.title,
             "summary": self.summary,
             "storage_path": self.path,
+            "editable": self.editable,
+            "source": self.source,
             "applicable_modes": list(self.applicable_modes),
             "scenarios": list(self.scenarios),
             "recommended_tools": list(self.recommended_tools),
@@ -242,6 +246,8 @@ class SkillRegistryManager:
             applicable_modes=list(payload.get("applicable_modes") or []),
             scenarios=list(payload.get("scenarios") or []),
             recommended_tools=list(payload.get("recommended_tools") or []),
+            editable=False,
+            source="builtin",
         )
 
     def _builtin_reusable_skill_record(self, skill_id: str, *, include_content: bool = False) -> SkillRecord | None:
@@ -260,6 +266,8 @@ class SkillRegistryManager:
             applicable_modes=list(payload.get("applicable_modes") or []),
             scenarios=list(payload.get("scenarios") or []),
             recommended_tools=list(payload.get("recommended_tools") or []),
+            editable=False,
+            source="builtin",
         )
 
     def _parse_project_skill_file(self, path: Path) -> SkillRecord | None:
@@ -282,6 +290,8 @@ class SkillRegistryManager:
             applicable_modes=[str(item).strip() for item in metadata.get("applicable_modes", []) if str(item).strip()],
             scenarios=[str(item).strip() for item in metadata.get("scenarios", []) if str(item).strip()],
             recommended_tools=[str(item).strip() for item in metadata.get("recommended_tools", []) if str(item).strip()],
+            editable=True,
+            source="project",
         )
 
     def _iter_created_skill_records(self) -> list[SkillRecord]:
@@ -358,7 +368,18 @@ class SkillRegistryManager:
                 return record.to_dict(include_content=True)
         return None
 
-    def create_skill(
+    def _created_skill_record(self, skill_id: str) -> SkillRecord | None:
+        normalized_id = _normalize_identifier(skill_id)
+        for record in self._iter_created_skill_records():
+            if record.skill_id == normalized_id:
+                return record
+        return None
+
+    @staticmethod
+    def _normalized_list(values: list[str] | None) -> list[str]:
+        return [str(item).strip() for item in (values or []) if str(item).strip()]
+
+    def _render_skill_file(
         self,
         *,
         skill_id: str,
@@ -368,15 +389,10 @@ class SkillRegistryManager:
         recommended_tools: list[str] | None = None,
         applicable_modes: list[str] | None = None,
         scenarios: list[str] | None = None,
-        source: str = "client",
-    ) -> dict[str, Any]:
-        del source
+    ) -> str:
         normalized_id = _normalize_identifier(skill_id or title)
         if not normalized_id or normalized_id.startswith("mode:"):
             raise ValueError("skill_id must resolve to a reusable skill identifier.")
-        if self.load_skill(normalized_id) is not None:
-            raise ValueError(f"skill already exists: {normalized_id}")
-
         normalized_title = str(title or normalized_id).strip()
         normalized_summary = str(summary or "").strip()
         normalized_content = str(content or "").strip()
@@ -389,11 +405,11 @@ class SkillRegistryManager:
             "id": normalized_id,
             "title": normalized_title,
             "summary": normalized_summary,
-            "recommended_tools": [str(item).strip() for item in (recommended_tools or []) if str(item).strip()],
-            "applicable_modes": [str(item).strip() for item in (applicable_modes or []) if str(item).strip()],
-            "scenarios": [str(item).strip() for item in (scenarios or []) if str(item).strip()],
+            "recommended_tools": self._normalized_list(recommended_tools),
+            "applicable_modes": self._normalized_list(applicable_modes),
+            "scenarios": self._normalized_list(scenarios),
         }
-        rendered = "\n".join(
+        return "\n".join(
             [
                 "[Skill Metadata]",
                 json.dumps(payload, ensure_ascii=False, indent=2),
@@ -403,10 +419,198 @@ class SkillRegistryManager:
                 "",
             ]
         )
+
+    def _write_skill_file(
+        self,
+        *,
+        skill_id: str,
+        title: str,
+        summary: str,
+        content: str,
+        recommended_tools: list[str] | None = None,
+        applicable_modes: list[str] | None = None,
+        scenarios: list[str] | None = None,
+        path: Path | None = None,
+    ) -> dict[str, Any]:
+        normalized_id = _normalize_identifier(skill_id or title)
+        rendered = self._render_skill_file(
+            skill_id=normalized_id,
+            title=title,
+            summary=summary,
+            content=content,
+            recommended_tools=recommended_tools,
+            applicable_modes=applicable_modes,
+            scenarios=scenarios,
+        )
         self._skill_dir.mkdir(parents=True, exist_ok=True)
-        skill_path = self._skill_dir / f"{_display_file_name(normalized_id)}.md"
+        skill_path = path or self._skill_dir / f"{_display_file_name(normalized_id)}.md"
         skill_path.write_text(rendered, encoding="utf-8")
-        created = self.load_skill(normalized_id)
-        if created is None:
-            raise ValueError(f"failed to load created skill: {normalized_id}")
-        return created
+        loaded = self.load_skill(normalized_id)
+        if loaded is None:
+            raise ValueError(f"failed to load skill: {normalized_id}")
+        return loaded
+
+    def create_skill(
+        self,
+        *,
+        skill_id: str,
+        title: str,
+        summary: str,
+        content: str,
+        recommended_tools: list[str] | None = None,
+        applicable_modes: list[str] | None = None,
+        scenarios: list[str] | None = None,
+        overwrite: bool = False,
+        source: str = "client",
+    ) -> dict[str, Any]:
+        del source
+        normalized_id = _normalize_identifier(skill_id or title)
+        if not normalized_id or normalized_id.startswith("mode:"):
+            raise ValueError("skill_id must resolve to a reusable skill identifier.")
+        existing = self.load_skill(normalized_id)
+        existing_created = self._created_skill_record(normalized_id)
+        if existing is not None and not overwrite:
+            raise ValueError(f"skill already exists: {normalized_id}")
+        if existing is not None and existing_created is None:
+            raise ValueError(f"built-in or mode skill cannot be overwritten: {normalized_id}")
+        target_path = Path(existing_created.path) if existing_created is not None else None
+        candidate_path = target_path or self._skill_dir / f"{_display_file_name(normalized_id)}.md"
+        if candidate_path.exists() and existing_created is None and not overwrite:
+            raise ValueError(f"skill file already exists: {candidate_path}")
+        return self._write_skill_file(
+            skill_id=normalized_id,
+            title=title,
+            summary=summary,
+            content=content,
+            recommended_tools=recommended_tools,
+            applicable_modes=applicable_modes,
+            scenarios=scenarios,
+            path=candidate_path,
+        )
+
+    def update_skill(
+        self,
+        *,
+        skill_id: str,
+        title: str | None = None,
+        summary: str | None = None,
+        content: str | None = None,
+        recommended_tools: list[str] | None = None,
+        applicable_modes: list[str] | None = None,
+        scenarios: list[str] | None = None,
+    ) -> dict[str, Any]:
+        record = self._created_skill_record(skill_id)
+        if record is None:
+            raise ValueError(f"only project-created reusable skills can be updated: {_normalize_identifier(skill_id)}")
+        return self._write_skill_file(
+            skill_id=record.skill_id,
+            title=record.title if title is None else title,
+            summary=record.summary if summary is None else summary,
+            content=record.content if content is None else content,
+            recommended_tools=record.recommended_tools if recommended_tools is None else recommended_tools,
+            applicable_modes=record.applicable_modes if applicable_modes is None else applicable_modes,
+            scenarios=record.scenarios if scenarios is None else scenarios,
+            path=Path(record.path),
+        )
+
+    def rename_skill(
+        self,
+        *,
+        skill_id: str,
+        new_skill_id: str,
+        title: str | None = None,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        record = self._created_skill_record(skill_id)
+        if record is None:
+            raise ValueError(f"only project-created reusable skills can be renamed: {_normalize_identifier(skill_id)}")
+        normalized_new_id = _normalize_identifier(new_skill_id)
+        if not normalized_new_id or normalized_new_id.startswith("mode:"):
+            raise ValueError("new_skill_id must resolve to a reusable skill identifier.")
+        if normalized_new_id == record.skill_id:
+            return self.update_skill(skill_id=record.skill_id, title=title) if title is not None else record.to_dict(include_content=True)
+
+        existing = self.load_skill(normalized_new_id)
+        existing_created = self._created_skill_record(normalized_new_id)
+        if existing is not None and not overwrite:
+            raise ValueError(f"target skill already exists: {normalized_new_id}")
+        if existing is not None and existing_created is None:
+            raise ValueError(f"built-in or mode skill cannot be overwritten: {normalized_new_id}")
+
+        target_path = self._skill_dir / f"{_display_file_name(normalized_new_id)}.md"
+        if target_path.exists() and existing_created is None and not overwrite:
+            raise ValueError(f"target skill file already exists: {target_path}")
+        if existing_created is not None and Path(existing_created.path) != Path(record.path):
+            Path(existing_created.path).unlink(missing_ok=True)
+
+        renamed = self._write_skill_file(
+            skill_id=normalized_new_id,
+            title=record.title if title is None else title,
+            summary=record.summary,
+            content=record.content,
+            recommended_tools=record.recommended_tools,
+            applicable_modes=record.applicable_modes,
+            scenarios=record.scenarios,
+            path=target_path,
+        )
+        Path(record.path).unlink(missing_ok=True)
+        return renamed
+
+    def delete_skill(self, skill_id: str) -> dict[str, Any]:
+        record = self._created_skill_record(skill_id)
+        if record is None:
+            raise ValueError(f"only project-created reusable skills can be deleted: {_normalize_identifier(skill_id)}")
+        payload = record.to_dict(include_content=True)
+        Path(record.path).unlink(missing_ok=True)
+        return payload
+
+    def manage_skill(
+        self,
+        *,
+        action: str,
+        skill_id: str = "",
+        new_skill_id: str = "",
+        title: str | None = None,
+        summary: str | None = None,
+        content: str | None = None,
+        recommended_tools: list[str] | None = None,
+        applicable_modes: list[str] | None = None,
+        scenarios: list[str] | None = None,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action == "create":
+            skill = self.create_skill(
+                skill_id=skill_id,
+                title=title or skill_id,
+                summary=summary or "",
+                content=content or "",
+                recommended_tools=recommended_tools,
+                applicable_modes=applicable_modes,
+                scenarios=scenarios,
+                overwrite=overwrite,
+            )
+            return {"action": "create", "skill": skill}
+        if normalized_action == "update":
+            skill = self.update_skill(
+                skill_id=skill_id,
+                title=title,
+                summary=summary,
+                content=content,
+                recommended_tools=recommended_tools,
+                applicable_modes=applicable_modes,
+                scenarios=scenarios,
+            )
+            return {"action": "update", "skill": skill}
+        if normalized_action == "rename":
+            skill = self.rename_skill(
+                skill_id=skill_id,
+                new_skill_id=new_skill_id,
+                title=title,
+                overwrite=overwrite,
+            )
+            return {"action": "rename", "skill": skill}
+        if normalized_action == "delete":
+            deleted = self.delete_skill(skill_id)
+            return {"action": "delete", "deleted": True, "skill": deleted}
+        raise ValueError("action must be one of create, update, rename, or delete.")

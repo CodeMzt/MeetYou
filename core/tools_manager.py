@@ -172,6 +172,7 @@ class ToolsManager:
             "list_skills": self._scenario_tools.list_skills,
             "load_skill": self._scenario_tools.load_skill,
             "create_skill": self._scenario_tools.create_skill,
+            "manage_skill": self._scenario_tools.manage_skill,
             "list_attachments": self._attachment_tools.list_attachments,
             "read_attachment": self._attachment_tools.read_attachment,
             "delete_attachment": self._attachment_tools.delete_attachment,

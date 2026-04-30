@@ -751,7 +751,7 @@
       "type": "function",
       "function": {
         "name": "create_skill",
-        "description": "Create a new reusable SKILL when no existing SKILL covers a repeated workflow.",
+        "description": "Create a new reusable SKILL when no existing SKILL covers a repeated workflow. Set overwrite=true only to replace an existing project-created SKILL with the same id.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -791,6 +791,10 @@
                 "type": "string"
               }
             },
+            "overwrite": {
+              "type": "boolean",
+              "description": "Replace an existing project-created SKILL with the same id. Built-in and mode SKILLs cannot be overwritten."
+            },
             "inject_context": {
               "type": "boolean"
             }
@@ -800,6 +804,80 @@
             "summary",
             "content"
           ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "manage_skill",
+        "description": "Create, update, rename, or delete project-created reusable SKILLs. Built-in and mode SKILLs are read-only and can only be loaded/viewed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "create",
+                "update",
+                "rename",
+                "delete"
+              ]
+            },
+            "skill_id": {
+              "type": "string"
+            },
+            "new_skill_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "recommended_tools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "applicable_modes": {
+              "type": "array",
+              "description": "V4 public assistant modes only: general, automation, or danxi.",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "general",
+                  "automation",
+                  "danxi"
+                ]
+              }
+            },
+            "scenarios": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "overwrite": {
+              "type": "boolean",
+              "description": "For create/rename, allow replacing an existing project-created target SKILL. Built-in and mode SKILLs cannot be replaced."
+            },
+            "inject_context": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        "metadata": {
+          "action_risk": "local_write",
+          "safe_parallel": false
         }
       }
     },

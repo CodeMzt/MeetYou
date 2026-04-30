@@ -5,7 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  ExternalLink,
+  FileText,
   FolderOpen,
   KeyRound,
   RefreshCcw,
@@ -18,7 +18,7 @@ import GlassSelect from '../components/GlassSelect'
 import { useConfig } from '../hooks/useConfig'
 import { fetchWithAuth, readErrorMessage } from '../apiClient'
 import { fetchRuntimeBuildInfo, type RuntimeBuildInfoSnapshot } from '../buildInfo'
-import type { ConfigFormValue, ResolvedConfigField, SkillListItem } from '../types'
+import type { ConfigFormValue, ResolvedConfigField, SkillDetail, SkillListItem } from '../types'
 import { DEFAULT_BASE_URL } from '../windowBridge'
 
 type SettingsTab = 'config' | 'skills'
@@ -307,7 +307,9 @@ function SkillsView({ baseUrl = DEFAULT_BASE_URL }: { baseUrl?: string }) {
   const [skills, setSkills] = useState<SkillListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [openFeedback, setOpenFeedback] = useState('')
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState('')
+  const [selectedSkill, setSelectedSkill] = useState<SkillDetail | null>(null)
   const [query, setQuery] = useState('')
   const [skillType, setSkillType] = useState<SkillTypeFilter>('all')
 
@@ -341,15 +343,20 @@ function SkillsView({ baseUrl = DEFAULT_BASE_URL }: { baseUrl?: string }) {
   )
 
   const handleOpenSkill = async (skill: SkillListItem) => {
-    setOpenFeedback('')
-    const invoke = getIpcInvoke()
-    if (!invoke) {
-      setOpenFeedback('当前环境无法调用系统默认应用。')
-      return
-    }
-    const result = await invoke('open-local-path', skill.storage_path)
-    if (!result?.ok) {
-      setOpenFeedback(String(result?.error || '无法打开该 SKILL 文件。'))
+    try {
+      setDetailLoading(true)
+      setDetailError('')
+      const response = await fetchWithAuth(`${baseUrl}/desktop/skills/${encodeURIComponent(skill.id)}`)
+      if (!response.ok) {
+        const failure = await readErrorMessage(response, '获取 SKILL 详情失败')
+        throw new Error(failure.message)
+      }
+      const data = await response.json()
+      setSelectedSkill(data as SkillDetail)
+    } catch (fetchError) {
+      setDetailError(fetchError instanceof Error ? fetchError.message : '获取 SKILL 详情失败')
+    } finally {
+      setDetailLoading(false)
     }
   }
 
@@ -389,12 +396,14 @@ function SkillsView({ baseUrl = DEFAULT_BASE_URL }: { baseUrl?: string }) {
         </div>
       ) : null}
 
-      {openFeedback ? (
+      {detailError ? (
         <div className="settings-banner warning">
           <AlertCircle size={15} />
-          <span>{openFeedback}</span>
+          <span>{detailError}</span>
         </div>
       ) : null}
+
+      {detailLoading ? <div className="settings-loading">正在加载 SKILL 详情…</div> : null}
 
       {loading ? <div className="settings-loading">正在加载 SKILL…</div> : null}
 
@@ -415,16 +424,70 @@ function SkillsView({ baseUrl = DEFAULT_BASE_URL }: { baseUrl?: string }) {
                 <BookOpen size={15} />
                 <strong>{skill.title || skill.id}</strong>
                 <span className="skill-type-pill">{skill.skill_type === 'mode' ? '模式' : '可复用'}</span>
+                {skill.editable ? <span className="skill-type-pill">可编辑</span> : null}
               </div>
               <p>{skill.summary || '未提供摘要。'}</p>
               <div className="skill-list-path" title={skill.storage_path}>
                 {skill.storage_path}
               </div>
             </div>
-            <ExternalLink size={15} />
+            <FileText size={15} />
           </button>
         ))}
       </div>
+
+      {selectedSkill ? (
+        <div className="skill-detail-overlay" role="dialog" aria-modal="true" aria-label="SKILL 详情">
+          <div className="skill-detail-panel">
+            <div className="skill-detail-header">
+              <div>
+                <div className="settings-kicker">SKILL 详情</div>
+                <h3>{selectedSkill.title || selectedSkill.id}</h3>
+              </div>
+              <button
+                className="directory-list-remove"
+                type="button"
+                onClick={() => setSelectedSkill(null)}
+                title="关闭"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="skill-detail-meta">
+              <span>{selectedSkill.skill_type === 'mode' ? '模式 SKILL' : '可复用 SKILL'}</span>
+              <span>{selectedSkill.editable ? '项目可编辑' : '只读'}</span>
+              {selectedSkill.source ? <span>{selectedSkill.source}</span> : null}
+            </div>
+
+            <p className="skill-detail-summary">{selectedSkill.summary || '未提供摘要。'}</p>
+
+            <div className="skill-detail-path" title={selectedSkill.storage_path}>
+              {selectedSkill.storage_path}
+            </div>
+
+            <div className="skill-detail-grid">
+              <div>
+                <span>适用模式</span>
+                <strong>{selectedSkill.applicable_modes.length ? selectedSkill.applicable_modes.join('、') : '未声明'}</strong>
+              </div>
+              <div>
+                <span>场景</span>
+                <strong>{selectedSkill.scenarios.length ? selectedSkill.scenarios.join('、') : '未声明'}</strong>
+              </div>
+              <div>
+                <span>推荐工具</span>
+                <strong>{selectedSkill.recommended_tools.length ? selectedSkill.recommended_tools.join('、') : '未声明'}</strong>
+              </div>
+            </div>
+
+            <div className="skill-detail-content">
+              <div className="skill-detail-content-title">内容</div>
+              <pre>{selectedSkill.content || '该 SKILL 暂无内容。'}</pre>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

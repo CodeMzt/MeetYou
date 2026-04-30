@@ -1177,6 +1177,7 @@ class ScenarioTools:
         recommended_tools: list[str] | None = None,
         applicable_modes: list[str] | None = None,
         scenarios: list[str] | None = None,
+        overwrite: bool = False,
         inject_context: bool = False,
         session_id: str = "",
         source=None,
@@ -1206,6 +1207,7 @@ class ScenarioTools:
                 recommended_tools=recommended_tools,
                 applicable_modes=applicable_modes,
                 scenarios=scenarios,
+                overwrite=overwrite,
             )
         except Exception as exc:
             payload = {
@@ -1228,5 +1230,78 @@ class ScenarioTools:
             "created": True,
             "injected_into_context": injected_into_context,
             "skill": created,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    async def manage_skill(
+        self,
+        action: str,
+        skill_id: str = "",
+        new_skill_id: str = "",
+        title: str | None = None,
+        summary: str | None = None,
+        content: str | None = None,
+        recommended_tools: list[str] | None = None,
+        applicable_modes: list[str] | None = None,
+        scenarios: list[str] | None = None,
+        overwrite: bool = False,
+        inject_context: bool = False,
+        session_id: str = "",
+        source=None,
+        activity_callback: ActivityCallback | None = None,
+        route_context: dict[str, Any] | None = None,
+    ) -> str:
+        del session_id, source
+        normalized_action = _normalize_text(action).lower()
+        await self._emit_activity(
+            activity_callback,
+            "routing",
+            f"Managing skill with action: {normalized_action}",
+            {"tool_name": "manage_skill", "action": normalized_action, "skill_id": _normalize_text(skill_id)},
+        )
+        if self._mode_manager is None:
+            payload = {
+                "tool": "manage_skill",
+                "action": normalized_action,
+                "ok": False,
+                "error": "skill_registry_unavailable",
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        try:
+            result = self._mode_manager.manage_skill(
+                action=normalized_action,
+                skill_id=skill_id,
+                new_skill_id=new_skill_id,
+                title=title,
+                summary=summary,
+                content=content,
+                recommended_tools=recommended_tools,
+                applicable_modes=applicable_modes,
+                scenarios=scenarios,
+                overwrite=overwrite,
+            )
+        except Exception as exc:
+            payload = {
+                "tool": "manage_skill",
+                "action": normalized_action,
+                "ok": False,
+                "error": str(exc),
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
+        skill = result.get("skill") if isinstance(result, dict) else None
+        injected_into_context = False
+        if inject_context and isinstance(route_context, dict) and isinstance(skill, dict) and normalized_action != "delete":
+            loaded_skills = [str(item).strip() for item in route_context.get("loaded_skills", []) if str(item).strip()]
+            if skill.get("id") not in loaded_skills:
+                loaded_skills.append(str(skill.get("id")))
+                route_context["loaded_skills"] = loaded_skills
+            injected_into_context = True
+
+        payload = {
+            "tool": "manage_skill",
+            "ok": True,
+            "injected_into_context": injected_into_context,
+            **dict(result or {}),
         }
         return json.dumps(payload, ensure_ascii=False, indent=2)

@@ -539,8 +539,35 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(created["created"])
             self.assertIn("release_note_triage", route_context["loaded_skills"])
 
+            updated = json.loads(
+                await tools.manage_skill(
+                    action="update",
+                    skill_id="release_note_triage",
+                    content="Extract breaking changes, owners, and release risks.",
+                    route_context=route_context,
+                )
+            )
+            self.assertTrue(updated["ok"])
+            self.assertIn("release risks", updated["skill"]["content"])
+
+            renamed = json.loads(
+                await tools.manage_skill(
+                    action="rename",
+                    skill_id="release_note_triage",
+                    new_skill_id="release_triage",
+                    inject_context=True,
+                    route_context=route_context,
+                )
+            )
+            self.assertTrue(renamed["ok"])
+            self.assertEqual(renamed["skill"]["id"], "release_triage")
+            self.assertIn("release_triage", route_context["loaded_skills"])
+
             loaded_created = json.loads(await tools.load_skill("release_note_triage", route_context=route_context))
-            self.assertEqual(Path(loaded_created["skill"]["storage_path"]).parent, skill_dir.resolve())
+            self.assertFalse(loaded_created["loaded"])
+
+            loaded_renamed = json.loads(await tools.load_skill("release_triage", route_context=route_context))
+            self.assertEqual(Path(loaded_renamed["skill"]["storage_path"]).parent, skill_dir.resolve())
 
 
 if __name__ == "__main__":
