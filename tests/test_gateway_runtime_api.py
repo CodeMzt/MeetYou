@@ -419,6 +419,105 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(len(message_service.rows), 1)
         self.assertEqual(event_bus.inbound_queue.qsize(), 1)
 
+    def test_runtime_user_message_records_context_pool_item(self):
+        class _MessageService:
+            def __init__(self):
+                self.rows = []
+
+            def get_by_endpoint_message_id(self, *, thread_id, endpoint_message_id, origin_endpoint_id=None, role="user"):
+                return None
+
+            def create_message(self, **kwargs):
+                row = SimpleNamespace(
+                    id=f"row-{len(self.rows) + 1}",
+                    message_id=f"msg-{len(self.rows) + 1}",
+                    channel=kwargs.get("channel", "message"),
+                    status=kwargs.get("status", "completed"),
+                    created_at=None,
+                    **kwargs,
+                )
+                self.rows.append(row)
+                return row
+
+        class _ContextPoolService:
+            def __init__(self):
+                self.calls = []
+
+            def record_message(self, **kwargs):
+                self.calls.append(dict(kwargs))
+                return SimpleNamespace(context_id="ctx-1")
+
+        workspace = SimpleNamespace(
+            id="workspace-row",
+            workspace_id="personal",
+            title="Personal",
+            status="active",
+            base_mode="general",
+            prompt_overlay="",
+            default_execution_target="core.local",
+            meta={},
+        )
+        thread = SimpleNamespace(
+            id="thread-row",
+            thread_id="thr-1",
+            title="Thread",
+            status="active",
+            summary="",
+            home_workspace_id=workspace.id,
+            workspace_id=workspace.id,
+            principal_id="principal-row",
+        )
+        session = SimpleNamespace(id="session-row", session_id="sess-1")
+        endpoint = SimpleNamespace(id="endpoint-row", endpoint_id="desktop-app", provider_type="desktop")
+        message_service = _MessageService()
+        context_pool = _ContextPoolService()
+        domain = SimpleNamespace(
+            principal=SimpleNamespace(id="principal-row"),
+            services=SimpleNamespace(
+                workspace=SimpleNamespace(
+                    get_by_workspace_id=lambda workspace_id: workspace if workspace_id == "personal" else None,
+                    get_by_id=lambda row_id: workspace if row_id == workspace.id else None,
+                ),
+                thread=SimpleNamespace(get_by_thread_id=lambda thread_id: thread if thread_id == "thr-1" else None),
+                session=SimpleNamespace(get_by_session_id=lambda session_id: session if session_id == "sess-1" else None),
+                endpoint=SimpleNamespace(get_by_endpoint_id=lambda endpoint_id: endpoint if endpoint_id == "desktop-app" else None),
+                message=message_service,
+                context_pool=context_pool,
+            )
+        )
+        event_bus = EventBus()
+        gateway = FastAPIGateway(
+            event_bus,
+            SessionManager(),
+            core_domain=domain,
+            access_token=self.access_token,
+        )
+        client = TestClient(gateway.app)
+        self.addCleanup(client.close)
+
+        response = client.post(
+            "/runtime/messages",
+            json={
+                "thread_id": "thr-1",
+                "workspace_id": "personal",
+                "session_id": "sess-1",
+                "endpoint_id": "desktop-app",
+                "endpoint_type": "electron",
+                "content": "remember this thread context",
+                "endpoint_message_id": "endpoint-msg-1",
+            },
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(context_pool.calls), 1)
+        call = context_pool.calls[0]
+        self.assertEqual(call["principal_id"], "principal-row")
+        self.assertEqual(call["message"].content, "remember this thread context")
+        self.assertEqual(call["message"].role, "user")
+        self.assertEqual(call["thread"].thread_id, "thr-1")
+        self.assertEqual(call["session"].session_id, "sess-1")
+
     def test_runtime_message_to_deleted_thread_returns_thread_not_found(self):
         domain = SimpleNamespace(
             services=SimpleNamespace(

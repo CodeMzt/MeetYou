@@ -50,6 +50,14 @@ class ThreadService(ServiceBase):
         with self.session_scope() as session:
             return ThreadRepository(session).get_by_id(row_id)
 
+    def update_summary(self, *, thread_row_id, summary: str, metadata: dict | None = None):
+        with self.session_scope() as session:
+            return ThreadRepository(session).update_summary(
+                thread_row_id=thread_row_id,
+                summary=summary,
+                metadata=metadata,
+            )
+
     def list_threads(self, *, principal_id, workspace_id=None, limit: int = 50):
         with self.session_scope() as session:
             return ThreadRepository(session).list_for_principal(

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from core.context import ContextManager
 from core.runtime_context import bind_event_context, reset_event_context
@@ -80,6 +81,58 @@ class FakeContextPoolService:
                 "created_at": "2026-04-24T00:00:00Z",
             }
         ]
+
+
+class FakeThreadContextThreadService:
+    def __init__(self, summary: str = ""):
+        self.thread = SimpleNamespace(
+            id="thread-row-1",
+            thread_id="thr-1",
+            summary=summary,
+            meta={},
+        )
+        self.updated_summaries: list[dict] = []
+
+    def get_by_thread_id(self, thread_id: str):
+        return self.thread if thread_id == self.thread.thread_id else None
+
+    def update_summary(self, **kwargs):
+        self.updated_summaries.append(dict(kwargs))
+        self.thread.summary = kwargs.get("summary", "")
+        self.thread.meta.update(dict(kwargs.get("metadata") or {}))
+        return self.thread
+
+
+class FakeThreadContextMessageService:
+    def __init__(self):
+        self.window_calls: list[dict] = []
+        self.older_calls: list[dict] = []
+        self.old_user = SimpleNamespace(
+            message_id="msg-old-user",
+            role="user",
+            content="previous user turn",
+            meta={},
+            active_workspace_id=None,
+        )
+        self.old_assistant = SimpleNamespace(
+            message_id="msg-old-assistant",
+            role="assistant",
+            content="previous assistant turn",
+            meta={},
+            active_workspace_id=None,
+        )
+
+    def load_thread_context_window(self, **kwargs):
+        self.window_calls.append(dict(kwargs))
+        return {
+            "messages": [self.old_user, self.old_assistant],
+            "total_count": 2,
+            "older_count": 0,
+        }
+
+    def list_older_thread_context_messages(self, **kwargs):
+        self.older_calls.append(dict(kwargs))
+        return []
 
 
 class DummyMemory(Memory):
@@ -270,6 +323,29 @@ class MemoryRedesignTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context_pool.calls[0]["active_workspace_id"], "desktop-main")
         self.assertEqual(context_pool.calls[0]["session_id"], "desktop-session")
         self.assertGreater(plan["breakdown"]["context_pool"], 0)
+
+    async def test_thread_context_hydration_uses_persisted_thread_messages(self):
+        thread_service = FakeThreadContextThreadService(summary="stored thread summary")
+        message_service = FakeThreadContextMessageService()
+        context_manager = ContextManager(self.memory, adapter=SummaryAdapter(), event_bus=None)
+        context_manager.set_thread_context_services(
+            thread_service=thread_service,
+            message_service=message_service,
+        )
+
+        payload = await context_manager.hydrate_thread_context(
+            session_id="sess-1",
+            thread_id="thr-1",
+            current_message_id="msg-current",
+            current_endpoint_message_id="endpoint-current",
+            model="gpt-5.4",
+        )
+
+        self.assertEqual(payload["summary"], "stored thread summary")
+        self.assertEqual([message["content"] for message in payload["messages"]], ["previous user turn", "previous assistant turn"])
+        self.assertEqual(message_service.window_calls[0]["before_message_id"], "msg-current")
+        self.assertEqual(message_service.window_calls[0]["exclude_endpoint_message_id"], "endpoint-current")
+        self.assertEqual(message_service.window_calls[0]["limit"], 24)
 
     async def test_trim_history_persists_summary_without_writing_system_message_into_history(self):
         adapter = SummaryAdapter("updated summary")

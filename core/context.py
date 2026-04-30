@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from core.runtime_context import get_event_context
@@ -14,6 +15,8 @@ from core.runtime_context import get_event_context
 logger = logging.getLogger("meetyou.context")
 
 _DEFAULT_PROVIDER_FAMILY = "generic"
+DEFAULT_THREAD_CONTEXT_MESSAGE_LIMIT = 24
+DEFAULT_THREAD_SUMMARY_MESSAGE_LIMIT = 80
 _PROVIDER_LENGTH_POLICIES: dict[str, dict[str, Any]] = {
     "openai": {
         "reserve_ratio": 0.72,
@@ -53,6 +56,8 @@ class ContextManager:
         self._event_bus = event_bus
         self._context_pool_service = None
         self._context_pool_principal_getter = None
+        self._thread_service = None
+        self._message_service = None
         self.proprioception_info: dict = {
             "ui_info": "",
             "running_apps": [],
@@ -65,6 +70,10 @@ class ContextManager:
     def set_context_pool_service(self, service, *, principal_getter=None) -> None:
         self._context_pool_service = service
         self._context_pool_principal_getter = principal_getter
+
+    def set_thread_context_services(self, *, thread_service=None, message_service=None) -> None:
+        self._thread_service = thread_service
+        self._message_service = message_service
 
     async def load_context(self, session_id: str = "") -> str:
         return await self._memory.load_working_summary(session_id=session_id)
@@ -306,6 +315,150 @@ class ContextManager:
                 + json.dumps({"items": rows}, ensure_ascii=False)
             ),
             "metadata": {"context_layer": "context_pool", "transient": True},
+        }
+
+    @staticmethod
+    def _thread_message_metadata(row) -> dict[str, Any]:
+        metadata = dict(getattr(row, "meta", {}) or {})
+        metadata.update(
+            {
+                "context_layer": "thread_history",
+                "persisted_thread_history": True,
+                "thread_context_message_id": str(getattr(row, "message_id", "") or ""),
+            }
+        )
+        active_workspace_id = getattr(row, "active_workspace_id", None)
+        if active_workspace_id is not None:
+            metadata["active_workspace_row_id"] = str(active_workspace_id)
+        return metadata
+
+    @classmethod
+    def _thread_message_to_model_message(cls, row) -> dict[str, Any]:
+        return {
+            "role": str(getattr(row, "role", "") or "user"),
+            "content": str(getattr(row, "content", "") or ""),
+            "metadata": cls._thread_message_metadata(row),
+        }
+
+    @classmethod
+    def _rows_to_summary_messages(cls, rows: list[Any]) -> list[dict[str, Any]]:
+        return [
+            cls._thread_message_to_model_message(row)
+            for row in rows
+            if str(getattr(row, "content", "") or "").strip()
+            and str(getattr(row, "role", "") or "") in {"user", "assistant"}
+        ]
+
+    @staticmethod
+    def _thread_summary_meta(*, older_count: int, summarized_count: int, message_limit: int) -> dict[str, Any]:
+        return {
+            "context_summary": {
+                "older_message_count": max(0, int(older_count or 0)),
+                "summarized_message_count": max(0, int(summarized_count or 0)),
+                "summary_message_limit": max(1, int(message_limit or DEFAULT_THREAD_SUMMARY_MESSAGE_LIMIT)),
+                "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            }
+        }
+
+    async def hydrate_thread_context(
+        self,
+        *,
+        session_id: str = "",
+        thread_id: str = "",
+        current_message_id: str = "",
+        current_endpoint_message_id: str = "",
+        exact_message_limit: int = DEFAULT_THREAD_CONTEXT_MESSAGE_LIMIT,
+        summary_message_limit: int = DEFAULT_THREAD_SUMMARY_MESSAGE_LIMIT,
+        summary_session=None,
+        api_url: str = "",
+        api_key: str = "",
+        model: str = "",
+    ) -> dict[str, Any]:
+        del session_id
+        thread_service = self._thread_service
+        message_service = self._message_service
+        public_thread_id = str(thread_id or "").strip()
+        if not public_thread_id or thread_service is None or message_service is None:
+            return {}
+
+        thread = thread_service.get_by_thread_id(public_thread_id)
+        if thread is None:
+            return {}
+        thread_row_id = getattr(thread, "id", None)
+        if thread_row_id is None:
+            return {}
+
+        exact_limit = max(1, int(exact_message_limit or DEFAULT_THREAD_CONTEXT_MESSAGE_LIMIT))
+        summary_limit = max(1, int(summary_message_limit or DEFAULT_THREAD_SUMMARY_MESSAGE_LIMIT))
+        window_loader = getattr(message_service, "load_thread_context_window", None)
+        if not callable(window_loader):
+            return {}
+        window = window_loader(
+            thread_id=thread_row_id,
+            before_message_id=current_message_id,
+            exclude_endpoint_message_id=current_endpoint_message_id,
+            limit=exact_limit,
+        )
+        recent_rows = list((window or {}).get("messages") or [])
+        older_count = int((window or {}).get("older_count", 0) or 0)
+        exact_messages = self._rows_to_summary_messages(recent_rows)
+
+        summary = str(getattr(thread, "summary", "") or "").strip()
+        meta = dict(getattr(thread, "meta", {}) or {})
+        summary_meta = meta.get("context_summary") if isinstance(meta.get("context_summary"), dict) else {}
+        summarized_count = int((summary_meta or {}).get("summarized_message_count", 0) or 0)
+        summary_stale = bool(older_count > 0 and (not summary or summarized_count < older_count))
+        if summary_stale:
+            older_loader = getattr(message_service, "list_older_thread_context_messages", None)
+            older_rows = (
+                older_loader(
+                    thread_id=thread_row_id,
+                    before_message_id=current_message_id,
+                    exclude_endpoint_message_id=current_endpoint_message_id,
+                    offset=exact_limit,
+                    limit=summary_limit,
+                )
+                if callable(older_loader)
+                else []
+            )
+            older_messages = self._rows_to_summary_messages(list(older_rows or []))
+            if older_messages:
+                try:
+                    next_summary, _ = await self._summarize(
+                        older_messages,
+                        summary_session,
+                        api_url,
+                        api_key,
+                        model,
+                        existing_summary=summary,
+                    )
+                    next_summary = self._normalize_conversation_summary(next_summary)
+                except Exception:
+                    logger.warning("Thread context summary generation failed", exc_info=True)
+                    next_summary = ""
+                if next_summary:
+                    summary = next_summary
+                    updater = getattr(thread_service, "update_summary", None)
+                    if callable(updater):
+                        try:
+                            updater(
+                                thread_row_id=thread_row_id,
+                                summary=summary,
+                                metadata=self._thread_summary_meta(
+                                    older_count=older_count,
+                                    summarized_count=max(older_count, summarized_count),
+                                    message_limit=summary_limit,
+                                ),
+                            )
+                        except Exception:
+                            logger.warning("Thread context summary persistence failed", exc_info=True)
+
+        return {
+            "thread_id": public_thread_id,
+            "summary": summary,
+            "messages": exact_messages,
+            "older_count": older_count,
+            "hydrated_message_count": len(exact_messages),
         }
 
     async def build_context_plan(
