@@ -69,6 +69,15 @@ class EndpointRegistryService(ServiceBase):
         with self.session_scope() as session:
             return EndpointRepository(session).set_status(endpoint_id=endpoint_id, status=status)
 
+    def update_heartbeat(self, *, endpoint_id: str, status: str = "ready", metrics: dict | None = None, payload: dict | None = None):
+        with self.session_scope() as session:
+            return EndpointRepository(session).update_heartbeat(
+                endpoint_id=endpoint_id,
+                status=status,
+                metrics=metrics,
+                payload=payload,
+            )
+
 
 class EndpointConnectionService(ServiceBase):
     def upsert_connection(
@@ -140,12 +149,14 @@ class EndpointCapabilityService(ServiceBase):
 
     def replace_snapshot(self, *, endpoint_row_id, endpoint_public_id: str, capabilities: list[dict]) -> int:
         count = 0
+        active_tool_keys: set[str] = set()
         with self.session_scope() as session:
             repo = EndpointCapabilityRepository(session)
             for item in capabilities or []:
                 tool_key = str(item.get("tool_key") or item.get("name") or "").strip()
                 if not tool_key:
                     continue
+                active_tool_keys.add(tool_key)
                 raw_capability_id = str(item.get("capability_id") or item.get("tool_id") or "").strip()
                 if raw_capability_id and not raw_capability_id.startswith("endpoint."):
                     raw_capability_id = ""
@@ -176,6 +187,7 @@ class EndpointCapabilityService(ServiceBase):
                     metadata=metadata,
                 )
                 count += 1
+            repo.disable_missing_for_endpoint(endpoint_id=endpoint_row_id, active_tool_keys=active_tool_keys)
         return count
 
     def get_by_capability_id(self, capability_id: str):

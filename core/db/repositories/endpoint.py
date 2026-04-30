@@ -78,6 +78,26 @@ class EndpointRepository(RepositoryBase):
         self.session.flush()
         return row
 
+    def update_heartbeat(self, *, endpoint_id: str, status: str = "ready", metrics: dict | None = None, payload: dict | None = None) -> Endpoint | None:
+        row = self.get_by_endpoint_id(endpoint_id)
+        if row is None:
+            return None
+        normalized_status = str(status or "").strip()
+        if normalized_status:
+            row.status = normalized_status
+        merged = dict(row.meta or {})
+        heartbeat = {
+            "status": row.status,
+            "metrics": dict(metrics or {}),
+            "payload": dict(payload or {}),
+            "last_seen_at": utcnow().isoformat(),
+        }
+        merged["heartbeat"] = heartbeat
+        merged["heartbeat_metrics"] = dict(metrics or {})
+        row.meta = merged
+        self.session.flush()
+        return row
+
 
 class EndpointConnectionRepository(RepositoryBase):
     def upsert(
@@ -204,6 +224,19 @@ class EndpointCapabilityRepository(RepositoryBase):
             .order_by(EndpointCapability.tool_key.asc())
             .all()
         )
+
+    def disable_missing_for_endpoint(self, *, endpoint_id, active_tool_keys: set[str]) -> int:
+        rows = self.list_for_endpoint(endpoint_id=endpoint_id)
+        disabled = 0
+        for row in rows:
+            tool_key = str(getattr(row, "tool_key", "") or "").strip()
+            if tool_key in active_tool_keys or not bool(getattr(row, "enabled", True)):
+                continue
+            row.enabled = False
+            disabled += 1
+        if disabled:
+            self.session.flush()
+        return disabled
 
 
 class EndpointAddressRepository(RepositoryBase):
