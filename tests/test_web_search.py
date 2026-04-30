@@ -126,9 +126,12 @@ class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(raw)
 
         self.assertEqual(payload["search_backend"], "tavily")
+        self.assertEqual(payload["provider_backends"], ["tavily"])
         self.assertEqual(payload["topic"], "news")
         self.assertEqual(payload["sources"][0]["reader"], "tavily_extract")
         self.assertEqual(payload["sources"][0]["id"], 1)
+        self.assertEqual(payload["evidence_ledger"][0]["source_id"], 1)
+        self.assertEqual(payload["evidence_ledger"][0]["verification_status"], "read")
         self.assertIn("Answer first", payload["citation_style"])
         self.assertEqual(manager.calls[0][0], "tavily-search")
         self.assertEqual(manager.calls[0][1]["max_results"], 5)
@@ -371,6 +374,105 @@ class WebSearchToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manager.max_active_by_tool.get("tavily-extract"), 3)
         self.assertEqual(len(payload["sources"]), 3)
         self.assertEqual([source["id"] for source in payload["sources"]], [1, 2, 3])
+
+    async def test_search_web_fast_mode_reads_one_ranked_source(self):
+        manager = _FakeMCPManager(
+            responses={
+                "tavily-search": [
+                    json.dumps(
+                        {
+                            "answer": "answer",
+                            "results": [
+                                {
+                                    "title": "Blog",
+                                    "url": "https://blog.example.com/post",
+                                    "content": "Secondary coverage",
+                                    "score": 0.1,
+                                },
+                                {
+                                    "title": "Python Docs",
+                                    "url": "https://docs.python.org/3/library/pathlib.html",
+                                    "content": "Official docs",
+                                    "score": 0.1,
+                                },
+                            ],
+                        }
+                    )
+                ],
+                "tavily-extract": [
+                    json.dumps(
+                        {
+                            "results": [
+                                {
+                                    "url": "https://docs.python.org/3/library/pathlib.html",
+                                    "title": "Python Docs",
+                                    "raw_content": "Official pathlib documentation " * 20,
+                                }
+                            ]
+                        }
+                    )
+                ],
+            },
+            tool_map={"tavily-search": "tavily_web", "tavily-extract": "tavily_web"},
+        )
+        tools = WebSearchTools(manager)
+
+        raw = await tools.search_web("pathlib docs", max_results=2, quality="fast", source_profile="tech_updates", official_only=True)
+        payload = json.loads(raw)
+
+        self.assertEqual(len(payload["sources"]), 1)
+        self.assertEqual(payload["sources"][0]["domain"], "docs.python.org")
+        self.assertTrue(payload["sources"][0]["is_primary_source"])
+        self.assertEqual(payload["additional_results"][0]["domain"], "blog.example.com")
+        self.assertEqual(manager.calls[1][1]["urls"], ["https://docs.python.org/3/library/pathlib.html"])
+
+    async def test_search_web_deduplicates_canonical_urls(self):
+        manager = _FakeMCPManager(
+            responses={
+                "tavily-search": [
+                    json.dumps(
+                        {
+                            "results": [
+                                {
+                                    "title": "First",
+                                    "url": "https://www.example.com/page#intro",
+                                    "content": "Snippet one",
+                                    "score": 0.1,
+                                },
+                                {
+                                    "title": "Second",
+                                    "url": "https://example.com/page/",
+                                    "content": "Snippet two",
+                                    "score": 0.9,
+                                },
+                            ]
+                        }
+                    )
+                ],
+                "tavily-extract": [
+                    json.dumps(
+                        {
+                            "results": [
+                                {
+                                    "url": "https://example.com/page/",
+                                    "title": "Second",
+                                    "raw_content": "Canonical content " * 20,
+                                }
+                            ]
+                        }
+                    )
+                ],
+            },
+            tool_map={"tavily-search": "tavily_web", "tavily-extract": "tavily_web"},
+        )
+        tools = WebSearchTools(manager)
+
+        raw = await tools.search_web("canonical example", max_results=2, quality="balanced")
+        payload = json.loads(raw)
+
+        self.assertEqual(len(payload["sources"]), 1)
+        self.assertEqual(payload["sources"][0]["title"], "Second")
+        self.assertEqual(payload["sources"][0]["canonical_url"], "https://example.com/page")
 
 
 if __name__ == "__main__":

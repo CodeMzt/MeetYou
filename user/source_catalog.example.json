@@ -9,40 +9,83 @@
       "default_freshness": "workspace",
       "primary_domains": []
     },
+    "study_materials": {
+      "label": "Study Materials",
+      "description": "Prefer local study materials, notes, and user-provided references.",
+      "preferred_source_ids": [],
+      "official_only": false,
+      "default_freshness": "coursework",
+      "primary_domains": []
+    },
     "tech_updates": {
       "label": "Tech Updates",
       "description": "Official release notes, changelogs, standards, and vendor updates.",
-      "preferred_source_ids": [
-        "github_releases_official"
-      ],
+      "preferred_source_ids": ["github_releases_official", "python_docs"],
       "official_only": true,
       "default_freshness": "high",
-      "primary_domains": [
-        "github.com",
-        "developer.mozilla.org",
-        "docs.python.org"
-      ],
-      "match_any": [
-        "latest",
-        "recent",
-        "release",
-        "changelog",
-        "framework",
-        "sdk",
-        "api",
-        "model"
-      ]
+      "primary_domains": ["github.com", "developer.mozilla.org", "docs.python.org", "w3.org", "whatwg.org", "ietf.org"],
+      "match_any": ["latest", "recent", "release", "changelog", "framework", "sdk", "api", "model"]
+    },
+    "policy_cn": {
+      "label": "China Policy",
+      "description": "Chinese government policy, regulation, and statistics sources.",
+      "preferred_source_ids": ["china_gov"],
+      "official_only": true,
+      "default_freshness": "high",
+      "primary_domains": ["gov.cn", "stats.gov.cn"],
+      "match_any": ["gov.cn", "policy", "regulation", "statistics"]
+    },
+    "policy_global": {
+      "label": "Global Policy",
+      "description": "Government and regulator sources outside China.",
+      "preferred_source_ids": ["sec_edgar", "who_official"],
+      "official_only": true,
+      "default_freshness": "high",
+      "primary_domains": ["who.int", "fda.gov", "sec.gov", "edgar.sec.gov"],
+      "match_any": ["policy", "regulation", "government", "fda", "sec", "who", "law"]
+    },
+    "finance_macro": {
+      "label": "Finance / Macro",
+      "description": "Official filings, macro indicators, and financial disclosures.",
+      "preferred_source_ids": ["sec_edgar", "fred_series", "world_bank_data"],
+      "official_only": true,
+      "default_freshness": "high",
+      "primary_domains": ["sec.gov", "edgar.sec.gov", "fred.stlouisfed.org", "federalreserve.gov", "worldbank.org"],
+      "match_any": ["finance", "earnings", "filing", "inflation", "gdp", "stock", "macro"]
+    },
+    "academic_biomed": {
+      "label": "Academic / Biomedical",
+      "description": "Papers, DOI records, PubMed, and biomedical literature.",
+      "preferred_source_ids": ["pubmed", "crossref"],
+      "official_only": true,
+      "default_freshness": "medium",
+      "primary_domains": ["arxiv.org", "pubmed.ncbi.nlm.nih.gov", "doi.org", "crossref.org"],
+      "match_any": ["paper", "doi", "pubmed", "study", "journal", "trial", "research"]
+    },
+    "cyber_threat": {
+      "label": "Cyber Threat",
+      "description": "Official vulnerability and exploitation advisories.",
+      "preferred_source_ids": ["nvd_cve", "cisa_kev"],
+      "official_only": true,
+      "default_freshness": "high",
+      "primary_domains": ["nvd.nist.gov", "cisa.gov"],
+      "match_any": ["cve", "vulnerability", "exploit", "kev", "security"]
+    },
+    "campus_forum": {
+      "label": "Campus Forum",
+      "description": "Campus forum posts, subscriptions, and low-risk community information.",
+      "preferred_source_ids": [],
+      "official_only": false,
+      "default_freshness": "high",
+      "primary_domains": ["forum.fduhole.com", "auth.fduhole.com", "webvpn.fudan.edu.cn"],
+      "match_any": ["danxi", "fduhole", "forum", "campus"]
     }
   },
   "context_limits": [
     {
       "provider": "openai",
-      "host_patterns": [
-        "api.openai.com"
-      ],
-      "model_patterns": [
-        "gpt-5.4*"
-      ],
+      "host_patterns": ["api.openai.com"],
+      "model_patterns": ["gpt-5.4*"],
       "context_limit_tokens": 400000,
       "source": "config_override",
       "confidence": "high",
@@ -50,14 +93,8 @@
     },
     {
       "provider": "ollama",
-      "host_patterns": [
-        "localhost",
-        "127.0.0.1",
-        "*"
-      ],
-      "model_patterns": [
-        "*"
-      ],
+      "host_patterns": ["localhost", "127.0.0.1", "*"],
+      "model_patterns": ["*"],
       "context_limit_tokens": 131072,
       "source": "config_override",
       "confidence": "medium",
@@ -77,19 +114,147 @@
       "primary_source": true,
       "freshness": "high",
       "auth": [],
-      "rate_limit": {
-        "requests_per_minute": 30
-      },
+      "rate_limit": {"requests_per_minute": 30},
+      "request_defaults": {"site_query": "github.com"},
+      "capabilities": {"search": true, "track_updates": true},
+      "fallback_policy": {"on_error": "continue"}
+    },
+    {
+      "id": "python_docs",
+      "enabled": true,
+      "domain": "docs.python.org",
+      "label": "Python Documentation",
+      "connector_type": "whitelist_page_reader",
+      "profiles": ["tech_updates"],
+      "priority": 80,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "medium",
+      "auth": [],
+      "request_defaults": {"site_query": "docs.python.org"}
+    },
+    {
+      "id": "sec_edgar",
+      "enabled": true,
+      "domain": "sec.gov",
+      "label": "SEC EDGAR",
+      "connector_type": "sec_edgar",
+      "profiles": ["policy_global", "finance_macro"],
+      "priority": 95,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "high",
+      "auth": [],
+      "request_defaults": {"site_query": "sec.gov"}
+    },
+    {
+      "id": "fred_series",
+      "enabled": true,
+      "domain": "fred.stlouisfed.org",
+      "label": "FRED Series Search",
+      "connector_type": "fred",
+      "profiles": ["finance_macro"],
+      "priority": 90,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "high",
+      "auth": [{"type": "query_api_key", "env": "FRED_API_KEY", "param": "api_key"}]
+    },
+    {
+      "id": "world_bank_data",
+      "enabled": true,
+      "domain": "worldbank.org",
+      "label": "World Bank Data",
+      "connector_type": "world_bank",
+      "profiles": ["finance_macro", "policy_global"],
+      "priority": 70,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "medium",
+      "auth": []
+    },
+    {
+      "id": "pubmed",
+      "enabled": true,
+      "domain": "pubmed.ncbi.nlm.nih.gov",
+      "label": "PubMed",
+      "connector_type": "pubmed_eutils",
+      "profiles": ["academic_biomed"],
+      "priority": 95,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "medium",
+      "auth": [{"type": "query_contact", "env": "PUBMED_EMAIL", "param": "email"}]
+    },
+    {
+      "id": "crossref",
+      "enabled": true,
+      "domain": "crossref.org",
+      "label": "Crossref Works",
+      "connector_type": "crossref_rest",
+      "profiles": ["academic_biomed"],
+      "priority": 85,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "medium",
+      "auth": []
+    },
+    {
+      "id": "nvd_cve",
+      "enabled": true,
+      "domain": "nvd.nist.gov",
+      "label": "NVD CVE API",
+      "connector_type": "nvd_api",
+      "profiles": ["cyber_threat"],
+      "priority": 95,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "high",
+      "auth": [{"type": "header", "env": "NVD_API_KEY", "header": "apiKey"}]
+    },
+    {
+      "id": "cisa_kev",
+      "enabled": true,
+      "domain": "cisa.gov",
+      "label": "CISA KEV Catalog",
+      "connector_type": "cisa_kev",
+      "profiles": ["cyber_threat"],
+      "priority": 90,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "high",
+      "auth": [],
       "request_defaults": {
-        "site_query": "github.com"
-      },
-      "capabilities": {
-        "search": true,
-        "track_updates": true
-      },
-      "fallback_policy": {
-        "on_error": "continue"
+        "endpoint": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
       }
+    },
+    {
+      "id": "china_gov",
+      "enabled": true,
+      "domain": "gov.cn",
+      "label": "China Government Portal",
+      "connector_type": "whitelist_page_reader",
+      "profiles": ["policy_cn"],
+      "priority": 90,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "high",
+      "auth": [],
+      "request_defaults": {"site_query": "gov.cn"}
+    },
+    {
+      "id": "who_official",
+      "enabled": true,
+      "domain": "who.int",
+      "label": "World Health Organization",
+      "connector_type": "whitelist_page_reader",
+      "profiles": ["policy_global", "academic_biomed"],
+      "priority": 80,
+      "credibility": "primary",
+      "primary_source": true,
+      "freshness": "high",
+      "auth": [],
+      "request_defaults": {"site_query": "who.int"}
     }
   ]
 }

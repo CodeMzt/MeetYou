@@ -8,6 +8,7 @@ import json
 import re
 from typing import Any, Awaitable, Callable
 
+from core.source_catalog import normalize_source_profile_name
 from core.tool_runtime.models import ToolCallResult, ToolErrorCategory, ToolSourceType
 from tools.memory_tools import MemoryTools
 from tools.authoritative_sources import AuthoritativeSourceRegistry
@@ -330,22 +331,6 @@ class ScenarioTools:
             return ""
         return _trim_text(context_text, 500)
 
-    def _default_source_profile(self, route_context: dict[str, Any] | None, query: str) -> str:
-        if isinstance(route_context, dict) and route_context.get("source_profile"):
-            return str(route_context["source_profile"])
-        if self._mode_manager is not None:
-            return self._mode_manager.classify_research_source_profile(query)
-        lowered = str(query or "").lower()
-        if any(token in lowered for token in ("paper", "doi", "arxiv", "论文", "文献")):
-            return "academic"
-        if any(token in lowered for token in ("policy", "law", "regulation", "政策", "法规")):
-            return "policy"
-        if any(token in lowered for token in ("finance", "stock", "earnings", "财报", "股票")):
-            return "finance"
-        if any("\u4e00" <= char <= "\u9fff" for char in str(query or "")):
-            return "tech_cn"
-        return "tech_global"
-
     def _classify_source_type(self, url: str) -> str:
         lowered = str(url or "").lower()
         if ".gov" in lowered or "gov.cn" in lowered:
@@ -366,18 +351,31 @@ class ScenarioTools:
             is_primary = self._mode_manager.is_primary_source(url, source_profile)
         else:
             is_primary = False
+        source_id = source.get("source_id") or source.get("id")
+        title = _normalize_text(source.get("title"))
+        credibility = _normalize_text(source.get("credibility") or source.get("credible_level"))
+        if not credibility:
+            credibility = "primary" if is_primary else "secondary"
         return {
-            "source_id": source.get("id"),
-            "title": _normalize_text(source.get("title")),
+            "source_id": source_id,
+            "title": title,
             "url": url,
-            "domain": re.sub(r"^www\.", "", re.sub(r":\d+$", "", re.sub(r"/.*$", "", url.replace("https://", "").replace("http://", "")))),
-            "published_date": _normalize_text(source.get("published_date")),
+            "canonical_url": _normalize_text(source.get("canonical_url")),
+            "domain": _normalize_text(source.get("domain"))
+            or re.sub(r"^www\.", "", re.sub(r":\d+$", "", re.sub(r"/.*$", "", url.replace("https://", "").replace("http://", "")))),
+            "provider": _normalize_text(source.get("provider")),
+            "published_date": _normalize_text(source.get("published_date") or source.get("published_at")),
+            "published_at": _normalize_text(source.get("published_at") or source.get("published_date")),
+            "retrieved_at": _normalize_text(source.get("retrieved_at")),
             "excerpt": _trim_text(source.get("summary") or source.get("snippet"), 320),
             "reader": _normalize_text(source.get("reader")),
             "source_type": self._classify_source_type(url),
-            "credible_level": "primary" if is_primary else "secondary",
+            "credible_level": "primary" if is_primary else credibility,
+            "credibility": "primary" if is_primary else credibility,
             "is_primary_source": is_primary,
-            "citation": f"[{source.get('id')}] {_normalize_text(source.get('title'))}",
+            "rank_score": source.get("rank_score", 0.0),
+            "verification_status": _normalize_text(source.get("verification_status")),
+            "citation": f"[{source_id}] {title}",
         }
 
     def _decorate_research_payload(
@@ -395,17 +393,29 @@ class ScenarioTools:
         ]
         search_payload["source_profile"] = source_profile
         search_payload["evidence"] = evidence
+        search_payload["evidence_ledger"] = evidence
         search_payload["citation_blocks"] = [
             {"source_id": item["source_id"], "citation": item["citation"]}
             for item in evidence
         ]
         return search_payload
 
-    def _default_source_profile(self, route_context: dict[str, Any] | None, query: str) -> str:
+    def _default_source_profile(
+        self,
+        route_context: dict[str, Any] | None,
+        query: str,
+        *,
+        requested_profile: str = "",
+    ) -> str:
+        if requested_profile:
+            return normalize_source_profile_name(requested_profile, fallback="tech_updates")
         if isinstance(route_context, dict) and route_context.get("source_profile"):
-            return str(route_context["source_profile"])
+            return normalize_source_profile_name(str(route_context["source_profile"]), fallback="tech_updates")
         if self._mode_manager is not None:
-            return self._mode_manager.classify_research_source_profile(query)
+            return normalize_source_profile_name(
+                self._mode_manager.classify_research_source_profile(query),
+                fallback="tech_updates",
+            )
         lowered = str(query or "").lower()
         if any(token in lowered for token in ("paper", "doi", "arxiv", "study", "trial", "pubmed")):
             return "academic_biomed"
@@ -433,6 +443,9 @@ class ScenarioTools:
         source_profile: str,
         session_id: str,
         activity_callback: ActivityCallback | None,
+        quality: str = "",
+        official_only: bool | None = None,
+        freshness: str = "",
     ) -> dict[str, Any] | ToolCallResult:
         raw = await self._web_tools.search_web(
             query,
@@ -442,6 +455,9 @@ class ScenarioTools:
                 {"searching": "searching_web"},
             ),
             source_profile=source_profile,
+            quality=quality,
+            official_only=official_only,
+            freshness=freshness,
         )
         if isinstance(raw, ToolCallResult):
             return raw
@@ -460,6 +476,10 @@ class ScenarioTools:
         self,
         query: str,
         goal: str = "",
+        source_profile: str = "",
+        official_only: bool | None = None,
+        freshness: str = "",
+        quality: str = "",
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
@@ -476,13 +496,39 @@ class ScenarioTools:
                 category=ToolErrorCategory.VALIDATION,
                 message="research_topic requires a non-empty query.",
             )
-        source_profile = self._default_source_profile(route_context, normalized_query)
+        url_match = _URL_RE.search(normalized_query)
+        if url_match:
+            page_goal = _normalize_text(goal) or _normalize_text(normalized_query.replace(url_match.group(0), ""))
+            return await self.inspect_page(
+                url_match.group(0),
+                goal=page_goal,
+                source_profile=source_profile,
+                session_id=session_id,
+                activity_callback=activity_callback,
+                route_context=route_context,
+            )
+
+        source_profile = self._default_source_profile(
+            route_context,
+            normalized_query,
+            requested_profile=source_profile,
+        )
+        normalized_quality = str(quality or "").strip().lower()
+        if normalized_quality not in {"fast", "balanced", "deep"}:
+            normalized_quality = "fast"
+        normalized_freshness = _normalize_text(freshness)
 
         await self._emit_activity(
             activity_callback,
             "routing",
             f"Routing request to web research: {normalized_query}",
-            {"tool_name": "research_topic", "source_profile": source_profile},
+            {
+                "tool_name": "research_topic",
+                "source_profile": source_profile,
+                "quality": normalized_quality,
+                "official_only": official_only,
+                "freshness": normalized_freshness,
+            },
         )
         session_context = await self._maybe_load_session_context(
             session_id,
@@ -493,10 +539,12 @@ class ScenarioTools:
 
         authoritative_payload: dict[str, Any] = {}
         if self._can_use_authoritative_catalog():
+            catalog_limit = 3 if normalized_quality == "fast" else 8 if normalized_quality == "deep" else 5
             authoritative_payload = await self._authoritative_sources.search(
                 normalized_query,
                 source_profile=source_profile,
-                limit=5,
+                limit=catalog_limit,
+                official_only=official_only,
                 activity_callback=self._relay_activity(
                     activity_callback,
                     {"searching_web": "searching_web"},
@@ -510,6 +558,9 @@ class ScenarioTools:
                 source_profile=source_profile,
                 session_id=session_id,
                 activity_callback=activity_callback,
+                quality=normalized_quality,
+                official_only=official_only,
+                freshness=normalized_freshness,
             )
 
         if isinstance(fallback_payload, ToolCallResult):
@@ -524,6 +575,9 @@ class ScenarioTools:
                     "query": normalized_query,
                     "goal": _normalize_text(goal),
                     "source_profile": source_profile,
+                    "quality": normalized_quality,
+                    "official_only": official_only,
+                    "freshness": normalized_freshness,
                     "session_context": session_context,
                     "search_error": fallback_error or "Research backends returned no usable results.",
                     "catalog_unavailable": not self._can_use_authoritative_catalog(),
@@ -543,6 +597,9 @@ class ScenarioTools:
                     "partial_failures": authoritative_payload.get("partial_failures", []),
                     "catalog_status": authoritative_payload.get("catalog_status", {}),
                     "catalog_unavailable": authoritative_payload.get("catalog_unavailable", False),
+                    "official_only": official_only,
+                    "freshness": normalized_freshness,
+                    "quality": normalized_quality,
                 },
                 source_profile=source_profile,
             )
@@ -564,9 +621,12 @@ class ScenarioTools:
                 "query": normalized_query,
                 "goal": _normalize_text(goal),
                 "source_profile": source_profile,
+                "quality": normalized_quality,
+                "official_only": official_only,
+                "freshness": normalized_freshness,
                 "session_context": session_context,
                 "search": search_payload,
-                "answer_style": "Lead with the answer, then cite sourced claims inline like [1], [2].",
+                "answer_style": "Lead with the answer, then cite only returned evidence_ledger source ids inline like [1], [2].",
             },
             ensure_ascii=False,
             indent=2,
@@ -576,6 +636,7 @@ class ScenarioTools:
         self,
         url: str,
         goal: str = "",
+        source_profile: str = "",
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
@@ -592,7 +653,11 @@ class ScenarioTools:
                 category=ToolErrorCategory.VALIDATION,
                 message="inspect_page requires a non-empty URL.",
             )
-        source_profile = self._default_source_profile(route_context, normalized_url)
+        source_profile = self._default_source_profile(
+            route_context,
+            normalized_url,
+            requested_profile=source_profile,
+        )
 
         await self._emit_activity(
             activity_callback,
@@ -666,7 +731,7 @@ class ScenarioTools:
         route_context: dict[str, Any] | None = None,
     ) -> str:
         del session_id, source, route_context
-        normalized_profile = _normalize_text(source_profile) or "tech_updates"
+        normalized_profile = normalize_source_profile_name(_normalize_text(source_profile), fallback="tech_updates")
         payload = await self._authoritative_sources.track_updates(
             source_profile=normalized_profile,
             watchlist=watchlist,
