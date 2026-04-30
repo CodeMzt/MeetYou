@@ -332,6 +332,16 @@ class ToolRouterService:
         normalized_tool_key = str(tool_key or "").strip()
         requested = dict(execution_target or {})
         requested_endpoint_id = str(endpoint_id or requested.get("endpoint_id") or requested.get("execution_target_id") or "").strip()
+        workspace = self._workspace_service.get_by_workspace_id(workspace_id) if workspace_id else None
+        if not normalized_tool_key:
+            raise ToolRouterError("tool_key_required", "Tool key is required")
+        if workspace is not None and not self._workspace_allows_tool(workspace, normalized_tool_key):
+            raise ToolRouterError(
+                "workspace_tool_not_allowed",
+                f"Workspace does not allow tool: {normalized_tool_key}",
+                details={"workspace_id": workspace_id, "tool_key": normalized_tool_key},
+                retryable=False,
+            )
         if requested_endpoint_id:
             endpoint = self._endpoint_service.get_by_endpoint_id(requested_endpoint_id)
             if endpoint is None:
@@ -370,7 +380,6 @@ class ToolRouterService:
             endpoint = self._endpoint_service.get_by_endpoint_id("core.local")
             return ExecutionTarget("core.local", "core", endpoint=endpoint)
 
-        workspace = self._workspace_service.get_by_workspace_id(workspace_id) if workspace_id else None
         capabilities = self._endpoint_capability_service.list_enabled_for_tool(tool_key=normalized_tool_key)
         selected, rejected = self._select_best_endpoint_candidate(
             tool_key=normalized_tool_key,
@@ -407,6 +416,15 @@ class ToolRouterService:
                 }
                 return ExecutionTarget(endpoint.endpoint_id, "endpoint", endpoint=endpoint, endpoint_capability=capability, offline_policy=offline_policy, routing_decision=routing_decision)
         raise ToolRouterError("execution_target_unavailable", f"No execution target can run tool: {normalized_tool_key}", retryable=True)
+
+    def _workspace_allows_tool(self, workspace, tool_key: str) -> bool:
+        checker = getattr(self._workspace_service, "tool_allowed", None)
+        if not callable(checker):
+            return True
+        try:
+            return bool(checker(workspace, tool_key))
+        except TypeError:
+            return True
 
     def _connected_endpoint_ids(self) -> set[str] | None:
         getter = self._connected_endpoint_ids_getter

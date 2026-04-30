@@ -13,8 +13,8 @@ const workspace: RuntimeWorkspace = {
   default_execution_target: 'core.local',
   tool_policy: 'allow_all',
   allowed_tool_ids: [],
-  preferred_target_endpoint_ids: [],
-  preferred_endpoint_provider_types: [],
+  preferred_target_endpoint_ids: ['desktop.personal.executor'],
+  preferred_endpoint_provider_types: ['desktop'],
   preferred_source_profiles: ['workspace_local'],
   tool_target_routing_policy: 'balanced',
   memory_ranking_policy: 'workspace_first',
@@ -38,6 +38,9 @@ describe('WorkspacePanel', () => {
     expect(markup).toContain('本地工具')
     expect(markup).toContain('运行中操作')
     expect(markup).toContain('工作区/本地知识')
+    expect(markup).toContain('偏好端点：1')
+    expect(markup).toContain('Provider 偏好：1')
+    expect(markup).toContain('路由策略：均衡')
     expect(markup).not.toContain('固定流程')
   })
 

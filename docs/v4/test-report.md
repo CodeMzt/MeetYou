@@ -1,6 +1,21 @@
-# MeetYou V4 Test Report
+﻿# MeetYou V4 Test Report
 
 Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
+
+## 2026-04-30 Endpoint Handler Registry / ToolRouter Scoring / Workspace Routing Governance Addendum
+
+- Local commits: `503290a1` (`refactor endpoint frame handling`), `bef25146` (`feat tool router endpoint scoring`), and the final workspace routing governance commit containing this addendum.
+- Scope: split `/endpoint/ws` into a frame handler registry, made capability snapshots replace old capability state, routed tool result/error updates through ToolRouter, added real-time endpoint scoring with operation routing metadata, persisted heartbeat/routing metrics in endpoint metadata, exposed workspace routing governance through Operator PATCH and UI controls, and added real Electron window visual QA for the workspace governance surface.
+- This addendum records the final Operator/API/UI governance phase plus cross-phase verification.
+- Backend focused tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_tool_router_v4 tests.test_endpoint_protocol_v4 tests.test_endpoint_address_v4 tests.test_endpoint_tool_protocol tests.test_operator_workspace_governance`, 20 tests).
+- Backend full discovery: passed after isolating an environment-sensitive provider URL fallback assertion from local `MEETYOU_CORE_BASE_URL` (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 579 tests, 1 skipped).
+- Frontend typecheck: passed (`npm run typecheck`).
+- Frontend focused tests: passed (`npm run test -- --run WorkspaceGovernanceEditor WorkspacePanel runtimeApi`, 3 files / 21 tests).
+- Frontend full tests: passed (`npm run test`, 20 files / 82 tests).
+- Real UI visual QA: passed (`npm run visual:workspace-governance`). The check opens the real Electron workspace route through Vite with mocked workspace sync data, captures `560x700` and `520x620` windows, and verifies top, governance upper, and governance lower scroll states for no horizontal overflow, no clipped controls, and required visible text.
+- Visual QA evidence: screenshots were generated under `%TEMP%\meetyou-workspace-governance-visual\`, including `workspace-default-top-560x700.png`, `workspace-default-governance-560x700.png`, `workspace-default-governance-lower-560x700.png`, `workspace-minimum-top-520x620.png`, `workspace-minimum-governance-520x620.png`, and `workspace-minimum-governance-lower-520x620.png`.
+- Evaluation vs real-window difference: SSR component tests proved text/payload rendering but did not catch actual click target height. The first real-window run failed because approval buttons rendered at 19px high; the UI was fixed with a stable `28px` minimum button height. The visual checker was also expanded from broad text presence to separate scroll-state screenshots so parent-container text does not create false confidence about below-fold form visibility.
+- Local only: CI, Deploy, remote Core `/health`, local Desktop against remote Core, and Feishu/WeChatBot human confirmation were not rerun for this local implementation batch.
 
 ## 2026-04-30 Provider Thread / ThreadPicker Visual QA Addendum
 

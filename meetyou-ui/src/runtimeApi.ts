@@ -358,8 +358,15 @@ export async function updateOperatorWorkspaceGovernance(
   workspaceId: string,
   payload: {
     base_mode?: AssistantMode
+    default_execution_target?: string
+    tool_policy?: string
+    allowed_tool_ids?: string[]
+    preferred_target_endpoint_ids?: string[]
+    preferred_endpoint_provider_types?: string[]
     preferred_source_profiles?: string[]
+    tool_target_routing_policy?: string
     memory_ranking_policy?: string
+    tool_routing_overrides?: Record<string, unknown>
   },
 ): Promise<RuntimeWorkspace> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}`), {

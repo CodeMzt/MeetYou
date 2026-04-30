@@ -827,8 +827,15 @@ class OperatorWorkspaceCreateRequest(BaseModel):
 
 class OperatorWorkspaceUpdateRequest(BaseModel):
     base_mode: str | None = None
+    default_execution_target: str | None = None
+    tool_policy: str | None = None
+    allowed_tool_ids: list[str] | None = None
+    preferred_target_endpoint_ids: list[str] | None = None
+    preferred_endpoint_provider_types: list[str] | None = None
     preferred_source_profiles: list[str] | None = None
+    tool_target_routing_policy: str | None = None
     memory_ranking_policy: str | None = None
+    tool_routing_overrides: dict[str, Any] | None = None
 
     @field_validator("base_mode", mode="before")
     @classmethod
@@ -836,6 +843,13 @@ class OperatorWorkspaceUpdateRequest(BaseModel):
         if value is None:
             return None
         return to_public_assistant_mode(value)
+
+    @field_validator("default_execution_target", mode="before")
+    @classmethod
+    def _normalize_default_execution_target(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return normalize_execution_target(value)
 
 
 class OperatorSourceProfileResponse(BaseModel):

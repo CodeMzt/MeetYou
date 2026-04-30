@@ -180,15 +180,20 @@ describe('runtimeApi', () => {
           base_mode: 'general',
           description: 'Study workspace for focused learning.',
           prompt_overlay: '',
-          default_execution_target: 'core.local',
-          tool_policy: 'allow_all',
-          allowed_tool_ids: [],
-          preferred_target_endpoint_ids: [],
-          preferred_endpoint_provider_types: [],
+          default_execution_target: 'workspace_any_endpoint',
+          tool_policy: 'allowlist',
+          allowed_tool_ids: ['utility.echo'],
+          preferred_target_endpoint_ids: ['desktop.study.executor'],
+          preferred_endpoint_provider_types: ['desktop'],
           preferred_source_profiles: ['study_materials', 'workspace_local'],
-          tool_target_routing_policy: 'balanced',
+          tool_target_routing_policy: 'strict_preferred_endpoint',
           memory_ranking_policy: 'workspace_first',
-          tool_routing_overrides: {},
+          tool_routing_overrides: {
+            'utility.echo': {
+              preferred_target_endpoint_ids: ['desktop.study.executor'],
+              tool_target_routing_policy: 'strict_preferred_endpoint',
+            },
+          },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
@@ -196,11 +201,29 @@ describe('runtimeApi', () => {
 
     const workspace = await updateOperatorWorkspaceGovernance('http://127.0.0.1:8000', 'study', {
       base_mode: 'danxi',
+      default_execution_target: 'workspace_any_endpoint',
+      tool_policy: 'allowlist',
+      allowed_tool_ids: ['utility.echo'],
+      preferred_target_endpoint_ids: ['desktop.study.executor'],
+      preferred_endpoint_provider_types: ['desktop'],
       preferred_source_profiles: ['study_materials', 'workspace_local'],
+      tool_target_routing_policy: 'strict_preferred_endpoint',
       memory_ranking_policy: 'workspace_first',
+      tool_routing_overrides: {
+        'utility.echo': {
+          preferred_target_endpoint_ids: ['desktop.study.executor'],
+          tool_target_routing_policy: 'strict_preferred_endpoint',
+        },
+      },
     })
 
     expect(workspace.workspace_id).toBe('study')
+    expect(workspace.default_execution_target).toBe('workspace_any_endpoint')
+    expect(workspace.tool_policy).toBe('allowlist')
+    expect(workspace.allowed_tool_ids).toEqual(['utility.echo'])
+    expect(workspace.preferred_target_endpoint_ids).toEqual(['desktop.study.executor'])
+    expect(workspace.preferred_endpoint_provider_types).toEqual(['desktop'])
+    expect(workspace.tool_target_routing_policy).toBe('strict_preferred_endpoint')
     expect(workspace.preferred_source_profiles).toEqual(['study_materials', 'workspace_local'])
     expect(workspace.memory_ranking_policy).toBe('workspace_first')
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -209,8 +232,20 @@ describe('runtimeApi', () => {
         method: 'PATCH',
         body: JSON.stringify({
           base_mode: 'danxi',
+          default_execution_target: 'workspace_any_endpoint',
+          tool_policy: 'allowlist',
+          allowed_tool_ids: ['utility.echo'],
+          preferred_target_endpoint_ids: ['desktop.study.executor'],
+          preferred_endpoint_provider_types: ['desktop'],
           preferred_source_profiles: ['study_materials', 'workspace_local'],
+          tool_target_routing_policy: 'strict_preferred_endpoint',
           memory_ranking_policy: 'workspace_first',
+          tool_routing_overrides: {
+            'utility.echo': {
+              preferred_target_endpoint_ids: ['desktop.study.executor'],
+              tool_target_routing_policy: 'strict_preferred_endpoint',
+            },
+          },
         }),
       }),
     )

@@ -120,6 +120,14 @@ export default function WorkspacePanel({
           <span>偏好端点：{workspace.preferred_target_endpoint_ids.length || 0}</span>
         </div>
         <div className={styles.metaItem}>
+          <Bot size={12} />
+          <span>Provider 偏好：{workspace.preferred_endpoint_provider_types.length || 0}</span>
+        </div>
+        <div className={styles.metaItem}>
+          <LayoutTemplate size={12} />
+          <span>路由策略：{formatRoutingPolicyLabel(workspace.tool_target_routing_policy)}</span>
+        </div>
+        <div className={styles.metaItem}>
           <Sparkles size={12} />
           <span>
             来源偏好：{workspace.preferred_source_profiles.length > 0

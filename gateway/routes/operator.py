@@ -540,15 +540,47 @@ def build_operator_router(gateway) -> APIRouter:
                 category=RuntimeErrorCategory.VALIDATION.value,
                 message=f"未知 workspace: {workspace_id}",
             )
-        metadata: dict[str, object] = {}
+        current_governance = gateway_workspace_governance(workspace)
+        metadata: dict[str, object] = {
+            "tool_policy": current_governance["tool_policy"],
+            "allowed_tool_ids": current_governance["allowed_tool_ids"],
+            "preferred_target_endpoint_ids": current_governance["preferred_target_endpoint_ids"],
+            "preferred_endpoint_provider_types": current_governance["preferred_endpoint_provider_types"],
+            "preferred_source_profiles": current_governance["preferred_source_profiles"],
+            "tool_target_routing_policy": current_governance["tool_target_routing_policy"],
+            "memory_ranking_policy": current_governance["memory_ranking_policy"],
+            "tool_routing_overrides": current_governance["tool_routing_overrides"],
+        }
+        metadata_changed = False
+        if payload.tool_policy is not None:
+            metadata["tool_policy"] = str(payload.tool_policy or "").strip()
+            metadata_changed = True
+        if payload.allowed_tool_ids is not None:
+            metadata["allowed_tool_ids"] = list(payload.allowed_tool_ids or [])
+            metadata_changed = True
+        if payload.preferred_target_endpoint_ids is not None:
+            metadata["preferred_target_endpoint_ids"] = list(payload.preferred_target_endpoint_ids or [])
+            metadata_changed = True
+        if payload.preferred_endpoint_provider_types is not None:
+            metadata["preferred_endpoint_provider_types"] = list(payload.preferred_endpoint_provider_types or [])
+            metadata_changed = True
         if payload.preferred_source_profiles is not None:
             metadata["preferred_source_profiles"] = _validate_source_profiles(gateway, payload.preferred_source_profiles)
+            metadata_changed = True
+        if payload.tool_target_routing_policy is not None:
+            metadata["tool_target_routing_policy"] = str(payload.tool_target_routing_policy or "").strip()
+            metadata_changed = True
         if payload.memory_ranking_policy is not None:
             metadata["memory_ranking_policy"] = _validate_memory_ranking_policy(gateway, payload.memory_ranking_policy)
+            metadata_changed = True
+        if payload.tool_routing_overrides is not None:
+            metadata["tool_routing_overrides"] = dict(payload.tool_routing_overrides or {})
+            metadata_changed = True
         updated = domain.services.workspace.update_workspace(
             workspace_id=workspace_id,
             base_mode=payload.base_mode,
-            metadata=metadata if metadata else None,
+            default_execution_target=payload.default_execution_target,
+            metadata=metadata if metadata_changed else None,
         )
         return _workspace_response(updated or workspace)
 

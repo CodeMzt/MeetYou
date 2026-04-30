@@ -46,6 +46,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "visual:workspace-governance": "electron scripts/workspace-governance-visual-check.cjs",
     "build": "tsc && vite build && electron-builder",
     "preview": "vite preview"
   },
