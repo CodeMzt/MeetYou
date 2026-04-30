@@ -174,6 +174,7 @@ class AssistantModeManagerTests(unittest.TestCase):
         manager = AssistantModeManager(_FakeConfig())
 
         self.assertEqual(manager._mode_registry()["skill_prompt_dir"], "prompt/SKILL")
+        self.assertEqual(manager._mode_registry()["created_skill_dir"], "user/skills")
 
     def test_skill_prompts_live_only_under_prompt_skill(self):
         repo_root = Path(__file__).resolve().parent.parent
@@ -524,13 +525,15 @@ class AssistantModeManagerTests(unittest.TestCase):
     def test_lists_loads_and_creates_open_skills(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             skill_dir = Path(tmp_dir) / "SKILL"
+            created_skill_dir = Path(tmp_dir) / "created-skills"
             _populate_skill_dir(skill_dir)
             manager = AssistantModeManager(
                 _FakeConfig(
                     {
                         "assistant_modes": json.dumps(
                             {
-                                "skill_prompt_dir": str(skill_dir)
+                                "skill_prompt_dir": str(skill_dir),
+                                "created_skill_dir": str(created_skill_dir),
                             }
                         )
                     }
@@ -560,7 +563,10 @@ class AssistantModeManagerTests(unittest.TestCase):
             )
             self.assertEqual(created["skill_type"], "reusable")
             self.assertTrue(created["editable"])
-            self.assertEqual(Path(created["storage_path"]).parent, skill_dir.resolve())
+            self.assertEqual(created["storage_path"], "")
+            self.assertEqual(created["storage_ref"], "core://skills/reusable/release_note_triage")
+            self.assertEqual(created["source"], "core_runtime")
+            self.assertTrue((created_skill_dir / "release-note-triage.md").is_file())
 
             loaded = manager.load_skill("release_note_triage")
             self.assertIsNotNone(loaded)
@@ -628,13 +634,15 @@ class AssistantModeManagerTests(unittest.TestCase):
     def test_validates_capability_registry_and_loaded_skill_capabilities(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             skill_dir = Path(tmp_dir) / "SKILL"
+            created_skill_dir = Path(tmp_dir) / "created-skills"
             _populate_skill_dir(skill_dir)
             manager = AssistantModeManager(
                 _FakeConfig(
                     {
                         "assistant_modes": json.dumps(
                             {
-                                "skill_prompt_dir": str(skill_dir)
+                                "skill_prompt_dir": str(skill_dir),
+                                "created_skill_dir": str(created_skill_dir),
                             }
                         )
                     }

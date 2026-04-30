@@ -165,7 +165,8 @@ function skillList() {
       skill_type: 'reusable',
       title: '任务识别 SKILL',
       summary: '识别提醒、追踪、阻塞与任务状态请求，并衔接任务工具。',
-      storage_path: 'E:\\Documents\\Project\\MeetYou\\prompt\\SKILL\\task-recognition',
+      storage_path: '',
+      storage_ref: 'core://skills/reusable/task_recognition',
       editable: false,
       source: 'builtin',
       applicable_modes: ['general', 'automation'],
@@ -178,7 +179,8 @@ function skillList() {
       skill_type: 'mode',
       title: '通用模式 SKILL',
       summary: '通用日常协作范式，优先使用共享基础能力处理轻量任务。',
-      storage_path: 'E:\\Documents\\Project\\MeetYou\\prompt\\SKILL\\mode-general',
+      storage_path: '',
+      storage_ref: 'core://skills/mode/general',
       editable: false,
       source: 'builtin',
       applicable_modes: ['general'],
@@ -448,13 +450,13 @@ async function runVisualCheck() {
         Array.from(document.querySelectorAll('button')).find((button) => button.innerText.trim() === 'SKILL')?.click()
       `)
       await waitForText(win, '任务识别 SKILL')
-      reports.push(await captureState(win, size, 'skills-list', ['任务识别 SKILL', '通用模式 SKILL', 'prompt\\SKILL']))
+      reports.push(await captureState(win, size, 'skills-list', ['任务识别 SKILL', '通用模式 SKILL', 'core://skills']))
 
       await win.webContents.executeJavaScript(`
         document.querySelector('.skill-list-item')?.click()
       `)
       await waitForText(win, 'SKILL 详情')
-      reports.push(await captureState(win, size, 'skill-detail', ['SKILL 详情', 'Detect task', 'manage_tasks']))
+      reports.push(await captureState(win, size, 'skill-detail', ['SKILL 详情', 'core://skills', 'Detect task', 'manage_tasks']))
       await win.webContents.executeJavaScript(`
         document.querySelector('.skill-detail-header button')?.click()
       `)

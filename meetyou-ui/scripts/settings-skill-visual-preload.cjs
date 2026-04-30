@@ -22,14 +22,6 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
         paths: ['E:\\Visual\\Trusted', 'D:\\Reports\\MeetYou'],
       })
     }
-    if (channel === 'open-local-path') {
-      const targetPath = String(args[0] || '')
-      return Promise.resolve({
-        ok: false,
-        path: targetPath,
-        error: '本机不存在该路径。',
-      })
-    }
     return Promise.resolve(null)
   },
 })

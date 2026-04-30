@@ -1051,7 +1051,8 @@ class AssistantModeManager:
         self._semantic_router = semantic_router or SemanticRouterAgent()
         assistant_modes_config = _parse_json_config(self._config.get("assistant_modes"))
         self._skill_registry = SkillRegistryManager(
-            skill_dir=str(assistant_modes_config.get("skill_prompt_dir") or "prompt/SKILL")
+            skill_dir=str(assistant_modes_config.get("skill_prompt_dir") or "prompt/SKILL"),
+            created_skill_dir=str(assistant_modes_config.get("created_skill_dir") or "user/skills"),
         )
         self._capability_registry = CapabilityRegistry(self._mode_registry(), self._skill_registry)
         self._prompt_assembler = PromptAssembler(self._capability_registry)
@@ -1062,6 +1063,7 @@ class AssistantModeManager:
                 "enabled_modes": list(ASSISTANT_MODES),
                 "prompt_dir": "prompt/modes",
                 "skill_prompt_dir": "prompt/SKILL",
+                "created_skill_dir": "user/skills",
                 "basic_tools": list(_DEFAULT_BASIC_MODE_TOOLS),
                 "prompt_registry": _DEFAULT_PROMPT_REGISTRY,
                 "skills": _DEFAULT_SKILL_REGISTRY,

@@ -56,7 +56,7 @@ function includesQuery(skill: SkillListItem, query: string): boolean {
     skill.title,
     skill.summary,
     skill.skill_type,
-    skill.storage_path,
+    skill.storage_ref || '',
     ...skill.applicable_modes,
     ...skill.scenarios,
     ...skill.recommended_tools,
@@ -368,7 +368,7 @@ function SkillsView({ baseUrl = DEFAULT_BASE_URL }: { baseUrl?: string }) {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索标题、场景、工具或路径"
+            placeholder="搜索标题、场景、工具或 Core 引用"
           />
         </label>
         <GlassSelect
@@ -427,8 +427,8 @@ function SkillsView({ baseUrl = DEFAULT_BASE_URL }: { baseUrl?: string }) {
                 {skill.editable ? <span className="skill-type-pill">可编辑</span> : null}
               </div>
               <p>{skill.summary || '未提供摘要。'}</p>
-              <div className="skill-list-path" title={skill.storage_path}>
-                {skill.storage_path}
+              <div className="skill-list-path" title={skill.storage_ref || ''}>
+                {skill.storage_ref || 'Core 服务存储'}
               </div>
             </div>
             <FileText size={15} />
@@ -462,8 +462,8 @@ function SkillsView({ baseUrl = DEFAULT_BASE_URL }: { baseUrl?: string }) {
 
             <p className="skill-detail-summary">{selectedSkill.summary || '未提供摘要。'}</p>
 
-            <div className="skill-detail-path" title={selectedSkill.storage_path}>
-              {selectedSkill.storage_path}
+            <div className="skill-detail-path" title={selectedSkill.storage_ref || ''}>
+              {selectedSkill.storage_ref || 'Core 服务存储'}
             </div>
 
             <div className="skill-detail-grid">
