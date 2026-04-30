@@ -273,6 +273,61 @@ class GatewayRuntimeApiTests(unittest.TestCase):
             "web",
         )
 
+    def test_runtime_reply_control_queues_v4_control_event(self):
+        domain = SimpleNamespace(
+            services=SimpleNamespace(
+                session=SimpleNamespace(
+                    get_by_session_id=lambda session_id: SimpleNamespace(id="session-row", session_id=session_id)
+                    if session_id == "sess-1"
+                    else None
+                ),
+                endpoint=SimpleNamespace(
+                    get_by_endpoint_id=lambda endpoint_id: SimpleNamespace(
+                        id="endpoint-row",
+                        endpoint_id=endpoint_id,
+                        provider_type="desktop",
+                    )
+                    if endpoint_id == "desktop-app"
+                    else None
+                ),
+            )
+        )
+        event_bus = EventBus()
+        gateway = FastAPIGateway(
+            event_bus,
+            SessionManager(),
+            core_domain=domain,
+            access_token=self.access_token,
+        )
+        client = TestClient(gateway.app)
+        self.addCleanup(client.close)
+
+        response = client.post(
+            "/runtime/sessions/sess-1/reply-control",
+            json={
+                "action": "regenerate",
+                "endpoint_id": "desktop-app",
+                "endpoint_type": "electron",
+                "endpoint_request_id": "ctrl-1",
+                "turn_id": "turn-1",
+                "metadata": {"from": "ui-control"},
+            },
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["action"], "regenerate")
+        self.assertEqual(payload["request_id"], "ctrl-1")
+        event = event_bus.inbound_queue.get_nowait()
+        self.assertEqual(event.event_id, "ctrl-1")
+        self.assertEqual(event.session_id, "sess-1")
+        self.assertEqual(event.type, "control")
+        self.assertEqual(event.content["action"], "regenerate")
+        self.assertEqual(event.content["turn_id"], "turn-1")
+        self.assertEqual(event.metadata["control_kind"], "reply_control")
+        self.assertEqual(event.metadata["from"], "ui-control")
+
     def test_runtime_messages_are_idempotent_by_endpoint_message_id(self):
         class _MessageService:
             def __init__(self):

@@ -20,6 +20,9 @@ Runtime HTTP 主要资源：
 
 - `POST /runtime/threads`
 - `POST /runtime/sessions`
+- `POST /runtime/sessions/{session_id}/confirm-response`
+- `POST /runtime/sessions/{session_id}/human-input-response`
+- `POST /runtime/sessions/{session_id}/reply-control`
 - `POST /runtime/messages`
 - `POST /runtime/operations`
 - `GET /runtime/operations/{operation_id}`
@@ -35,6 +38,8 @@ Runtime HTTP 主要资源：
 - `GET /runtime/attachments/content/{attachment_id}`
 
 `POST /runtime/messages` accepts `endpoint_message_id` for Endpoint Provider inbound idempotency. For the same thread, endpoint, role, and `endpoint_message_id`, Core returns the existing Message with `idempotent_replay=true` and does not enqueue another assistant run.
+
+`POST /runtime/sessions/{session_id}/reply-control` is the V4 conversation control entrypoint for `stop`, `append_guidance`, `regenerate`, and `rollback`. UI surfaces must use this Runtime HTTP facade instead of sending bare control payloads over `/endpoint/ws`.
 
 Danxi 资源也在 `/runtime/danxi/*` 下。登录和 WebVPN Cookie 更新只接受加密载荷或服务端环境凭据，不接受明文密码、Cookie 或 token。
 

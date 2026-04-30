@@ -372,11 +372,15 @@ function syncRuntimeToTurns(turns: ChatTurn[], snapshot: RuntimeStateSnapshot): 
     return turns
   }
 
-  const shouldCreateTurn =
+  const isTurnStreaming =
     snapshot.status !== 'idle' &&
-    snapshot.status !== 'initializing' &&
+    snapshot.status !== 'error' &&
     snapshot.status !== 'heartbeat' &&
+    snapshot.status !== 'initializing' &&
     snapshot.status !== 'shutting_down'
+
+  const shouldCreateTurn =
+    isTurnStreaming
 
   const index = findTurnIndex(turns, snapshot.stream_id, snapshot.turn_id)
   if (index === -1 && !shouldCreateTurn) {
@@ -393,7 +397,7 @@ function syncRuntimeToTurns(turns: ChatTurn[], snapshot: RuntimeStateSnapshot): 
     ...current,
     streamId: snapshot.stream_id || current.streamId,
     turnId: snapshot.turn_id || current.turnId,
-    isStreaming: snapshot.status !== 'idle' && snapshot.status !== 'error',
+    isStreaming: isTurnStreaming,
     error: snapshot.status === 'error' ? snapshot.detail : current.error,
   }
   return nextTurns

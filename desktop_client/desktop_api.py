@@ -157,6 +157,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("POST", "/desktop/approvals/{approval_id}/decision", lambda request: f"/runtime/approvals/{request.match_info['approval_id']}/decision"),
         DesktopApiRoute("POST", "/desktop/sessions/{session_id}/confirm-response", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/confirm-response"),
         DesktopApiRoute("POST", "/desktop/sessions/{session_id}/human-input-response", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/human-input-response"),
+        DesktopApiRoute("POST", "/desktop/sessions/{session_id}/reply-control", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/reply-control"),
         DesktopApiRoute("POST", "/desktop/attachments/upload-ticket", lambda _request: "/runtime/attachments/upload-ticket", rewrite_json=rewrite_attachment_ticket),
         DesktopApiRoute("PUT", "/desktop/attachments/upload/{ticket_id}", lambda request: f"/runtime/attachments/upload/{request.match_info['ticket_id']}", binary_response=True),
         DesktopApiRoute("POST", "/desktop/attachments/{attachment_id}/complete", lambda request: f"/runtime/attachments/{request.match_info['attachment_id']}/complete"),

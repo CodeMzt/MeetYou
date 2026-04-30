@@ -600,6 +600,38 @@ export async function submitRuntimeHumanInputResponse(
   return readJsonOrThrow(response, '提交补充输入结果失败')
 }
 
+export async function submitRuntimeReplyControl(
+  baseUrl: string,
+  sessionId: string,
+  payload: {
+    action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback'
+    guidance?: string
+    checkpoint_id?: string
+    turn_id?: string
+    stream_id?: string
+    endpoint_id?: string
+    endpoint_type?: string
+    endpoint_request_id?: string
+    metadata?: Record<string, unknown>
+  },
+): Promise<{
+  request_id: string
+  session_id: string
+  action: string
+  accepted: boolean
+  status: string
+}> {
+  const response = await fetchWithAuth(
+    buildDesktopUrl(baseUrl, `/sessions/${encodeURIComponent(sessionId)}/reply-control`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  )
+  return readJsonOrThrow(response, '提交控制命令失败')
+}
+
 export async function createRuntimeAttachmentUploadTicket(
   baseUrl: string,
   payload: {

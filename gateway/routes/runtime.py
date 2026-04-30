@@ -43,6 +43,8 @@ from gateway.models import (
     RuntimeMessageResponse,
     RuntimeOperationCreateRequest,
     RuntimeOperationResponse,
+    RuntimeReplyControlRequest,
+    RuntimeReplyControlResult,
     RuntimeDefaultThreadRequest,
     RuntimeEndpointSessionResolveRequest,
     RuntimeEndpointSessionResolveResponse,
@@ -811,6 +813,78 @@ def build_runtime_router(gateway) -> APIRouter:
             selected_option=payload.selected_option,
         )
         return RuntimeHumanInputResponseResult(accepted=bool(accepted), request_id=payload.request_id, session_id=session_id)
+
+    @router.post("/sessions/{session_id}/reply-control", response_model=RuntimeReplyControlResult)
+    async def reply_control(session_id: str, payload: RuntimeReplyControlRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        normalized_session_id = str(session_id or "").strip()
+        action = str(payload.action or "").strip().lower()
+        if action not in {"stop", "append_guidance", "regenerate", "rollback"}:
+            gateway._raise_http_error(
+                status_code=400,
+                code="reply_control_action_invalid",
+                category="validation",
+                message="reply control action must be stop, append_guidance, regenerate, or rollback",
+            )
+        session_service = getattr(getattr(domain, "services", None), "session", None)
+        get_session = getattr(session_service, "get_by_session_id", None)
+        if callable(get_session) and get_session(normalized_session_id) is None:
+            gateway._raise_http_error(
+                status_code=404,
+                code="session_not_found",
+                category="validation",
+                message=f"Unknown session: {normalized_session_id}",
+            )
+        endpoint = _find_endpoint(domain, payload.endpoint_id)
+        source_id = str(getattr(endpoint, "endpoint_id", "") or payload.endpoint_id or "ui.endpoint")
+        metadata = dict(payload.metadata or {})
+        source_kind = _resolve_runtime_source_kind(
+            endpoint_id=source_id,
+            endpoint_type=payload.endpoint_type,
+            metadata=metadata,
+        )
+        request_id = str(payload.endpoint_request_id or "").strip()
+        event_kwargs = {}
+        if request_id:
+            event_kwargs["event_id"] = request_id
+        await gateway._event_bus.inbound_queue.put(
+            InboundEvent(
+                session_id=normalized_session_id,
+                type=EventType.CONTROL.value,
+                role="system",
+                content={
+                    "action": action,
+                    "guidance": payload.guidance,
+                    "checkpoint_id": payload.checkpoint_id,
+                    "turn_id": payload.turn_id,
+                    "stream_id": payload.stream_id,
+                },
+                source=make_source(
+                    source_kind,
+                    source_id,
+                    endpoint_id=source_id,
+                    endpoint_type=payload.endpoint_type,
+                    provider_type=str(getattr(endpoint, "provider_type", "") or metadata.get("provider_type") or ""),
+                ),
+                target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+                metadata={
+                    "control_kind": "reply_control",
+                    "endpoint_id": source_id,
+                    "endpoint_type": payload.endpoint_type,
+                    "source_kind": source_kind,
+                    **metadata,
+                },
+                **event_kwargs,
+            )
+        )
+        return RuntimeReplyControlResult(
+            request_id=request_id,
+            session_id=normalized_session_id,
+            action=action,
+            accepted=True,
+            status="queued",
+        )
 
     @router.post("/approvals/{approval_id}/decision", response_model=RuntimeApprovalResponse)
     async def decide_approval(approval_id: str, payload: RuntimeApprovalDecisionRequest, request: Request):

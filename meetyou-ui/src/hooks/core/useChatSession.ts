@@ -1,5 +1,5 @@
 import { startTransition, useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
-import { fetchRuntimeUsageSnapshot, listThreadMessages, sendRuntimeMessage, submitRuntimeConfirmResponse, submitRuntimeHumanInputResponse } from '../../runtimeApi'
+import { fetchRuntimeUsageSnapshot, listThreadMessages, sendRuntimeMessage, submitRuntimeConfirmResponse, submitRuntimeHumanInputResponse, submitRuntimeReplyControl } from '../../runtimeApi'
 import { createInitialChatState, createSystemTurn, createUserTurn, reduceChatState } from '../../chatState'
 import { parseEndpointWsPayload } from '../../protocolClient'
 import type { EndpointContext } from './useEndpointContext'
@@ -360,23 +360,26 @@ export function useChatSession(
   )
 
   const sendControlCommand = useCallback(
-    (
+    async (
       action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback',
       params: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string } = {},
     ) => {
-      const sent = sendEndpointWsCommand({
-        action,
-        session_id: endpointContext?.session.session_id || sessionId,
-        endpoint_id: endpointId,
-        endpoint_request_id: createEndpointRequestId(),
-        ...params,
-        metadata: { from: 'ui-control' },
-      })
-      if (!sent) {
+      const endpointRequestId = createEndpointRequestId()
+      try {
+        const context = endpointContext ?? (await initializeEndpointContext())
+        await submitRuntimeReplyControl(baseUrl, context.session.session_id || sessionId, {
+          action,
+          endpoint_id: context.endpointId || endpointId,
+          endpoint_type: 'electron',
+          endpoint_request_id: endpointRequestId,
+          ...params,
+          metadata: { from: 'ui-control' },
+        })
+      } catch (submitError) {
         const error = {
           code: 'transport_error',
           category: 'dependency' as const,
-          message: '交互通道未连接，无法提交控制命令',
+          message: submitError instanceof Error ? submitError.message : '交互通道未连接，无法提交控制命令',
           retryable: true,
           details: {},
           occurred_at: '',
@@ -387,7 +390,7 @@ export function useChatSession(
         })
       }
     },
-    [endpointContext?.session.session_id, endpointId, sendEndpointWsCommand, sessionId, dispatchTransport],
+    [baseUrl, endpointContext, endpointId, initializeEndpointContext, sessionId, dispatchTransport],
   )
 
   const processWsUpdateForChat = useCallback((update: ReturnType<typeof parseEndpointWsPayload>) => {
