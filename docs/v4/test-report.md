@@ -2,6 +2,23 @@
 
 Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
 
+## 2026-04-30 Provider Thread / ThreadPicker Visual QA Addendum
+
+- Commit sha: `46d07effe91c98e73f047b82ce4dc2cc7d82424a`
+- Scope: stopped provider-only Feishu / MeetWeChat registration clients from resolving user-visible Core threads, hid historical provider management threads from the runtime thread picker, and fixed the ThreadPicker dropdown / delete confirmation modal layout for narrow desktop windows.
+- Root cause for standalone `MeetWeChat Provider` / `Feishu Provider` threads: provider-level address/capability registration reused `GatewayConversationClient.start()` with thread binding enabled, so `/runtime/endpoint-sessions/resolve` created `shared_endpoint` Core threads even though these were management connections rather than user conversations. Provider registration now uses `bind_thread=false`; per-person/per-group external chats continue to use endpoint-owned `conversation_key` thread resolution.
+- UI root cause: ThreadPicker and ConfirmModal were rendered under the top dock, whose transformed/fixed layout made viewport positioning differ from ordinary browser validation. Both controls now portal to `document.body`; the dropdown is clamped against the actual viewport, and the delete modal no longer leaves the dropdown visible behind it.
+- Actual-window visual QA: passed against Electron main-window dimensions from `meetyou-ui/electron/main.ts`, including the default `400x620` window and minimum `340x460` window. Checks covered menu bounds, delete icon visibility, full wrapping of long thread detail text, modal centering, footer buttons, and no modal overflow.
+- Local focused backend tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_gateway_client tests.test_meetwechat_adapter tests.test_feishu_input_adapter`, 47 tests).
+- Local frontend typecheck: passed (`npm run typecheck`).
+- Local focused frontend tests: passed (`npm run test -- --run ThreadPicker threadPresentation`, 2 files / 3 tests).
+- Local desktop rebuild: passed in the correct order (`scripts\build-desktop-backend.ps1` first, then `npm run build` so the Electron installer includes the regenerated desktop backend). Local installer path: `meetyou-ui\release\MeetYou Setup 1.0.0.exe`.
+- CI status: passed (`CI`, run `25143441597`, commit `46d07effe91c98e73f047b82ce4dc2cc7d82424a`).
+- Deploy status: passed (`Deploy MeetYou Core`, run `25143441584`, commit `46d07effe91c98e73f047b82ce4dc2cc7d82424a`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=46d07effe91c98e73f047b82ce4dc2cc7d82424a`, `branch=main`, `build_time=2026-04-30T01:59:50Z`).
+- Desktop Release status: passed (`Desktop Release`, run `25143542163`, artifact `meetyou-windows-desktop`, artifact id `6721516126`, size `231604874` bytes).
+- External WeChatBot human confirmation: not rerun in this addendum. The previous requested marker `WX_REAL_20260430_0756_12B533` remains pending until a fresh user-sent WeChat message is observed and confirmed.
+
 ## 2026-04-30 Endpoint Tool Catalog / WeChat Delivery Fix Addendum
 
 - Commit sha: `12b5335876f102e92e7ca9b1ab3ae348350bcc73`
