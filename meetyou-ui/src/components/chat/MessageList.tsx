@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { User, Bot } from 'lucide-react'
 import { ChatTurn, HumanInputRequestPayload, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel } from '../../types'
@@ -36,7 +36,6 @@ export default function MessageList({
   sendControlCommand
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
   const [autoFollowEnabled, setAutoFollowEnabled] = useState(true)
   const lastAssistantMessageId = useMemo(
     () => [...messages].reverse().find((message) => message.role === 'assistant')?.id,
@@ -53,11 +52,19 @@ export default function MessageList({
     return distance <= 80
   }
 
-  useEffect(() => {
-    if (autoFollowEnabled && scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth', block: 'end' })
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const container = containerRef.current
+    if (!container) {
+      return
     }
-  }, [autoFollowEnabled, messages, approvalDisplay, pendingHumanInput, runtimeSnapshot?.status, isStreaming])
+    container.scrollTo({ top: container.scrollHeight, behavior })
+  }, [])
+
+  useEffect(() => {
+    if (autoFollowEnabled) {
+      scrollToBottom(isStreaming ? 'auto' : 'smooth')
+    }
+  }, [autoFollowEnabled, messages, approvalDisplay, pendingHumanInput, runtimeSnapshot?.status, isStreaming, scrollToBottom])
 
   useEffect(() => {
     if (autoFollowEnabled && isNearBottom()) {
@@ -166,13 +173,12 @@ export default function MessageList({
           className={styles.resumeFollowBtn}
           onClick={() => {
             setAutoFollowEnabled(true)
-            scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+            scrollToBottom('smooth')
           }}
         >
           回到底部继续追踪输出
         </button>
       )}
-      <div ref={scrollRef} style={{ height: 16 }} />
     </div>
   )
 }

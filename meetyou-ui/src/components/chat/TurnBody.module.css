@@ -46,16 +46,22 @@
 }
 
 .actionBar {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
   display: flex;
   gap: 6px;
-  margin-top: 8px;
+  margin: 0;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.2s ease;
   justify-content: flex-end;
 }
 
-:global(.messageInner):hover .actionBar {
+:global([class*="messageInner"]):hover .actionBar,
+.actionBar:focus-within {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .actionBtn {

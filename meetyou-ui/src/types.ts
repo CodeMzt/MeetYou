@@ -486,6 +486,7 @@ export interface ChatTurn {
   activities: TurnActivity[]
   isStreaming: boolean
   createdAt: number
+  clientRequestId?: string
   trimmedActivityCount?: number
   error?: string
   temporary?: boolean

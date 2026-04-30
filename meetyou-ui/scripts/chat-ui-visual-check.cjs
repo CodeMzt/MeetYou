@@ -1,0 +1,699 @@
+const crypto = require('crypto')
+const fs = require('fs')
+const http = require('http')
+const os = require('os')
+const path = require('path')
+const { spawn } = require('child_process')
+const { app, BrowserWindow } = require('electron')
+
+const appRoot = path.resolve(__dirname, '..')
+const vitePort = Number(process.env.MEETYOU_CHAT_VISUAL_PORT || 5174)
+const visualUrl = process.env.MEETYOU_CHAT_VISUAL_URL || `http://127.0.0.1:${vitePort}/`
+const outputDir = process.env.MEETYOU_CHAT_VISUAL_OUTPUT_DIR || path.join(os.tmpdir(), 'meetyou-chat-ui-visual')
+const wsClients = new Set()
+const threadId = 'thread_visual_chat'
+const sessionId = 'session_visual_chat'
+const workspaceId = 'personal'
+const endpointId = 'desktop-app'
+const userPrompt = 'Danxi最近人们在哪些话题？'
+const assistantAnswer = '这是助手回复第一行。'
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function nowIso() {
+  return new Date().toISOString()
+}
+
+function usageSnapshot() {
+  return {
+    session_id: sessionId,
+    usage_ready: true,
+    context_limit_tokens: 128000,
+    context_limit_source: 'visual_fixture',
+    context_limit_model: 'gpt-5.4',
+    context_limit_confidence: 'high',
+    current_context_tokens_estimated: 4096,
+    context_breakdown: {
+      system: 256,
+      history: 2048,
+      tool_history: 128,
+      context_pool: 128,
+      memory_context: 512,
+      policy: 64,
+      current_input: 512,
+      proprioception: 64,
+      total: 3712,
+    },
+    last_turn_usage: {
+      prompt_tokens: 1200,
+      completion_tokens: 180,
+      reasoning_tokens: 60,
+      total_tokens: 1440,
+    },
+    session_totals: {
+      prompt_tokens: 1200,
+      completion_tokens: 180,
+      reasoning_tokens: 60,
+      total_tokens: 1440,
+      turn_count: 1,
+    },
+    usage_source: 'visual_fixture',
+    updated_at: nowIso(),
+  }
+}
+
+const workspace = {
+  workspace_id: workspaceId,
+  title: '个人工作区',
+  status: 'active',
+  base_mode: 'general',
+  description: '用于主窗口视觉验收的工作区。',
+  prompt_overlay: '',
+  default_execution_target: 'workspace_any_endpoint',
+  tool_policy: 'allow_all',
+  allowed_tool_ids: [],
+  preferred_target_endpoint_ids: [],
+  preferred_endpoint_provider_types: ['desktop'],
+  preferred_source_profiles: ['workspace_local'],
+  tool_target_routing_policy: 'balanced',
+  memory_ranking_policy: 'workspace_first',
+  tool_routing_overrides: {},
+}
+
+const thread = {
+  thread_id: threadId,
+  home_workspace_id: workspaceId,
+  workspace_id: workspaceId,
+  title: '桌面聊天',
+  status: 'active',
+  summary: '',
+}
+
+const session = {
+  session_id: sessionId,
+  thread_id: threadId,
+  active_workspace_id: workspaceId,
+  workspace_id: workspaceId,
+  endpoint_id: endpointId,
+  status: 'active',
+}
+
+function writeJson(response, payload, statusCode = 200) {
+  const body = JSON.stringify(payload)
+  response.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, content-type',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+  })
+  response.end(body)
+}
+
+function readBody(request) {
+  return new Promise((resolve) => {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf-8')
+      try {
+        resolve(text ? JSON.parse(text) : {})
+      } catch {
+        resolve({})
+      }
+    })
+  })
+}
+
+function createWsFrame(payload) {
+  const data = Buffer.from(JSON.stringify(payload), 'utf-8')
+  if (data.length < 126) {
+    return Buffer.concat([Buffer.from([0x81, data.length]), data])
+  }
+  if (data.length < 65536) {
+    const header = Buffer.alloc(4)
+    header[0] = 0x81
+    header[1] = 126
+    header.writeUInt16BE(data.length, 2)
+    return Buffer.concat([header, data])
+  }
+  const header = Buffer.alloc(10)
+  header[0] = 0x81
+  header[1] = 127
+  header.writeBigUInt64BE(BigInt(data.length), 2)
+  return Buffer.concat([header, data])
+}
+
+function sendWs(payload) {
+  const frame = createWsFrame(payload)
+  for (const socket of wsClients) {
+    if (!socket.destroyed) {
+      socket.write(frame)
+    }
+  }
+}
+
+function sendConnectionAck() {
+  sendWs({
+    schema: 'meetyou.endpoint.ws.v4',
+    type: 'endpoint.hello.ack',
+    payload: {
+      target_id: threadId,
+      status: 'connected',
+    },
+  })
+}
+
+function sendAssistantRaceFrames() {
+  const streamId = 'stream_visual_chat'
+  const turnId = 'turn_visual_chat'
+  setTimeout(() => {
+    sendWs({
+      kind: 'event',
+      event: {
+        type: 'runtime.state',
+        thread_id: threadId,
+        session_id: sessionId,
+        snapshot: {
+          session_id: sessionId,
+          status: 'answering',
+          detail: '正在回复...',
+          active_tools: [],
+          current_mode: 'danxi',
+          route_reason: '',
+          action_risk: 'read',
+          source_profile: 'workspace_local',
+          stream_id: streamId,
+          turn_id: turnId,
+          updated_at: nowIso(),
+        },
+      },
+    })
+  }, 20)
+  setTimeout(() => {
+    sendWs({
+      kind: 'event',
+      event: {
+        type: 'message.delta',
+        thread_id: threadId,
+        session_id: sessionId,
+        stream_id: streamId,
+        turn_id: turnId,
+        delta: `\n\n${assistantAnswer}`,
+      },
+    })
+  }, 45)
+  setTimeout(() => {
+    sendWs({
+      kind: 'event',
+      event: {
+        type: 'message.completed',
+        thread_id: threadId,
+        session_id: sessionId,
+        stream_id: streamId,
+        turn_id: turnId,
+        message: {
+          message_id: 'msg_visual_assistant',
+          thread_id: threadId,
+          session_id: sessionId,
+          active_workspace_id: workspaceId,
+          workspace_id: workspaceId,
+          endpoint_id: '',
+          role: 'assistant',
+          content: `\n\n${assistantAnswer}\n\n`,
+          status: 'completed',
+          channel: 'message',
+          created_at: nowIso(),
+        },
+      },
+    })
+  }, 95)
+  setTimeout(() => {
+    sendWs({
+      kind: 'event',
+      event: {
+        type: 'runtime.state',
+        thread_id: threadId,
+        session_id: sessionId,
+        snapshot: {
+          session_id: sessionId,
+          status: 'idle',
+          detail: '',
+          active_tools: [],
+          current_mode: 'danxi',
+          route_reason: '',
+          action_risk: 'read',
+          source_profile: 'workspace_local',
+          stream_id: streamId,
+          turn_id: turnId,
+          updated_at: nowIso(),
+        },
+      },
+    })
+  }, 130)
+}
+
+async function handleRequest(request, response) {
+  const url = new URL(request.url, 'http://127.0.0.1')
+  if (request.method === 'OPTIONS') {
+    writeJson(response, {})
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/desktop/workspaces') {
+    writeJson(response, [workspace])
+    return
+  }
+  if (request.method === 'POST' && url.pathname === '/desktop/threads/default') {
+    writeJson(response, thread)
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/desktop/threads') {
+    writeJson(response, [thread])
+    return
+  }
+  if (request.method === 'POST' && url.pathname === '/desktop/sessions') {
+    writeJson(response, session)
+    return
+  }
+  if (request.method === 'GET' && url.pathname === `/desktop/threads/${threadId}/messages`) {
+    writeJson(response, [])
+    return
+  }
+  if (request.method === 'GET' && url.pathname === `/desktop/workspaces/${workspaceId}/endpoints`) {
+    writeJson(response, [
+      {
+        endpoint_id: endpointId,
+        endpoint_type: 'desktop_ui',
+        provider_type: 'desktop',
+        display_name: '桌面应用',
+        transport_profile: 'desktop_ui_bridge',
+        status: 'online',
+        workspace_ids: [workspaceId],
+        available_tools: ['file.read', 'shell.exec'],
+        executable_tools: ['file.read', 'shell.exec'],
+        membership_role: 'member',
+        enabled: true,
+      },
+    ])
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/desktop/health') {
+    writeJson(response, {
+      kind: 'health',
+      health: {
+        service: 'desktop-visual',
+        version: 'visual',
+        status: 'ok',
+        live: true,
+        ready: true,
+        degraded: false,
+        components: [],
+        errors: [],
+        updated_at: nowIso(),
+      },
+    })
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/desktop/runtime/usage') {
+    writeJson(response, {
+      kind: 'runtime',
+      runtime: {
+        resource: 'usage',
+        session_id: sessionId,
+        usage: usageSnapshot(),
+      },
+    })
+    return
+  }
+  if (request.method === 'POST' && url.pathname === '/desktop/messages') {
+    const payload = await readBody(request)
+    sendAssistantRaceFrames()
+    setTimeout(() => {
+      writeJson(response, {
+        message_id: 'msg_visual_user',
+        thread_id: threadId,
+        session_id: sessionId,
+        active_workspace_id: workspaceId,
+        workspace_id: workspaceId,
+        endpoint_id: endpointId,
+        role: 'user',
+        content: String(payload.content || userPrompt),
+        status: 'completed',
+        channel: 'message',
+        created_at: nowIso(),
+      })
+    }, 180)
+    return
+  }
+  writeJson(response, { kind: 'error', error: { code: 'not_found', message: url.pathname } }, 404)
+}
+
+function startFixtureServer() {
+  const server = http.createServer((request, response) => {
+    handleRequest(request, response).catch((error) => {
+      writeJson(response, { kind: 'error', error: { code: 'fixture_error', message: error.message } }, 500)
+    })
+  })
+  server.on('upgrade', (request, socket) => {
+    const url = new URL(request.url, 'http://127.0.0.1')
+    if (url.pathname !== '/desktop/ws') {
+      socket.destroy()
+      return
+    }
+    const key = String(request.headers['sec-websocket-key'] || '')
+    const accept = crypto
+      .createHash('sha1')
+      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64')
+    socket.write([
+      'HTTP/1.1 101 Switching Protocols',
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Accept: ${accept}`,
+      '',
+      '',
+    ].join('\r\n'))
+    wsClients.add(socket)
+    socket.on('close', () => wsClients.delete(socket))
+    socket.on('error', () => wsClients.delete(socket))
+    socket.on('data', () => {})
+    setTimeout(sendConnectionAck, 30)
+  })
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      resolve({ server, baseUrl: `http://127.0.0.1:${address.port}` })
+    })
+  })
+}
+
+function waitForHttp(url, timeoutMs = 30000) {
+  const startedAt = Date.now()
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const request = http.get(url, (response) => {
+        response.resume()
+        if (response.statusCode && response.statusCode < 500) {
+          resolve()
+          return
+        }
+        retry()
+      })
+      request.on('error', retry)
+      request.setTimeout(3000, () => {
+        request.destroy()
+        retry()
+      })
+    }
+    const retry = () => {
+      if (Date.now() - startedAt > timeoutMs) {
+        reject(new Error(`Timed out waiting for ${url}`))
+        return
+      }
+      setTimeout(attempt, 500)
+    }
+    attempt()
+  })
+}
+
+function startVite() {
+  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const child = spawn(
+    npmCommand,
+    ['run', 'dev', '--', '--host', '127.0.0.1', '--port', String(vitePort), '--strictPort'],
+    {
+      cwd: appRoot,
+      env: { ...process.env, BROWSER: 'none' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    },
+  )
+  child.stdout.on('data', (chunk) => process.stdout.write(chunk))
+  child.stderr.on('data', (chunk) => process.stderr.write(chunk))
+  return child
+}
+
+async function waitForCondition(win, expression, label, timeoutMs = 15000) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const matched = await win.webContents.executeJavaScript(`Boolean(${expression})`)
+    if (matched) {
+      return
+    }
+    await wait(250)
+  }
+  throw new Error(`Timed out waiting for ${label}`)
+}
+
+async function capture(win, name) {
+  const image = await win.webContents.capturePage()
+  const screenshotPath = path.join(outputDir, `${name}.png`)
+  fs.writeFileSync(screenshotPath, image.toPNG())
+  return screenshotPath
+}
+
+async function collectIslandReport(win) {
+  return win.webContents.executeJavaScript(`
+(() => new Promise((resolve) => {
+  const pill = document.querySelector('[class*="islandPill"]')
+  if (!pill) {
+    resolve({ ok: false, reason: 'missing-island-pill' })
+    return
+  }
+  pill.click()
+  window.setTimeout(() => {
+    const dropdown = document.querySelector('[class*="usageDropdown"]')
+    if (!dropdown) {
+      resolve({ ok: false, reason: 'missing-usage-dropdown' })
+      return
+    }
+    const rect = dropdown.getBoundingClientRect()
+    const style = window.getComputedStyle(dropdown)
+    resolve({
+      ok: true,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      rect: {
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        right: Math.round(rect.right),
+        bottom: Math.round(rect.bottom),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      },
+      clipped: rect.left < 0 || rect.top < 0 || rect.right > window.innerWidth || rect.bottom > window.innerHeight,
+      maxHeight: style.maxHeight,
+      overflowY: style.overflowY,
+      text: dropdown.innerText,
+    })
+  }, 260)
+}))()
+`)
+}
+
+async function sendChatPrompt(win) {
+  await win.webContents.executeJavaScript(`
+(() => {
+  const textarea = document.querySelector('textarea')
+  if (!textarea) throw new Error('textarea missing')
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+  setter.call(textarea, ${JSON.stringify(userPrompt)})
+  textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }))
+})()
+`)
+}
+
+async function collectChatReport(win) {
+  return win.webContents.executeJavaScript(`
+(() => {
+  const wrappers = Array.from(document.querySelectorAll('[class*="messageWrapper"]'))
+  const rows = wrappers.map((element) => ({
+    text: String(element.innerText || element.textContent || '').trim(),
+    className: String(element.className || ''),
+    rect: (() => {
+      const rect = element.getBoundingClientRect()
+      return { top: Math.round(rect.top), bottom: Math.round(rect.bottom), height: Math.round(rect.height) }
+    })(),
+  }))
+  const userIndex = rows.findIndex((row) => row.text.includes(${JSON.stringify(userPrompt)}))
+  const assistantIndex = rows.findIndex((row) => row.text.includes(${JSON.stringify(assistantAnswer)}))
+  const container = document.querySelector('[class*="scrollContainer"]')
+  const lastMessage = wrappers[wrappers.length - 1] || null
+  const children = container ? Array.from(container.children).filter((element) => {
+    const style = window.getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    return style.display !== 'none' && rect.height > 0
+  }) : []
+  const lastChild = children[children.length - 1] || null
+  const lastMessageChildIndex = lastMessage ? children.indexOf(lastMessage) : -1
+  const trailingChildCount = lastMessageChildIndex >= 0 ? children.length - lastMessageChildIndex - 1 : -1
+  const assistantWrapper = assistantIndex >= 0 ? wrappers[assistantIndex] : null
+  const assistantBubble = assistantWrapper?.querySelector('[class*="messageInner"]') || null
+  const paragraph = assistantWrapper?.querySelector('[class*="markdownBody"] p') || null
+  const paragraphMarginBottom = paragraph ? window.getComputedStyle(paragraph).marginBottom : ''
+  const textNode = paragraph ? Array.from(paragraph.childNodes).find((node) => node.nodeType === Node.TEXT_NODE && String(node.textContent || '').trim()) : null
+  let assistantBottomGap = -1
+  if (assistantBubble && textNode) {
+    const range = document.createRange()
+    range.selectNodeContents(textNode)
+    const textRects = Array.from(range.getClientRects())
+    range.detach()
+    const lastTextRect = textRects[textRects.length - 1]
+    const bubbleRect = assistantBubble.getBoundingClientRect()
+    if (lastTextRect) {
+      assistantBottomGap = Math.round(bubbleRect.bottom - lastTextRect.bottom)
+    }
+  }
+  return {
+    rows,
+    userIndex,
+    assistantIndex,
+    orderOk: userIndex !== -1 && assistantIndex !== -1 && userIndex < assistantIndex,
+    lastChildClassName: String(lastChild?.className || ''),
+    lastChildIsMessage: Boolean(lastChild && String(lastChild.className || '').includes('messageWrapper')),
+    trailingChildCount,
+    paragraphMarginBottom,
+    assistantBottomGap,
+    bodyText: document.body.innerText,
+  }
+})()
+`)
+}
+
+async function runVisualCheck(apiBaseUrl) {
+  fs.mkdirSync(outputDir, { recursive: true })
+  app.commandLine.appendSwitch('disable-gpu')
+  process.env.MEETYOU_CHAT_VISUAL_API_BASE_URL = apiBaseUrl
+  await app.whenReady()
+
+  const win = new BrowserWindow({
+    width: 400,
+    height: 620,
+    show: false,
+    frame: false,
+    transparent: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'chat-ui-visual-preload.cjs'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  await win.loadURL(visualUrl)
+  win.showInactive()
+  await waitForCondition(win, "document.body.innerText.includes('个人工作区')", 'workspace shell')
+  await waitForCondition(win, "document.body.innerText.includes('随时可以开始对话')", 'connected empty state')
+  await waitForCondition(win, "document.querySelector('textarea') && !document.querySelector('textarea').disabled", 'enabled chat input')
+
+  win.setSize(360, 520)
+  await wait(500)
+  const islandReport = await collectIslandReport(win)
+  await wait(1000)
+  const islandScreenshot = await capture(win, 'main-narrow-island-open-360x520')
+
+  await win.webContents.executeJavaScript(`
+(() => {
+  document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 1, clientY: 1 }))
+})()
+`)
+  await waitForCondition(win, "!document.querySelector('[class*=\"usageDropdown\"]')", 'closed island dropdown')
+  win.setSize(400, 620)
+  await wait(300)
+  await sendChatPrompt(win)
+  await waitForCondition(win, `document.body.innerText.includes(${JSON.stringify(assistantAnswer)})`, 'assistant answer')
+  await wait(500)
+  const chatReport = await collectChatReport(win)
+  const chatScreenshot = await capture(win, 'main-chat-after-send-400x620')
+
+  const report = {
+    visualUrl,
+    apiBaseUrl,
+    islandReport,
+    chatReport,
+    screenshots: {
+      island: islandScreenshot,
+      chat: chatScreenshot,
+    },
+  }
+  const reportPath = path.join(outputDir, 'chat-ui-visual-report.json')
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+
+  const failures = []
+  if (!islandReport.ok) {
+    failures.push(`island dropdown failed: ${islandReport.reason}`)
+  } else {
+    if (islandReport.clipped) {
+      failures.push('island dropdown is clipped by the window')
+    }
+    if (!islandReport.text.includes('上下文') && !islandReport.text.includes('占用')) {
+      failures.push('island dropdown did not render context usage copy')
+    }
+  }
+  if (!chatReport.orderOk) {
+    failures.push(`message order invalid: userIndex=${chatReport.userIndex} assistantIndex=${chatReport.assistantIndex}`)
+  }
+  if (!chatReport.lastChildIsMessage) {
+    failures.push(`scroll container has a trailing non-message child: ${chatReport.lastChildClassName}`)
+  }
+  if (chatReport.trailingChildCount > 0) {
+    failures.push(`message list has ${chatReport.trailingChildCount} trailing rendered child nodes after the last message`)
+  }
+  if (chatReport.paragraphMarginBottom !== '0px') {
+    failures.push(`single-paragraph assistant reply has bottom margin ${chatReport.paragraphMarginBottom}`)
+  }
+  if (chatReport.assistantBottomGap < 0 || chatReport.assistantBottomGap > 22) {
+    failures.push(`assistant reply bottom gap is ${chatReport.assistantBottomGap}px, expected padding-only spacing`)
+  }
+
+  console.log(JSON.stringify({ ok: failures.length === 0, reportPath, report }, null, 2))
+  if (failures.length > 0) {
+    throw new Error(failures.join('; '))
+  }
+  return report
+}
+
+let viteProcess = null
+let fixtureServer = null
+
+async function main() {
+  const fixture = await startFixtureServer()
+  fixtureServer = fixture.server
+  if (!process.env.MEETYOU_CHAT_VISUAL_URL) {
+    try {
+      await waitForHttp(`http://127.0.0.1:${vitePort}/`, 1000)
+    } catch {
+      viteProcess = startVite()
+    }
+    await waitForHttp(`http://127.0.0.1:${vitePort}/`)
+  }
+  try {
+    await runVisualCheck(fixture.baseUrl)
+  } finally {
+    if (viteProcess && !viteProcess.killed) {
+      viteProcess.kill()
+    }
+    if (fixtureServer) {
+      fixtureServer.close()
+    }
+    for (const socket of wsClients) {
+      socket.destroy()
+    }
+    app.quit()
+  }
+}
+
+main().catch((error) => {
+  console.error(error)
+  if (viteProcess && !viteProcess.killed) {
+    viteProcess.kill()
+  }
+  if (fixtureServer) {
+    fixtureServer.close()
+  }
+  for (const socket of wsClients) {
+    socket.destroy()
+  }
+  app.exit(1)
+})

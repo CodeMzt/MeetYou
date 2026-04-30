@@ -13,5 +13,6 @@ export function normalizeAssistantDisplayText(value: string): string {
       return part.replace(/\n{3,}/g, '\n\n')
     })
     .join('')
+    .replace(/^[ \t]*\n+/g, '')
     .replace(/\n+$/g, '')
 }

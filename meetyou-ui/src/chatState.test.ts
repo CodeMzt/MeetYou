@@ -146,6 +146,79 @@ describe('chatState', () => {
     expect(state.messages[0]?.isStreaming).toBe(false)
   })
 
+  it('keeps an optimistic user message above assistant streaming updates', () => {
+    let state = reduceChatState(createInitialChatState(), {
+      type: 'append_user_turn',
+      turn: createUserTurn('user asks first', '', 'request-1'),
+    })
+
+    state = reduceChatState(state, {
+      type: 'append_message',
+      role: 'assistant',
+      content: 'assistant starts before http returns',
+      streamId: 'stream-1',
+      turnId: 'turn-1',
+      channel: 'answer',
+      phase: 'chunk',
+      eventId: 'evt-1',
+      activeTurnId: 'turn-1',
+    })
+
+    state = reduceChatState(state, {
+      type: 'complete_user_turn',
+      optimisticId: 'request-1',
+      message: {
+        message_id: 'msg_user',
+        thread_id: 'thr_1',
+        session_id: 'sess_1',
+        workspace_id: 'personal',
+        active_workspace_id: 'personal',
+        endpoint_id: 'desktop-app',
+        role: 'user',
+        content: 'user asks first',
+        status: 'completed',
+        channel: 'message',
+        created_at: '2026-04-08T00:00:00Z',
+      },
+    })
+
+    expect(state.messages).toHaveLength(2)
+    expect(state.messages[0]?.id).toBe('msg_user')
+    expect(state.messages[0]?.role).toBe('user')
+    expect(state.messages[1]?.role).toBe('assistant')
+  })
+
+  it('does not duplicate a completed user message when a replay arrives after optimistic reconciliation', () => {
+    let state = reduceChatState(createInitialChatState(), {
+      type: 'append_user_turn',
+      turn: createUserTurn('hello', '', 'request-1'),
+    })
+
+    const message = {
+      message_id: 'msg_user',
+      thread_id: 'thr_1',
+      session_id: 'sess_1',
+      workspace_id: 'personal',
+      active_workspace_id: 'personal',
+      endpoint_id: 'desktop-app',
+      role: 'user' as const,
+      content: 'hello',
+      status: 'completed',
+      channel: 'message',
+      created_at: '2026-04-08T00:00:00Z',
+    }
+
+    state = reduceChatState(state, {
+      type: 'complete_user_turn',
+      optimisticId: 'request-1',
+      message,
+    })
+    state = reduceChatState(state, { type: 'append_runtime_message', message })
+
+    expect(state.messages).toHaveLength(1)
+    expect(state.messages[0]?.id).toBe('msg_user')
+  })
+
   it('does not duplicate replayed completed messages after history hydration', () => {
     let state = reduceChatState(createInitialChatState(), {
       type: 'hydrate_messages',

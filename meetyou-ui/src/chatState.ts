@@ -38,6 +38,7 @@ export function createInitialChatState(): ChatState {
 
 export type ChatAction =
   | { type: 'append_user_turn'; turn: ChatTurn }
+  | { type: 'complete_user_turn'; optimisticId: string; message: RuntimeMessage }
   | { type: 'append_system_turn'; turn: ChatTurn }
   | { type: 'hydrate_messages'; messages: RuntimeMessage[] }
   | { type: 'append_runtime_message'; message: RuntimeMessage }
@@ -62,9 +63,9 @@ export type ChatAction =
   | { type: 'resolve_confirm'; requestId: string; accepted: boolean; turnId?: string }
   | { type: 'resolve_human_input'; requestId: string; answerText: string; selectedOption?: string; turnId?: string }
 
-export function createUserTurn(content: string, turnId = ''): ChatTurn {
+export function createUserTurn(content: string, turnId = '', clientRequestId = ''): ChatTurn {
   return {
-    id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: clientRequestId || `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     streamId: '',
     turnId,
     role: 'user',
@@ -73,6 +74,7 @@ export function createUserTurn(content: string, turnId = ''): ChatTurn {
     activities: [],
     isStreaming: false,
     createdAt: Date.now(),
+    clientRequestId: clientRequestId || undefined,
     trimmedActivityCount: 0,
     temporary: false,
   }
@@ -208,17 +210,9 @@ function hydrateRuntimeMessages(messages: RuntimeMessage[]): ChatTurn[] {
   }))
 }
 
-function appendRuntimeMessage(turns: ChatTurn[], message: RuntimeMessage): ChatTurn[] {
+function toChatTurnFromRuntimeMessage(message: RuntimeMessage): ChatTurn {
   const logicalTurnId = message.role === 'assistant' ? message.message_id : ''
-  const existing = turns.findIndex(
-    (turn) =>
-      turn.id === message.message_id ||
-      (logicalTurnId && turn.turnId === logicalTurnId),
-  )
-  if (existing !== -1) {
-    return turns
-  }
-  const nextTurn = {
+  return {
     id: message.message_id,
     streamId: '',
     turnId: logicalTurnId,
@@ -231,6 +225,19 @@ function appendRuntimeMessage(turns: ChatTurn[], message: RuntimeMessage): ChatT
     error: buildMessageError(message.status, message.role),
     temporary: Boolean(message.temporary),
   }
+}
+
+function appendRuntimeMessage(turns: ChatTurn[], message: RuntimeMessage): ChatTurn[] {
+  const logicalTurnId = message.role === 'assistant' ? message.message_id : ''
+  const existing = turns.findIndex(
+    (turn) =>
+      turn.id === message.message_id ||
+      (logicalTurnId && turn.turnId === logicalTurnId),
+  )
+  if (existing !== -1) {
+    return turns
+  }
+  const nextTurn = toChatTurnFromRuntimeMessage(message)
   if (message.channel === 'progress_notice') {
     const last = turns[turns.length - 1]
     if (last?.role === 'assistant' && last.isStreaming && !last.content && !last.reasoning) {
@@ -238,6 +245,30 @@ function appendRuntimeMessage(turns: ChatTurn[], message: RuntimeMessage): ChatT
     }
   }
   return [...turns, nextTurn]
+}
+
+function completeUserTurn(turns: ChatTurn[], optimisticId: string, message: RuntimeMessage): ChatTurn[] {
+  const normalizedOptimisticId = String(optimisticId || '').trim()
+  const existingMessageIndex = findMessageIndex(turns, message.message_id)
+  const optimisticIndex = normalizedOptimisticId
+    ? turns.findIndex(
+        (turn) =>
+          turn.role === 'user' &&
+          (turn.id === normalizedOptimisticId || turn.clientRequestId === normalizedOptimisticId),
+      )
+    : -1
+
+  if (existingMessageIndex !== -1) {
+    if (optimisticIndex !== -1 && optimisticIndex !== existingMessageIndex) {
+      return turns.filter((_, index) => index !== optimisticIndex)
+    }
+    return turns
+  }
+  if (optimisticIndex === -1) {
+    return appendRuntimeMessage(turns, message)
+  }
+  const nextTurn = toChatTurnFromRuntimeMessage(message)
+  return turns.map((turn, index) => (index === optimisticIndex ? nextTurn : turn))
 }
 
 function completeStreamMessage(turns: ChatTurn[], message: RuntimeMessage, streamId: string, turnId: string): ChatTurn[] {
@@ -405,6 +436,12 @@ export function reduceChatState(state: ChatState, action: ChatAction): ChatState
   switch (action.type) {
     case 'append_user_turn':
       return withPrunedMessages(state, [...state.messages, action.turn], action.turn.turnId)
+    case 'complete_user_turn':
+      return withPrunedMessages(
+        state,
+        completeUserTurn(state.messages, action.optimisticId, action.message),
+        state.runtimeSnapshot?.turn_id || '',
+      )
     case 'append_system_turn':
       return withPrunedMessages(
         state,

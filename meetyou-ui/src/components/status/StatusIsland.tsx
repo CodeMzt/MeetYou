@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Cpu } from 'lucide-react'
 import type { RuntimeStateSnapshot, RuntimeUsageSnapshot, RuntimeHealthSnapshot, StatusFeedback } from '../../types'
@@ -17,6 +18,7 @@ interface StatusIslandProps {
 export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSnapshot, statusFeedback, preferredMode, danxiStatusText }: StatusIslandProps) {
   const [expanded, setExpanded] = useState(false)
   const islandRef = useRef<HTMLDivElement | null>(null)
+  const dropdownRef = useRef<HTMLDivElement | null>(null)
 
   const isConnected = !!healthSnapshot
   const status = runtimeSnapshot?.status || 'idle'
@@ -58,7 +60,8 @@ export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSna
       return
     }
     const handlePointerDown = (event: MouseEvent) => {
-      if (!islandRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node
+      if (!islandRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
         setExpanded(false)
       }
     }
@@ -94,9 +97,10 @@ export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSna
         </motion.div>
       </motion.div>
 
-      <AnimatePresence>
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
         {expanded && usageSnapshot && usageSnapshot.usage_ready && (
-          <MotionCard className={styles.usageDropdown}>
+          <MotionCard ref={dropdownRef} className={styles.usageDropdown}>
             <div className={styles.usageHeader}>
               <span>上下文占用</span>
               <span className="text-gradient">
@@ -126,7 +130,9 @@ export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSna
             )}
           </MotionCard>
         )}
-      </AnimatePresence>
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   )
 }

@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { normalizeAssistantDisplayText } from './displayText'
 
 describe('normalizeAssistantDisplayText', () => {
-  it('trims trailing blank lines and collapses excessive spacing outside code fences', () => {
-    expect(normalizeAssistantDisplayText('first\n\n\n\nsecond\n\n')).toBe('first\n\nsecond')
+  it('removes transport-only boundary blank lines without flattening intentional paragraphs', () => {
+    expect(normalizeAssistantDisplayText('\n\nFirst paragraph\n\nSecond paragraph\n\n')).toBe(
+      'First paragraph\n\nSecond paragraph',
+    )
   })
 
-  it('preserves blank lines inside fenced code blocks', () => {
-    const input = 'before\n\n\n```ts\nconst a = 1\n\n\nconst b = 2\n```\n\n\nafter\n'
-    expect(normalizeAssistantDisplayText(input)).toBe('before\n\n```ts\nconst a = 1\n\n\nconst b = 2\n```\n\nafter')
+  it('keeps fenced code block spacing intact', () => {
+    expect(normalizeAssistantDisplayText('\n```ts\n\nconst value = 1\n```\n')).toBe(
+      '```ts\n\nconst value = 1\n```',
+    )
   })
 })

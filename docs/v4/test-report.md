@@ -2,6 +2,17 @@
 
 Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
 
+## 2026-04-30 Main Chat UI Ordering / Context Popover Addendum
+
+- Local commit: the main chat UI fix commit containing this addendum.
+- Scope: fixed the dynamic-island context popover being clipped in the transformed top dock by rendering the popover through a body portal with viewport-bounded sizing, removed the hidden scroll anchor that created reply-tail whitespace, moved the invisible regenerate action bar out of normal layout so it no longer creates a fake blank line at the end of assistant replies, normalized leading/trailing assistant display blank lines, and made user sends optimistic so assistant streaming events can no longer appear above the user message when WebSocket events beat the HTTP response.
+- Frontend typecheck: passed (`npm run typecheck`).
+- Frontend focused tests: passed (`npm run test -- --run chatState displayText UsagePanel`, 3 files / 17 tests).
+- Frontend full tests: passed (`npm run test`, 20 files / 84 tests).
+- Real UI visual QA: passed (`npm run visual:chat-ui`). The check opens the real Electron main window through Vite, uses a local mock Desktop HTTP/WebSocket backend, reproduces the race where assistant stream frames arrive before the delayed user-message HTTP response, captures a `360x520` dynamic-island popover state and a `400x620` post-send chat state, and verifies no popover clipping, correct user-before-assistant order, no trailing rendered blank node, `0px` bottom margin for a single-paragraph assistant reply, and padding-only assistant text-to-bubble bottom spacing. A stricter geometry check initially failed at `46px`; after moving the hidden action bar out of flow it passed at `16px`.
+- Visual QA evidence: screenshots were generated under `%TEMP%\meetyou-chat-ui-visual\`, including `main-narrow-island-open-360x520.png` and `main-chat-after-send-400x620.png`; the latest inspected screenshots show Chinese UI text, a full-width unclipped context popover, and the user bubble above the assistant bubble.
+- Local only: backend, CI, Deploy, remote Core, local Desktop against remote Core, and Feishu/WeChatBot human confirmation were not rerun for this UI-only batch.
+
 ## 2026-04-30 Endpoint Handler Registry / ToolRouter Scoring / Workspace Routing Governance Addendum
 
 - Local commits: `503290a1` (`refactor endpoint frame handling`), `bef25146` (`feat tool router endpoint scoring`), and the final workspace routing governance commit containing this addendum.
