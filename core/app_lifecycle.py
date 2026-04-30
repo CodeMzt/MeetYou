@@ -214,6 +214,7 @@ async def setup_app_runtime(app) -> None:
         cors_origins=app.config.get("gateway_cors_origins") or [],
     )
     app.core_domain.tool_router.set_endpoint_transport(app.gateway.dispatch_endpoint_call)
+    app.core_domain.tool_router.set_connected_endpoint_ids_getter(app.gateway.endpoint_ws_manager.connected_endpoint_ids_now)
     app.core_domain.services.delivery.set_transport(
         lambda endpoint_id, frame: app.gateway.dispatch_endpoint_call(endpoint_id=endpoint_id, payload=frame)
     )

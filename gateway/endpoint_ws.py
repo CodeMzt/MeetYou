@@ -129,6 +129,9 @@ class EndpointWebSocketManager:
         async with self._lock:
             return {endpoint_id for endpoint_id, sockets in self._connections.items() if sockets}
 
+    def connected_endpoint_ids_now(self) -> set[str]:
+        return {endpoint_id for endpoint_id, sockets in self._connections.items() if sockets}
+
     async def snapshot(self, *, endpoint_id: str = "") -> list[dict[str, Any]]:
         normalized_endpoint_id = str(endpoint_id or "").strip()
         async with self._lock:

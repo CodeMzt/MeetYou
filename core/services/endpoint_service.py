@@ -78,6 +78,14 @@ class EndpointRegistryService(ServiceBase):
                 payload=payload,
             )
 
+    def record_routing_result(self, *, endpoint_row_id, success: bool, latency_ms: float | None = None):
+        with self.session_scope() as session:
+            return EndpointRepository(session).record_routing_result(
+                endpoint_row_id=endpoint_row_id,
+                success=success,
+                latency_ms=latency_ms,
+            )
+
 
 class EndpointConnectionService(ServiceBase):
     def upsert_connection(
