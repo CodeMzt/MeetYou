@@ -18,6 +18,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     aiohttp = None
 
+from core.source_catalog import normalize_source_profile_name
+
 ActivityCallback = Callable[[str, str, dict[str, Any] | None], Awaitable[None]]
 
 logger = logging.getLogger("meetyou.authoritative_sources")
@@ -269,13 +271,16 @@ class AuthoritativeSourceRegistry:
         official_only: bool | None = None,
         activity_callback: ActivityCallback | None = None,
     ) -> dict[str, Any]:
+        requested_profile = normalize_source_profile_name(source_profile, fallback="tech_updates")
         status_getter = getattr(self._mode_manager, "get_source_catalog_status", None)
         status = status_getter() if callable(status_getter) else {"available": False, "error": "catalog_manager_unavailable"}
         profile_getter = getattr(self._mode_manager, "get_source_profile", None)
-        profile = profile_getter(source_profile) if callable(profile_getter) else {"name": source_profile}
+        profile = profile_getter(requested_profile) if callable(profile_getter) else {"name": requested_profile}
+        profile_name = _normalize_text(profile.get("name") if isinstance(profile, dict) else "") or requested_profile
+        profile_name = normalize_source_profile_name(profile_name, fallback=requested_profile)
         source_getter = getattr(self._mode_manager, "get_sources_for_profile", None)
         sources = (
-            source_getter(source_profile, official_only=official_only)
+            source_getter(profile_name, official_only=official_only)
             if callable(source_getter)
             else []
         )
@@ -284,13 +289,15 @@ class AuthoritativeSourceRegistry:
             return {
                 "catalog_status": status,
                 "catalog_unavailable": True,
-                "source_profile": source_profile,
+                "source_profile": profile_name,
                 "sources": [],
                 "partial_failures": [status.get("error") or "catalog_unavailable"],
             }
 
         collected: list[dict[str, Any]] = []
         failures: list[str] = []
+        if not sources:
+            failures.append(f"source_profile_no_sources:{profile_name}")
         for source_config in sources:
             if len(collected) >= max(1, int(limit or 5)):
                 break
@@ -323,7 +330,7 @@ class AuthoritativeSourceRegistry:
         return {
             "catalog_status": status,
             "catalog_unavailable": False,
-            "source_profile": source_profile,
+            "source_profile": profile_name,
             "profile": profile,
             "sources": collected[: max(1, int(limit or 5))],
             "partial_failures": failures,
@@ -338,6 +345,7 @@ class AuthoritativeSourceRegistry:
         limit: int = 8,
         activity_callback: ActivityCallback | None = None,
     ) -> dict[str, Any]:
+        source_profile = normalize_source_profile_name(source_profile, fallback="tech_updates")
         watch_items = [watchlist] if isinstance(watchlist, str) else list(watchlist or [])
         watch_items = [_normalize_text(item) for item in watch_items if _normalize_text(item)]
         if not watch_items:
@@ -391,8 +399,11 @@ class AuthoritativeSourceRegistry:
         raw = await self._web_tools.search_web(
             search_query,
             max_results=max(3, min(limit, 5)),
-            source_profile=(source_config.get("profiles") or [""])[0],
+            source_profile=normalize_source_profile_name((source_config.get("profiles") or [""])[0], fallback="tech_updates"),
+            official_only=bool(source_config.get("primary_source", False)),
         )
+        if not isinstance(raw, str):
+            return []
         payload = json.loads(raw)
         normalized_domain = _normalize_domain(domain)
         results: list[dict[str, Any]] = []

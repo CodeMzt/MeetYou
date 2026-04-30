@@ -13,6 +13,15 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 from core.tool_runtime.models import ToolCallResult, ToolErrorCategory, ToolSourceType
+from tools.search_providers import (
+    SearchProvider,
+    SearchProviderResponse,
+    SearchRequest,
+    SearchResult,
+    canonicalize_url,
+    normalize_domain,
+    utc_timestamp,
+)
 
 logger = logging.getLogger("meetyou.web_search")
 
@@ -340,6 +349,405 @@ def _normalize_playwright_payload(text: str, url: str, fallback_title: str = "")
     }
 
 
+def _numeric_score(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _primary_domain_hint(domain: str, source_profile: str = "") -> bool:
+    normalized = normalize_domain(domain)
+    if not normalized:
+        return False
+    official_domains = {
+        "github.com",
+        "docs.python.org",
+        "developer.mozilla.org",
+        "w3.org",
+        "whatwg.org",
+        "ietf.org",
+        "sec.gov",
+        "edgar.sec.gov",
+        "federalreserve.gov",
+        "fred.stlouisfed.org",
+        "worldbank.org",
+        "who.int",
+        "fda.gov",
+        "pubmed.ncbi.nlm.nih.gov",
+        "arxiv.org",
+        "doi.org",
+        "crossref.org",
+        "nvd.nist.gov",
+        "cisa.gov",
+    }
+    if normalized in official_domains or any(normalized.endswith(f".{item}") for item in official_domains):
+        return True
+    if source_profile == "policy_cn" and (normalized == "gov.cn" or normalized.endswith(".gov.cn")):
+        return True
+    return False
+
+
+def _result_rank_score(result: SearchResult, *, source_profile: str = "", official_only: bool | None = None) -> float:
+    domain = normalize_domain(result.url)
+    score = _numeric_score(result.score)
+    if _primary_domain_hint(domain, source_profile):
+        score += 2.0
+    if bool(official_only) and _primary_domain_hint(domain, source_profile):
+        score += 1.0
+    if result.published_at:
+        score += 0.15
+    if result.snippet:
+        score += 0.05
+    return score
+
+
+def _evidence_from_source(source: dict[str, Any]) -> dict[str, Any]:
+    source_id = source.get("source_id") or source.get("id")
+    title = _trim_text(str(source.get("title") or source.get("url") or ""), 180)
+    return {
+        "source_id": source_id,
+        "title": title,
+        "url": str(source.get("url") or ""),
+        "canonical_url": str(source.get("canonical_url") or ""),
+        "domain": str(source.get("domain") or ""),
+        "provider": str(source.get("provider") or ""),
+        "published_at": str(source.get("published_at") or source.get("published_date") or ""),
+        "retrieved_at": str(source.get("retrieved_at") or ""),
+        "source_profile": str(source.get("source_profile") or ""),
+        "is_primary_source": bool(source.get("is_primary_source", False)),
+        "credibility": str(source.get("credibility") or ""),
+        "rank_score": source.get("rank_score", 0.0),
+        "excerpt": _trim_text(source.get("summary") or source.get("snippet"), 320),
+        "verification_status": str(source.get("verification_status") or ""),
+        "citation": f"[{source_id}] {title}".strip(),
+    }
+
+
+class TavilySearchProvider:
+    name = "tavily"
+
+    def __init__(self, owner: "WebSearchTools"):
+        self._owner = owner
+
+    def is_available(self) -> bool:
+        return self._owner.has_tavily_search()
+
+    def unavailable_result(self) -> ToolCallResult:
+        return self._owner._tavily_unavailable_result()
+
+    async def search(self, request: SearchRequest) -> SearchProviderResponse | ToolCallResult:
+        search_tool_name = self._owner._resolve_tavily_search_tool_name()
+        if not search_tool_name:
+            return self.unavailable_result()
+
+        try:
+            search_started_at = time.perf_counter()
+            search_args = {
+                "query": request.query,
+                "max_results": request.max_results,
+                "search_depth": request.search_depth,
+                "topic": request.topic,
+                "include_raw_content": False,
+                "include_images": False,
+            }
+            cache_key = (
+                "search",
+                search_tool_name,
+                request.query.lower(),
+                request.max_results,
+                request.search_depth,
+                request.topic,
+            )
+            search_text = self._owner._get_cached(cache_key, _SEARCH_CACHE_TTL_SECONDS)
+            was_cached = search_text is not None
+            if search_text is None:
+                search_text = await self._owner._call_mcp_text(search_tool_name, search_args)
+                self._owner._set_cached(cache_key, search_text)
+            logger.debug(
+                "Web search provider completed provider=%s query=%r depth=%s elapsed_ms=%s cached=%s",
+                self.name,
+                request.query,
+                request.search_depth,
+                int((time.perf_counter() - search_started_at) * 1000),
+                was_cached,
+            )
+        except Exception as exc:
+            logger.error("Tavily search failed: %s", exc)
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_backend_failed",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Web search is unavailable right now.",
+                details={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+                retryable=True,
+            )
+
+        backend_error = _extract_tavily_error(search_text)
+        if backend_error:
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_backend_failed",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Web search is unavailable right now.",
+                details={"backend_error": backend_error},
+                retryable=True,
+            )
+
+        payload = _extract_tavily_payload(search_text)
+        normalized = _normalize_tavily_search_payload(payload, request.query, request.max_results)
+        results = [
+            SearchResult(
+                title=item["title"],
+                url=item["url"],
+                snippet=item.get("snippet", ""),
+                published_at=item.get("published_date", ""),
+                score=item.get("score"),
+                provider=self.name,
+                raw=dict(item),
+            )
+            for item in normalized["results"]
+        ]
+        if not results and search_text.strip() and not _looks_like_tavily_empty_results(search_text):
+            logger.warning(
+                "Unexpected Tavily search response for query %s: %s",
+                request.query,
+                _trim_text(search_text, 240),
+            )
+            return ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_response_invalid",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Web search backend returned an unexpected response format.",
+                details={"response_excerpt": _trim_text(search_text, 240)},
+            )
+        return SearchProviderResponse(
+            provider=self.name,
+            query=request.query,
+            answer=normalized["answer"],
+            results=results,
+            diagnostics={
+                "topic": request.topic,
+                "search_depth": request.search_depth,
+                "cached": was_cached,
+                "tool_name": search_tool_name,
+            },
+        )
+
+
+class SearchOrchestrator:
+    def __init__(self, owner: "WebSearchTools", providers: list[SearchProvider]):
+        self._owner = owner
+        self._providers = list(providers)
+
+    def _fuse_results(self, responses: list[SearchProviderResponse], request: SearchRequest) -> list[SearchResult]:
+        by_url: dict[str, SearchResult] = {}
+        for response in responses:
+            for result in response.results:
+                canonical = canonicalize_url(result.url)
+                if not canonical:
+                    continue
+                result.provider = result.provider or response.provider
+                result.rank_score = _result_rank_score(
+                    result,
+                    source_profile=request.source_profile,
+                    official_only=request.official_only,
+                )
+                existing = by_url.get(canonical)
+                if existing is None or result.rank_score > existing.rank_score:
+                    by_url[canonical] = result
+                elif existing and not existing.snippet and result.snippet:
+                    existing.snippet = result.snippet
+        ordered = list(by_url.values())
+        ordered.sort(key=lambda item: (item.rank_score, _numeric_score(item.score)), reverse=True)
+        return ordered[: request.max_results]
+
+    def _source_payload_from_result(
+        self,
+        index: int,
+        result: SearchResult,
+        request: SearchRequest,
+        *,
+        detailed: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        url = str((detailed or {}).get("url") or result.url)
+        title = str((detailed or {}).get("title") or result.title or url)
+        summary = str((detailed or {}).get("summary") or result.snippet or "")
+        reader = str((detailed or {}).get("reader") or "search_result")
+        domain = normalize_domain(url)
+        is_primary = _primary_domain_hint(domain, request.source_profile)
+        if request.official_only is True and not is_primary:
+            credibility = "unverified_official_candidate"
+        else:
+            credibility = "primary" if is_primary else "secondary"
+        verification_status = "read" if detailed and detailed.get("summary") else "search_result_only"
+        return {
+            "id": index,
+            "source_id": index,
+            "title": title,
+            "url": url,
+            "canonical_url": canonicalize_url(url),
+            "domain": domain,
+            "snippet": result.snippet,
+            "published_date": result.published_at,
+            "published_at": result.published_at,
+            "retrieved_at": utc_timestamp(),
+            "reader": reader,
+            "provider": result.provider,
+            "summary": summary,
+            "excerpt": _trim_text(summary, 320),
+            "source_profile": request.source_profile,
+            "is_primary_source": is_primary,
+            "credibility": credibility,
+            "rank_score": round(float(result.rank_score or 0.0), 4),
+            "verification_status": verification_status,
+        }
+
+    async def search(self, request: SearchRequest) -> str | ToolCallResult:
+        responses: list[SearchProviderResponse] = []
+        provider_failures: list[str] = []
+        last_failure: ToolCallResult | None = None
+
+        for provider in self._providers:
+            if not provider.is_available():
+                unavailable = provider.unavailable_result()
+                if isinstance(unavailable, ToolCallResult):
+                    last_failure = unavailable
+                    provider_failures.append(_trim_text(unavailable.error.message if unavailable.error else provider.name, 240))
+                continue
+            provider_response = await provider.search(request)
+            if isinstance(provider_response, ToolCallResult):
+                last_failure = provider_response
+                provider_failures.append(_trim_text(provider_response.error.message if provider_response.error else provider.name, 240))
+                continue
+            responses.append(provider_response)
+            if request.quality == "fast":
+                break
+
+        if not responses:
+            return last_failure or ToolCallResult.failure(
+                tool_name="search_web",
+                source=ToolSourceType.BUILTIN,
+                action_risk="read",
+                code="web_search_unavailable",
+                category=ToolErrorCategory.DEPENDENCY,
+                message="Web search is unavailable because no search provider is configured.",
+            )
+
+        results = self._fuse_results(responses, request)
+        provider_backends = [response.provider for response in responses]
+        summary_hint = next((response.answer for response in responses if response.answer), "")
+
+        if not results:
+            return json.dumps(
+                {
+                    "query": request.query,
+                    "search_backend": provider_backends[0] if len(provider_backends) == 1 else "multi_provider",
+                    "provider_backends": provider_backends,
+                    "topic": request.topic,
+                    "quality": request.quality,
+                    "search_depth": request.search_depth,
+                    "source_profile": request.source_profile,
+                    "official_only": request.official_only,
+                    "freshness": request.freshness,
+                    "citation_style": "No results were found.",
+                    "summary_hint": summary_hint,
+                    "sources": [],
+                    "evidence_ledger": [],
+                    "provider_failures": provider_failures,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        read_top_k = _read_top_k_for_quality(request.quality, request.max_results)
+        source_candidates = results[:read_top_k]
+        sources: list[dict[str, Any]] = []
+        failures: list[str] = list(provider_failures)
+
+        if source_candidates:
+            await self._owner._emit_activity(
+                request.activity_callback,
+                "reading_sources",
+                f"Reading {len(source_candidates)} source(s)",
+                {"count": len(source_candidates)},
+            )
+
+        async def read_source(index: int, result: SearchResult) -> tuple[int, dict[str, Any], str | None]:
+            detailed, failure = await self._owner._read_url_with_fallback(
+                result.url,
+                title=result.title,
+                activity_callback=request.activity_callback,
+                allow_playwright=index == 1,
+                extract_timeout_seconds=self._owner._extract_timeout_seconds,
+            )
+            return index, self._source_payload_from_result(index, result, request, detailed=detailed), failure
+
+        if source_candidates:
+            read_results = await asyncio.gather(
+                *(read_source(index, result) for index, result in enumerate(source_candidates, start=1)),
+                return_exceptions=True,
+            )
+            for item in sorted(
+                (entry for entry in read_results if not isinstance(entry, Exception)),
+                key=lambda entry: entry[0],
+            ):
+                _, merged, failure = item
+                if failure:
+                    failures.append(failure)
+                sources.append(merged)
+            for item in read_results:
+                if isinstance(item, Exception):
+                    failures.append(f"Source read failed: {item}")
+
+        additional_results = [
+            {
+                "title": item.title,
+                "url": item.url,
+                "canonical_url": canonicalize_url(item.url),
+                "domain": normalize_domain(item.url),
+                "snippet": item.snippet,
+                "published_date": item.published_at,
+                "published_at": item.published_at,
+                "provider": item.provider,
+                "rank_score": round(float(item.rank_score or 0.0), 4),
+                "verification_status": "search_result_only",
+            }
+            for item in results[read_top_k : request.max_results]
+        ]
+        evidence_ledger = [_evidence_from_source(source) for source in sources]
+
+        return json.dumps(
+            {
+                "query": request.query,
+                "search_backend": provider_backends[0] if len(provider_backends) == 1 else "multi_provider",
+                "provider_backends": provider_backends,
+                "provider_diagnostics": [response.diagnostics for response in responses],
+                "topic": request.topic,
+                "quality": request.quality,
+                "search_depth": request.search_depth,
+                "source_profile": request.source_profile,
+                "official_only": request.official_only,
+                "freshness": request.freshness,
+                "citation_style": "Answer first, then cite only evidence_ledger source ids inline like [1], [2].",
+                "summary_hint": summary_hint,
+                "sources": sources,
+                "evidence_ledger": evidence_ledger,
+                "evidence": evidence_ledger,
+                "additional_results": additional_results,
+                "partial_failures": failures,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
 class WebSearchTools:
     def __init__(self, mcp_manager, config=None):
         self._mcp_manager = mcp_manager
@@ -358,9 +766,11 @@ class WebSearchTools:
             maximum=30,
         )
         self._default_quality = str(
-            getattr(config, "get", lambda key, default=None: default)("web_search_quality", "adaptive") if config is not None else "adaptive"
-        ).strip() or "adaptive"
+            getattr(config, "get", lambda key, default=None: default)("web_search_quality", "fast") if config is not None else "fast"
+        ).strip() or "fast"
         self._extract_semaphore = asyncio.Semaphore(self._parallel_reads)
+        self._search_providers: list[SearchProvider] = [TavilySearchProvider(self)]
+        self._search_orchestrator = SearchOrchestrator(self, self._search_providers)
 
     def _get_cached(self, key: tuple[Any, ...], ttl_seconds: int) -> Any | None:
         now = time.monotonic()
@@ -637,6 +1047,8 @@ class WebSearchTools:
         activity_callback: ActivityCallback | None = None,
         source_profile: str = "",
         quality: str = "",
+        official_only: bool | None = None,
+        freshness: str = "",
     ) -> str | ToolCallResult:
         del session_id, source
 
@@ -661,17 +1073,9 @@ class WebSearchTools:
                 message="search_web is for discovery queries. Use read_web_page for a direct URL.",
             )
 
-        if not self.has_tavily_search():
-            return self._tavily_unavailable_result()
-        search_tool_name = self._resolve_tavily_search_tool_name()
-        if not search_tool_name:
-            return self._tavily_unavailable_result()
-
         safe_max_results = _bounded_int(max_results, default=_DEFAULT_SEARCH_RESULTS)
         resolved_quality = _normalize_quality(quality or self._default_quality, query=normalized_query, source_profile=source_profile)
         search_depth = _search_depth_for_quality(resolved_quality)
-        read_top_k = _read_top_k_for_quality(resolved_quality, safe_max_results)
-
         topic = _guess_tavily_topic(normalized_query)
 
         await self._emit_activity(
@@ -681,170 +1085,18 @@ class WebSearchTools:
             {"query": normalized_query},
         )
 
-        try:
-            search_started_at = time.perf_counter()
-            search_args = {
-                "query": normalized_query,
-                "max_results": safe_max_results,
-                "search_depth": search_depth,
-                "topic": topic,
-                "include_raw_content": False,
-                "include_images": False,
-            }
-            cache_key = ("search", search_tool_name, normalized_query.lower(), safe_max_results, search_depth, topic)
-            search_text = self._get_cached(cache_key, _SEARCH_CACHE_TTL_SECONDS)
-            was_cached = search_text is not None
-            if search_text is None:
-                search_text = await self._call_mcp_text(search_tool_name, search_args)
-                self._set_cached(cache_key, search_text)
-            logger.debug(
-                "Web search backend completed query=%r depth=%s elapsed_ms=%s cached=%s",
-                normalized_query,
-                search_depth,
-                int((time.perf_counter() - search_started_at) * 1000),
-                was_cached,
-            )
-        except Exception as exc:
-            logger.error("Tavily search failed: %s", exc)
-            return ToolCallResult.failure(
-                tool_name="search_web",
-                source=ToolSourceType.BUILTIN,
-                action_risk="read",
-                code="web_search_backend_failed",
-                category=ToolErrorCategory.DEPENDENCY,
-                message="Web search is unavailable right now.",
-                details={"exception_type": type(exc).__name__, "exception_message": str(exc)},
-                retryable=True,
-            )
-
-        backend_error = _extract_tavily_error(search_text)
-        if backend_error:
-            return ToolCallResult.failure(
-                tool_name="search_web",
-                source=ToolSourceType.BUILTIN,
-                action_risk="read",
-                code="web_search_backend_failed",
-                category=ToolErrorCategory.DEPENDENCY,
-                message="Web search is unavailable right now.",
-                details={"backend_error": backend_error},
-                retryable=True,
-            )
-
-        payload = _extract_tavily_payload(search_text)
-        normalized = _normalize_tavily_search_payload(payload, normalized_query, safe_max_results)
-        results = normalized["results"]
-        if not results:
-            if search_text.strip() and not _looks_like_tavily_empty_results(search_text):
-                logger.warning(
-                    "Unexpected Tavily search response for query %s: %s",
-                    normalized_query,
-                    _trim_text(search_text, 240),
-                )
-                return ToolCallResult.failure(
-                    tool_name="search_web",
-                    source=ToolSourceType.BUILTIN,
-                    action_risk="read",
-                    code="web_search_response_invalid",
-                    category=ToolErrorCategory.DEPENDENCY,
-                    message="Web search backend returned an unexpected response format.",
-                    details={"response_excerpt": _trim_text(search_text, 240)},
-                )
-            return json.dumps(
-                {
-                    "query": normalized_query,
-                    "search_backend": "tavily",
-                    "topic": topic,
-                    "quality": resolved_quality,
-                    "search_depth": search_depth,
-                    "source_profile": str(source_profile or ""),
-                    "citation_style": "No results were found.",
-                    "summary_hint": normalized["answer"],
-                    "sources": [],
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-
-        sources: list[dict[str, Any]] = []
-        failures: list[str] = []
-        source_candidates = results[:read_top_k]
-
-        if source_candidates:
-            await self._emit_activity(
-                activity_callback,
-                "reading_sources",
-                f"Reading {len(source_candidates)} source(s)",
-                {"count": len(source_candidates)},
-            )
-
-        async def read_source(index: int, result: dict[str, Any]) -> tuple[int, dict[str, Any], str | None]:
-            detailed, failure = await self._read_url_with_fallback(
-                result["url"],
-                title=result["title"],
-                activity_callback=activity_callback,
-                allow_playwright=index == 1,
-                extract_timeout_seconds=self._extract_timeout_seconds,
-            )
-            merged = {
-                "id": index,
-                "title": result["title"],
-                "url": result["url"],
-                "snippet": result["snippet"],
-                "published_date": result["published_date"],
-                "reader": "search_result",
-                "summary": result["snippet"],
-            }
-            if detailed:
-                merged["title"] = detailed.get("title") or merged["title"]
-                merged["url"] = detailed.get("url") or merged["url"]
-                merged["reader"] = detailed.get("reader") or merged["reader"]
-                merged["summary"] = detailed.get("summary") or merged["summary"]
-            return index, merged, failure
-
-        if source_candidates:
-            read_results = await asyncio.gather(
-                *(read_source(index, result) for index, result in enumerate(source_candidates, start=1)),
-                return_exceptions=True,
-            )
-            for item in sorted(
-                (entry for entry in read_results if not isinstance(entry, Exception)),
-                key=lambda entry: entry[0],
-            ):
-                _, merged, failure = item
-                if failure:
-                    failures.append(failure)
-                sources.append(merged)
-            for item in read_results:
-                if isinstance(item, Exception):
-                    failures.append(f"Source read failed: {item}")
-
-        additional_results = [
-            {
-                "title": item["title"],
-                "url": item["url"],
-                "snippet": item["snippet"],
-                "published_date": item["published_date"],
-            }
-            for item in results[read_top_k:safe_max_results]
-        ]
-
-        return json.dumps(
-            {
-                "query": normalized_query,
-                "search_backend": "tavily",
-                "topic": topic,
-                "quality": resolved_quality,
-                "search_depth": search_depth,
-                "source_profile": str(source_profile or ""),
-                "citation_style": "Answer first, then cite sources inline like [1], [2] using the source ids below.",
-                "summary_hint": normalized["answer"],
-                "sources": sources,
-                "additional_results": additional_results,
-                "partial_failures": failures,
-            },
-            ensure_ascii=False,
-            indent=2,
+        request = SearchRequest(
+            query=normalized_query,
+            max_results=safe_max_results,
+            quality=resolved_quality,
+            source_profile=str(source_profile or ""),
+            official_only=official_only,
+            freshness=str(freshness or ""),
+            search_depth=search_depth,
+            topic=topic,
+            activity_callback=activity_callback,
         )
+        return await self._search_orchestrator.search(request)
 
     async def read_web_page(
         self,
@@ -853,6 +1105,7 @@ class WebSearchTools:
         source=None,
         activity_callback: ActivityCallback | None = None,
         source_profile: str = "",
+        freshness: str = "",
     ) -> str | ToolCallResult:
         del session_id, source
 
@@ -900,16 +1153,34 @@ class WebSearchTools:
                 retryable=True,
             )
 
+        source_payload = {
+            "id": 1,
+            "source_id": 1,
+            "title": detailed.get("title") or normalized_url,
+            "url": detailed.get("url") or normalized_url,
+            "canonical_url": canonicalize_url(detailed.get("url") or normalized_url),
+            "domain": normalize_domain(detailed.get("url") or normalized_url),
+            "reader": detailed.get("reader") or "unknown",
+            "provider": str(detailed.get("reader") or "unknown").split("_", 1)[0],
+            "summary": detailed.get("summary") or "",
+            "excerpt": _trim_text(detailed.get("summary") or "", 320),
+            "published_date": "",
+            "published_at": "",
+            "retrieved_at": utc_timestamp(),
+            "source_profile": str(source_profile or ""),
+            "freshness": str(freshness or ""),
+            "is_primary_source": _primary_domain_hint(detailed.get("url") or normalized_url, str(source_profile or "")),
+            "credibility": "primary" if _primary_domain_hint(detailed.get("url") or normalized_url, str(source_profile or "")) else "secondary",
+            "rank_score": 0.0,
+            "verification_status": "read",
+        }
         payload = {
             "source_profile": str(source_profile or ""),
+            "freshness": str(freshness or ""),
             "citation_style": "If you use this page in the answer, cite it as [1].",
-            "source": {
-                "id": 1,
-                "title": detailed.get("title") or normalized_url,
-                "url": detailed.get("url") or normalized_url,
-                "reader": detailed.get("reader") or "unknown",
-                "summary": detailed.get("summary") or "",
-            },
+            "source": source_payload,
+            "evidence_ledger": [_evidence_from_source(source_payload)],
+            "evidence": [_evidence_from_source(source_payload)],
         }
         if failure:
             payload["partial_failures"] = [failure]

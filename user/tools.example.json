@@ -353,6 +353,27 @@
             "goal": {
               "type": "string",
               "description": "Optional focus for the research."
+            },
+            "source_profile": {
+              "type": "string",
+              "description": "Optional canonical source profile, such as tech_updates, policy_global, finance_macro, academic_biomed, cyber_threat, policy_cn, or campus_forum."
+            },
+            "official_only": {
+              "type": "boolean",
+              "description": "Prefer configured primary/official sources when true."
+            },
+            "freshness": {
+              "type": "string",
+              "description": "Optional freshness hint such as high, medium, recent, today, or a domain-specific time window."
+            },
+            "quality": {
+              "type": "string",
+              "enum": [
+                "fast",
+                "balanced",
+                "deep"
+              ],
+              "description": "Speed/quality mode. Defaults to fast."
             }
           },
           "required": [
@@ -376,6 +397,10 @@
             "goal": {
               "type": "string",
               "description": "Optional extraction focus."
+            },
+            "source_profile": {
+              "type": "string",
+              "description": "Optional canonical source profile."
             }
           },
           "required": [
@@ -1822,7 +1847,19 @@
             "quality": {
               "type": "string",
               "enum": ["adaptive", "fast", "balanced", "deep"],
-              "description": "Optional speed/quality mode. Defaults to adaptive."
+              "description": "Optional speed/quality mode. Defaults to fast."
+            },
+            "source_profile": {
+              "type": "string",
+              "description": "Optional canonical source profile."
+            },
+            "official_only": {
+              "type": "boolean",
+              "description": "Prefer official/primary-source candidates when true."
+            },
+            "freshness": {
+              "type": "string",
+              "description": "Optional freshness hint."
             }
           },
           "required": [
@@ -1847,6 +1884,14 @@
             "url": {
               "type": "string",
               "description": "The page URL."
+            },
+            "source_profile": {
+              "type": "string",
+              "description": "Optional canonical source profile."
+            },
+            "freshness": {
+              "type": "string",
+              "description": "Optional freshness hint."
             }
           },
           "required": [
