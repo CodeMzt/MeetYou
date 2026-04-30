@@ -268,6 +268,7 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("list_skills", route.tool_bundle)
         self.assertIn("load_skill", route.tool_bundle)
         self.assertIn("create_skill", route.tool_bundle)
+        self.assertIn("manage_skill", route.tool_bundle)
         self.assertIn("summarize_text", route.tool_bundle)
         self.assertTrue(route.authorization_policy["read_only"])
         self.assertIn("skill:research_grounding", route.authorization_policy["policy_sources"])
@@ -305,6 +306,7 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("[Skill-First Policy]", prompt_text)
         self.assertIn("list_skills", prompt_text)
         self.assertIn("load_skill", prompt_text)
+        self.assertIn("manage_skill", prompt_text)
         self.assertIn("Before using non-skill business tools", prompt_text)
 
     def test_prompt_treats_active_skills_as_primary_workflow_guide(self):
@@ -370,6 +372,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "list_skills",
                 "load_skill",
                 "create_skill",
+                "manage_skill",
                 "summarize_text",
                 "organize_notes",
                 "extract_action_items",
@@ -440,6 +443,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             self.assertIn("list_skills", bundle["tools"])
             self.assertIn("load_skill", bundle["tools"])
             self.assertIn("create_skill", bundle["tools"])
+            self.assertIn("manage_skill", bundle["tools"])
 
     def test_uses_injected_semantic_router_for_route_selection(self):
         manager = AssistantModeManager(_FakeConfig(), semantic_router=_InjectedSemanticRouter())
@@ -555,6 +559,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                 scenarios=["release notes", "change review"],
             )
             self.assertEqual(created["skill_type"], "reusable")
+            self.assertTrue(created["editable"])
             self.assertEqual(Path(created["storage_path"]).parent, skill_dir.resolve())
 
             loaded = manager.load_skill("release_note_triage")
@@ -578,6 +583,47 @@ class AssistantModeManagerTests(unittest.TestCase):
             bundle = manager.get_tool_bundle("general", loaded_skills=["release_note_triage"])
             self.assertIn("research_topic", bundle["tools"])
             self.assertIn("compile_report", bundle["tools"])
+
+            updated = manager.manage_skill(
+                action="update",
+                skill_id="release_note_triage",
+                summary="Updated release note triage.",
+                content="Extract breaking changes, migration steps, and owners.",
+            )
+            self.assertEqual(updated["action"], "update")
+            self.assertIn("migration steps", updated["skill"]["content"])
+
+            renamed = manager.manage_skill(
+                action="rename",
+                skill_id="release_note_triage",
+                new_skill_id="release_triage",
+            )
+            self.assertEqual(renamed["skill"]["id"], "release_triage")
+            self.assertIsNone(manager.load_skill("release_note_triage"))
+
+            with self.assertRaises(ValueError):
+                manager.manage_skill(action="delete", skill_id="task_recognition")
+
+            deleted = manager.manage_skill(action="delete", skill_id="release_triage")
+            self.assertTrue(deleted["deleted"])
+            self.assertIsNone(manager.load_skill("release_triage"))
+
+            manager.create_skill(
+                skill_id="release_triage",
+                title="Release Triage",
+                summary="First draft.",
+                content="Initial workflow.",
+                applicable_modes=["general"],
+            )
+            overwritten = manager.create_skill(
+                skill_id="release_triage",
+                title="Release Triage",
+                summary="Replacement draft.",
+                content="Replacement workflow.",
+                applicable_modes=["general"],
+                overwrite=True,
+            )
+            self.assertIn("Replacement workflow", overwritten["content"])
 
     def test_validates_capability_registry_and_loaded_skill_capabilities(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -632,6 +678,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "list_skills",
                     "load_skill",
                     "create_skill",
+                    "manage_skill",
                 "summarize_text",
                 "organize_notes",
                 "extract_action_items",

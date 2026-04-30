@@ -86,7 +86,7 @@ class PromptAssembler:
                 "Before using non-skill business tools for a multi-step or specialized workflow, first check whether an existing skill fits."
             )
             policy_lines.append(
-                "Use list_skills to inspect relevant reusable skills, then use load_skill before continuing when a matching skill exists."
+                "Use list_skills to inspect relevant reusable skills, then use load_skill before continuing when a matching skill exists; use manage_skill only when the user asks to create, overwrite, rename, update, or delete project-created SKILLs."
             )
         policy_lines.append(
             "Use direct tools immediately only when the task is obviously simple, one-step, or no skill would improve the workflow."

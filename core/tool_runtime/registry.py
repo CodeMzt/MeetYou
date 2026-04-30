@@ -102,6 +102,70 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "metadata": {"action_risk": "read", "safe_parallel": True, "parallel_group": "web_io", "max_concurrency": 3},
         },
     },
+    "create_skill": {
+        "type": "function",
+        "function": {
+            "name": "create_skill",
+            "description": "Create a reusable SKILL. Set overwrite=true only to replace an existing project-created SKILL with the same id; built-in and mode SKILLs remain read-only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_id": {"type": "string", "description": "Stable reusable skill id. Omit to derive one from title."},
+                    "title": {"type": "string", "description": "Human-readable SKILL title."},
+                    "summary": {"type": "string", "description": "Short description of when the SKILL applies."},
+                    "content": {"type": "string", "description": "The workflow guidance body."},
+                    "recommended_tools": {"type": "array", "items": {"type": "string"}},
+                    "applicable_modes": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["general", "automation", "danxi"]},
+                    },
+                    "scenarios": {"type": "array", "items": {"type": "string"}},
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Replace an existing project-created SKILL with the same id. Built-in and mode SKILLs cannot be overwritten.",
+                    },
+                    "inject_context": {"type": "boolean"},
+                },
+                "required": ["title", "summary", "content"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
+    "manage_skill": {
+        "type": "function",
+        "function": {
+            "name": "manage_skill",
+            "description": "Create, update, rename, or delete project-created reusable SKILLs. Built-in and mode SKILLs are read-only and can only be loaded/viewed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["create", "update", "rename", "delete"],
+                        "description": "Management action to perform.",
+                    },
+                    "skill_id": {"type": "string", "description": "Existing skill id for update, rename, or delete; new id for create."},
+                    "new_skill_id": {"type": "string", "description": "Target id for rename."},
+                    "title": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "content": {"type": "string"},
+                    "recommended_tools": {"type": "array", "items": {"type": "string"}},
+                    "applicable_modes": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["general", "automation", "danxi"]},
+                    },
+                    "scenarios": {"type": "array", "items": {"type": "string"}},
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "For create/rename, allow replacing an existing project-created target SKILL. Built-in and mode SKILLs cannot be replaced.",
+                    },
+                    "inject_context": {"type": "boolean"},
+                },
+                "required": ["action"],
+            },
+            "metadata": {"action_risk": "local_write", "safe_parallel": False},
+        },
+    },
     "list_workspaces": {
         "type": "function",
         "function": {

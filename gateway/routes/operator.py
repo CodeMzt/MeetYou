@@ -25,6 +25,7 @@ from gateway.models import (
     OperatorScheduledJobDeleteResponse,
     OperatorScheduledJobResponse,
     OperatorScheduledJobUpdateRequest,
+    OperatorSkillDetailResponse,
     OperatorSkillResponse,
     OperatorSourceProfileResponse,
     OperatorWorkspaceCreateRequest,
@@ -185,6 +186,26 @@ def build_operator_router(gateway) -> APIRouter:
                 query=str(query or "").strip(),
             )
         return [OperatorSkillResponse(**dict(item)) for item in payload]
+
+    @router.get("/skills/{skill_id}", response_model=OperatorSkillDetailResponse)
+    async def get_operator_skill(skill_id: str, request: Request):
+        gateway._require_http_auth(request)
+        getter = gateway._dependencies.skill_getter
+        if getter is not None:
+            payload = await gateway._resolve(getter, skill_id)
+        else:
+            from core.assistant_modes import AssistantModeManager
+
+            payload = AssistantModeManager(ConfigManager()).load_skill(skill_id)
+        if payload is None:
+            gateway._raise_http_error(
+                status_code=404,
+                code="skill_not_found",
+                category=RuntimeErrorCategory.DEPENDENCY.value,
+                message=f"未知 SKILL: {skill_id}",
+                details={"skill_id": skill_id},
+            )
+        return OperatorSkillDetailResponse(**dict(payload))
 
     @router.get("/config", response_model=ConfigSnapshotResponse)
     async def get_operator_config(request: Request):

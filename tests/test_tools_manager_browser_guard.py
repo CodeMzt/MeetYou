@@ -103,7 +103,7 @@ class ToolsManagerExposureTests(unittest.TestCase):
         )
         manager = ToolsManager(memory, context_manager, mcp_manager, system_tools)
         with open(
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "user", "tools.json"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "user", "tools.example.json"),
             "r",
             encoding="utf-8",
         ) as fh:
@@ -121,6 +121,7 @@ class ToolsManagerExposureTests(unittest.TestCase):
         self.assertIn("list_skills", visible_names)
         self.assertIn("load_skill", visible_names)
         self.assertIn("create_skill", visible_names)
+        self.assertIn("manage_skill", visible_names)
         self.assertIn("list_attachments", visible_names)
         self.assertIn("read_attachment", visible_names)
         self.assertIn("delete_attachment", visible_names)

@@ -635,9 +635,15 @@ export interface SkillListItem {
   title: string
   summary: string
   storage_path: string
+  editable?: boolean
+  source?: string
   applicable_modes: string[]
   scenarios: string[]
   recommended_tools: string[]
+}
+
+export interface SkillDetail extends SkillListItem {
+  content: string
 }
 
 export interface UiProtocolSchema {

@@ -34,6 +34,7 @@ _DEFAULT_TOOL_ACTION_RISKS: dict[str, str] = {
     "list_skills": "read",
     "load_skill": "read",
     "create_skill": "local_write",
+    "manage_skill": "local_write",
     "analyze_workspace": "read",
     "read_local_documents": "read",
     "write_local_document": "local_write",

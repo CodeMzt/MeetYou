@@ -457,6 +457,7 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "list_skills",
     "load_skill",
     "create_skill",
+    "manage_skill",
     "list_workspaces",
     "switch_workspace",
     "list_active_endpoints",
@@ -1404,6 +1405,7 @@ class AssistantModeManager:
         recommended_tools: list[str] | None = None,
         applicable_modes: list[str] | None = None,
         scenarios: list[str] | None = None,
+        overwrite: bool = False,
         source: str = "client",
     ) -> dict[str, Any]:
         return self._skill_registry.create_skill(
@@ -1414,7 +1416,35 @@ class AssistantModeManager:
             recommended_tools=recommended_tools,
             applicable_modes=applicable_modes,
             scenarios=scenarios,
+            overwrite=overwrite,
             source=source,
+        )
+
+    def manage_skill(
+        self,
+        *,
+        action: str,
+        skill_id: str = "",
+        new_skill_id: str = "",
+        title: str | None = None,
+        summary: str | None = None,
+        content: str | None = None,
+        recommended_tools: list[str] | None = None,
+        applicable_modes: list[str] | None = None,
+        scenarios: list[str] | None = None,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        return self._skill_registry.manage_skill(
+            action=action,
+            skill_id=skill_id,
+            new_skill_id=new_skill_id,
+            title=title,
+            summary=summary,
+            content=content,
+            recommended_tools=recommended_tools,
+            applicable_modes=applicable_modes,
+            scenarios=scenarios,
+            overwrite=overwrite,
         )
 
     def should_preload_context(self, query: str, goal: str = "") -> bool:

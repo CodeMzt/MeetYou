@@ -124,9 +124,15 @@ class OperatorSkillResponse(BaseModel):
     title: str
     summary: str
     storage_path: str
+    editable: bool = False
+    source: str = ""
     applicable_modes: list[str] = Field(default_factory=list)
     scenarios: list[str] = Field(default_factory=list)
     recommended_tools: list[str] = Field(default_factory=list)
+
+
+class OperatorSkillDetailResponse(OperatorSkillResponse):
+    content: str = ""
 
 
 class RuntimeStateSnapshotResponse(BaseModel):

@@ -28,6 +28,8 @@ class GatewayConfigApiTests(unittest.TestCase):
                     "title": "通用模式 SKILL",
                     "summary": "通用日常协作范式。",
                     "storage_path": r"E:\Documents\Project\MeetYou\prompt\SKILL\mode-general",
+                    "editable": False,
+                    "source": "builtin",
                     "applicable_modes": ["general"],
                     "scenarios": ["日常对话"],
                     "recommended_tools": ["search_memory"],
@@ -38,6 +40,8 @@ class GatewayConfigApiTests(unittest.TestCase):
                     "title": "任务识别 SKILL",
                     "summary": "识别提醒、追踪、阻塞与任务状态请求。",
                     "storage_path": r"E:\Documents\Project\MeetYou\prompt\SKILL\task-recognition",
+                    "editable": False,
+                    "source": "builtin",
                     "applicable_modes": ["general", "automation"],
                     "scenarios": ["提醒"],
                     "recommended_tools": ["manage_tasks"],
@@ -55,6 +59,12 @@ class GatewayConfigApiTests(unittest.TestCase):
                     or any(normalized_query in tool for tool in item["recommended_tools"])
                 ]
             return skills
+
+        def get_skill(skill_id):
+            for item in list_skills():
+                if item["id"] == skill_id:
+                    return {**item, "content": f"# {item['title']}\n\nFollow this skill."}
+            return None
 
         self.gateway = FastAPIGateway(
             EventBus(),
@@ -87,6 +97,7 @@ class GatewayConfigApiTests(unittest.TestCase):
             },
             config_updater=updater,
             skill_list_getter=list_skills,
+            skill_getter=get_skill,
             access_token=self.access_token,
         )
         self.client = TestClient(self.gateway.app)
@@ -152,6 +163,27 @@ class GatewayConfigApiTests(unittest.TestCase):
         self.assertEqual(payload[0]["id"], "task_recognition")
         self.assertEqual(payload[0]["skill_type"], "reusable")
         self.assertIn("storage_path", payload[0])
+        self.assertFalse(payload[0]["editable"])
+
+    def test_operator_skill_detail_loads_content(self):
+        response = self.client.get(
+            "/operator/skills/task_recognition",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["id"], "task_recognition")
+        self.assertIn("Follow this skill", payload["content"])
+
+    def test_operator_skill_detail_returns_404_for_unknown_skill(self):
+        response = self.client.get(
+            "/operator/skills/missing_skill",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "skill_not_found")
 
     def test_operator_skills_rejects_unknown_skill_type(self):
         response = self.client.get(

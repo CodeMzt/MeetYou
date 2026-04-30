@@ -417,7 +417,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             tools_path = Path(__file__).resolve().parent.parent / "user" / "tools.json"
             manager.tools_schema_dict = json.loads(tools_path.read_text(encoding="utf-8"))
             route_context = {
-                "tool_bundle": ["search_memory", "remember_knowledge", "create_skill"],
+                "tool_bundle": ["search_memory", "remember_knowledge", "create_skill", "manage_skill"],
                 "mcp_servers": [],
                 "current_mode": "general",
                 "authorization_policy": {"read_only": True, "policy_sources": ["mode:general"]},
@@ -430,6 +430,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("search_memory", visible_names)
             self.assertNotIn("remember_knowledge", visible_names)
             self.assertNotIn("create_skill", visible_names)
+            self.assertNotIn("manage_skill", visible_names)
 
             result = await manager.call_tool(
                 "remember_knowledge",

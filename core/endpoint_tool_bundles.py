@@ -11,6 +11,7 @@ EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE = [
     "list_skills",
     "load_skill",
     "create_skill",
+    "manage_skill",
     "list_workspaces",
     "switch_workspace",
     "list_active_endpoints",

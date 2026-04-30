@@ -53,6 +53,12 @@ class DesktopEndpointBridgeTests(unittest.TestCase):
             "/operator/skills?skill_type=reusable&query=task",
         )
 
+    def test_desktop_skill_detail_route_proxies_to_operator_skill_detail(self):
+        route = next(item for item in _desktop_routes() if item.desktop_path == "/desktop/skills/{skill_id}")
+        request = SimpleNamespace(match_info={"skill_id": "mode:general"})
+
+        self.assertEqual(route.core_path_builder(request), "/operator/skills/mode:general")
+
 
 class DesktopEndpointBackendTests(unittest.IsolatedAsyncioTestCase):
     async def test_backend_starts_endpoint_runtime_when_local_bridge_is_enabled(self):

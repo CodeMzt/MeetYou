@@ -166,9 +166,12 @@ function skillList() {
       title: '任务识别 SKILL',
       summary: '识别提醒、追踪、阻塞与任务状态请求，并衔接任务工具。',
       storage_path: 'E:\\Documents\\Project\\MeetYou\\prompt\\SKILL\\task-recognition',
+      editable: false,
+      source: 'builtin',
       applicable_modes: ['general', 'automation'],
       scenarios: ['提醒', '跟进', '任务更新'],
       recommended_tools: ['manage_tasks', 'create_scheduled_workflow'],
+      content: 'Detect task, reminder, follow-up, blocker, and status-update intent. Use task and scheduled-workflow tools when needed.',
     },
     {
       id: 'mode:general',
@@ -176,9 +179,12 @@ function skillList() {
       title: '通用模式 SKILL',
       summary: '通用日常协作范式，优先使用共享基础能力处理轻量任务。',
       storage_path: 'E:\\Documents\\Project\\MeetYou\\prompt\\SKILL\\mode-general',
+      editable: false,
+      source: 'builtin',
       applicable_modes: ['general'],
       scenarios: ['日常对话', '轻量规划'],
       recommended_tools: ['search_memory', 'search_web'],
+      content: 'Operate as a general daily assistant. Use shared basic tools before escalating to specialized workflows.',
     },
   ]
 }
@@ -220,6 +226,16 @@ function createFixtureServer() {
     }
     if (url.pathname === '/desktop/skills') {
       writeJson(response, skillList())
+      return
+    }
+    if (url.pathname.startsWith('/desktop/skills/')) {
+      const skillId = decodeURIComponent(url.pathname.slice('/desktop/skills/'.length))
+      const skill = skillList().find((item) => item.id === skillId)
+      if (skill) {
+        writeJson(response, skill)
+        return
+      }
+      writeJson(response, { error: 'skill not found', skill_id: skillId }, 404)
       return
     }
     writeJson(response, { error: 'not found', path: url.pathname }, 404)
@@ -437,8 +453,12 @@ async function runVisualCheck() {
       await win.webContents.executeJavaScript(`
         document.querySelector('.skill-list-item')?.click()
       `)
-      await waitForText(win, '本机不存在该路径。')
-      reports.push(await captureState(win, size, 'open-failure', ['本机不存在该路径。']))
+      await waitForText(win, 'SKILL 详情')
+      reports.push(await captureState(win, size, 'skill-detail', ['SKILL 详情', 'Detect task', 'manage_tasks']))
+      await win.webContents.executeJavaScript(`
+        document.querySelector('.skill-detail-header button')?.click()
+      `)
+      await wait(200)
 
       await win.webContents.executeJavaScript(`
         Array.from(document.querySelectorAll('button')).find((button) => button.innerText.trim() === '配置')?.click()

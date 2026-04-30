@@ -187,6 +187,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("PATCH", "/desktop/workspaces/{workspace_id}", lambda request: f"/operator/workspaces/{request.match_info['workspace_id']}"),
         DesktopApiRoute("GET", "/desktop/source-profiles", lambda _request: "/operator/source-profiles"),
         DesktopApiRoute("GET", "/desktop/skills", lambda request: f"/operator/skills?{request.query_string}" if request.query_string else "/operator/skills"),
+        DesktopApiRoute("GET", "/desktop/skills/{skill_id}", lambda request: f"/operator/skills/{request.match_info['skill_id']}"),
         DesktopApiRoute("GET", "/desktop/runtime/usage", lambda _request: "/runtime/usage"),
         DesktopApiRoute("GET", "/desktop/runtime/debug", lambda _request: "/developer/runtime/debug"),
     ]

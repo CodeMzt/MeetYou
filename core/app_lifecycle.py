@@ -208,6 +208,7 @@ async def setup_app_runtime(app) -> None:
         runtime_debug_getter=app.get_runtime_debug,
         health_getter=app._health_getter,
         skill_list_getter=lambda **kwargs: app.mode_manager.list_skills(**kwargs),
+        skill_getter=lambda skill_id: app.mode_manager.load_skill(skill_id),
         core_domain=app.core_domain,
         endpoint_connection_prompt_getter=app.build_endpoint_connection_prompt,
         endpoint_connection_event_handler=app.inject_endpoint_connection_event,

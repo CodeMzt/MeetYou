@@ -895,6 +895,131 @@
   white-space: nowrap;
 }
 
+.skill-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.skill-detail-panel {
+  width: min(500px, calc(100vw - 32px));
+  max-height: min(580px, calc(100vh - 32px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: 0 24px 60px var(--shadow-color);
+  padding: 16px;
+}
+
+.skill-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.skill-detail-header h3 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.skill-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.skill-detail-meta span {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.skill-detail-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.skill-detail-path {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  word-break: break-all;
+}
+
+.skill-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.skill-detail-grid div {
+  min-width: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  padding: 8px 10px;
+}
+
+.skill-detail-grid span,
+.skill-detail-content-title {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.skill-detail-grid strong {
+  display: block;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.skill-detail-content {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.skill-detail-content pre {
+  min-height: 120px;
+  max-height: 210px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 10px;
+}
+
 .records-toolbar {
   display: flex;
   align-items: center;
