@@ -634,7 +634,8 @@ export interface SkillListItem {
   skill_type: 'mode' | 'reusable' | string
   title: string
   summary: string
-  storage_path: string
+  storage_path?: string
+  storage_ref?: string
   editable?: boolean
   source?: string
   applicable_modes: string[]

@@ -27,7 +27,8 @@ class GatewayConfigApiTests(unittest.TestCase):
                     "skill_type": "mode",
                     "title": "通用模式 SKILL",
                     "summary": "通用日常协作范式。",
-                    "storage_path": r"E:\Documents\Project\MeetYou\prompt\SKILL\mode-general",
+                    "storage_path": "",
+                    "storage_ref": "core://skills/mode/general",
                     "editable": False,
                     "source": "builtin",
                     "applicable_modes": ["general"],
@@ -39,7 +40,8 @@ class GatewayConfigApiTests(unittest.TestCase):
                     "skill_type": "reusable",
                     "title": "任务识别 SKILL",
                     "summary": "识别提醒、追踪、阻塞与任务状态请求。",
-                    "storage_path": r"E:\Documents\Project\MeetYou\prompt\SKILL\task-recognition",
+                    "storage_path": "",
+                    "storage_ref": "core://skills/reusable/task_recognition",
                     "editable": False,
                     "source": "builtin",
                     "applicable_modes": ["general", "automation"],
@@ -162,7 +164,8 @@ class GatewayConfigApiTests(unittest.TestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["id"], "task_recognition")
         self.assertEqual(payload[0]["skill_type"], "reusable")
-        self.assertIn("storage_path", payload[0])
+        self.assertEqual(payload[0]["storage_path"], "")
+        self.assertEqual(payload[0]["storage_ref"], "core://skills/reusable/task_recognition")
         self.assertFalse(payload[0]["editable"])
 
     def test_operator_skill_detail_loads_content(self):
@@ -174,6 +177,7 @@ class GatewayConfigApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["id"], "task_recognition")
+        self.assertEqual(payload["storage_ref"], "core://skills/reusable/task_recognition")
         self.assertIn("Follow this skill", payload["content"])
 
     def test_operator_skill_detail_returns_404_for_unknown_skill(self):

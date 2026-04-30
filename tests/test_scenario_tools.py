@@ -499,13 +499,15 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
     async def test_open_skill_tools_list_load_and_create(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             skill_dir = Path(tmp_dir) / "SKILL"
+            created_skill_dir = Path(tmp_dir) / "created-skills"
             _populate_skill_dir(skill_dir)
             mode_manager = AssistantModeManager(
                 _Config(
                     {
                         "assistant_modes": json.dumps(
                             {
-                                "skill_prompt_dir": str(skill_dir)
+                                "skill_prompt_dir": str(skill_dir),
+                                "created_skill_dir": str(created_skill_dir),
                             }
                         )
                     }
@@ -567,7 +569,9 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(loaded_created["loaded"])
 
             loaded_renamed = json.loads(await tools.load_skill("release_triage", route_context=route_context))
-            self.assertEqual(Path(loaded_renamed["skill"]["storage_path"]).parent, skill_dir.resolve())
+            self.assertEqual(loaded_renamed["skill"]["storage_path"], "")
+            self.assertEqual(loaded_renamed["skill"]["storage_ref"], "core://skills/reusable/release_triage")
+            self.assertTrue((created_skill_dir / "release-triage.md").is_file())
 
 
 if __name__ == "__main__":

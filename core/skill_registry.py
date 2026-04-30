@@ -187,6 +187,7 @@ class SkillRecord:
     title: str
     summary: str
     path: str
+    storage_ref: str
     content: str = ""
     applicable_modes: list[str] = field(default_factory=list)
     scenarios: list[str] = field(default_factory=list)
@@ -200,7 +201,8 @@ class SkillRecord:
             "skill_type": self.skill_type,
             "title": self.title,
             "summary": self.summary,
-            "storage_path": self.path,
+            "storage_path": "",
+            "storage_ref": self.storage_ref,
             "editable": self.editable,
             "source": self.source,
             "applicable_modes": list(self.applicable_modes),
@@ -213,14 +215,27 @@ class SkillRecord:
 
 
 class SkillRegistryManager:
-    def __init__(self, skill_dir: str = "prompt/SKILL"):
+    def __init__(self, skill_dir: str = "prompt/SKILL", created_skill_dir: str = "user/skills"):
         self._repo_root = _repo_root()
-        self._skill_dir = Path(skill_dir)
-        if not self._skill_dir.is_absolute():
-            self._skill_dir = self._repo_root / self._skill_dir
+        self._skill_dir = self._resolve_core_storage_dir(skill_dir)
+        self._created_skill_dir = self._resolve_core_storage_dir(created_skill_dir)
+
+    def _resolve_core_storage_dir(self, value: str) -> Path:
+        path = Path(str(value or "").strip() or "user/skills")
+        if not path.is_absolute():
+            path = self._repo_root / path
+        return path
 
     def _resolve_skill_path(self, file_name: str) -> Path:
         return self._skill_dir / file_name
+
+    @staticmethod
+    def _storage_ref(skill_type: str, skill_id: str) -> str:
+        normalized_type = str(skill_type or "reusable").strip() or "reusable"
+        normalized_id = _normalize_identifier(skill_id)
+        if normalized_type == "mode" and normalized_id.startswith("mode:"):
+            normalized_id = normalized_id.split(":", 1)[1]
+        return f"core://skills/{normalized_type}/{normalized_id}"
 
     def _read_skill_content(self, path: Path, *, include_content: bool) -> str:
         if not include_content:
@@ -242,6 +257,7 @@ class SkillRegistryManager:
             title=payload["title"],
             summary=payload["summary"],
             path=str(absolute_path),
+            storage_ref=self._storage_ref("mode", payload["id"]),
             content=content,
             applicable_modes=list(payload.get("applicable_modes") or []),
             scenarios=list(payload.get("scenarios") or []),
@@ -262,6 +278,7 @@ class SkillRegistryManager:
             title=payload["title"],
             summary=payload["summary"],
             path=str(absolute_path),
+            storage_ref=self._storage_ref("reusable", payload["id"]),
             content=content,
             applicable_modes=list(payload.get("applicable_modes") or []),
             scenarios=list(payload.get("scenarios") or []),
@@ -286,24 +303,29 @@ class SkillRegistryManager:
             title=str(metadata.get("title") or skill_id),
             summary=str(metadata.get("summary") or "").strip(),
             path=str(path.resolve()),
+            storage_ref=self._storage_ref("reusable", skill_id),
             content=content,
             applicable_modes=[str(item).strip() for item in metadata.get("applicable_modes", []) if str(item).strip()],
             scenarios=[str(item).strip() for item in metadata.get("scenarios", []) if str(item).strip()],
             recommended_tools=[str(item).strip() for item in metadata.get("recommended_tools", []) if str(item).strip()],
             editable=True,
-            source="project",
+            source="core_runtime",
         )
 
     def _iter_created_skill_records(self) -> list[SkillRecord]:
-        if not self._skill_dir.exists():
-            return []
         records: list[SkillRecord] = []
-        for path in sorted(self._skill_dir.glob("*.md")):
-            try:
-                record = self._parse_project_skill_file(path)
-            except Exception:
-                record = None
-            if record is not None:
+        seen: set[str] = set()
+        for directory in (self._created_skill_dir, self._skill_dir):
+            if not directory.exists():
+                continue
+            for path in sorted(directory.glob("*.md")):
+                try:
+                    record = self._parse_project_skill_file(path)
+                except Exception:
+                    record = None
+                if record is None or record.skill_id in seen:
+                    continue
+                seen.add(record.skill_id)
                 records.append(record)
         return records
 
@@ -442,8 +464,8 @@ class SkillRegistryManager:
             applicable_modes=applicable_modes,
             scenarios=scenarios,
         )
-        self._skill_dir.mkdir(parents=True, exist_ok=True)
-        skill_path = path or self._skill_dir / f"{_display_file_name(normalized_id)}.md"
+        self._created_skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path = path or self._created_skill_dir / f"{_display_file_name(normalized_id)}.md"
         skill_path.write_text(rendered, encoding="utf-8")
         loaded = self.load_skill(normalized_id)
         if loaded is None:
@@ -474,7 +496,7 @@ class SkillRegistryManager:
         if existing is not None and existing_created is None:
             raise ValueError(f"built-in or mode skill cannot be overwritten: {normalized_id}")
         target_path = Path(existing_created.path) if existing_created is not None else None
-        candidate_path = target_path or self._skill_dir / f"{_display_file_name(normalized_id)}.md"
+        candidate_path = target_path or self._created_skill_dir / f"{_display_file_name(normalized_id)}.md"
         if candidate_path.exists() and existing_created is None and not overwrite:
             raise ValueError(f"skill file already exists: {candidate_path}")
         return self._write_skill_file(
@@ -537,7 +559,7 @@ class SkillRegistryManager:
         if existing is not None and existing_created is None:
             raise ValueError(f"built-in or mode skill cannot be overwritten: {normalized_new_id}")
 
-        target_path = self._skill_dir / f"{_display_file_name(normalized_new_id)}.md"
+        target_path = self._created_skill_dir / f"{_display_file_name(normalized_new_id)}.md"
         if target_path.exists() and existing_created is None and not overwrite:
             raise ValueError(f"target skill file already exists: {target_path}")
         if existing_created is not None and Path(existing_created.path) != Path(record.path):

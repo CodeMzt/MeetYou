@@ -123,7 +123,8 @@ class OperatorSkillResponse(BaseModel):
     skill_type: str
     title: str
     summary: str
-    storage_path: str
+    storage_path: str = ""
+    storage_ref: str = ""
     editable: bool = False
     source: str = ""
     applicable_modes: list[str] = Field(default_factory=list)

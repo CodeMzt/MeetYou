@@ -903,7 +903,8 @@
   align-items: center;
   justify-content: center;
   padding: 22px;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(10px);
 }
 
 .skill-detail-panel {
@@ -915,10 +916,16 @@
   gap: 12px;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  background: var(--bg-card);
+  background: rgba(250, 250, 252, 0.97);
   color: var(--text-primary);
   box-shadow: 0 24px 60px var(--shadow-color);
   padding: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .skill-detail-panel {
+    background: rgba(34, 34, 36, 0.97);
+  }
 }
 
 .skill-detail-header {
