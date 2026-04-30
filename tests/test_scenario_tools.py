@@ -202,10 +202,11 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(raw)
 
         self.assertEqual(payload["chain"], "research_topic")
-        self.assertEqual(payload["source_profile"], "tech_global")
+        self.assertEqual(payload["source_profile"], "tech_updates")
         self.assertEqual(payload["search"]["search_backend"], "tavily")
-        self.assertEqual(payload["search"]["source_profile"], "tech_global")
+        self.assertEqual(payload["search"]["source_profile"], "tech_updates")
         self.assertEqual(payload["search"]["evidence"][0]["credible_level"], "secondary")
+        self.assertEqual(payload["search"]["evidence_ledger"][0]["source_id"], 1)
         self.assertEqual(payload["search"]["citation_blocks"][0]["source_id"], 1)
         self.assertEqual(manager.calls[0][0], "tavily-search")
 
@@ -310,7 +311,7 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(raw)
 
         self.assertEqual(payload["chain"], "inspect_page")
-        self.assertEqual(payload["source_profile"], "tech_global")
+        self.assertEqual(payload["source_profile"], "tech_updates")
         self.assertTrue(payload["page"]["evidence"][0]["is_primary_source"])
 
     async def test_research_topic_prefers_catalog_results_when_available(self):
@@ -355,8 +356,37 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["search"]["search_backend"], "source_catalog")
         self.assertFalse(payload["search"]["catalog_unavailable"])
-        self.assertEqual(payload["search"]["source_profile"], "tech_global")
+        self.assertEqual(payload["search"]["source_profile"], "tech_updates")
         self.assertEqual(payload["search"]["evidence"][0]["credible_level"], "primary")
+
+    async def test_research_topic_direct_url_routes_to_inspect_page(self):
+        manager = _FakeMCPManager(
+            responses={
+                "tavily-extract": [
+                    json.dumps(
+                        {
+                            "results": [
+                                {
+                                    "url": "https://docs.python.org/3/library/pathlib.html",
+                                    "title": "pathlib",
+                                    "raw_content": "Pathlib direct page content. " * 12,
+                                }
+                            ]
+                        }
+                    )
+                ]
+            },
+            tool_map={"tavily-extract": "tavily_web"},
+        )
+        tools = ScenarioTools(_FakeMemory(), _FakeContextManager(), manager, mode_manager=_FakeModeManager())
+
+        raw = await tools.research_topic("what does https://docs.python.org/3/library/pathlib.html say?")
+        payload = json.loads(raw)
+
+        self.assertEqual(payload["chain"], "inspect_page")
+        self.assertEqual(payload["source_profile"], "tech_updates")
+        self.assertEqual(payload["page"]["evidence_ledger"][0]["verification_status"], "read")
+        self.assertEqual(manager.calls[0][0], "tavily-extract")
 
     async def test_track_source_updates_returns_catalog_payload(self):
         tools = ScenarioTools(
@@ -391,6 +421,7 @@ class ScenarioToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["tool"], "track_source_updates")
         self.assertEqual(payload["status"], "ok")
         self.assertFalse(payload["catalog_unavailable"])
+        self.assertEqual(payload["source_profile"], "tech_updates")
         self.assertEqual(payload["updates"][0]["title"], "GitHub Release v1.2.3")
 
     async def test_manage_tasks_create_list_update_and_complete(self):

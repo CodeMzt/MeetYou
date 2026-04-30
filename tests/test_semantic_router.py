@@ -142,10 +142,10 @@ class SemanticRouterAgentTests(unittest.TestCase):
         world = agent.classify_source_profile("Compare Reuters, AP, and Xinhua coverage on current geopolitics and supply chain shifts.")
         frontier = agent.classify_source_profile("Review Hugging Face daily papers and MIT Technology Review analysis on edge AI.")
 
-        self.assertEqual(academic, "academic_research")
-        self.assertEqual(engineering, "code_engineering")
-        self.assertEqual(world, "world_affairs")
-        self.assertEqual(frontier, "frontier_tech")
+        self.assertEqual(academic, "academic_biomed")
+        self.assertEqual(engineering, "tech_updates")
+        self.assertEqual(world, "policy_global")
+        self.assertEqual(frontier, "tech_updates")
 
     def test_evaluate_skill_activation_returns_reasoned_decision(self):
         agent = SemanticRouterAgent()

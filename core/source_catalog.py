@@ -44,6 +44,46 @@ VALID_CONNECTOR_TYPES = {
     "rss_atom_feed",
     "whitelist_page_reader",
 }
+
+CANONICAL_SOURCE_PROFILES = {
+    "workspace_local",
+    "study_materials",
+    "tech_updates",
+    "policy_cn",
+    "policy_global",
+    "finance_macro",
+    "academic_biomed",
+    "cyber_threat",
+    "campus_forum",
+}
+
+SOURCE_PROFILE_ALIASES = {
+    "tech_global": "tech_updates",
+    "tech_cn": "tech_updates",
+    "frontier_tech": "tech_updates",
+    "code_engineering": "tech_updates",
+    "academic": "academic_biomed",
+    "academic_research": "academic_biomed",
+    "research": "academic_biomed",
+    "policy": "policy_global",
+    "world_affairs": "policy_global",
+    "finance": "finance_macro",
+    "macro": "finance_macro",
+    "security": "cyber_threat",
+    "cybersecurity": "cyber_threat",
+    "danxi": "campus_forum",
+}
+
+
+def normalize_source_profile_name(profile_name: str, *, fallback: str = "workspace_local") -> str:
+    normalized = str(profile_name or "").strip()
+    if not normalized:
+        return fallback
+    normalized = SOURCE_PROFILE_ALIASES.get(normalized, normalized)
+    if normalized in CANONICAL_SOURCE_PROFILES:
+        return normalized
+    return normalized if not fallback else fallback
+
 FALLBACK_SOURCE_PROFILES = {
     "workspace_local": {
         "label": "工作区与本地知识",
@@ -198,6 +238,97 @@ FALLBACK_SOURCE_PROFILES = {
 }
 
 
+# Runtime fallback profile metadata uses canonical V4 profile ids.
+FALLBACK_SOURCE_PROFILES = {
+    "workspace_local": {
+        "label": "Workspace and local knowledge",
+        "description": "Prefer local files, memory, and trusted private workspace sources.",
+        "preferred_source_ids": [],
+        "official_only": False,
+        "default_freshness": "workspace",
+        "primary_domains": [],
+    },
+    "study_materials": {
+        "label": "Study materials",
+        "description": "Prefer local study materials, notes, and user-provided references.",
+        "preferred_source_ids": [],
+        "official_only": False,
+        "default_freshness": "coursework",
+        "primary_domains": [],
+    },
+    "tech_updates": {
+        "label": "Tech updates",
+        "description": "Official release notes, changelogs, standards, and vendor updates.",
+        "preferred_source_ids": [],
+        "official_only": True,
+        "default_freshness": "high",
+        "primary_domains": [
+            "github.com",
+            "developer.mozilla.org",
+            "docs.python.org",
+            "w3.org",
+            "whatwg.org",
+            "ietf.org",
+        ],
+        "match_any": ["latest", "release", "changelog", "framework", "model", "sdk", "api"],
+    },
+    "policy_cn": {
+        "label": "China policy",
+        "description": "Chinese government policy, regulation, and statistics sources.",
+        "preferred_source_ids": [],
+        "official_only": True,
+        "default_freshness": "high",
+        "primary_domains": ["gov.cn", "stats.gov.cn"],
+        "match_any": ["gov.cn", "policy", "regulation", "statistics"],
+    },
+    "policy_global": {
+        "label": "Global policy",
+        "description": "Government and regulator sources outside China.",
+        "preferred_source_ids": [],
+        "official_only": True,
+        "default_freshness": "high",
+        "primary_domains": ["who.int", "fda.gov", "sec.gov", "edgar.sec.gov"],
+        "match_any": ["policy", "regulation", "government", "fda", "sec", "who", "law"],
+    },
+    "finance_macro": {
+        "label": "Finance and macro",
+        "description": "Official filings, macro indicators, and financial disclosures.",
+        "preferred_source_ids": [],
+        "official_only": True,
+        "default_freshness": "high",
+        "primary_domains": ["sec.gov", "edgar.sec.gov", "fred.stlouisfed.org", "federalreserve.gov", "worldbank.org"],
+        "match_any": ["finance", "earnings", "filing", "inflation", "gdp", "stock", "macro"],
+    },
+    "academic_biomed": {
+        "label": "Academic and biomedical",
+        "description": "Papers, DOI records, PubMed, and biomedical literature.",
+        "preferred_source_ids": [],
+        "official_only": True,
+        "default_freshness": "medium",
+        "primary_domains": ["arxiv.org", "pubmed.ncbi.nlm.nih.gov", "doi.org", "crossref.org"],
+        "match_any": ["paper", "doi", "pubmed", "study", "journal", "trial", "research"],
+    },
+    "cyber_threat": {
+        "label": "Cyber threat",
+        "description": "Official vulnerability and exploitation advisories.",
+        "preferred_source_ids": [],
+        "official_only": True,
+        "default_freshness": "high",
+        "primary_domains": ["nvd.nist.gov", "cisa.gov"],
+        "match_any": ["cve", "vulnerability", "exploit", "kev", "security"],
+    },
+    "campus_forum": {
+        "label": "Campus forum",
+        "description": "Campus forum posts, subscriptions, and low-risk community information.",
+        "preferred_source_ids": [],
+        "official_only": False,
+        "default_freshness": "high",
+        "primary_domains": ["forum.fduhole.com", "auth.fduhole.com", "webvpn.fudan.edu.cn"],
+        "match_any": ["danxi", "fduhole", "forum", "campus"],
+    },
+}
+
+
 def _fallback_context_limit(provider_name: str, model_name: str):
     capability = get_model_capability_resolver().resolve(provider_name, model_name)
     return capability
@@ -237,6 +368,7 @@ class SourceCatalogStatus:
     profile_count: int = 0
     source_count: int = 0
     storage: str = "file"
+    warnings: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -247,6 +379,7 @@ class SourceCatalogStatus:
             "profile_count": self.profile_count,
             "source_count": self.source_count,
             "storage": self.storage,
+            "warnings": list(self.warnings or []),
         }
 
 
@@ -321,6 +454,19 @@ class SourceCatalogManager:
                 storage=storage,
             )
 
+        warnings: list[str] = []
+        normalized_profiles: dict[str, Any] = copy.deepcopy(FALLBACK_SOURCE_PROFILES)
+        for profile_name, profile_payload in profiles.items():
+            raw_name = str(profile_name or "").strip()
+            canonical_name = normalize_source_profile_name(raw_name, fallback=raw_name)
+            if canonical_name != raw_name:
+                warnings.append(f"profile_alias:{raw_name}->{canonical_name}")
+            if canonical_name not in CANONICAL_SOURCE_PROFILES and canonical_name not in normalized_profiles:
+                warnings.append(f"unknown_profile:{canonical_name}")
+            existing = dict(normalized_profiles.get(canonical_name) or {})
+            if isinstance(profile_payload, dict):
+                normalized_profiles[canonical_name] = {**existing, **profile_payload}
+
         normalized_sources: list[dict[str, Any]] = []
         for item in sources:
             if not isinstance(item, dict):
@@ -328,12 +474,41 @@ class SourceCatalogManager:
             connector_type = str(item.get("connector_type") or "").strip()
             if connector_type and connector_type not in VALID_CONNECTOR_TYPES:
                 logger.warning("Ignoring source catalog entry with unknown connector type: %s", connector_type)
+                warnings.append(f"unsupported_connector:{item.get('id') or connector_type}")
                 continue
-            normalized_sources.append(item)
+            normalized_item = dict(item)
+            normalized_item["profiles"] = [
+                normalize_source_profile_name(str(value or "").strip(), fallback=str(value or "").strip())
+                for value in item.get("profiles", [])
+                if str(value or "").strip()
+            ]
+            for profile_name in normalized_item["profiles"]:
+                if profile_name not in normalized_profiles:
+                    warnings.append(f"source_unknown_profile:{normalized_item.get('id') or ''}:{profile_name}")
+            for auth_entry in self.resolve_auth_entries(normalized_item):
+                if str(auth_entry.get("value") or "").strip():
+                    continue
+                env_key = str(auth_entry.get("env") or "").strip()
+                config_key = str(auth_entry.get("config_key") or "").strip()
+                if env_key or config_key:
+                    warnings.append(f"source_missing_auth:{normalized_item.get('id') or ''}:{env_key or config_key}")
+            normalized_sources.append(normalized_item)
+
+        for profile_name, profile in normalized_profiles.items():
+            if not isinstance(profile, dict) or not bool(profile.get("official_only", False)):
+                continue
+            preferred_ids = {str(item).strip() for item in profile.get("preferred_source_ids", []) if str(item).strip()}
+            matching_sources = [
+                item for item in normalized_sources
+                if profile_name in {str(value).strip() for value in item.get("profiles", [])}
+                or str(item.get("id") or "").strip() in preferred_ids
+            ]
+            if not any(bool(item.get("primary_source", False)) for item in matching_sources):
+                warnings.append(f"profile_empty_official_sources:{profile_name}")
 
         normalized_catalog = {
             "version": version or "1",
-            "default_source_profiles": {**FALLBACK_SOURCE_PROFILES, **profiles},
+            "default_source_profiles": normalized_profiles,
             "context_limits": [item for item in context_limits if isinstance(item, dict)],
             "sources": normalized_sources,
         }
@@ -344,6 +519,7 @@ class SourceCatalogManager:
             profile_count=len(normalized_catalog["default_source_profiles"]),
             source_count=len(normalized_sources),
             storage=storage,
+            warnings=list(dict.fromkeys(warnings)),
         )
 
     def _load_catalog_from_backend(self) -> tuple[dict[str, Any], SourceCatalogStatus]:
@@ -415,7 +591,7 @@ class SourceCatalogManager:
 
     def get_source_profile(self, profile_name: str) -> dict[str, Any]:
         profiles = self.get_source_profiles()
-        normalized = str(profile_name or "").strip() or "workspace_local"
+        normalized = normalize_source_profile_name(profile_name, fallback="workspace_local")
         resolved_name = normalized
         payload = profiles.get(normalized)
         if payload is None:
@@ -439,7 +615,7 @@ class SourceCatalogManager:
         preferred_ids = [str(item).strip() for item in profile.get("preferred_source_ids", []) if str(item).strip()]
         profile_ids = set(preferred_ids)
         preferred_order = {source_id: index for index, source_id in enumerate(preferred_ids)}
-        requested_profile = str(profile_name or "").strip()
+        requested_profile = str(profile.get("name") or normalize_source_profile_name(profile_name, fallback="")).strip()
         effective_official_only = profile.get("official_only") if official_only is None else official_only
 
         selected: list[dict[str, Any]] = []
@@ -479,7 +655,7 @@ class SourceCatalogManager:
                 continue
             match_any = [str(item).lower() for item in profile.get("match_any", []) if str(item).strip()]
             if match_any and any(token in lowered for token in match_any):
-                return str(profile_name)
+                return normalize_source_profile_name(str(profile_name), fallback="tech_updates")
         if any("\u4e00" <= char <= "\u9fff" for char in str(text or "")) and "policy_cn" in profiles:
             if any(token in lowered for token in ("政策", "法规", "统计", "gov.cn", "国务院")):
                 return "policy_cn"

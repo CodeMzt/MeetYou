@@ -10,6 +10,8 @@ from difflib import SequenceMatcher
 from math import sqrt
 from typing import Any, Protocol
 
+from core.source_catalog import normalize_source_profile_name
+
 ASSISTANT_MODE_GENERAL = "general"
 ASSISTANT_MODE_AUTOMATION = "automation"
 ASSISTANT_MODES = (
@@ -1002,7 +1004,7 @@ class SemanticRouterAgent:
             lambda: self._fallback_adapter.classify_source_profile(text),
             enable_keyword_fallback=enable_keyword_fallback,
         )
-        return str(decision.value or "tech_updates")
+        return normalize_source_profile_name(str(decision.value or "tech_updates"), fallback="tech_updates")
 
     def should_preload_context(self, query: str, goal: str = "", *, enable_keyword_fallback: bool = True) -> bool:
         decision = self._choose_signal(

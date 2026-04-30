@@ -7,6 +7,101 @@ from typing import Any
 logger = logging.getLogger("meetyou.tools_manager")
 
 _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "research_topic": {
+        "type": "function",
+        "function": {
+            "name": "research_topic",
+            "description": "Research a topic using governed source profiles, configured search providers, and evidence-ledger citations.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The topic or question to research."},
+                    "goal": {"type": "string", "description": "Optional focus for the research.", "default": ""},
+                    "source_profile": {
+                        "type": "string",
+                        "description": "Optional canonical source profile, such as tech_updates, policy_global, finance_macro, academic_biomed, cyber_threat, policy_cn, or campus_forum.",
+                        "default": "",
+                    },
+                    "official_only": {
+                        "type": "boolean",
+                        "description": "Prefer configured primary/official sources when true.",
+                    },
+                    "freshness": {
+                        "type": "string",
+                        "description": "Optional freshness hint such as high, medium, recent, today, or any domain-specific time window.",
+                        "default": "",
+                    },
+                    "quality": {
+                        "type": "string",
+                        "enum": ["fast", "balanced", "deep"],
+                        "description": "Speed/quality mode. Defaults to fast.",
+                        "default": "fast",
+                    },
+                },
+                "required": ["query"],
+            },
+            "metadata": {"action_risk": "read", "safe_parallel": True, "parallel_group": "web_io", "max_concurrency": 3},
+        },
+    },
+    "inspect_page": {
+        "type": "function",
+        "function": {
+            "name": "inspect_page",
+            "description": "Inspect a direct webpage or PDF URL and return a governed evidence object.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The URL to inspect."},
+                    "goal": {"type": "string", "description": "Optional extraction focus.", "default": ""},
+                    "source_profile": {"type": "string", "description": "Optional canonical source profile.", "default": ""},
+                },
+                "required": ["url"],
+            },
+            "metadata": {"action_risk": "read", "safe_parallel": True, "parallel_group": "web_io", "max_concurrency": 3},
+        },
+    },
+    "search_web": {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the web through Core's configured provider abstraction and return an evidence ledger.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query."},
+                    "max_results": {"type": "integer", "description": "Optional maximum number of search results.", "default": 5},
+                    "quality": {
+                        "type": "string",
+                        "enum": ["adaptive", "fast", "balanced", "deep"],
+                        "description": "Optional speed/quality mode. Defaults to fast.",
+                        "default": "fast",
+                    },
+                    "source_profile": {"type": "string", "description": "Optional canonical source profile.", "default": ""},
+                    "official_only": {"type": "boolean", "description": "Prefer official/primary-source candidates when true."},
+                    "freshness": {"type": "string", "description": "Optional freshness hint.", "default": ""},
+                },
+                "required": ["query"],
+            },
+            "metadata": {"action_risk": "read", "safe_parallel": True, "parallel_group": "web_io", "max_concurrency": 3},
+        },
+    },
+    "read_web_page": {
+        "type": "function",
+        "function": {
+            "name": "read_web_page",
+            "description": "Read and extract a direct webpage or PDF URL and return a single-source evidence ledger.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The page URL."},
+                    "source_profile": {"type": "string", "description": "Optional canonical source profile.", "default": ""},
+                    "freshness": {"type": "string", "description": "Optional freshness hint.", "default": ""},
+                },
+                "required": ["url"],
+            },
+            "metadata": {"action_risk": "read", "safe_parallel": True, "parallel_group": "web_io", "max_concurrency": 3},
+        },
+    },
     "list_workspaces": {
         "type": "function",
         "function": {
@@ -687,32 +782,20 @@ class ToolRegistry:
             known_names.add(tool_name)
 
     def _patch_builtin_tool_schemas(self) -> None:
-        for tool in self.tools_schema_dict.get("common_tools", []):
-            function = tool.get("function") if isinstance(tool, dict) else None
-            if not isinstance(function, dict):
-                continue
-            fallback = _BUILTIN_FALLBACK_TOOL_SCHEMAS.get(str(function.get("name") or ""))
-            if not isinstance(fallback, dict):
-                continue
-            fallback_function = fallback.get("function")
-            if not isinstance(fallback_function, dict):
-                continue
-            for key in ("description", "parameters", "metadata"):
-                if key in fallback_function:
-                    function[key] = fallback_function[key]
-        for tool in self.tools_schema_dict.get("chain_tools", []):
-            function = tool.get("function") if isinstance(tool, dict) else None
-            if not isinstance(function, dict):
-                continue
-            fallback = _BUILTIN_FALLBACK_TOOL_SCHEMAS.get(str(function.get("name") or ""))
-            if not isinstance(fallback, dict):
-                continue
-            fallback_function = fallback.get("function")
-            if not isinstance(fallback_function, dict):
-                continue
-            for key in ("description", "parameters", "metadata"):
-                if key in fallback_function:
-                    function[key] = fallback_function[key]
+        for section in ("common_tools", "chain_tools", "memory_tools", "background_tools", "web_tools"):
+            for tool in self.tools_schema_dict.get(section, []):
+                function = tool.get("function") if isinstance(tool, dict) else None
+                if not isinstance(function, dict):
+                    continue
+                fallback = _BUILTIN_FALLBACK_TOOL_SCHEMAS.get(str(function.get("name") or ""))
+                if not isinstance(fallback, dict):
+                    continue
+                fallback_function = fallback.get("function")
+                if not isinstance(fallback_function, dict):
+                    continue
+                for key in ("description", "parameters", "metadata"):
+                    if key in fallback_function:
+                        function[key] = fallback_function[key]
 
     def has_builtin(self, tool_name: str) -> bool:
         return tool_name in self.supported_funcs
