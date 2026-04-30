@@ -98,6 +98,35 @@ class EndpointRepository(RepositoryBase):
         self.session.flush()
         return row
 
+    def record_routing_result(self, *, endpoint_row_id, success: bool, latency_ms: float | None = None) -> Endpoint | None:
+        row = self.get_by_id(endpoint_row_id)
+        if row is None:
+            return None
+        merged = dict(row.meta or {})
+        stats = dict(merged.get("routing_stats") or {})
+        success_count = int(stats.get("success_count") or 0)
+        failure_count = int(stats.get("failure_count") or 0)
+        if success:
+            success_count += 1
+            stats["last_success_at"] = utcnow().isoformat()
+        else:
+            failure_count += 1
+            stats["last_failure_at"] = utcnow().isoformat()
+        stats["success_count"] = success_count
+        stats["failure_count"] = failure_count
+        if latency_ms is not None:
+            try:
+                observed = max(0.0, float(latency_ms))
+                previous = float(stats.get("average_latency_ms") or observed)
+                stats["average_latency_ms"] = round((previous * 0.8) + (observed * 0.2), 3)
+                stats["last_latency_ms"] = round(observed, 3)
+            except (TypeError, ValueError):
+                pass
+        merged["routing_stats"] = stats
+        row.meta = merged
+        self.session.flush()
+        return row
+
 
 class EndpointConnectionRepository(RepositoryBase):
     def upsert(

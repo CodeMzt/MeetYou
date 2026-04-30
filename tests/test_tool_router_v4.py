@@ -76,6 +76,103 @@ class _EndpointCapabilityService:
         return []
 
 
+class _ScoringWorkspaceService(_WorkspaceService):
+    def __init__(self, *, preferred_endpoint_ids=None, preferred_provider_types=None, routing_policy="balanced"):
+        self.workspace = SimpleNamespace(
+            id="workspace-row",
+            workspace_id="personal",
+            meta={
+                "preferred_target_endpoint_ids": list(preferred_endpoint_ids or []),
+                "preferred_endpoint_provider_types": list(preferred_provider_types or []),
+                "tool_target_routing_policy": routing_policy,
+            },
+        )
+
+    def get_by_workspace_id(self, workspace_id):
+        return self.workspace if workspace_id == "personal" else None
+
+    def get_by_id(self, row_id):
+        return self.workspace if row_id else None
+
+    def get_effective_tool_target_preferences(self, workspace, **kwargs):
+        del kwargs
+        meta = dict(getattr(workspace, "meta", {}) or {})
+        return {
+            "preferred_target_endpoint_ids": list(meta.get("preferred_target_endpoint_ids") or []),
+            "preferred_endpoint_provider_types": list(meta.get("preferred_endpoint_provider_types") or []),
+            "tool_target_routing_policy": str(meta.get("tool_target_routing_policy") or "balanced"),
+            "source": "test",
+        }
+
+
+class _ScoringEndpointService:
+    def __init__(self):
+        self.rows = {
+            "endpoint-a": SimpleNamespace(
+                id="endpoint-a",
+                endpoint_id="desktop.a.executor",
+                provider_type="desktop",
+                status="online",
+                priority=100,
+                workspace_scope=["other"],
+                meta={"heartbeat_metrics": {"active_calls": 0}, "routing_stats": {"success_count": 10, "failure_count": 0, "average_latency_ms": 200}},
+            ),
+            "endpoint-b": SimpleNamespace(
+                id="endpoint-b",
+                endpoint_id="desktop.b.executor",
+                provider_type="desktop",
+                status="online",
+                priority=100,
+                workspace_scope=["personal"],
+                meta={"heartbeat_metrics": {"active_calls": 4, "cpu_percent": 80}, "routing_stats": {"success_count": 4, "failure_count": 4, "average_latency_ms": 5000}},
+            ),
+            "endpoint-c": SimpleNamespace(
+                id="endpoint-c",
+                endpoint_id="desktop.c.executor",
+                provider_type="desktop",
+                status="online",
+                priority=50,
+                workspace_scope=["personal"],
+                meta={"heartbeat_metrics": {"active_calls": 0, "cpu_percent": 10}, "routing_stats": {"success_count": 9, "failure_count": 1, "average_latency_ms": 500}},
+            ),
+        }
+        self.routing_results = []
+
+    def get_by_endpoint_id(self, endpoint_id):
+        return next((row for row in self.rows.values() if row.endpoint_id == endpoint_id), None)
+
+    def get_by_id(self, row_id):
+        return self.rows.get(row_id)
+
+    def record_routing_result(self, **kwargs):
+        self.routing_results.append(dict(kwargs))
+
+
+class _ScoringCapabilityService:
+    def __init__(self):
+        self.rows = [
+            SimpleNamespace(
+                id=f"capability-{endpoint_id}",
+                capability_id=f"endpoint.{endpoint_id}.utility.echo",
+                endpoint_id=endpoint_id,
+                tool_key="utility.echo",
+                enabled=True,
+                requires_confirmation=False,
+                risk_level="read",
+                meta={},
+            )
+            for endpoint_id in ("endpoint-a", "endpoint-b", "endpoint-c")
+        ]
+
+    def list_for_endpoint(self, *, endpoint_row_id):
+        return [row for row in self.rows if row.endpoint_id == endpoint_row_id]
+
+    def list_enabled_for_tool(self, tool_key):
+        if tool_key == "utility.echo":
+            return list(self.rows)
+        return []
+
+
 class _OperationService:
     def __init__(self):
         self.rows = []
@@ -279,6 +376,110 @@ class ToolRouterV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch[0]["target"].target_id, "desktop.local.executor")
         self.assertFalse(batch[1]["ok"])
         self.assertEqual(batch[1]["error"]["code"], "endpoint_capability_not_found")
+
+    async def test_scored_resolution_prefers_workspace_preference_load_success_and_latency(self):
+        router = ToolRouterService(
+            actor_service=_NoopService(),
+            workspace_service=_ScoringWorkspaceService(preferred_endpoint_ids=["desktop.c.executor"]),
+            endpoint_service=_ScoringEndpointService(),
+            endpoint_capability_service=_ScoringCapabilityService(),
+            session_service=_NoopService(),
+            thread_service=_NoopService(),
+            operation_service=_OperationService(),
+            operation_call_service=_OperationCallService(),
+        )
+        router.set_connected_endpoint_ids_getter(lambda: {"desktop.b.executor", "desktop.c.executor"})
+
+        target = router.resolve_execution_target(
+            tool_key="utility.echo",
+            workspace_id="personal",
+            confirmed=True,
+        )
+
+        self.assertEqual(target.target_id, "desktop.c.executor")
+        decision = target.routing_decision or {}
+        self.assertEqual(decision["selected_endpoint_id"], "desktop.c.executor")
+        self.assertGreater(decision["score"], 0)
+        self.assertEqual(decision["candidate_count"], 3)
+        rejected_reasons = {
+            reason
+            for item in decision["rejected_candidates"]
+            for reason in item.get("rejected_reasons", [])
+        }
+        self.assertIn("endpoint_disconnected", rejected_reasons)
+        self.assertIn("workspace_mismatch", rejected_reasons)
+        self.assertGreater(decision["breakdown"]["preference"], 0)
+        self.assertGreater(decision["breakdown"]["load"], 0)
+        self.assertGreater(decision["breakdown"]["success_rate"], 0)
+        self.assertGreater(decision["breakdown"]["latency"], 0)
+
+    async def test_disconnected_endpoint_is_not_auto_selected_when_connected_candidate_exists(self):
+        router = ToolRouterService(
+            actor_service=_NoopService(),
+            workspace_service=_ScoringWorkspaceService(preferred_endpoint_ids=["desktop.b.executor"]),
+            endpoint_service=_ScoringEndpointService(),
+            endpoint_capability_service=_ScoringCapabilityService(),
+            session_service=_NoopService(),
+            thread_service=_NoopService(),
+            operation_service=_OperationService(),
+            operation_call_service=_OperationCallService(),
+        )
+        router.set_connected_endpoint_ids_getter(lambda: {"desktop.c.executor"})
+
+        target = router.resolve_execution_target(
+            tool_key="utility.echo",
+            workspace_id="personal",
+            confirmed=True,
+        )
+
+        self.assertEqual(target.target_id, "desktop.c.executor")
+        rejected = {
+            item["endpoint_id"]: item["rejected_reasons"]
+            for item in (target.routing_decision or {}).get("rejected_candidates", [])
+        }
+        self.assertIn("endpoint_disconnected", rejected["desktop.b.executor"])
+
+    async def test_dispatch_persists_routing_decision_metadata_and_records_stats(self):
+        endpoint_service = _ScoringEndpointService()
+        operation_service = _OperationService()
+        operation_call_service = _OperationCallService()
+        router = ToolRouterService(
+            actor_service=_NoopService(),
+            workspace_service=_ScoringWorkspaceService(preferred_endpoint_ids=["desktop.c.executor"]),
+            endpoint_service=endpoint_service,
+            endpoint_capability_service=_ScoringCapabilityService(),
+            session_service=_NoopService(),
+            thread_service=_NoopService(),
+            operation_service=operation_service,
+            operation_call_service=operation_call_service,
+        )
+        router.set_connected_endpoint_ids_getter(lambda: {"desktop.c.executor"})
+
+        async def _transport(*, endpoint_id, payload):
+            self.assertEqual(endpoint_id, "desktop.c.executor")
+
+            async def _finish():
+                await asyncio.sleep(0)
+                await router.notify_call_result(payload["payload"]["call_id"], {"echo": "ok"})
+
+            asyncio.create_task(_finish())
+            return True
+
+        router.set_endpoint_transport(_transport)
+
+        result = await router.dispatch_tool_call(
+            tool_key="utility.echo",
+            arguments={"text": "ok"},
+            workspace_id="personal",
+            confirmed=True,
+            return_operation=True,
+        )
+
+        self.assertEqual(result["execution_target_id"], "desktop.c.executor")
+        decision = operation_service.rows[0].metadata["routing_decision"]
+        self.assertEqual(decision["selected_endpoint_id"], "desktop.c.executor")
+        self.assertEqual(endpoint_service.routing_results[0]["endpoint_row_id"], "endpoint-c")
+        self.assertTrue(endpoint_service.routing_results[0]["success"])
 
 
 if __name__ == "__main__":
