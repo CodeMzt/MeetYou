@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, ChevronDown, MessageSquare, Plus, Trash2 } from 'lucide-react'
 import type { RuntimeThreadPresentation } from '../../threadPresentation'
 import ConfirmModal from '../common/ConfirmModal'
@@ -29,6 +30,9 @@ export default function ThreadPicker({
   const [deleteTarget, setDeleteTarget] = useState<RuntimeThreadPresentation | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({})
   const activeItem = useMemo(
     () => items.find((item) => item.thread.thread_id === activeThreadId) ?? items[0] ?? null,
     [activeThreadId, items],
@@ -39,7 +43,8 @@ export default function ThreadPicker({
       return
     }
     const handlePointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setOpen(false)
       }
     }
@@ -53,6 +58,42 @@ export default function ThreadPicker({
     return () => {
       document.removeEventListener('mousedown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return
+    }
+    const updateMenuPosition = () => {
+      const trigger = triggerRef.current
+      if (!trigger) {
+        return
+      }
+      const rect = trigger.getBoundingClientRect()
+      const viewportWidth = window.innerWidth
+      const viewportHeight = window.innerHeight
+      const gutter = 12
+      const width = Math.max(0, Math.min(360, viewportWidth - gutter * 2))
+      const left = Math.min(
+        Math.max(gutter, rect.right - width),
+        Math.max(gutter, viewportWidth - width - gutter),
+      )
+      const top = Math.min(rect.bottom + 10, Math.max(gutter, viewportHeight - 112))
+      const maxHeight = Math.max(180, viewportHeight - top - gutter)
+      setMenuStyle({
+        left,
+        top,
+        width,
+        maxHeight,
+      })
+    }
+    updateMenuPosition()
+    window.addEventListener('resize', updateMenuPosition)
+    window.addEventListener('scroll', updateMenuPosition, true)
+    return () => {
+      window.removeEventListener('resize', updateMenuPosition)
+      window.removeEventListener('scroll', updateMenuPosition, true)
     }
   }, [open])
 
@@ -88,6 +129,7 @@ export default function ThreadPicker({
       return
     }
     setDeleteError('')
+    setOpen(false)
     setDeleteTarget(item)
   }
 
@@ -121,6 +163,7 @@ export default function ThreadPicker({
     <div className={styles.threadPicker} ref={rootRef}>
       <button
         type="button"
+        ref={triggerRef}
         className={`${styles.trigger} ${open ? styles.open : ''}`}
         onClick={() => setOpen((current) => !current)}
         title={activeItem.tooltip}
@@ -132,8 +175,14 @@ export default function ThreadPicker({
         <ChevronDown size={14} className={styles.chevron} aria-hidden="true" />
       </button>
 
-      {open && (
-        <div className={styles.menu} role="listbox" aria-label="选择会话线程">
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          className={styles.menu}
+          ref={menuRef}
+          style={menuStyle}
+          role="listbox"
+          aria-label="选择会话线程"
+        >
           <form className={styles.createForm} onSubmit={handleCreate}>
             <input
               className={styles.createInput}
@@ -183,7 +232,8 @@ export default function ThreadPicker({
               </div>
             )
           })}
-        </div>
+        </div>,
+        document.body,
       )}
       <ConfirmModal
         isOpen={Boolean(deleteTarget)}

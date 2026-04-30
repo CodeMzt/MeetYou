@@ -1061,6 +1061,7 @@ class MeetWeChatInputAdapter:
                 endpoint_id=self._provider_endpoint_id,
                 endpoint_addresses=await self._discover_address_snapshot(),
                 supports_markdown=False,
+                bind_thread=False,
                 event_handler=lambda payload: self._output_adapter.send_runtime_event("", payload),
             )
         await self._provider_gateway_client.start()

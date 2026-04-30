@@ -111,16 +111,19 @@ export function getVisibleRuntimeThreadItems(
   activeThreadId = '',
   defaultThreadId = '',
 ): RuntimeThreadPresentation[] {
-  const prepared = threads.map((thread, index) => {
+  const prepared = threads.flatMap((thread, index) => {
     const kind = classifyRuntimeThread(thread, defaultThreadId)
-    return {
+    if (kind === 'wechat_provider' || kind === 'feishu_provider') {
+      return []
+    }
+    return [{
       thread,
       kind,
       index,
       priority: priorityForThread(thread, kind, activeThreadId, defaultThreadId),
       baseTitle: baseTitleForThread(thread, kind),
       duplicateKey: duplicateIdentityKey(thread, kind),
-    }
+    }]
   })
 
   prepared.sort((left, right) => left.priority - right.priority || left.index - right.index)

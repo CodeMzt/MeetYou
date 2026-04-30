@@ -57,6 +57,7 @@ class GatewayConversationClient:
         thread_strategy: str = "",
         endpoint_addresses: list[dict[str, Any]] | None = None,
         supports_markdown: bool = True,
+        bind_thread: bool = True,
         event_handler: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ):
         self.base_url = base_url.rstrip("/")
@@ -74,6 +75,7 @@ class GatewayConversationClient:
         self._thread_strategy = str(thread_strategy or "").strip()
         self._endpoint_addresses = list(endpoint_addresses or [])
         self.supports_markdown = bool(supports_markdown)
+        self._bind_thread = bool(bind_thread)
 
         self._http_session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -154,6 +156,8 @@ class GatewayConversationClient:
             return payload
 
     async def ensure_context(self) -> None:
+        if not self._bind_thread:
+            return
         if self.thread_id and self.session_id:
             return
         async with self._context_lock:
@@ -262,20 +266,21 @@ class GatewayConversationClient:
                     },
                 }
             )
-        await self._ws.send_json(
-            {
-                "schema": "meetyou.endpoint.ws.v4",
-                "type": "subscription.start",
-                "endpoint_id": self.endpoint_id,
-                "payload": {
-                    "subscription_id": f"sub-{self.thread_id}",
-                    "target_type": "thread",
-                    "target_id": self.thread_id,
-                    "last_seen_event_seq": 0,
-                    "replay": False,
-                },
-            }
-        )
+        if self._bind_thread:
+            await self._ws.send_json(
+                {
+                    "schema": "meetyou.endpoint.ws.v4",
+                    "type": "subscription.start",
+                    "endpoint_id": self.endpoint_id,
+                    "payload": {
+                        "subscription_id": f"sub-{self.thread_id}",
+                        "target_type": "thread",
+                        "target_id": self.thread_id,
+                        "last_seen_event_seq": 0,
+                        "replay": False,
+                    },
+                }
+            )
 
     async def upsert_address(self, address: dict[str, Any]) -> None:
         await self.start()
@@ -298,6 +303,9 @@ class GatewayConversationClient:
         async for message in self._ws:
             if message.type == aiohttp.WSMsgType.TEXT:
                 payload = message.json(loads=json.loads)
+                if payload.get("type") == "endpoint.hello.ack" and not self._bind_thread:
+                    self._subscription_acknowledged.set()
+                    self._ws_connected.set()
                 if payload.get("type") == "subscription.ack":
                     self._subscription_acknowledged.set()
                     self._ws_connected.set()

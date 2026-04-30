@@ -121,6 +121,7 @@ class FeishuInputAdapter:
                 endpoint_id=self._provider_endpoint_id,
                 endpoint_addresses=[self._address_payload(chat_id) for chat_id in known_chat_ids],
                 supports_markdown=False,
+                bind_thread=False,
                 event_handler=(
                     (lambda payload: self._output_adapter.send_runtime_event("", payload))
                     if self._output_adapter is not None
