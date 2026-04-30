@@ -12,13 +12,18 @@ const workspace: RuntimeWorkspace = {
   prompt_overlay: '',
   default_execution_target: 'core.local',
   tool_policy: 'allow_all',
-  allowed_tool_ids: [],
-  preferred_target_endpoint_ids: [],
-  preferred_endpoint_provider_types: [],
+  allowed_tool_ids: ['utility.echo'],
+  preferred_target_endpoint_ids: ['desktop.study.executor'],
+  preferred_endpoint_provider_types: ['desktop'],
   preferred_source_profiles: ['study_materials', 'workspace_local'],
   tool_target_routing_policy: 'balanced',
   memory_ranking_policy: 'workspace_first',
-  tool_routing_overrides: {},
+  tool_routing_overrides: {
+    'utility.echo': {
+      preferred_target_endpoint_ids: ['desktop.study.executor'],
+      tool_target_routing_policy: 'strict_preferred_endpoint',
+    },
+  },
 }
 
 describe('WorkspaceGovernanceEditor', () => {
@@ -36,5 +41,12 @@ describe('WorkspaceGovernanceEditor', () => {
     expect(markup).toContain('工作区：Study')
     expect(markup).toContain('Study')
     expect(markup).toContain('记忆排序')
+    expect(markup).toContain('默认执行目标')
+    expect(markup).toContain('工具策略')
+    expect(markup).toContain('允许工具')
+    expect(markup).toContain('偏好端点')
+    expect(markup).toContain('Provider 偏好')
+    expect(markup).toContain('工具路由覆盖')
+    expect(markup).toContain('utility.echo')
   })
 })

@@ -29,14 +29,15 @@ class EndpointProviderProtocolTests(unittest.TestCase):
             self.assertEqual(resolve_core_base_url(config), "https://remote.example/core")
 
     def test_external_provider_base_url_supports_config_and_gateway_fallback(self):
-        self.assertEqual(
-            resolve_core_base_url({"core_base_url": "https://config.example"}),
-            "https://config.example",
-        )
-        self.assertEqual(
-            resolve_core_base_url({"gateway_host": "0.0.0.0", "gateway_port": 9001}),
-            "http://127.0.0.1:9001",
-        )
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(
+                resolve_core_base_url({"core_base_url": "https://config.example"}),
+                "https://config.example",
+            )
+            self.assertEqual(
+                resolve_core_base_url({"gateway_host": "0.0.0.0", "gateway_port": 9001}),
+                "http://127.0.0.1:9001",
+            )
 
     def test_desktop_provider_advertises_endpoint_identity_and_capabilities(self):
         config = DesktopClientConfig(provider_id="desktop-main", workspace_ids=["desktop-main"])

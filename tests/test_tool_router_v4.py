@@ -4,7 +4,7 @@ import asyncio
 import unittest
 from types import SimpleNamespace
 
-from core.services.tool_router_service import ToolRouterService
+from core.services.tool_router_service import ToolRouterError, ToolRouterService
 
 
 class _NoopService:
@@ -103,6 +103,21 @@ class _ScoringWorkspaceService(_WorkspaceService):
             "tool_target_routing_policy": str(meta.get("tool_target_routing_policy") or "balanced"),
             "source": "test",
         }
+
+
+class _AllowlistWorkspaceService(_WorkspaceService):
+    def get_by_workspace_id(self, workspace_id):
+        return SimpleNamespace(
+            id="workspace-row",
+            workspace_id=workspace_id,
+            meta={"tool_policy": "allowlist", "allowed_tool_ids": ["delivery.message"]},
+        )
+
+    def tool_allowed(self, workspace, tool_id):
+        meta = dict(getattr(workspace, "meta", {}) or {})
+        if meta.get("tool_policy") != "allowlist":
+            return True
+        return tool_id in set(meta.get("allowed_tool_ids") or [])
 
 
 class _ScoringEndpointService:
@@ -376,6 +391,28 @@ class ToolRouterV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch[0]["target"].target_id, "desktop.local.executor")
         self.assertFalse(batch[1]["ok"])
         self.assertEqual(batch[1]["error"]["code"], "endpoint_capability_not_found")
+
+    async def test_workspace_allowlist_blocks_unlisted_tool(self):
+        router = ToolRouterService(
+            actor_service=_NoopService(),
+            workspace_service=_AllowlistWorkspaceService(),
+            endpoint_service=_EndpointService(),
+            endpoint_capability_service=_EndpointCapabilityService(),
+            session_service=_NoopService(),
+            thread_service=_NoopService(),
+            operation_service=_OperationService(),
+            operation_call_service=_OperationCallService(),
+        )
+
+        with self.assertRaises(ToolRouterError) as raised:
+            router.resolve_execution_target(
+                tool_key="utility.echo",
+                workspace_id="personal",
+                confirmed=True,
+            )
+
+        self.assertEqual(raised.exception.code, "workspace_tool_not_allowed")
+        self.assertFalse(raised.exception.retryable)
 
     async def test_scored_resolution_prefers_workspace_preference_load_success_and_latency(self):
         router = ToolRouterService(
