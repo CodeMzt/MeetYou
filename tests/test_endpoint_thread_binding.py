@@ -116,6 +116,41 @@ class EndpointThreadBindingTests(unittest.TestCase):
         self.assertNotEqual(thread.thread_id, "thr_missing")
         self.assertTrue(thread.thread_id.startswith("thr_"))
 
+    def test_per_conversation_rebinds_when_previous_thread_was_deleted(self) -> None:
+        service = EndpointThreadBindingService(self.Session)
+
+        binding, first_thread = service.resolve_thread(
+            principal_id=self.principal_id,
+            endpoint_row_id=self.endpoint_id,
+            endpoint_public_id=self.endpoint_public_id,
+            workspace_row_id=self.workspace_id,
+            workspace_public_id=self.workspace_public_id,
+            thread_strategy="per_conversation",
+            conversation_key="wechat:chat:deleted",
+            title="Deleted Chat",
+        )
+        with self.Session() as session:
+            row = session.query(Thread).filter_by(thread_id=first_thread.thread_id).one()
+            row.status = "deleted"
+            session.commit()
+
+        rebound_binding, rebound_thread = service.resolve_thread(
+            principal_id=self.principal_id,
+            endpoint_row_id=self.endpoint_id,
+            endpoint_public_id=self.endpoint_public_id,
+            workspace_row_id=self.workspace_id,
+            workspace_public_id=self.workspace_public_id,
+            thread_strategy="per_conversation",
+            conversation_key="wechat:chat:deleted",
+            title="Deleted Chat",
+            explicit_thread_id=first_thread.thread_id,
+        )
+
+        self.assertEqual(binding.binding_id, rebound_binding.binding_id)
+        self.assertNotEqual(first_thread.thread_id, rebound_thread.thread_id)
+        self.assertEqual(rebound_binding.thread_id, rebound_thread.id)
+        self.assertEqual(rebound_thread.status, "active")
+
     def test_explicit_thread_requires_existing_accessible_thread(self) -> None:
         service = EndpointThreadBindingService(self.Session)
 

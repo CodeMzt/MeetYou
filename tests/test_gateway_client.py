@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import aiohttp
 
-from clients.gateway_client import GatewayConversationClient
+from clients.gateway_client import GatewayClientError, GatewayConversationClient
 
 
 class GatewayConversationClientTests(unittest.TestCase):
@@ -144,6 +144,61 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[1][3]["conversation_key"], "feishu:chat:oc_test")
         self.assertEqual(calls[1][3]["thread_strategy"], "per_conversation")
         self.assertEqual(calls[1][3]["title"], "Feishu Chat oc_test")
+
+    async def test_send_message_rebinds_after_deleted_thread_context(self):
+        calls = []
+        resolve_count = 0
+
+        class _ContextClient(GatewayConversationClient):
+            async def start(self):
+                await self.ensure_context()
+
+            async def request_json(self, method, path, *, params=None, json_body=None):
+                nonlocal resolve_count
+                calls.append((method, path, dict(params or {}), dict(json_body or {})))
+                if path == "/runtime/workspaces":
+                    return [{"workspace_id": "personal"}]
+                if path == "/runtime/endpoint-sessions/resolve":
+                    resolve_count += 1
+                    if resolve_count == 1:
+                        return {
+                            "thread": {"thread_id": "thr-old"},
+                            "session": {"session_id": "sess-old", "thread_id": "thr-old"},
+                            "binding": {"binding_id": "etb.1"},
+                        }
+                    return {
+                        "thread": {"thread_id": "thr-new"},
+                        "session": {"session_id": "sess-new", "thread_id": "thr-new"},
+                        "binding": {"binding_id": "etb.1"},
+                    }
+                if path == "/runtime/messages":
+                    if json_body.get("thread_id") == "thr-old":
+                        raise GatewayClientError("404 Unknown thread: thr-old", status_code=404, code="thread_not_found")
+                    return {
+                        "message_id": "msg-new",
+                        "thread_id": json_body.get("thread_id"),
+                        "session_id": json_body.get("session_id"),
+                    }
+                raise AssertionError(path)
+
+        client = _ContextClient(
+            base_url="http://127.0.0.1:8000",
+            provider_id="meetwechat-chat-test",
+            provider_type="wechat",
+            display_name="MeetWeChat private test",
+            workspace_id="personal",
+            conversation_key="wechat:meetwechat:chat:chat-1",
+            thread_strategy="per_conversation",
+        )
+
+        response = await client.send_message("hello", endpoint_message_id="evt-1")
+
+        message_calls = [item for item in calls if item[1] == "/runtime/messages"]
+        self.assertEqual(resolve_count, 2)
+        self.assertEqual([item[3]["thread_id"] for item in message_calls], ["thr-old", "thr-new"])
+        self.assertEqual(response["thread_id"], "thr-new")
+        self.assertEqual(client.thread_id, "thr-new")
+        self.assertEqual(client.session_id, "sess-new")
 
     async def test_endpoint_subscription_disables_replay_for_external_side_effect_clients(self):
         client = GatewayConversationClient(

@@ -364,6 +364,39 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(len(message_service.rows), 1)
         self.assertEqual(event_bus.inbound_queue.qsize(), 1)
 
+    def test_runtime_message_to_deleted_thread_returns_thread_not_found(self):
+        domain = SimpleNamespace(
+            services=SimpleNamespace(
+                thread=SimpleNamespace(get_by_thread_id=lambda thread_id: None),
+            )
+        )
+        gateway = FastAPIGateway(
+            EventBus(),
+            SessionManager(),
+            core_domain=domain,
+            access_token=self.access_token,
+        )
+        client = TestClient(gateway.app)
+        self.addCleanup(client.close)
+
+        response = client.post(
+            "/runtime/messages",
+            json={
+                "thread_id": "thr-deleted",
+                "workspace_id": "personal",
+                "session_id": "sess-old",
+                "endpoint_id": "wechat.provider.ui",
+                "endpoint_type": "wechat",
+                "content": "hello",
+                "endpoint_message_id": "evt-after-delete",
+            },
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "thread_not_found")
+
     def test_endpoint_session_resolve_binds_external_conversation_to_thread(self):
         workspace = SimpleNamespace(
             id="workspace-row",

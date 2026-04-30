@@ -1297,6 +1297,7 @@ class MeetWeChatInputAdapter:
                 preferred_mode=_infer_preferred_mode(text),
                 endpoint_message_id=identity_key,
             )
+            await self._remember_gateway_client_thread(event, client)
         except Exception as exc:
             self._output_adapter.discard_pending(event.chat_id, event.event_id)
             reason = f"bridge:{exc.__class__.__name__}"
@@ -1504,6 +1505,12 @@ class MeetWeChatInputAdapter:
         if thread_id:
             await self._state_store.set_thread_id(conversation_key, thread_id)
         return client
+
+    async def _remember_gateway_client_thread(self, event: MeetWeChatEvent, client: Any) -> None:
+        thread_id = str(getattr(client, "thread_id", "") or "")
+        if not thread_id:
+            return
+        await self._state_store.set_thread_id(self._conversation_key(event), thread_id)
 
     def _sender_alias(self, event: MeetWeChatEvent) -> str:
         if event.chat_type != "group":

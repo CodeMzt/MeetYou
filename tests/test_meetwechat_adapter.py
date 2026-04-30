@@ -103,6 +103,7 @@ class _FakeGatewayClient:
         self.human_input_responses = []
         self.commands = []
         self.message_response = kwargs.get("message_response") or {"ok": True, "message_id": "core-msg-1"}
+        self.thread_after_send = kwargs.get("thread_after_send") or ""
         self.reply_payload = kwargs.get("reply_payload") or _run_event(
             {
                 "type": "message.completed",
@@ -118,6 +119,8 @@ class _FakeGatewayClient:
         self.messages.append({"content": content, **kwargs})
         if self.event_handler and self.reply_payload is not None:
             await self.event_handler(self.reply_payload)
+        if self.thread_after_send:
+            self.thread_id = self.thread_after_send
         return dict(self.message_response)
 
     async def submit_confirm_response(self, **kwargs):
@@ -156,7 +159,16 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         payload.update(overrides)
         return MeetWeChatEvent.from_payload(payload)
 
-    def _build_adapter(self, *, config=None, meetwechat_client=None, reply_payload=None, gateway_clients=None, message_response=None):
+    def _build_adapter(
+        self,
+        *,
+        config=None,
+        meetwechat_client=None,
+        reply_payload=None,
+        gateway_clients=None,
+        message_response=None,
+        thread_after_send=None,
+    ):
         config = config or _Config(meetwechat_state_file=self.state_path)
         state = MeetWeChatStateStore(self.state_path)
         meetwechat_client = meetwechat_client or _FakeMeetWeChatClient()
@@ -168,7 +180,14 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         gateway_clients = gateway_clients if gateway_clients is not None else []
 
         def factory(**kwargs):
-            client = _FakeGatewayClient(**{**kwargs, "reply_payload": reply_payload, "message_response": message_response})
+            client = _FakeGatewayClient(
+                **{
+                    **kwargs,
+                    "reply_payload": reply_payload,
+                    "message_response": message_response,
+                    "thread_after_send": thread_after_send,
+                }
+            )
             gateway_clients.append(client)
             return client
 
@@ -245,6 +264,13 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(gateway_clients), 1)
         self.assertEqual(gateway_clients[0].kwargs["endpoint_id"], "wechat.provider.ui")
         self.assertFalse(gateway_clients[0].kwargs["bind_thread"])
+
+    async def test_updates_cached_thread_after_gateway_rebind(self):
+        adapter, _, _, _, state = self._build_adapter(thread_after_send="thread-rebound")
+
+        await adapter.handle_events([self._event()])
+
+        self.assertEqual(state.get_thread_id("wechat:meetwechat:chat:chat-1"), "thread-rebound")
 
     async def test_guarded_auto_event_still_sends_after_bridge(self):
         adapter, _, meetwechat_client, gateway_clients, state = self._build_adapter()
