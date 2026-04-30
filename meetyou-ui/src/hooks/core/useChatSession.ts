@@ -1,6 +1,6 @@
 import { startTransition, useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { fetchRuntimeUsageSnapshot, listThreadMessages, sendRuntimeMessage, submitRuntimeConfirmResponse, submitRuntimeHumanInputResponse } from '../../runtimeApi'
-import { createInitialChatState, createSystemTurn, reduceChatState } from '../../chatState'
+import { createInitialChatState, createSystemTurn, createUserTurn, reduceChatState } from '../../chatState'
 import { parseEndpointWsPayload } from '../../protocolClient'
 import type { EndpointContext } from './useEndpointContext'
 import type { AckPayload, AssistantMode, ThinkingOverride, ApprovalDisplayModel } from '../../types'
@@ -208,6 +208,9 @@ export function useChatSession(
         return
       }
 
+      const endpointRequestId = createEndpointRequestId()
+      dispatchChat({ type: 'append_user_turn', turn: createUserTurn(content, '', endpointRequestId) })
+
       try {
         const context = endpointContext ?? (await initializeEndpointContext())
         const message = await sendRuntimeMessage(baseUrl, {
@@ -220,12 +223,12 @@ export function useChatSession(
           display_name: '桌面应用',
           role: 'user',
           content,
-          endpoint_message_id: createEndpointRequestId(),
+          endpoint_message_id: endpointRequestId,
           preferred_mode: preferredMode,
           options: buildThinkingOptions(thinkingOverride),
         })
         startTransition(() => {
-          dispatchChat({ type: 'append_runtime_message', message })
+          dispatchChat({ type: 'complete_user_turn', optimisticId: endpointRequestId, message })
         })
       } catch (error) {
         console.error('通过端点 API 发送消息失败:', error)

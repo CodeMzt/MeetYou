@@ -61,14 +61,18 @@
 }
 
 .usageDropdown {
-  position: absolute;
-  top: 48px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 320px;
+  position: fixed;
+  top: 92px;
+  left: max(12px, calc(50vw - 160px));
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100vh - 112px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 16px;
   pointer-events: auto;
   font-size: 13px;
+  scrollbar-gutter: stable;
 }
 
 .usageHeader {

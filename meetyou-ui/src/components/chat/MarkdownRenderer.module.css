@@ -15,7 +15,11 @@
 }
 
 .markdownBody p {
-  margin-bottom: 12px;
+  margin: 0 0 12px;
+}
+
+.markdownBody p:only-child {
+  margin: 0;
 }
 
 .markdownBody h1, .markdownBody h2, .markdownBody h3, .markdownBody h4, .markdownBody h5, .markdownBody h6 {

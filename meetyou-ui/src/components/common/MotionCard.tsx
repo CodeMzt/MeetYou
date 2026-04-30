@@ -1,5 +1,5 @@
 import { motion, HTMLMotionProps } from 'framer-motion'
-import { ReactNode } from 'react'
+import { forwardRef, ReactNode } from 'react'
 
 interface MotionCardProps extends HTMLMotionProps<'div'> {
   children: ReactNode
@@ -7,9 +7,13 @@ interface MotionCardProps extends HTMLMotionProps<'div'> {
   glass?: boolean
 }
 
-export default function MotionCard({ children, className = '', glass = true, ...props }: MotionCardProps) {
+const MotionCard = forwardRef<HTMLDivElement, MotionCardProps>(function MotionCard(
+  { children, className = '', glass = true, ...props },
+  ref,
+) {
   return (
     <motion.div
+      ref={ref}
       initial={{ opacity: 0, y: 10, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
@@ -20,4 +24,6 @@ export default function MotionCard({ children, className = '', glass = true, ...
       {children}
     </motion.div>
   )
-}
+})
+
+export default MotionCard
