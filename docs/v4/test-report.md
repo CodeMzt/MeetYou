@@ -1,6 +1,24 @@
 # MeetYou V4 Test Report
 
-Status: local V4 validation, CI, Deploy, remote Core verification, local Desktop -> remote Core validation, and external Feishu / WeChatBot human confirmation passed.
+Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
+
+## 2026-04-30 Endpoint Tool Catalog / WeChat Delivery Fix Addendum
+
+- Commit sha: `12b5335876f102e92e7ca9b1ab3ae348350bcc73`
+- Scope: documented and implemented Endpoint Tool Catalog registration through `endpoint.capabilities.snapshot`, endpoint-owned thread binding through `/runtime/endpoint-sessions/resolve`, contextual endpoint tool auto-injection, MeetWeChat / Feishu provider conversation-key session resolution, UI delete confirmation styling and force-delete behavior, and MeetWeChat `guarded_auto` real-send delivery behavior.
+- Root cause for the latest WeChat no-send report: MeetWeChat inbound messages and assistant replies were persisted in Core, but `guarded_auto` was not treated as an allowed outbound send mode by `MeetWeChatProxyPolicy.allow_send()`. The provider could therefore show the assistant reply in the Core thread while not actually calling the MeetWeChat sidecar send endpoint.
+- Local focused backend tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_meetwechat_adapter tests.test_feishu_output_adapter tests.test_gateway_client tests.test_endpoint_thread_binding tests.test_gateway_runtime_api tests.test_tool_runtime`, 82 tests).
+- Local frontend typecheck: passed (`npm run typecheck`).
+- Local focused frontend tests: passed (`npm run test -- --run ThreadPicker useEndpointContext`, 2 files / 4 tests).
+- Local full frontend tests: passed earlier in the same change batch (`npm run test`, 20 files / 82 tests).
+- Local full backend discovery: attempted earlier in the same change batch and timed out after 5 minutes without failure output; focused protocol/runtime/provider coverage above passed.
+- CI status: passed (`CI`, run `25139807849`, commit `12b5335876f102e92e7ca9b1ab3ae348350bcc73`).
+- Deploy status: passed (`Deploy MeetYou Core`, run `25139807858`, commit `12b5335876f102e92e7ca9b1ab3ae348350bcc73`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=12b5335876f102e92e7ca9b1ab3ae348350bcc73`, `branch=main`, `build_time=2026-04-29T23:49:14Z`).
+- Remote endpoint status after deploy: `feishu.provider.ui` online and `wechat.provider.ui` online in workspace `personal`; deploy logs also show `meetyou-feishu-provider.service` and `meetyou-meetwechat-provider.service` restarted as running.
+- Remote V4 real acceptance: passed with proxy bypass (`NO_PROXY=core.maziteng.cn,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://core.maziteng.cn --skip-ui`).
+- Remote acceptance marker: `V4OK_20260429235343_731152`; streaming marker `V4STREAM_20260429235344_36106f`; thread `thr_8db99b5850b8440a9ff9abfffa6dd331`; ToolRouter operation `op_1adfa63b3149430aa7c6de4e55798242`; replay seq `15`.
+- WeChatBot human confirmation: pending. Requested human marker `WX_REAL_20260430_0756_12B533`; a 4-minute remote thread poll did not observe that marker, so no fresh WeChat human receipt can be claimed yet.
 
 ## 2026-04-29 V4 Optimization / External Provider Deploy Addendum
 
