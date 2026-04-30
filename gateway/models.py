@@ -531,6 +531,26 @@ class RuntimeHumanInputResponseResult(BaseModel):
     selected_option: str | None = None
 
 
+class RuntimeReplyControlRequest(BaseModel):
+    action: str
+    guidance: str = ""
+    checkpoint_id: str = ""
+    turn_id: str = ""
+    stream_id: str = ""
+    endpoint_id: str = ""
+    endpoint_type: str = "electron"
+    endpoint_request_id: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeReplyControlResult(BaseModel):
+    request_id: str
+    session_id: str
+    action: str
+    accepted: bool = True
+    status: str = "queued"
+
+
 class RuntimeAttachmentUploadTicketRequest(BaseModel):
     owner_type: str
     owner_id: str

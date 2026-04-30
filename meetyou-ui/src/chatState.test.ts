@@ -146,6 +146,51 @@ describe('chatState', () => {
     expect(state.messages[0]?.isStreaming).toBe(false)
   })
 
+  it('does not keep an existing turn streaming after a heartbeat runtime update', () => {
+    let state = reduceChatState(createInitialChatState(), {
+      type: 'sync_runtime',
+      snapshot: {
+        session_id: 'sess_1',
+        status: 'thinking',
+        detail: 'working',
+        active_tools: [],
+        current_mode: 'general',
+        route_reason: '',
+        action_risk: 'read',
+        source_profile: '',
+        stream_id: 'stream-1',
+        turn_id: 'turn-1',
+        finish_reason: '',
+        reply_control: {},
+        updated_at: '2026-04-08T00:00:00Z',
+      },
+    })
+
+    expect(state.messages[0]?.isStreaming).toBe(true)
+
+    state = reduceChatState(state, {
+      type: 'sync_runtime',
+      snapshot: {
+        session_id: 'sess_1',
+        status: 'heartbeat',
+        detail: 'heartbeat completed',
+        active_tools: ['heartbeat'],
+        current_mode: '',
+        route_reason: '',
+        action_risk: 'read',
+        source_profile: '',
+        stream_id: 'stream-1',
+        turn_id: 'turn-1',
+        finish_reason: '',
+        reply_control: {},
+        updated_at: '2026-04-08T00:00:01Z',
+      },
+    })
+
+    expect(state.messages).toHaveLength(1)
+    expect(state.messages[0]?.isStreaming).toBe(false)
+  })
+
   it('keeps an optimistic user message above assistant streaming updates', () => {
     let state = reduceChatState(createInitialChatState(), {
       type: 'append_user_turn',
