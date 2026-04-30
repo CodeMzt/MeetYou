@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from core.db.base import Base
-from core.db.models import Principal, Workspace
+from core.db.models import Message, Principal, Workspace
+from core.services.message_service import MessageService
 from core.services.thread_service import ThreadService
 
 
@@ -96,6 +98,67 @@ class ThreadServiceTests(unittest.TestCase):
         self.assertTrue(other_result.deleted)
         self.assertNotIn(other.thread_id, {row.thread_id for row in rows})
         self.assertIn(default_thread.thread_id, {row.thread_id for row in rows})
+
+    def test_message_context_window_is_bounded_chronological_and_excludes_current(self) -> None:
+        thread_service = ThreadService(self.Session)
+        message_service = MessageService(self.Session)
+        thread = thread_service.create_thread(
+            principal_id=self.principal_id,
+            workspace_id=self.workspace_id,
+            title="Context thread",
+        )
+        rows = [
+            message_service.create_message(thread_id=thread.id, role="user", content="old user"),
+            message_service.create_message(thread_id=thread.id, role="assistant", content="old assistant"),
+            message_service.create_message(thread_id=thread.id, role="user", content="recent user"),
+            message_service.create_message(thread_id=thread.id, role="assistant", content="recent assistant"),
+            message_service.create_message(
+                thread_id=thread.id,
+                role="user",
+                content="current user",
+                meta={"endpoint_message_id": "endpoint-current"},
+            ),
+        ]
+        ignored = message_service.create_message(
+            thread_id=thread.id,
+            role="tool",
+            content="tool output",
+        )
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with self.Session() as session:
+            for index, row in enumerate([*rows, ignored]):
+                persisted = session.get(Message, row.id)
+                persisted.created_at = base_time + timedelta(seconds=index)
+            session.commit()
+
+        window = message_service.load_thread_context_window(
+            thread_id=thread.id,
+            before_message_id=rows[-1].message_id,
+            limit=2,
+        )
+        self.assertEqual([row.content for row in window["messages"]], ["recent user", "recent assistant"])
+        self.assertEqual(window["total_count"], 4)
+        self.assertEqual(window["older_count"], 2)
+
+        older = message_service.list_older_thread_context_messages(
+            thread_id=thread.id,
+            before_message_id=rows[-1].message_id,
+            offset=2,
+            limit=10,
+        )
+        self.assertEqual([row.content for row in older], ["old user", "old assistant"])
+
+        endpoint_excluded = message_service.load_thread_context_window(
+            thread_id=thread.id,
+            exclude_endpoint_message_id="endpoint-current",
+            limit=4,
+        )
+        self.assertEqual(
+            [row.content for row in endpoint_excluded["messages"]],
+            ["old user", "old assistant", "recent user", "recent assistant"],
+        )
+        self.assertNotIn("current user", {row.content for row in endpoint_excluded["messages"]})
+        self.assertEqual(endpoint_excluded["older_count"], 0)
 
 
 if __name__ == "__main__":

@@ -44,6 +44,18 @@ class ThreadRepository(RepositoryBase):
         self.session.flush()
         return thread
 
+    def update_summary(self, *, thread_row_id, summary: str, metadata: dict | None = None) -> Thread | None:
+        thread = self.get_by_id(thread_row_id)
+        if thread is None:
+            return None
+        thread.summary = str(summary or "").strip()
+        if metadata:
+            merged = dict(thread.meta or {})
+            merged.update(dict(metadata or {}))
+            thread.meta = merged
+        self.session.flush()
+        return thread
+
     def list_for_principal(self, *, principal_id, workspace_id=None, limit: int = 50) -> list[Thread]:
         query = self.session.query(Thread).filter_by(principal_id=principal_id)
         query = query.filter(Thread.status != "deleted")
