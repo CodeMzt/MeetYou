@@ -2,6 +2,24 @@
 
 Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
 
+## 2026-04-30 SKILL Core Storage Boundary Addendum
+
+- Functional commit sha: `dfea137e0059d63224212335871dc5aeb5d75b0a`.
+- Scope: corrected SKILL storage semantics so Desktop treats SKILL list/detail records as remote Core state, removed the stale local `open-local-path` SKILL path IPC, added `storage_ref` (`core://skills/...`) for SKILL list/detail payloads, stopped exposing Core filesystem paths through public `storage_path`, and moved created/managed SKILL files to the Core runtime skill store (`created_skill_dir`, default `user/skills`) instead of the built-in `prompt/SKILL` package directory.
+- Local backend focused tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_assistant_modes tests.test_scenario_tools tests.test_gateway_config_api tests.test_desktop_agent_ui_bridge tests.test_tools_manager_browser_guard tests.test_tool_runtime`, 79 tests).
+- Local frontend typecheck: passed (`npm run typecheck`).
+- Local frontend tests: passed (`npm run test`, 21 files / 86 tests).
+- Real Settings/SKILL window visual QA: passed (`npm run visual:settings-skill`). The check opened a real frameless Electron Settings window at `560x660` and `560x620`, covered config top, directory picker, SKILL list, and SKILL detail states, and reported no missing visible text, no horizontal overflow, and no clipped controls.
+- Visual QA evidence: screenshots were generated under `%TEMP%\meetyou-settings-skill-visual\`, including `settings-default-skills-list-560x660.png` and `settings-minimum-skill-detail-560x620.png`; manual inspection confirmed SKILL list/detail show `core://skills/reusable/task_recognition` and no `E:\...` local path.
+- Desktop build: passed (`npm run build`); installer regenerated at `meetyou-ui\release\MeetYou Setup 1.0.0.exe`.
+- CI status: passed (`CI`, run `25155924106`, commit `dfea137e0059d63224212335871dc5aeb5d75b0a`).
+- Deploy status: passed (`Deploy MeetYou Core`, run `25155924083`, commit `dfea137e0059d63224212335871dc5aeb5d75b0a`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=dfea137e0059d63224212335871dc5aeb5d75b0a`, `branch=main`).
+- Remote SKILL API probe: passed. `GET /operator/skills?skill_type=reusable&query=task_recognition` and `GET /operator/skills/task_recognition` returned `storage_ref=core://skills/reusable/task_recognition`, empty `storage_path`, and detail content.
+- Remote V4 real acceptance without UI: passed (`logs\v4-remote-skill-boundary-acceptance.json`, marker `V4OK_20260430084321_6881e9`, streaming marker `V4STREAM_20260430084322_35c806`, replay seq `15`).
+- Local Desktop Provider -> remote Core real acceptance: passed (`logs\v4-remote-skill-boundary-desktop-acceptance.json`, provider `desktop.remote-skill-boundary-20260430164437.executor`, marker `V4OK_20260430084534_652e71`, real Desktop tool marker `DESKTOP_TOOL_20260430084541_89bc28`, replay seq `14`).
+- External Feishu / WeChatBot human confirmation: not rerun for this SKILL storage-boundary correction.
+
 ## 2026-04-30 Main Chat UI Ordering / Context Popover Addendum
 
 - Local commit: the main chat UI fix commit containing this addendum.
