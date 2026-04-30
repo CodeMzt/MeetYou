@@ -9,7 +9,7 @@ from unittest.mock import patch
 from desktop_client.backend import DesktopClientBackend
 from desktop_client.config import DesktopClientConfig
 from desktop_client.core_client import DesktopCoreClient
-from desktop_client.desktop_api import DESKTOP_WS_PATH, LOCAL_BRIDGE_STATUS_PATH
+from desktop_client.desktop_api import DESKTOP_WS_PATH, LOCAL_BRIDGE_STATUS_PATH, _desktop_routes
 
 
 class DesktopEndpointBridgeTests(unittest.TestCase):
@@ -43,6 +43,15 @@ class DesktopEndpointBridgeTests(unittest.TestCase):
     def test_desktop_local_surface_keeps_ui_paths_stable(self):
         self.assertEqual(LOCAL_BRIDGE_STATUS_PATH, "/desktop/status")
         self.assertEqual(DESKTOP_WS_PATH, "/desktop/ws")
+
+    def test_desktop_skills_route_proxies_to_operator_skills(self):
+        route = next(item for item in _desktop_routes() if item.desktop_path == "/desktop/skills")
+        request = SimpleNamespace(query_string="skill_type=reusable&query=task")
+
+        self.assertEqual(
+            route.core_path_builder(request),
+            "/operator/skills?skill_type=reusable&query=task",
+        )
 
 
 class DesktopEndpointBackendTests(unittest.IsolatedAsyncioTestCase):

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -1181,6 +1181,32 @@ function createWindow() {
   ipcMain.handle('get-desktop-bridge-access-token', () => desktopBridgeAccessToken)
   ipcMain.removeHandler('get-gateway-access-token')
   ipcMain.handle('get-gateway-access-token', () => readGatewayAccessToken())
+  ipcMain.removeHandler('select-local-directories')
+  ipcMain.handle('select-local-directories', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory', 'multiSelections', 'createDirectory'],
+    })
+    return {
+      canceled: result.canceled,
+      paths: result.filePaths.map((item) => path.resolve(item)),
+    }
+  })
+  ipcMain.removeHandler('open-local-path')
+  ipcMain.handle('open-local-path', async (_event, rawPath: unknown) => {
+    const targetPath = path.resolve(String(rawPath || '').trim())
+    if (!String(rawPath || '').trim()) {
+      return { ok: false, path: '', error: '路径为空。' }
+    }
+    if (!fs.existsSync(targetPath)) {
+      return { ok: false, path: targetPath, error: '本机不存在该路径。' }
+    }
+    const failure = await shell.openPath(targetPath)
+    return {
+      ok: !failure,
+      path: targetPath,
+      error: failure || '',
+    }
+  })
   ipcMain.removeHandler('encrypt-danxi-credentials')
   ipcMain.handle('encrypt-danxi-credentials', (_event, payload: Record<string, unknown>) => {
     const purpose = String(payload?.purpose || '').trim()

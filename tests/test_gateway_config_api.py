@@ -20,6 +20,42 @@ class GatewayConfigApiTests(unittest.TestCase):
                 "warnings": [],
             }
 
+        def list_skills(skill_type="all", query=""):
+            skills = [
+                {
+                    "id": "mode:general",
+                    "skill_type": "mode",
+                    "title": "通用模式 SKILL",
+                    "summary": "通用日常协作范式。",
+                    "storage_path": r"E:\Documents\Project\MeetYou\prompt\SKILL\mode-general",
+                    "applicable_modes": ["general"],
+                    "scenarios": ["日常对话"],
+                    "recommended_tools": ["search_memory"],
+                },
+                {
+                    "id": "task_recognition",
+                    "skill_type": "reusable",
+                    "title": "任务识别 SKILL",
+                    "summary": "识别提醒、追踪、阻塞与任务状态请求。",
+                    "storage_path": r"E:\Documents\Project\MeetYou\prompt\SKILL\task-recognition",
+                    "applicable_modes": ["general", "automation"],
+                    "scenarios": ["提醒"],
+                    "recommended_tools": ["manage_tasks"],
+                },
+            ]
+            if skill_type != "all":
+                skills = [item for item in skills if item["skill_type"] == skill_type]
+            normalized_query = str(query or "").lower()
+            if normalized_query:
+                skills = [
+                    item
+                    for item in skills
+                    if normalized_query in item["id"].lower()
+                    or normalized_query in item["title"].lower()
+                    or any(normalized_query in tool for tool in item["recommended_tools"])
+                ]
+            return skills
+
         self.gateway = FastAPIGateway(
             EventBus(),
             SessionManager(),
@@ -50,6 +86,7 @@ class GatewayConfigApiTests(unittest.TestCase):
                 "env_key": None if key == "api_provider" else "MEETYOU_API_KEY",
             },
             config_updater=updater,
+            skill_list_getter=list_skills,
             access_token=self.access_token,
         )
         self.client = TestClient(self.gateway.app)
@@ -82,6 +119,17 @@ class GatewayConfigApiTests(unittest.TestCase):
         self.assertTrue(
             any(field["key"] == "api_provider" for field in payload["ui_schema"]["config_fields"])
         )
+        trusted_write_roots = next(
+            field for field in payload["ui_schema"]["config_fields"] if field["key"] == "trusted_write_roots"
+        )
+        self.assertEqual(trusted_write_roots["control"], "directory_list")
+        self.assertTrue(trusted_write_roots["help_text"])
+        self.assertTrue(trusted_write_roots["examples"])
+        web_search_quality = next(
+            field for field in payload["ui_schema"]["config_fields"] if field["key"] == "web_search_quality"
+        )
+        self.assertEqual(web_search_quality["input"], "select")
+        self.assertIn("deep", [option["value"] for option in web_search_quality["options"]])
 
     def test_operator_config_surfaces_match_new_architecture(self):
         schema_response = self.client.get("/operator/schema/ui", headers=self._auth_headers())
@@ -91,6 +139,29 @@ class GatewayConfigApiTests(unittest.TestCase):
         self.assertEqual(config_response.status_code, 200)
         self.assertEqual(schema_response.json()["kind"], "schema")
         self.assertIn("api_provider", config_response.json()["items"])
+
+    def test_operator_skills_lists_registered_skills(self):
+        response = self.client.get(
+            "/operator/skills?skill_type=reusable&query=manage_tasks",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["id"], "task_recognition")
+        self.assertEqual(payload[0]["skill_type"], "reusable")
+        self.assertIn("storage_path", payload[0])
+
+    def test_operator_skills_rejects_unknown_skill_type(self):
+        response = self.client.get(
+            "/operator/skills?skill_type=procedure",
+            headers=self._auth_headers(),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["kind"], "error")
+        self.assertEqual(response.json()["error"]["code"], "invalid_skill_type")
 
     def test_get_single_config_item(self):
         response = self.client.get("/config/api_provider", headers=self._auth_headers())

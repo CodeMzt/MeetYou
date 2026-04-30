@@ -1,19 +1,70 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   AlertCircle,
+  BookOpen,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
+  FolderOpen,
   KeyRound,
   RefreshCcw,
   RotateCcw,
   Save,
+  Search,
+  X,
 } from 'lucide-react'
 import GlassSelect from '../components/GlassSelect'
 import { useConfig } from '../hooks/useConfig'
+import { fetchWithAuth, readErrorMessage } from '../apiClient'
 import { fetchRuntimeBuildInfo, type RuntimeBuildInfoSnapshot } from '../buildInfo'
-import type { ConfigFormValue, ResolvedConfigField } from '../types'
+import type { ConfigFormValue, ResolvedConfigField, SkillListItem } from '../types'
 import { DEFAULT_BASE_URL } from '../windowBridge'
+
+type SettingsTab = 'config' | 'skills'
+type SkillTypeFilter = 'all' | 'mode' | 'reusable'
+
+const SKILL_TYPE_FILTERS: Array<{ value: SkillTypeFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'mode', label: '模式' },
+  { value: 'reusable', label: '可复用' },
+]
+
+function getIpcInvoke() {
+  return typeof window !== 'undefined' ? window.ipcRenderer?.invoke : undefined
+}
+
+function parseListValue(value: ConfigFormValue): string[] {
+  const text = typeof value === 'string' ? value : String(value)
+  return text
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function formatListValue(items: string[]): string {
+  return Array.from(new Set(items.map((item) => item.trim()).filter(Boolean))).join('\n')
+}
+
+function includesQuery(skill: SkillListItem, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) {
+    return true
+  }
+  return [
+    skill.id,
+    skill.title,
+    skill.summary,
+    skill.skill_type,
+    skill.storage_path,
+    ...skill.applicable_modes,
+    ...skill.scenarios,
+    ...skill.recommended_tools,
+  ]
+    .join('\n')
+    .toLowerCase()
+    .includes(normalizedQuery)
+}
 
 function FieldStatus({
   field,
@@ -58,6 +109,7 @@ function FieldControl({
   onChange: (key: string, value: ConfigFormValue) => void
   onClearSecret: (key: string) => void
 }) {
+  const [pickerError, setPickerError] = useState('')
   const placeholder =
     field.entry?.is_secret && field.entry.has_value
       ? String(field.entry.value || '已配置')
@@ -65,7 +117,92 @@ function FieldControl({
 
   let control = null
 
-  if (field.schema.input === 'boolean') {
+  const openDirectoryPicker = async () => {
+    const invoke = getIpcInvoke()
+    if (!invoke) {
+      setPickerError('当前环境不支持系统目录选择，请手动填写路径。')
+      return []
+    }
+    const result = await invoke('select-local-directories')
+    const paths = Array.isArray(result?.paths)
+      ? result.paths.map((item: unknown) => String(item || '').trim()).filter(Boolean)
+      : []
+    if (!result?.canceled && paths.length === 0) {
+      setPickerError('未选择目录。')
+    } else {
+      setPickerError('')
+    }
+    return paths
+  }
+
+  if (field.schema.control === 'directory_list' && getIpcInvoke()) {
+    const directories = parseListValue(field.value)
+    control = (
+      <div className="directory-list-control">
+        <div className="directory-list-items">
+          {directories.length > 0 ? (
+            directories.map((directory) => (
+              <div className="directory-list-item" key={directory}>
+                <span title={directory}>{directory}</span>
+                <button
+                  className="directory-list-remove"
+                  type="button"
+                  onClick={() => onChange(field.key, formatListValue(directories.filter((item) => item !== directory)))}
+                  disabled={saving}
+                  title="移除目录"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            ))
+          ) : (
+            <div className="directory-list-empty">尚未选择目录</div>
+          )}
+        </div>
+        <button
+          className="settings-secondary-btn directory-picker-btn"
+          type="button"
+          onClick={async () => {
+            const paths = await openDirectoryPicker()
+            if (paths.length) {
+              onChange(field.key, formatListValue([...directories, ...paths]))
+            }
+          }}
+          disabled={saving}
+        >
+          <FolderOpen size={14} />
+          <span>添加目录</span>
+        </button>
+      </div>
+    )
+  } else if (field.schema.control === 'directory' && getIpcInvoke()) {
+    control = (
+      <div className="directory-single-control">
+        <input
+          className="settings-input"
+          type="text"
+          value={String(field.value)}
+          onChange={(event) => onChange(field.key, event.target.value)}
+          placeholder={placeholder}
+          disabled={saving}
+        />
+        <button
+          className="settings-secondary-btn directory-picker-btn"
+          type="button"
+          onClick={async () => {
+            const paths = await openDirectoryPicker()
+            if (paths[0]) {
+              onChange(field.key, paths[0])
+            }
+          }}
+          disabled={saving}
+        >
+          <FolderOpen size={14} />
+          <span>选择</span>
+        </button>
+      </div>
+    )
+  } else if (field.schema.input === 'boolean') {
     control = (
       <button
         className={`settings-switch ${field.value ? 'checked' : ''}`}
@@ -135,10 +272,26 @@ function FieldControl({
           {field.dirty ? <span className="dirty-dot" title="有未保存修改" /> : null}
         </div>
         <div className="settings-field-description">{field.schema.description}</div>
+        {field.schema.help_text ? <div className="settings-field-help">{field.schema.help_text}</div> : null}
+        {field.schema.examples?.length ? (
+          <div className="settings-field-examples">
+            <span>示例</span>
+            {field.schema.examples.map((example) => (
+              <code key={example}>{example}</code>
+            ))}
+          </div>
+        ) : null}
         <FieldStatus field={field} onClear={onClearSecret} saving={saving} />
       </div>
 
       <div className="settings-field-control">{control}</div>
+
+      {pickerError ? (
+        <div className="settings-field-error">
+          <AlertCircle size={13} />
+          <span>{pickerError}</span>
+        </div>
+      ) : null}
 
       {field.error ? (
         <div className="settings-field-error">
@@ -146,6 +299,132 @@ function FieldControl({
           <span>{field.error}</span>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function SkillsView({ baseUrl = DEFAULT_BASE_URL }: { baseUrl?: string }) {
+  const [skills, setSkills] = useState<SkillListItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [openFeedback, setOpenFeedback] = useState('')
+  const [query, setQuery] = useState('')
+  const [skillType, setSkillType] = useState<SkillTypeFilter>('all')
+
+  const fetchSkills = async () => {
+    try {
+      setLoading(true)
+      setError('')
+      const params = new URLSearchParams({ skill_type: skillType })
+      const response = await fetchWithAuth(`${baseUrl}/desktop/skills?${params.toString()}`)
+      if (!response.ok) {
+        const failure = await readErrorMessage(response, '获取 SKILL 列表失败')
+        throw new Error(failure.message)
+      }
+      const data = await response.json()
+      setSkills(Array.isArray(data) ? data : [])
+    } catch (fetchError) {
+      setError(fetchError instanceof Error ? fetchError.message : '获取 SKILL 列表失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void fetchSkills()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseUrl, skillType])
+
+  const visibleSkills = useMemo(
+    () => skills.filter((skill) => includesQuery(skill, query)),
+    [query, skills],
+  )
+
+  const handleOpenSkill = async (skill: SkillListItem) => {
+    setOpenFeedback('')
+    const invoke = getIpcInvoke()
+    if (!invoke) {
+      setOpenFeedback('当前环境无法调用系统默认应用。')
+      return
+    }
+    const result = await invoke('open-local-path', skill.storage_path)
+    if (!result?.ok) {
+      setOpenFeedback(String(result?.error || '无法打开该 SKILL 文件。'))
+    }
+  }
+
+  return (
+    <div className="skills-page">
+      <div className="skills-toolbar">
+        <label className="skills-search">
+          <Search size={15} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索标题、场景、工具或路径"
+          />
+        </label>
+        <GlassSelect
+          wrapperClassName="skills-filter"
+          value={skillType}
+          onChange={(event) => setSkillType(event.target.value as SkillTypeFilter)}
+          disabled={loading}
+        >
+          {SKILL_TYPE_FILTERS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </GlassSelect>
+        <button className="settings-secondary-btn" onClick={() => void fetchSkills()} disabled={loading}>
+          <RefreshCcw size={14} />
+          <span>刷新</span>
+        </button>
+      </div>
+
+      {error ? (
+        <div className="settings-banner error">
+          <AlertCircle size={15} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {openFeedback ? (
+        <div className="settings-banner warning">
+          <AlertCircle size={15} />
+          <span>{openFeedback}</span>
+        </div>
+      ) : null}
+
+      {loading ? <div className="settings-loading">正在加载 SKILL…</div> : null}
+
+      {!loading && visibleSkills.length === 0 ? (
+        <div className="settings-empty-group">没有匹配的 SKILL。</div>
+      ) : null}
+
+      <div className="skill-list">
+        {visibleSkills.map((skill) => (
+          <button
+            className="skill-list-item"
+            type="button"
+            key={`${skill.skill_type}:${skill.id}`}
+            onClick={() => void handleOpenSkill(skill)}
+          >
+            <div className="skill-list-main">
+              <div className="skill-list-title-row">
+                <BookOpen size={15} />
+                <strong>{skill.title || skill.id}</strong>
+                <span className="skill-type-pill">{skill.skill_type === 'mode' ? '模式' : '可复用'}</span>
+              </div>
+              <p>{skill.summary || '未提供摘要。'}</p>
+              <div className="skill-list-path" title={skill.storage_path}>
+                {skill.storage_path}
+              </div>
+            </div>
+            <ExternalLink size={15} />
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
@@ -166,6 +445,7 @@ export default function SettingsView() {
     saveConfig,
   } = useConfig()
 
+  const [activeTab, setActiveTab] = useState<SettingsTab>('config')
   const [advancedOpen, setAdvancedOpen] = useState<Record<string, boolean>>({})
   const [runtimeBuildInfo, setRuntimeBuildInfo] = useState<RuntimeBuildInfoSnapshot | null>(null)
 
@@ -199,22 +479,40 @@ export default function SettingsView() {
           <div className="settings-subtitle">常用配置直接编辑，高级配置按分组折叠展示。</div>
         </div>
 
-        <div className="settings-header-actions">
-          <button className="settings-secondary-btn" onClick={() => refresh()} disabled={loading || saving}>
-            <RefreshCcw size={14} />
-            <span>刷新</span>
-          </button>
-          <button className="settings-secondary-btn" onClick={resetChanges} disabled={!hasDirtyChanges || saving}>
-            <RotateCcw size={14} />
-            <span>重置</span>
-          </button>
-          <button className="settings-primary-btn" onClick={handleSave} disabled={!hasDirtyChanges || saving}>
-            <Save size={14} />
-            <span>{saving ? '保存中…' : `保存更改${dirtyKeys.length ? ` (${dirtyKeys.length})` : ''}`}</span>
-          </button>
-        </div>
+        {activeTab === 'config' ? (
+          <div className="settings-header-actions">
+            <button className="settings-secondary-btn" onClick={() => refresh()} disabled={loading || saving}>
+              <RefreshCcw size={14} />
+              <span>刷新</span>
+            </button>
+            <button className="settings-secondary-btn" onClick={resetChanges} disabled={!hasDirtyChanges || saving}>
+              <RotateCcw size={14} />
+              <span>重置</span>
+            </button>
+            <button className="settings-primary-btn" onClick={handleSave} disabled={!hasDirtyChanges || saving}>
+              <Save size={14} />
+              <span>{saving ? '保存中…' : `保存更改${dirtyKeys.length ? ` (${dirtyKeys.length})` : ''}`}</span>
+            </button>
+          </div>
+        ) : null}
       </div>
 
+      <div className="settings-tabbar" role="tablist" aria-label="设置分类">
+        <button
+          className={`settings-tab ${activeTab === 'config' ? 'active' : ''}`}
+          type="button"
+          onClick={() => setActiveTab('config')}
+        >
+          配置
+        </button>
+        <button
+          className={`settings-tab ${activeTab === 'skills' ? 'active' : ''}`}
+          type="button"
+          onClick={() => setActiveTab('skills')}
+        >
+          SKILL
+        </button>
+      </div>
 
       {runtimeBuildInfo ? (
         <div className="settings-version-card">
@@ -256,6 +554,9 @@ export default function SettingsView() {
         </div>
       ) : null}
 
+      {activeTab === 'skills' ? <SkillsView /> : null}
+
+      {activeTab === 'config' ? (
       <div className="settings-group-list">
         {groupedFields.map((group) => {
           const isAdvancedOpen = Boolean(advancedOpen[group.key])
@@ -325,6 +626,7 @@ export default function SettingsView() {
           )
         })}
       </div>
+      ) : null}
     </div>
   )
 }

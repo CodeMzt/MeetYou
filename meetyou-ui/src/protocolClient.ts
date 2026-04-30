@@ -425,6 +425,9 @@ export function parseUiProtocolSchemaEnvelope(payload: unknown): UiProtocolSchem
                     .filter((option) => option.value)
                 : [],
               placeholder: toString(field.placeholder),
+              control: toString(field.control),
+              help_text: toString(field.help_text),
+              examples: toStringArray(field.examples),
               advanced: toBoolean(field.advanced),
             }
           })

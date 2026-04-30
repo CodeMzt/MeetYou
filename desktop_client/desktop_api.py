@@ -32,6 +32,8 @@ _LOCAL_CONFIG_FIELDS = [
         "group": "advanced",
         "input": "text",
         "placeholder": "https://core.example.com",
+        "help_text": "填写 Core 服务 HTTP 基础地址，不要包含 /runtime 路径。",
+        "examples": ["http://127.0.0.1:8000", "https://core.example.com"],
         "advanced": False,
     },
     {
@@ -40,6 +42,7 @@ _LOCAL_CONFIG_FIELDS = [
         "description": "桌面后端访问核心 HTTP 与端点实时通道时使用的 Bearer 令牌。",
         "group": "secrets",
         "input": "password",
+        "help_text": "与 Core 的 gateway_access_token 保持一致；优先使用环境变量配置正式环境。",
         "advanced": False,
     },
     {
@@ -48,6 +51,7 @@ _LOCAL_CONFIG_FIELDS = [
         "description": "打包桌面端点提供方连接核心服务 /endpoint/ws 时使用的 Bearer 令牌。",
         "group": "secrets",
         "input": "password",
+        "help_text": "与 Core 允许的端点访问令牌保持一致，修改后下次重连生效。",
         "advanced": True,
     },
 ]
@@ -182,6 +186,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("DELETE", "/desktop/memory/records/{memory_id}", lambda request: f"/operator/memory/records/{request.match_info['memory_id']}"),
         DesktopApiRoute("PATCH", "/desktop/workspaces/{workspace_id}", lambda request: f"/operator/workspaces/{request.match_info['workspace_id']}"),
         DesktopApiRoute("GET", "/desktop/source-profiles", lambda _request: "/operator/source-profiles"),
+        DesktopApiRoute("GET", "/desktop/skills", lambda request: f"/operator/skills?{request.query_string}" if request.query_string else "/operator/skills"),
         DesktopApiRoute("GET", "/desktop/runtime/usage", lambda _request: "/runtime/usage"),
         DesktopApiRoute("GET", "/desktop/runtime/debug", lambda _request: "/developer/runtime/debug"),
     ]

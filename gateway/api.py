@@ -71,6 +71,7 @@ class FastAPIGateway:
         runtime_usage_getter=None,
         runtime_debug_getter=None,
         health_getter=None,
+        skill_list_getter=None,
         core_domain=None,
         endpoint_connection_prompt_getter=None,
         endpoint_connection_event_handler=None,
@@ -94,6 +95,7 @@ class FastAPIGateway:
             runtime_usage_getter=runtime_usage_getter,
             runtime_debug_getter=runtime_debug_getter,
             health_getter=health_getter,
+            skill_list_getter=skill_list_getter,
         )
         self._event_bus = event_bus
         self._session_manager = session_manager
@@ -110,6 +112,7 @@ class FastAPIGateway:
         self._runtime_usage_getter = runtime_usage_getter
         self._runtime_debug_getter = runtime_debug_getter
         self._health_getter = health_getter
+        self._skill_list_getter = skill_list_getter
         self._endpoint_connection_prompt_getter = endpoint_connection_prompt_getter
         self._endpoint_connection_event_handler = endpoint_connection_event_handler
         self._access_token = str(access_token or "").strip()
