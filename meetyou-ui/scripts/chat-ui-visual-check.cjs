@@ -10,6 +10,7 @@ const appRoot = path.resolve(__dirname, '..')
 const vitePort = Number(process.env.MEETYOU_CHAT_VISUAL_PORT || 5174)
 const visualUrl = process.env.MEETYOU_CHAT_VISUAL_URL || `http://127.0.0.1:${vitePort}/`
 const outputDir = process.env.MEETYOU_CHAT_VISUAL_OUTPUT_DIR || path.join(os.tmpdir(), 'meetyou-chat-ui-visual')
+const visualUsageReady = process.env.MEETYOU_CHAT_VISUAL_USAGE_READY === 'true'
 const wsClients = new Set()
 const threadId = 'thread_visual_chat'
 const sessionId = 'session_visual_chat'
@@ -29,7 +30,7 @@ function nowIso() {
 function usageSnapshot() {
   return {
     session_id: sessionId,
-    usage_ready: true,
+    usage_ready: visualUsageReady,
     context_limit_tokens: 128000,
     context_limit_source: 'visual_fixture',
     context_limit_model: 'gpt-5.4',
@@ -610,6 +611,7 @@ async function runVisualCheck(apiBaseUrl) {
   const report = {
     visualUrl,
     apiBaseUrl,
+    visualUsageReady,
     islandReport,
     chatReport,
     screenshots: {
@@ -629,6 +631,9 @@ async function runVisualCheck(apiBaseUrl) {
     }
     if (!islandReport.text.includes('上下文') && !islandReport.text.includes('占用')) {
       failures.push('island dropdown did not render context usage copy')
+    }
+    if (!visualUsageReady && !islandReport.text.includes('同步')) {
+      failures.push('island dropdown did not show the pending usage state')
     }
   }
   if (!chatReport.orderOk) {
