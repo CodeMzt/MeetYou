@@ -35,6 +35,14 @@
 - Dependencies remain split across `requirements-core.txt`, `requirements-desktop-client.txt`, and `requirements-edge-client.txt`.
 - V4 implementation source of truth is `docs/v4/` plus this file. `docs/v3/` and `docs/archive/v2/` are legacy references only.
 
+## Repository Workflow
+
+- `main` is the publish branch. A finished task must be committed, pushed, and merged back to `main`; do not leave completed work only on a feature branch or as local uncommitted changes.
+- If work starts on `main`, commit directly to `main` only when the change is already verified and ready to publish. If work starts on another branch, merge it back to `main` after verification and push `main`.
+- Keep old plan and design documents for traceability. Do not delete `docs/v4/*plan*.md`, `docs/v3/`, or `docs/archive/` just because they reference historical architecture.
+- This Windows environment rejects `rg`. Use PowerShell file scanning (`Get-ChildItem`, `Select-String`), `git ls-files`, or targeted language/tooling commands for repository searches.
+- Publish prep must remove or ignore local-only outputs such as caches, logs, build folders, Electron release artifacts, packaged runtime templates, and screenshot/test artifacts. Do not commit local secrets or runtime state.
+
 ## Directory Boundaries
 
 - Runtime main chain: `main.py`, `service_runtime/service.py`, `core/app.py`, `core/app_lifecycle.py`.
@@ -126,6 +134,7 @@
 - Backend module test: `.venv\Scripts\python.exe -m unittest tests.test_service_runtime`
 - Backend full test: `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`
 - Manual main-chain check: `scripts\manual-acceptance.cmd start`, `scripts\manual-acceptance.cmd check`
+- Repository search in this environment: `Get-ChildItem -Recurse -File | Select-String -SimpleMatch "needle"` or `git ls-files | Select-String -SimpleMatch "needle"`; do not use `rg`.
 
 ## Completion Boundary
 
@@ -133,7 +142,7 @@
 - When changes touch protocol, config, persistence, or cross-surface behavior, add the smallest relevant verification.
 - When interfaces, startup modes, config items, or validation flows change, update `AGENTS.md`, `README.md`, or related docs.
 - V4 design, plan, deployment, compatibility-window, or cross-endpoint work updates go in `docs/v4/`.
-- After each phase is complete, commit once so phase-level docs and code do not sit uncommitted for long.
+- After each phase is complete, commit once so phase-level docs and code do not sit uncommitted for long. After the task is complete, merge to `main` and push `main`.
 - Release/rollback docs must state that Core Service owns database migration and protocol negotiation. Only claim safe Core rollback when the matching PostgreSQL snapshot is retained.
 - If behavior changes without repository test coverage, explicitly call out the test gap.
 
@@ -141,6 +150,7 @@
 
 - Backend changes: run the smallest related `unittest` module first; run full discovery for cross-directory or cross-system changes.
 - Frontend changes: run `npm run typecheck`, then `npm run test`; add real functional tests for substantive UI behavior.
+- Frontend acceptance must include a real browser or Electron run plus screenshot verification. Save screenshots under an ignored local artifact directory and report the exact path in the completion note. Typecheck/unit tests alone are not enough for frontend acceptance.
 - Cross-surface changes: verify backend first, then frontend; for API/protocol/service main-chain work, add runtime/gateway focused tests or `scripts\manual-acceptance.cmd check`.
 - V4 baseline test ladder must not stop at unit tests:
   - Run Python tests, frontend typecheck/build/test, migration tests, endpoint protocol tests, scheduler tests, tool router tests, and delivery tests as applicable.

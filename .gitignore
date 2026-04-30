@@ -173,6 +173,7 @@ cython_debug/
 .vscode/
 
 # Local AI/tooling workspace metadata
+.codex-tmp/
 .opencode/
 .trae/
 opencode.json
@@ -187,9 +188,27 @@ memory_tasks.json.bak
 .npm-cache/
 技术信息日报_2026-04-03.md
 tmp_*.py
+
+# Frontend and desktop packaging artifacts
 meetyou-ui/node_modules/
+meetyou-ui/.vite/
+meetyou-ui/.vitest/
 meetyou-ui/dist-electron/
 meetyou-ui/release/
+meetyou-ui/playwright-report/
+meetyou-ui/test-results/
+meetyou-ui/screenshots/
+meetyou-ui/visual-artifacts/
+meetyou-ui/electron-builder-debug.yml
+meetyou-ui/electron-builder.env
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 scripts/Capture-Screen.ps1
 deploy/docker/compose.env
 deploy/docker/runtime/
+meetyou-ui/resources/desktop-backend/
+meetyou-ui/resources/runtime-template/*
+!meetyou-ui/resources/runtime-template/.gitkeep
