@@ -1,11 +1,29 @@
 name: Desktop Release
 
 on:
+  push:
+    tags:
+      - "desktop-v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example desktop-v1.0.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark this release as a prerelease"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
 
 jobs:
   windows-desktop:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,3 +50,13 @@ jobs:
         with:
           name: meetyou-windows-desktop
           path: meetyou-ui/release/**
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: MeetYou Desktop ${{ env.RELEASE_TAG }}
+          files: meetyou-ui/release/**
+          draft: false
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
