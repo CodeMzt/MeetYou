@@ -22,3 +22,4 @@ class GatewayDependencies:
     runtime_usage_getter: Any = None
     runtime_debug_getter: Any = None
     health_getter: Any = None
+    skill_list_getter: Any = None

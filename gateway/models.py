@@ -74,6 +74,9 @@ class ConfigFieldSchemaResponse(BaseModel):
     input: str
     options: list[SchemaOptionResponse] = Field(default_factory=list)
     placeholder: str = ""
+    control: str = ""
+    help_text: str = ""
+    examples: list[str] = Field(default_factory=list)
     advanced: bool = False
 
 
@@ -113,6 +116,17 @@ class ConfigPatchResponse(BaseModel):
     reloaded_components: list[str] = Field(default_factory=list)
     restart_required_keys: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class OperatorSkillResponse(BaseModel):
+    id: str
+    skill_type: str
+    title: str
+    summary: str
+    storage_path: str
+    applicable_modes: list[str] = Field(default_factory=list)
+    scenarios: list[str] = Field(default_factory=list)
+    recommended_tools: list[str] = Field(default_factory=list)
 
 
 class RuntimeStateSnapshotResponse(BaseModel):

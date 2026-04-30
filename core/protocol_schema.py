@@ -47,6 +47,13 @@ OBJECT_STORE_BACKEND_OPTIONS = (
     {"label": "S3 兼容存储", "value": "s3_compatible"},
 )
 
+WEB_SEARCH_QUALITY_OPTIONS = (
+    {"label": "自适应", "value": "adaptive"},
+    {"label": "快速", "value": "fast"},
+    {"label": "均衡", "value": "balanced"},
+    {"label": "深入", "value": "deep"},
+)
+
 THINKING_EFFORT_OPTIONS = (
     {"label": "低", "value": "low"},
     {"label": "中", "value": "medium"},
@@ -102,6 +109,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "model",
         "input": "text",
         "placeholder": "https://api.openai.com/v1/responses",
+        "help_text": "填写完整 HTTP(S) 地址，通常包含版本或接口路径；不要填写 API Key。",
+        "examples": ["https://api.openai.com/v1/responses", "http://127.0.0.1:11434/v1/chat/completions"],
     },
     "model": {
         "title": "主模型名称",
@@ -109,6 +118,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "model",
         "input": "text",
         "placeholder": "gpt-5.4",
+        "help_text": "填写服务商真实模型 ID。模型名变化较快，因此保留手动输入。",
+        "examples": ["gpt-5.4", "claude-sonnet-4-5", "gemini-2.5-pro"],
     },
     "thinking_enabled": {
         "title": "默认启用推理",
@@ -185,6 +196,9 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "input": "text",
         "advanced": True,
         "placeholder": "user/attachments",
+        "control": "directory",
+        "help_text": "选择本机可写目录；相对路径会按运行目录解析。",
+        "examples": ["user/attachments", "E:\\Documents\\MeetYou\\attachments"],
     },
     "object_store_endpoint": {
         "title": "对象存储端点",
@@ -193,6 +207,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "input": "text",
         "advanced": True,
         "placeholder": "https://minio.example.com",
+        "help_text": "仅在 S3 兼容存储时使用，填写服务根地址。",
+        "examples": ["https://minio.example.com", "http://127.0.0.1:9000"],
     },
     "object_store_bucket": {
         "title": "对象存储桶",
@@ -257,6 +273,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "description": "Embedding 服务的接口地址。",
         "group": "memory",
         "input": "text",
+        "help_text": "填写 Embedding API 的完整 HTTP(S) 地址。",
+        "examples": ["https://api.openai.com/v1/embeddings"],
     },
     "embedding_model": {
         "title": "Embedding 模型",
@@ -270,6 +288,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "memory",
         "input": "text",
         "advanced": True,
+        "help_text": "填写 JSON 状态文件路径；通常放在 user/ 下，避免提交到 Git。",
+        "examples": ["user/memory_state.json"],
     },
     "task_file_path": {
         "title": "任务文件路径",
@@ -278,6 +298,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "input": "text",
         "advanced": True,
         "placeholder": "user/memory_tasks.json",
+        "help_text": "填写任务状态 JSON 文件路径；通常放在 user/ 下。",
+        "examples": ["user/memory_tasks.json"],
     },
     "heartbeat_api_provider": {
         "title": "心跳模型提供商",
@@ -293,6 +315,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "heartbeat",
         "input": "text",
         "advanced": True,
+        "help_text": "留空时通常复用主模型地址；填写时使用完整 HTTP(S) 地址。",
+        "examples": ["https://api.openai.com/v1/responses"],
     },
     "heart_model": {
         "title": "心跳模型名称",
@@ -351,24 +375,33 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "heartbeat",
         "input": "text",
         "advanced": True,
+        "help_text": "填写本地提示词文件路径；相对路径会按项目根目录解析。",
+        "examples": ["prompt/heart.md"],
     },
     "assistant_modes": {
         "title": "助手模式配置",
         "description": "定义模式、共享基础工具、提示词注册、技能注册与工具包的 JSON 配置。",
         "group": "modes",
         "input": "json",
+        "help_text": "必须是 JSON 对象。仅在需要调整模式、SKILL 注册或工具包时修改。",
+        "examples": ["{\"default_mode\":\"general\"}"],
     },
     "mode_router": {
         "title": "模式路由配置",
         "description": "用于 Brain 决策、会话内切换与启发式回退策略的 JSON 配置。",
         "group": "modes",
         "input": "json",
+        "help_text": "必须是 JSON 对象。普通模式选择不需要改这里。",
+        "examples": ["{\"default_mode\":\"general\"}"],
     },
     "trusted_write_roots": {
         "title": "可信写入目录",
         "description": "无需额外放宽信任边界即可写入本地文档的目录列表。",
         "group": "modes",
         "input": "list",
+        "control": "directory_list",
+        "help_text": "每项是一个允许写入的目录；建议使用本机绝对路径，少量精确授权。",
+        "examples": ["E:\\Documents\\MeetYou", "D:\\Work\\Reports"],
     },
     "source_catalog_path": {
         "title": "信息源目录路径",
@@ -376,18 +409,22 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "modes",
         "input": "text",
         "placeholder": "user/source_catalog.json",
+        "help_text": "填写来源目录 JSON 文件路径；相对路径会按项目根目录解析。",
+        "examples": ["user/source_catalog.json"],
     },
     "document_parsers": {
         "title": "文档解析配置",
         "description": "本地文档解析限制与 OCR 能力的 JSON 配置。",
         "group": "modes",
         "input": "json",
+        "help_text": "必须是 JSON 对象。用于限制文档大小、页数、OCR 等解析行为。",
     },
     "office_integrations": {
         "title": "Office 集成配置",
         "description": "Office 集成能力与仅草稿行为的 JSON 配置。",
         "group": "modes",
         "input": "json",
+        "help_text": "必须是 JSON 对象。用于配置 Word/Excel/PowerPoint 草稿和集成策略。",
     },
     "research_contact_email": {
         "title": "研究联系邮箱",
@@ -418,6 +455,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "input": "text",
         "advanced": True,
         "placeholder": "http://127.0.0.1:38961",
+        "help_text": "填写 MeetWeChat 本地 HTTP API 基础地址。",
+        "examples": ["http://127.0.0.1:38961"],
     },
     "meetwechat_poll_interval_seconds": {
         "title": "MeetWeChat 轮询间隔",
@@ -447,6 +486,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "input": "text",
         "advanced": True,
         "placeholder": "user/meetwechat_client_state.json",
+        "help_text": "填写本地状态 JSON 文件路径；不要放到会提交 Git 的位置。",
+        "examples": ["user/meetwechat_client_state.json"],
     },
     "meetwechat_proxy_policy": {
         "title": "MeetWeChat 代理策略",
@@ -454,6 +495,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "json",
         "advanced": True,
+        "help_text": "必须是 JSON 对象。常用策略是 guarded_auto。",
+        "examples": ["{\"mode\":\"guarded_auto\"}"],
     },
     "max_parallel_tool_calls": {
         "title": "最大并行工具调用数",
@@ -466,7 +509,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "title": "网页搜索质量",
         "description": "可选 adaptive、fast、balanced 或 deep。默认 adaptive。",
         "group": "advanced",
-        "input": "text",
+        "input": "select",
+        "options": list(WEB_SEARCH_QUALITY_OPTIONS),
         "advanced": True,
         "placeholder": "adaptive",
     },
@@ -560,6 +604,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "本地开发通常使用 127.0.0.1；暴露到外部网络时必须配置访问令牌。",
+        "examples": ["127.0.0.1", "0.0.0.0"],
     },
     "core_base_url": {
         "title": "Core 服务地址",
@@ -567,6 +613,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "填写 Core 服务 HTTP 基础地址，不要包含 /runtime 路径。",
+        "examples": ["http://127.0.0.1:8000", "https://core.example.com"],
     },
     "gateway_port": {
         "title": "网关端口",
@@ -581,6 +629,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "list",
         "advanced": True,
+        "help_text": "每行一个浏览器 Origin，格式为 scheme://host[:port]。",
+        "examples": ["http://127.0.0.1:5173", "https://app.example.com"],
     },
     "feishu_broadcast_chat_ids": {
         "title": "飞书广播会话 ID",
@@ -588,6 +638,7 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "list",
         "advanced": True,
+        "help_text": "每行一个飞书 chat_id；需要从飞书端点发现或平台配置中获取。",
     },
     "feishu_default_chat_id": {
         "title": "默认飞书会话 ID",
@@ -595,6 +646,7 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "填写飞书 chat_id。该值来自飞书平台或已发现会话，不适合固定下拉。",
     },
     "feishu_chat_registry_path": {
         "title": "飞书会话注册表路径",
@@ -602,6 +654,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "填写本地 JSON 文件路径，通常放在 user/ 下。",
+        "examples": ["user/feishu_chats.json"],
     },
     "cmd_policy_path": {
         "title": "命令策略路径",
@@ -609,6 +663,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "填写命令策略 JSON 文件路径；桌面端本地执行会读取该文件。",
+        "examples": ["user/cmd_policy.json"],
     },
     "tools_schema_path": {
         "title": "工具 Schema 路径",
@@ -616,6 +672,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "填写工具定义 JSON 文件路径。",
+        "examples": ["user/tools.json"],
     },
     "soul_path": {
         "title": "Soul 提示词路径",
@@ -623,6 +681,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "填写本地提示词文件路径；相对路径会按项目根目录解析。",
+        "examples": ["prompt/soul.md"],
     },
     "start_path": {
         "title": "Start 提示词路径",
@@ -630,6 +690,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "填写本地提示词文件路径；相对路径会按项目根目录解析。",
+        "examples": ["prompt/start.md"],
     },
     "mcp_registry_url": {
         "title": "MCP 注册表地址",
@@ -637,6 +699,8 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
         "group": "advanced",
         "input": "text",
         "advanced": True,
+        "help_text": "填写 MCP registry HTTP(S) 地址。",
+        "examples": ["https://registry.example.com/mcp"],
     },
 }
 

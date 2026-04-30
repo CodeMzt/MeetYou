@@ -25,6 +25,7 @@ from gateway.models import (
     OperatorScheduledJobDeleteResponse,
     OperatorScheduledJobResponse,
     OperatorScheduledJobUpdateRequest,
+    OperatorSkillResponse,
     OperatorSourceProfileResponse,
     OperatorWorkspaceCreateRequest,
     OperatorWorkspaceUpdateRequest,
@@ -142,6 +143,18 @@ def _validate_memory_ranking_policy(gateway, value: str | None) -> str:
     return normalized
 
 
+def _validate_skill_type(gateway, value: str | None) -> str:
+    normalized = str(value or "all").strip().lower() or "all"
+    if normalized not in {"all", "mode", "reusable"}:
+        gateway._raise_http_error(
+            status_code=400,
+            code="invalid_skill_type",
+            category=RuntimeErrorCategory.VALIDATION.value,
+            message=f"未知 skill_type: {normalized}",
+        )
+    return normalized
+
+
 def build_operator_router(gateway) -> APIRouter:
     router = APIRouter(prefix="/operator", tags=["operator"])
 
@@ -152,6 +165,26 @@ def build_operator_router(gateway) -> APIRouter:
             schema_name="meetyou.http.v1",
             ui_schema=UiProtocolSchemaResponse(**build_ui_protocol_schema()),
         )
+
+    @router.get("/skills", response_model=list[OperatorSkillResponse])
+    async def list_operator_skills(request: Request, skill_type: str = "all", query: str = ""):
+        gateway._require_http_auth(request)
+        normalized_skill_type = _validate_skill_type(gateway, skill_type)
+        getter = gateway._dependencies.skill_list_getter
+        if getter is not None:
+            payload = await gateway._resolve(
+                getter,
+                skill_type=normalized_skill_type,
+                query=str(query or "").strip(),
+            )
+        else:
+            from core.assistant_modes import AssistantModeManager
+
+            payload = AssistantModeManager(ConfigManager()).list_skills(
+                skill_type=normalized_skill_type,
+                query=str(query or "").strip(),
+            )
+        return [OperatorSkillResponse(**dict(item)) for item in payload]
 
     @router.get("/config", response_model=ConfigSnapshotResponse)
     async def get_operator_config(request: Request):

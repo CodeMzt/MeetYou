@@ -193,6 +193,9 @@ describe('protocolClient', () => {
             input: 'select',
             options: [{ label: 'OpenAI', value: 'openai' }],
             placeholder: '',
+            control: 'directory_list',
+            help_text: '选择本地目录',
+            examples: ['E:\\Documents'],
             advanced: false,
           },
         ],
@@ -201,6 +204,9 @@ describe('protocolClient', () => {
 
     expect(schema?.providers[0]?.value).toBe('openai')
     expect(schema?.config_fields[0]?.key).toBe('api_provider')
+    expect(schema?.config_fields[0]?.control).toBe('directory_list')
+    expect(schema?.config_fields[0]?.help_text).toBe('选择本地目录')
+    expect(schema?.config_fields[0]?.examples).toEqual(['E:\\Documents'])
   })
 
   it('parses websocket runtime and control frames', () => {

@@ -576,6 +576,7 @@ export interface ConfigEntry {
 export type ConfigGroupKey = 'model' | 'secrets' | 'memory' | 'heartbeat' | 'modes' | 'advanced'
 
 export type ConfigFieldInput = 'text' | 'password' | 'number' | 'boolean' | 'select' | 'list' | 'json'
+export type ConfigFieldControl = 'directory' | 'directory_list'
 
 export interface ConfigFieldOption {
   label: string
@@ -590,6 +591,9 @@ export interface ConfigFieldSchema {
   input: ConfigFieldInput
   options?: ConfigFieldOption[]
   placeholder?: string
+  control?: ConfigFieldControl | string
+  help_text?: string
+  examples?: string[]
   advanced?: boolean
 }
 
@@ -623,6 +627,17 @@ export interface ConfigPatchResult {
   reloaded_components: string[]
   restart_required_keys: string[]
   warnings: string[]
+}
+
+export interface SkillListItem {
+  id: string
+  skill_type: 'mode' | 'reusable' | string
+  title: string
+  summary: string
+  storage_path: string
+  applicable_modes: string[]
+  scenarios: string[]
+  recommended_tools: string[]
 }
 
 export interface UiProtocolSchema {
