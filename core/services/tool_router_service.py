@@ -475,15 +475,16 @@ class ToolRouterService:
             async with self._lock:
                 self._pending.pop(call.call_id, None)
 
-    async def notify_call_result(self, call_id: str, result: dict[str, Any]) -> None:
-        self._operation_call_service.mark_succeeded(call_id=call_id, result=result)
+    async def notify_call_result(self, call_id: str, result: dict[str, Any]):
+        call_row = self._operation_call_service.mark_succeeded(call_id=call_id, result=result)
         async with self._lock:
             future = self._pending.get(call_id)
             if future is not None and not future.done():
                 future.set_result(dict(result or {}))
+        return call_row
 
-    async def notify_call_error(self, call_id: str, error: dict[str, Any]) -> None:
-        self._operation_call_service.mark_failed(call_id=call_id, error=error)
+    async def notify_call_error(self, call_id: str, error: dict[str, Any]):
+        call_row = self._operation_call_service.mark_failed(call_id=call_id, error=error)
         async with self._lock:
             future = self._pending.get(call_id)
             if future is not None and not future.done():
@@ -495,3 +496,4 @@ class ToolRouterService:
                         retryable=bool(error.get("retryable", False)),
                     )
                 )
+        return call_row
