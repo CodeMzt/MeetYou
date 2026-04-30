@@ -39,7 +39,7 @@
 
 - `main` is the publish branch. A finished task must be committed, pushed, and merged back to `main`; do not leave completed work only on a feature branch or as local uncommitted changes.
 - If work starts on `main`, commit directly to `main` only when the change is already verified and ready to publish. If work starts on another branch, merge it back to `main` after verification and push `main`.
-- Keep old plan and design documents for traceability. Do not delete `docs/v4/*plan*.md`, `docs/v3/`, or `docs/archive/` just because they reference historical architecture.
+- Keep documentation for traceability. Do not delete `docs/`, `docs/v4/*plan*.md`, `docs/v3/`, or `docs/archive/` just because they reference historical architecture; clean runtime compatibility code instead.
 - This Windows environment rejects `rg`. Use PowerShell file scanning (`Get-ChildItem`, `Select-String`), `git ls-files`, or targeted language/tooling commands for repository searches.
 - Publish prep must remove or ignore local-only outputs such as caches, logs, build folders, Electron release artifacts, packaged runtime templates, and screenshot/test artifacts. Do not commit local secrets or runtime state.
 
@@ -58,15 +58,15 @@
 ## Protocol Rules
 
 - The only V4 real-time provider entrypoint is `GET /endpoint/ws`.
-- The formal V4 HTTP facade is `/runtime/*`. `/client/*` is removed and may only return a removed response; it must not adapt or forward to V4.
+- The formal V4 HTTP facade is `/runtime/*`. `/client/*` is removed and must not be registered, adapted, or forwarded to V4.
 - V4 WebSocket protocol is `meetyou.endpoint.ws.v4`.
-- `/client/ws` is removed for V4. If a route remains during cleanup, it must return a clear removed response such as `410 Gone`; it must not adapt or forward to V4.
+- `/client/ws` is removed for V4. Do not keep a compatibility handler or a removed-response route for it.
 - Endpoint lifecycle frames are `endpoint.hello`, `endpoint.capabilities.snapshot`, `endpoint.ready`, `endpoint.heartbeat`, and `endpoint.goodbye`.
 - Endpoint address frames are `endpoint.addresses.snapshot`, `endpoint.address.upsert`, and `endpoint.address.delete`.
 - Subscription frames are `subscription.start`, `subscription.update`, and `subscription.stop`.
 - Delivery frames are `delivery.message`, `delivery.run_event`, `delivery.notice`, `delivery.operation_update`, and `delivery.inbox_item`.
 - Address-targeted `delivery.message` and `delivery.notice` payloads include `target_address_id`, `target_provider_type`, `target_address_type`, and `target_external_ref`.
-- Tool frames are `tool.call.request`, `tool.call.result`, `tool.call.error`, and `tool.call.cancel`.
+- Tool frames are `tool.call.request`, `tool.call.accepted`, `tool.call.progress`, `tool.call.result`, `tool.call.error`, and `tool.call.cancel`.
 - Use `origin_endpoint_id`, `target_endpoint_id`, and `execution_target_id` in V4 data paths. Do not add new runtime usage of `source_client_id` or `target_client_id`.
 - Capability/provider ids should be endpoint-oriented. Permissions are checked against abstract tool keys on Actor / Workspace / RunPolicy, not against a Client allowlist.
 - Scheduler-facing assistant tools should prefer `create_scheduled_workflow` and `manage_scheduled_workflows` for ordinary reminders, recurring analysis, document organization, and other scheduled assistant work. Use `create_scheduled_delivery` / `manage_scheduled_deliveries` only when the Scheduled Workflow output must be delivered to an `EndpointAddress`. Keep `manage_scheduled_jobs` as the low-level maintenance surface for Scheduler jobs and `system.heartbeat`.

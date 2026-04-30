@@ -18,7 +18,6 @@ from core.interaction_response_service import InteractionResponseService
 from core.protocol_schema import build_ui_protocol_schema
 from gateway.dependencies import GatewayDependencies
 from gateway.endpoint_ws import EndpointWebSocketManager
-from gateway.legacy_surface import register_legacy_gateway_surface
 from gateway.models import (
     ConfigEntryResponse,
     ConfigPatchRequest,
@@ -241,25 +240,6 @@ class FastAPIGateway:
             ),
         )
 
-    def _raise_legacy_http_surface_removed(
-        self,
-        *,
-        legacy_path: str,
-        replacement_path: str,
-        message: str,
-    ) -> None:
-        self._raise_http_error(
-            status_code=410,
-            code="legacy_http_path_removed",
-            category=RuntimeErrorCategory.VALIDATION.value,
-            message=message,
-            details={
-                "legacy_path": legacy_path,
-                "replacement_path": replacement_path,
-                "formal_surface": "thread/run/delivery + endpoint/ws",
-            },
-        )
-
     def _require_core_domain(self):
         if self._dependencies.core_domain is not None:
             return self._dependencies.core_domain
@@ -448,7 +428,6 @@ class FastAPIGateway:
         self.app.include_router(build_endpoint_router(self))
         self.app.include_router(build_operator_router(self))
         self.app.include_router(build_developer_router(self))
-        register_legacy_gateway_surface(self.app, self)
 
         @self.app.get("/health", response_model=HealthEnvelopeResponse)
         async def health():

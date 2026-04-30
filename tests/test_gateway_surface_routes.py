@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
+from endpoint_tool_sdk.protocol import build_endpoint_protocol_offer
 from core.session_manager import SessionManager
 from gateway.api import FastAPIGateway
 from gateway.endpoint_ws import ENDPOINT_WS_SCHEMA
@@ -269,6 +270,38 @@ class _FakeDomain:
 
 
 class GatewaySurfaceRouteTests(unittest.TestCase):
+    def test_endpoint_ws_hello_requires_protocol_offer(self):
+        domain = _FakeDomain()
+        gateway = FastAPIGateway(EventBus(), SessionManager(), core_domain=domain, access_token="surface-token")
+
+        with TestClient(gateway.app) as client:
+            with client.websocket_connect(
+                "/endpoint/ws",
+                headers={"Authorization": "Bearer surface-token"},
+            ) as websocket:
+                websocket.send_json(
+                    {
+                        "schema": ENDPOINT_WS_SCHEMA,
+                        "type": "endpoint.hello",
+                        "correlation_id": "hello-1",
+                        "payload": {
+                            "provider": {"provider_type": "desktop", "provider_id": "desktop-main"},
+                            "endpoints": [
+                                {
+                                    "endpoint_id": "desktop.main.executor",
+                                    "endpoint_type": "desktop_executor",
+                                    "workspace_ids": ["desktop-main"],
+                                }
+                            ],
+                        },
+                    }
+                )
+                hello_ack = websocket.receive_json()
+
+        self.assertEqual(hello_ack["type"], "endpoint.hello.ack")
+        self.assertFalse(hello_ack["payload"]["accepted"])
+        self.assertEqual(hello_ack["payload"]["reject_reason"]["code"], "endpoint_protocol_required")
+
     def test_endpoint_ws_hello_capability_and_subscription_flow(self):
         domain = _FakeDomain()
         gateway = FastAPIGateway(EventBus(), SessionManager(), core_domain=domain, access_token="surface-token")
@@ -286,6 +319,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                         "payload": {
                             "connection_id": "conn-1",
                             "provider": {"provider_type": "desktop", "provider_id": "desktop-main"},
+                            "protocol": build_endpoint_protocol_offer(),
                             "endpoints": [
                                 {
                                     "endpoint_id": "desktop.main.ui",
@@ -306,6 +340,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                 self.assertEqual(hello_ack["type"], "endpoint.hello.ack")
                 self.assertEqual(hello_ack["endpoint_id"], "desktop.main.ui")
                 self.assertTrue(hello_ack["payload"]["accepted"])
+                self.assertEqual(hello_ack["payload"]["protocol"]["selected_schema"], ENDPOINT_WS_SCHEMA)
 
                 websocket.send_json(
                     {
@@ -380,11 +415,7 @@ class GatewaySurfaceRouteTests(unittest.TestCase):
                     "/operator/clients",
                     headers={"Authorization": "Bearer surface-token"},
                 )
-                self.assertEqual(legacy_clients_resp.status_code, 410)
-                self.assertEqual(
-                    legacy_clients_resp.json()["error"]["details"]["replacement_path"],
-                    "/operator/endpoints",
-                )
+                self.assertEqual(legacy_clients_resp.status_code, 404)
 
             endpoints_resp = client.get(
                 "/operator/endpoints",

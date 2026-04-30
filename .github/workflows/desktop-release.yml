@@ -45,17 +45,93 @@ jobs:
       - name: Build Electron installer
         working-directory: meetyou-ui
         run: npm run build
+      - name: Stage release assets
+        shell: pwsh
+        working-directory: meetyou-ui
+        run: |
+          $releaseDir = Join-Path $PWD "release"
+          $assetDir = Join-Path $PWD "release-assets"
+          if (Test-Path -LiteralPath $assetDir) {
+            Remove-Item -LiteralPath $assetDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $assetDir | Out-Null
+
+          $patterns = @(
+            "*.exe",
+            "*.exe.blockmap",
+            "latest*.yml",
+            "*.zip",
+            "*.msi",
+            "*.msix",
+            "*.sha256",
+            "*.sha512"
+          )
+          $candidates = Get-ChildItem -LiteralPath $releaseDir -File | Where-Object {
+            $name = $_.Name
+            ($patterns | Where-Object { $name -like $_ } | Select-Object -First 1)
+          }
+          if (-not $candidates) {
+            throw "No top-level desktop release assets were produced in $releaseDir"
+          }
+
+          $emptyCandidates = $candidates | Where-Object { $_.Length -lt 1 }
+          if ($emptyCandidates) {
+            $names = ($emptyCandidates | ForEach-Object { $_.Name }) -join ", "
+            throw "Refusing to upload empty release assets: $names"
+          }
+
+          foreach ($item in $candidates) {
+            Copy-Item -LiteralPath $item.FullName -Destination (Join-Path $assetDir $item.Name) -Force
+          }
+
+          "Desktop release assets:" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Get-ChildItem -LiteralPath $assetDir -File | Sort-Object Name | ForEach-Object {
+            "- $($_.Name) ($($_.Length) bytes)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
           name: meetyou-windows-desktop
-          path: meetyou-ui/release/**
+          path: meetyou-ui/release-assets/*
+          if-no-files-found: error
+      - name: Clean existing release assets for reruns
+        shell: pwsh
+        working-directory: meetyou-ui
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:RELEASE_TAG --json assets *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release $env:RELEASE_TAG does not exist yet; no assets to clean."
+            exit 0
+          }
+
+          $expected = @{}
+          Get-ChildItem -LiteralPath "release-assets" -File | ForEach-Object {
+            $expected[$_.Name] = $true
+          }
+
+          $existingAssets = gh release view $env:RELEASE_TAG --json assets --jq ".assets[].name"
+          foreach ($assetName in $existingAssets) {
+            if (-not $assetName) {
+              continue
+            }
+            if ($expected.ContainsKey($assetName)) {
+              Write-Host "Replacing existing release asset: $assetName"
+            } else {
+              Write-Host "Removing stale release asset: $assetName"
+            }
+            gh release delete-asset $env:RELEASE_TAG $assetName --yes
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to delete existing release asset: $assetName"
+            }
+          }
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: MeetYou Desktop ${{ env.RELEASE_TAG }}
-          files: meetyou-ui/release/**
+          files: meetyou-ui/release-assets/*
           draft: false
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
           generate_release_notes: true

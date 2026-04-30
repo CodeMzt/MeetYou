@@ -5,6 +5,11 @@ from typing import Any
 from uuid import uuid4
 
 from core.db.base import utcnow
+from endpoint_tool_sdk.protocol import (
+    DEFAULT_ENDPOINT_TOOL_PROTOCOL_FEATURES,
+    ENDPOINT_TOOL_PROTOCOL_VERSION,
+    build_endpoint_protocol_selection,
+)
 from gateway.endpoint_ws import ENDPOINT_WS_SCHEMA
 
 
@@ -40,6 +45,65 @@ def _bool_value(value: Any, *, default: bool) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _string_set(values: Any) -> set[str]:
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
+    return {str(item or "").strip() for item in values if str(item or "").strip()}
+
+
+def _int_set(values: Any) -> set[int]:
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
+    result: set[int] = set()
+    for item in values:
+        try:
+            result.add(int(item))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _negotiate_endpoint_protocol(protocol_offer: Any) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    if not isinstance(protocol_offer, dict) or not protocol_offer:
+        return None, {
+            "code": "endpoint_protocol_required",
+            "message": "endpoint.hello must include a V4 protocol offer",
+        }
+    supported_schemas = _string_set(protocol_offer.get("supported_schemas") or protocol_offer.get("schema"))
+    if ENDPOINT_WS_SCHEMA not in supported_schemas:
+        return None, {
+            "code": "unsupported_endpoint_protocol",
+            "message": f"endpoint.hello must support schema {ENDPOINT_WS_SCHEMA}",
+        }
+    supported_versions = _int_set(protocol_offer.get("supported_versions") or protocol_offer.get("version"))
+    if ENDPOINT_TOOL_PROTOCOL_VERSION not in supported_versions:
+        return None, {
+            "code": "unsupported_endpoint_protocol",
+            "message": f"endpoint.hello must support protocol version {ENDPOINT_TOOL_PROTOCOL_VERSION}",
+        }
+    server_features = tuple(DEFAULT_ENDPOINT_TOOL_PROTOCOL_FEATURES)
+    offered_features = _string_set(protocol_offer.get("features") or [])
+    required_features = _string_set(protocol_offer.get("required_features") or [])
+    unsupported_required = sorted(required_features - set(server_features))
+    if unsupported_required:
+        return None, {
+            "code": "unsupported_endpoint_features",
+            "message": f"endpoint.hello requires unsupported features: {', '.join(unsupported_required)}",
+        }
+    enabled_features = [
+        feature
+        for feature in server_features
+        if feature in offered_features or feature in required_features
+    ]
+    disabled_features = [feature for feature in server_features if feature not in set(enabled_features)]
+    return build_endpoint_protocol_selection(
+        selected_schema=ENDPOINT_WS_SCHEMA,
+        selected_version=ENDPOINT_TOOL_PROTOCOL_VERSION,
+        enabled_features=enabled_features,
+        disabled_features=disabled_features,
+    ), None
 
 
 def _public_run_event(row) -> dict[str, Any]:
@@ -274,6 +338,16 @@ class EndpointHelloHandler(EndpointFrameHandler):
             default=True,
         )
         provider["supports_markdown"] = provider_supports_markdown
+        protocol_selection, protocol_error = _negotiate_endpoint_protocol(context.payload.get("protocol"))
+        if protocol_error:
+            await context.send(
+                "endpoint.hello.ack",
+                payload={
+                    "accepted": False,
+                    "reject_reason": protocol_error,
+                },
+            )
+            return
         endpoints = context.payload.get("endpoints") if isinstance(context.payload.get("endpoints"), list) else []
         if not endpoints:
             await context.error(code="endpoint_required", message="endpoint.hello requires at least one endpoint")
@@ -332,7 +406,7 @@ class EndpointHelloHandler(EndpointFrameHandler):
             endpoint_id=primary.endpoint_id,
             payload={
                 "accepted": True,
-                "protocol": ENDPOINT_WS_SCHEMA,
+                "protocol": protocol_selection,
                 "connection_id": connection.connection_id,
                 "requires_capabilities_snapshot": True,
                 "heartbeat_interval_seconds": 20,

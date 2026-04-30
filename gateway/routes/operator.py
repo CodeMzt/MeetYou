@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-from starlette.responses import JSONResponse
-
 from core.config import ConfigManager
 from core.exceptions import ConfigError
 from core.protocol_schema import build_ui_protocol_schema
@@ -372,25 +370,6 @@ def build_operator_router(gateway) -> APIRouter:
         else:
             health_payload = HealthResponse(**payload)
         return HealthEnvelopeResponse(schema_name="meetyou.http.v1", health=health_payload)
-
-    @router.get("/clients")
-    async def list_clients(request: Request):
-        gateway._require_http_auth(request)
-        return JSONResponse(
-            status_code=410,
-            content={
-                "schema": "meetyou.http.v1",
-                "kind": "error",
-                "error": {
-                    "code": "operator_clients_removed",
-                    "message": "Operator clients are removed in V4. Use operator endpoints.",
-                    "details": {
-                        "legacy_path": "/operator/clients",
-                        "replacement_path": "/operator/endpoints",
-                    },
-                },
-            },
-        )
 
     @router.get("/endpoints", response_model=list[OperatorEndpointResponse])
     async def list_endpoints(request: Request):

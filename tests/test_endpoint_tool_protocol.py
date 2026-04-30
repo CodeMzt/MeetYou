@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from endpoint_tool_sdk.protocol import (
+    DEFAULT_ENDPOINT_TOOL_PROTOCOL_FEATURES,
     ENDPOINT_TOOL_PROTOCOL_SCHEMA,
     build_endpoint_capabilities_snapshot,
     build_endpoint_heartbeat,
@@ -33,6 +34,9 @@ class EndpointToolProtocolTests(unittest.TestCase):
         self.assertEqual(hello["endpoint_id"], "desktop.desktop-main.executor")
         self.assertEqual(hello["payload"]["provider"]["provider_id"], "desktop-main")
         self.assertEqual(hello["payload"]["endpoints"][0]["endpoint_id"], "desktop.desktop-main.ui")
+        self.assertEqual(hello["payload"]["protocol"]["schema"], ENDPOINT_TOOL_PROTOCOL_SCHEMA)
+        self.assertEqual(hello["payload"]["protocol"]["version"], 4)
+        self.assertEqual(tuple(hello["payload"]["protocol"]["features"]), DEFAULT_ENDPOINT_TOOL_PROTOCOL_FEATURES)
         self.assertEqual(snapshot["type"], "endpoint.capabilities.snapshot")
         self.assertEqual(snapshot["payload"]["capabilities"][0]["tool_key"], "file.read")
         self.assertEqual(heartbeat["type"], "endpoint.heartbeat")

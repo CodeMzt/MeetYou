@@ -14,7 +14,6 @@ from uuid import uuid4
 
 import httpx
 import websockets
-from websockets.exceptions import InvalidStatus
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -171,19 +170,6 @@ class V4Acceptance:
         if "等待后端服务启动后即可使用" in response.text:
             self.fail("ui dev server", "stale backend-waiting placeholder is still rendered in index HTML")
         self.ok("ui dev server", {"url": self.ui_url, "status": response.status_code})
-
-    async def check_legacy_ws_removed(self) -> None:
-        try:
-            async with websockets.connect(ws_url(self.base_url, "/client/ws"), open_timeout=5):
-                self.fail("/client/ws removed", "legacy websocket unexpectedly accepted a connection")
-        except InvalidStatus as exc:
-            status = getattr(getattr(exc, "response", None), "status_code", None) or getattr(exc, "status_code", None)
-            if status in {400, 403, 404, 410, 426}:
-                self.ok("/client/ws removed", {"status": status})
-                return
-            self.fail("/client/ws removed", f"unexpected websocket status: {status}")
-        except OSError:
-            self.ok("/client/ws removed", {"status": "connection rejected"})
 
     async def first_workspace_id(self) -> str:
         workspaces = as_list(await self.request("GET", "/runtime/workspaces"))
@@ -699,7 +685,6 @@ class V4Acceptance:
 
     async def run(self) -> dict[str, Any]:
         await self.check_health_and_ui()
-        await self.check_legacy_ws_removed()
         workspace_id = await self.first_workspace_id()
         state = ProbeState(provider_id=f"v4check-{uuid4().hex[:8]}", provider_type="desktop", workspace_id=workspace_id)
         async with websockets.connect(ws_url(self.base_url, "/endpoint/ws"), open_timeout=10, ping_interval=None) as ws:

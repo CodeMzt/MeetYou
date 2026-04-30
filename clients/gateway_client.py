@@ -9,6 +9,8 @@ from urllib.parse import urlencode
 
 import aiohttp
 
+from endpoint_tool_sdk.protocol import build_endpoint_protocol_offer
+
 
 _HTTP_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15, sock_connect=5, sock_read=15)
 _HTTP_SESSION_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=5)
@@ -296,6 +298,7 @@ class GatewayConversationClient:
                         }
                     ],
                     "supports_markdown": self.supports_markdown,
+                    "protocol": build_endpoint_protocol_offer(),
                 },
             }
         )

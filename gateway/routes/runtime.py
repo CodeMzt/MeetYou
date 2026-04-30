@@ -4,8 +4,6 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
-from starlette.responses import JSONResponse
-
 from core.credential_transport import CredentialTransportError, decrypt_json_payload
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
@@ -470,26 +468,6 @@ def build_runtime_router(gateway) -> APIRouter:
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         return [_workspace_response(workspace) for workspace in domain.services.workspace.list_workspaces()]
-
-    @router.get("/workspaces/{workspace_id}/clients")
-    async def legacy_list_workspace_clients(workspace_id: str, request: Request, include_tools: bool = True):
-        del workspace_id, include_tools
-        gateway._require_http_auth(request)
-        return JSONResponse(
-            status_code=410,
-            content={
-                "schema": _HTTP_SCHEMA,
-                "kind": "error",
-                "error": {
-                    "code": "legacy_http_path_removed",
-                    "message": "Workspace clients are removed in V4. Use workspace endpoints.",
-                    "details": {
-                        "legacy_path": "/runtime/workspaces/{workspace_id}/clients",
-                        "replacement_path": "/runtime/workspaces/{workspace_id}/endpoints",
-                    },
-                },
-            },
-        )
 
     @router.get("/workspaces/{workspace_id}/endpoints", response_model=list[EndpointAvailableResponse])
     async def list_workspace_endpoints(workspace_id: str, request: Request, include_tools: bool = True):

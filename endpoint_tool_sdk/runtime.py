@@ -11,10 +11,10 @@ from typing import Any, Awaitable, Callable
 import aiohttp
 
 from endpoint_tool_sdk.protocol import (
+    DEFAULT_ENDPOINT_TOOL_PROTOCOL_FEATURES,
     ENDPOINT_TOOL_ARGUMENTS_PURPOSE,
     ENDPOINT_TOOL_PROTOCOL_VERSION,
     ENDPOINT_TOOL_SCHEMA,
-    LEGACY_ENDPOINT_TOOL_PROTOCOL_FEATURES,
     build_endpoint_protocol_selection,
 )
 from endpoint_tool_sdk.security import CredentialTransportError, decrypt_json_payload
@@ -57,8 +57,8 @@ class EndpointToolRuntimeBase(ABC):
         self._heartbeat_interval_seconds = normalize_heartbeat_interval(getattr(config, "heartbeat_interval_seconds", 20))
         self._heartbeat_interval_updated = asyncio.Event()
         self._last_connection_prompt: dict[str, Any] | None = None
-        self._negotiated_protocol: dict[str, Any] = self._legacy_protocol_selection()
-        self._requires_tools_snapshot = True
+        self._negotiated_protocol: dict[str, Any] = self._default_protocol_selection()
+        self._requires_capabilities_snapshot = True
         max_parallel_calls = getattr(config, "max_parallel_calls", 2)
         try:
             max_parallel_calls = int(max_parallel_calls)
@@ -156,12 +156,12 @@ class EndpointToolRuntimeBase(ABC):
                 self._set_heartbeat_interval(getattr(self.config, "heartbeat_interval_seconds", 20), notify=False)
                 self._heartbeat_interval_updated.clear()
                 self._last_connection_prompt = None
-                self._negotiated_protocol = self._legacy_protocol_selection()
-                self._requires_tools_snapshot = True
+                self._negotiated_protocol = self._default_protocol_selection()
+                self._requires_capabilities_snapshot = True
                 ready_received = False
                 await ws.send_json(self.build_hello_message())
                 ready_received = await self._complete_handshake(ws, session, ready_received)
-                if self._requires_tools_snapshot:
+                if self._requires_capabilities_snapshot:
                     await self._send_tools_snapshot(ws)
                 heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
                 try:
@@ -256,9 +256,25 @@ class EndpointToolRuntimeBase(ABC):
                 )
             next_interval = int(ack_payload.get("heartbeat_interval_seconds") or self._heartbeat_interval_seconds)
             self._set_heartbeat_interval(next_interval)
-            self._requires_tools_snapshot = bool(ack_payload.get("requires_tools_snapshot", True))
             protocol_payload = ack_payload.get("protocol") if isinstance(ack_payload.get("protocol"), dict) else None
-            self._negotiated_protocol = dict(protocol_payload) if protocol_payload else self._legacy_protocol_selection()
+            if not protocol_payload:
+                raise EndpointHandshakeRejected(
+                    "endpoint_protocol_required",
+                    "endpoint.hello.ack did not include a negotiated endpoint protocol",
+                )
+            selected_schema = str(protocol_payload.get("selected_schema") or "").strip()
+            try:
+                selected_version = int(protocol_payload.get("selected_version") or 0)
+            except (TypeError, ValueError):
+                selected_version = 0
+            if selected_schema != self.protocol_schema or selected_version != ENDPOINT_TOOL_PROTOCOL_VERSION:
+                raise EndpointHandshakeRejected(
+                    "unsupported_endpoint_protocol",
+                    "endpoint.hello.ack selected an unsupported endpoint protocol",
+                    details={"selected_schema": selected_schema, "selected_version": selected_version},
+                )
+            self._requires_capabilities_snapshot = bool(ack_payload.get("requires_capabilities_snapshot", True))
+            self._negotiated_protocol = dict(protocol_payload)
             connection_prompt = ack_payload.get("connection_prompt")
             if isinstance(connection_prompt, dict) and connection_prompt:
                 self._last_connection_prompt = dict(connection_prompt)
@@ -411,12 +427,11 @@ class EndpointToolRuntimeBase(ABC):
         del tool_id
         return False
 
-    def _legacy_protocol_selection(self) -> dict[str, Any]:
+    def _default_protocol_selection(self) -> dict[str, Any]:
         return build_endpoint_protocol_selection(
             selected_schema=self.protocol_schema,
             selected_version=ENDPOINT_TOOL_PROTOCOL_VERSION,
-            enabled_features=LEGACY_ENDPOINT_TOOL_PROTOCOL_FEATURES,
-            compatibility_mode="legacy_defaults",
+            enabled_features=DEFAULT_ENDPOINT_TOOL_PROTOCOL_FEATURES,
         )
 
     def call_progress_detail(self, tool_id: str) -> str:

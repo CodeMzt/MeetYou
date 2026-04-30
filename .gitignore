@@ -87,6 +87,9 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/_local/
+docs/generated/
+docs/test-artifacts/
 docs/project_python_learning_guide.md
 
 # PyBuilder
@@ -195,6 +198,7 @@ meetyou-ui/.vite/
 meetyou-ui/.vitest/
 meetyou-ui/dist-electron/
 meetyou-ui/release/
+meetyou-ui/release-assets/
 meetyou-ui/playwright-report/
 meetyou-ui/test-results/
 meetyou-ui/screenshots/

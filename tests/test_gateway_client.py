@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 import aiohttp
 
 from clients.gateway_client import GatewayClientError, GatewayConversationClient
+from endpoint_tool_sdk.protocol import ENDPOINT_TOOL_PROTOCOL_SCHEMA
 
 
 class GatewayConversationClientTests(unittest.TestCase):
@@ -221,6 +222,9 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         await client._connect_ws()  # noqa: SLF001
 
+        self.assertEqual(ws.sent[0]["type"], "endpoint.hello")
+        self.assertEqual(ws.sent[0]["payload"]["protocol"]["schema"], ENDPOINT_TOOL_PROTOCOL_SCHEMA)
+        self.assertEqual(ws.sent[0]["payload"]["protocol"]["version"], 4)
         self.assertEqual(ws.sent[1]["type"], "subscription.start")
         self.assertFalse(ws.sent[1]["payload"]["replay"])
 
@@ -246,6 +250,7 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([item["type"] for item in ws.sent], ["endpoint.hello"])
         self.assertEqual(ws.sent[0]["endpoint_id"], "wechat.provider.ui")
+        self.assertEqual(ws.sent[0]["payload"]["protocol"]["schema"], ENDPOINT_TOOL_PROTOCOL_SCHEMA)
 
     async def test_start_readiness_waits_for_subscription_ack_not_hello_ack(self):
         observed = []

@@ -2,7 +2,6 @@ import unittest
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from core.event_bus import EventBus
 from core.session_manager import SessionManager
@@ -224,16 +223,6 @@ class GatewayRuntimeApiTests(unittest.TestCase):
 
     def _auth_headers(self):
         return {"Authorization": f"Bearer {self.access_token}"}
-
-    def _assert_legacy_http_route_removed(self, response, *, legacy_path: str, replacement_path: str):
-        self.assertEqual(response.status_code, 410)
-        payload = response.json()
-        self.assertEqual(payload["schema"], "meetyou.http.v1")
-        self.assertEqual(payload["kind"], "error")
-        self.assertEqual(payload["error"]["code"], "legacy_http_path_removed")
-        self.assertEqual(payload["error"]["details"]["legacy_path"], legacy_path)
-        self.assertEqual(payload["error"]["details"]["replacement_path"], replacement_path)
-        self.assertEqual(payload["error"]["details"]["formal_surface"], "thread/run/delivery + endpoint/ws")
 
     def test_health_returns_structured_runtime_health(self):
         response = self.client.get("/health")
@@ -639,24 +628,6 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(resolved_calls[0]["conversation_key"], "wechat:meetwechat:group:example")
         self.assertEqual(resolved_calls[0]["thread_strategy"], "per_conversation")
 
-    def test_legacy_chat_http_routes_return_controlled_migration_errors(self):
-        response_specs = [
-            ("/inputs", self.client.post("/inputs", json={"content": "hello"}, headers=self._auth_headers()), "/runtime/messages"),
-            ("/controls", self.client.post("/controls", json={"action": "stop"}, headers=self._auth_headers()), "/runtime/*"),
-            ("/session", self.client.post("/session", json={"endpoint_id": "legacy-endpoint"}, headers=self._auth_headers()), "/runtime/sessions"),
-            ("/sessions", self.client.post("/sessions", json={"endpoint_id": "legacy-endpoint"}, headers=self._auth_headers()), "/runtime/sessions"),
-            ("/messages", self.client.post("/messages", json={"content": "legacy hello"}, headers=self._auth_headers()), "/runtime/messages"),
-        ]
-
-        for legacy_path, response, replacement_path in response_specs:
-            self._assert_legacy_http_route_removed(
-                response,
-                legacy_path=legacy_path,
-                replacement_path=replacement_path,
-            )
-
-        self.assertEqual(self.event_bus.inbound_queue.qsize(), 0)
-
     def test_get_runtime_state(self):
         response = self.client.get(
             "/runtime/state",
@@ -802,25 +773,14 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(payload["error"]["code"], "runtime_debug_not_found")
         self.assertEqual(payload["error"]["details"]["session_id"], "missing-session")
 
-    def test_websocket_rejects_unauthorized_connection(self):
-        with self.assertRaises(WebSocketDisconnect) as ctx:
-            with self.client.websocket_connect("/ws?session_id=web:session:1&source_id=browser-tab-a"):
-                pass
-        self.assertEqual(ctx.exception.code, 1008)
-
-    def test_websocket_rejects_legacy_root_ws_before_handshake(self):
-        with self.assertRaises(WebSocketDisconnect) as ctx:
-            with self.client.websocket_connect(
-                "/ws?session_id=web:session:1&source_id=browser-tab-a&access_token=runtime-token"
-            ):
-                pass
-        self.assertEqual(ctx.exception.code, 1008)
-
-    def test_websocket_rejects_legacy_client_ws_before_handshake(self):
-        with self.assertRaises(WebSocketDisconnect) as ctx:
-            with self.client.websocket_connect("/client/ws?access_token=runtime-token"):
-                pass
-        self.assertEqual(ctx.exception.code, 1008)
+    def test_legacy_routes_are_not_registered(self):
+        paths = {str(getattr(route, "path", "")) for route in self.gateway.app.routes}
+        self.assertIn("/endpoint/ws", paths)
+        self.assertNotIn("/ws", paths)
+        self.assertNotIn("/client/ws", paths)
+        self.assertNotIn("/client/{legacy_path:path}", paths)
+        self.assertNotIn("/operator/clients", paths)
+        self.assertNotIn("/runtime/workspaces/{workspace_id}/clients", paths)
 
 
 if __name__ == "__main__":
