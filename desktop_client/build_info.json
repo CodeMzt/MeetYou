@@ -1,7 +1,7 @@
 {
-  "git_commit": "a205ae2b125015c060c7c9432830ba91dd6e885d",
-  "branch": "work",
-  "build_time": "2026-04-24T12:31:23Z",
+  "git_commit": "df54629aa922adec1bcc45ee2a19bb287d3d7464",
+  "branch": "main",
+  "build_time": "2026-04-30T14:24:27Z",
   "component": "desktop_backend",
   "package_version": "1.0.0"
 }

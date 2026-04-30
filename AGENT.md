@@ -26,5 +26,8 @@ V4 non-negotiable rules:
 - Runtime assistant modes are limited to `general`, `automation`, and `danxi`. Legacy mode names normalize at the boundary only and must not be persisted as runtime modes.
 - Procedure is removed in V4. Do not reintroduce Procedure API, table, tool, pinned fields, prompt layer, or UI; reusable workflow guidance must use SKILL.
 - SKILL is the only reusable workflow guide layer. Use `list_skills`, `load_skill`, and `create_skill` plus the capability registry/semantic router path; skill lookup must match titles, summaries, scenarios, and recommended tools.
+- This environment rejects `rg`; use PowerShell `Get-ChildItem` / `Select-String`, `git ls-files`, or focused tooling for searches.
+- Frontend acceptance must include real browser or Electron execution with screenshot verification, not only typecheck/unit tests.
+- Completed tasks must be committed, pushed, and merged back to `main`; keep old plan/design docs for traceability.
 
 Follow `AGENTS.md` for directory boundaries, verification order, and the V4 real-test ladder.
