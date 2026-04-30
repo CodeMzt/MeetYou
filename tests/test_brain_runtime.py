@@ -56,6 +56,76 @@ class FakeContextManager:
         return 128000
 
 
+class HydratingContextManager(FakeContextManager):
+    def __init__(self):
+        super().__init__()
+        self.hydration_calls = []
+
+    async def hydrate_thread_context(self, **kwargs):
+        self.hydration_calls.append(dict(kwargs))
+        thread_id = str(kwargs.get("thread_id") or "")
+        if thread_id == "thr-2":
+            messages = [
+                {
+                    "role": "user",
+                    "content": "second thread persisted question",
+                    "metadata": {"thread_context_message_id": "msg-thread-2-user"},
+                },
+                {
+                    "role": "assistant",
+                    "content": "second thread persisted answer",
+                    "metadata": {"thread_context_message_id": "msg-thread-2-assistant"},
+                },
+            ]
+        else:
+            messages = [
+                {
+                    "role": "user",
+                    "content": "old persisted question",
+                    "metadata": {"thread_context_message_id": "msg-old-user"},
+                },
+                {
+                    "role": "assistant",
+                    "content": "old persisted answer",
+                    "metadata": {"thread_context_message_id": "msg-old-assistant"},
+                },
+            ]
+        return {
+            "thread_id": kwargs.get("thread_id", ""),
+            "summary": "stored thread summary",
+            "older_count": 3,
+            "messages": messages,
+        }
+
+    async def build_context_plan(
+        self,
+        *,
+        session_history_before_turn,
+        current_turn_messages,
+        auto_memory_message,
+        policy_messages,
+        proprioception_message,
+        conversation_summary="",
+        **kwargs,
+    ):
+        del kwargs
+        messages = list(session_history_before_turn)
+        if conversation_summary:
+            messages.append({"role": "system", "content": f"[Thread Summary]\n{conversation_summary}"})
+        if auto_memory_message:
+            messages.append(auto_memory_message)
+        messages.extend(policy_messages)
+        messages.extend(current_turn_messages)
+        if proprioception_message:
+            messages.append(proprioception_message)
+        return {
+            "messages": messages,
+            "breakdown": {"total": sum(self.estimate_message_tokens(message) for message in messages)},
+            "length_policy": {},
+            "layers": {"conversation_summary": bool(conversation_summary), "history_message_count": len(session_history_before_turn)},
+        }
+
+
 class FakeToolsManager:
     def __init__(self):
         self.calls = []
@@ -478,6 +548,128 @@ class ProviderContextRetryAdapter:
 
 
 class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_brain_hydrates_persisted_thread_context_once(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [StreamEvent(type="text", text="first answer")],
+                [StreamEvent(type="text", text="second answer")],
+            ]
+        )
+        context_manager = HydratingContextManager()
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            context_manager,
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-thread",
+                {
+                    "role": "user",
+                    "content": "current request",
+                    "metadata": {
+                        "thread_id": "thr-1",
+                        "message_id": "msg-current",
+                        "endpoint_message_id": "endpoint-current",
+                    },
+                },
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                pass
+
+            first_messages = adapter.stream_calls[0]["messages"]
+            first_contents = [str(message.get("content") or "") for message in first_messages]
+            self.assertIn("old persisted question", first_contents)
+            self.assertIn("old persisted answer", first_contents)
+            self.assertTrue(any("stored thread summary" in content for content in first_contents))
+            self.assertEqual(context_manager.hydration_calls[0]["thread_id"], "thr-1")
+            self.assertEqual(context_manager.hydration_calls[0]["current_message_id"], "msg-current")
+            self.assertEqual(context_manager.hydration_calls[0]["current_endpoint_message_id"], "endpoint-current")
+
+            async for _ in brain.input_brain(
+                "session-thread",
+                {
+                    "role": "user",
+                    "content": "follow-up",
+                    "metadata": {"thread_id": "thr-1", "message_id": "msg-next"},
+                },
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                pass
+
+            self.assertEqual(len(context_manager.hydration_calls), 1)
+            session = brain.get_or_create_session("session-thread")
+            persisted_questions = [
+                message
+                for message in session.chat_history
+                if message.get("content") == "old persisted question"
+            ]
+            self.assertEqual(len(persisted_questions), 1)
+        finally:
+            await brain.close_brain()
+
+    async def test_brain_rehydrates_when_session_switches_thread(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [StreamEvent(type="text", text="first answer")],
+                [StreamEvent(type="text", text="second answer")],
+            ]
+        )
+        context_manager = HydratingContextManager()
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            context_manager,
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-thread",
+                {
+                    "role": "user",
+                    "content": "current request",
+                    "metadata": {"thread_id": "thr-1", "message_id": "msg-current"},
+                },
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                pass
+
+            async for _ in brain.input_brain(
+                "session-thread",
+                {
+                    "role": "user",
+                    "content": "other thread follow-up",
+                    "metadata": {"thread_id": "thr-2", "message_id": "msg-other"},
+                },
+                "key",
+                "url",
+                "gpt-4o",
+            ):
+                pass
+
+            self.assertEqual([call["thread_id"] for call in context_manager.hydration_calls], ["thr-1", "thr-2"])
+            second_contents = [str(message.get("content") or "") for message in adapter.stream_calls[1]["messages"]]
+            self.assertIn("second thread persisted question", second_contents)
+            self.assertIn("second thread persisted answer", second_contents)
+            self.assertNotIn("old persisted question", second_contents)
+            self.assertNotIn("current request", second_contents)
+            self.assertNotIn("first answer", second_contents)
+        finally:
+            await brain.close_brain()
+
     async def test_brain_injects_structured_time_context_into_turn(self):
         adapter = QueuedStreamAdapter(
             rounds=[

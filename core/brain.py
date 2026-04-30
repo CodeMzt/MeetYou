@@ -43,6 +43,8 @@ logger = logging.getLogger("meetyou.brain")
 _INTERNAL_MODE_SWITCH_TOOL_NAME = "switch_assistant_mode"
 _MODE_SWITCH_REASON_LIMIT = 160
 _DEFAULT_AUTO_MEMORY_SEARCH_TIMEOUT_MS = 1200
+_THREAD_CONTEXT_EXACT_MESSAGE_LIMIT = 24
+_THREAD_CONTEXT_SUMMARY_MESSAGE_LIMIT = 80
 
 
 class _FallbackClientSession:
@@ -2615,6 +2617,154 @@ class Brain:
             return text
         return str(self._global_context or "").strip()
 
+    def _session_known_thread_id(self, session: BrainSession) -> str:
+        return str(session.metadata.get("thread_id") or session.metadata.get("hydrated_thread_id") or "").strip()
+
+    def _history_thread_ids(self, session: BrainSession) -> set[str]:
+        thread_ids: set[str] = set()
+        for message in session.chat_history[self._base_message_count() :]:
+            metadata = dict(message.get("metadata") or {})
+            thread_id = str(metadata.get("thread_id") or "").strip()
+            if thread_id:
+                thread_ids.add(thread_id)
+        return thread_ids
+
+    def _clear_thread_scoped_history(self, session: BrainSession) -> None:
+        session.chat_history = [dict(message) for message in self._base_messages]
+        for key in {
+            "conversation_summary",
+            "thread_id",
+            "hydrated_thread_id",
+            "hydrated_thread_message_count",
+            "hydrated_thread_older_count",
+            "hydrated_thread_context_at",
+        }:
+            session.metadata.pop(key, None)
+
+    def _session_has_non_system_history_for_thread(self, session: BrainSession, thread_id: str) -> bool:
+        base_count = self._base_message_count()
+        has_history = any(
+            str(message.get("role") or "") != "system"
+            for message in session.chat_history[base_count:]
+            if not bool(dict(message.get("metadata") or {}).get("transient"))
+        )
+        if not has_history:
+            return False
+        known_thread_id = self._session_known_thread_id(session)
+        if known_thread_id:
+            return known_thread_id == thread_id
+        history_thread_ids = self._history_thread_ids(session)
+        return not history_thread_ids or thread_id in history_thread_ids
+
+    @staticmethod
+    def _current_thread_id(input_info: dict[str, Any]) -> str:
+        metadata = dict(input_info.get("metadata") or {}) if isinstance(input_info, dict) else {}
+        context = get_event_context()
+        return str(metadata.get("thread_id") or context.get("thread_id") or "").strip()
+
+    @staticmethod
+    def _current_message_id(input_info: dict[str, Any]) -> str:
+        metadata = dict(input_info.get("metadata") or {}) if isinstance(input_info, dict) else {}
+        return str(metadata.get("message_id") or "").strip()
+
+    @staticmethod
+    def _current_endpoint_message_id(input_info: dict[str, Any]) -> str:
+        metadata = dict(input_info.get("metadata") or {}) if isinstance(input_info, dict) else {}
+        return str(metadata.get("endpoint_message_id") or "").strip()
+
+    def _known_thread_context_message_ids(self, session: BrainSession) -> set[str]:
+        message_ids: set[str] = set()
+        for message in session.chat_history[self._base_message_count():]:
+            metadata = dict(message.get("metadata") or {})
+            message_id = str(metadata.get("thread_context_message_id") or metadata.get("message_id") or "").strip()
+            if message_id:
+                message_ids.add(message_id)
+        return message_ids
+
+    async def _hydrate_thread_context_if_needed(
+        self,
+        session: BrainSession,
+        input_info: dict[str, Any],
+        *,
+        api_url: str,
+        api_key: str,
+        model: str,
+    ) -> None:
+        thread_id = self._current_thread_id(input_info)
+        if not thread_id:
+            return
+        known_thread_id = self._session_known_thread_id(session)
+        history_thread_ids = self._history_thread_ids(session)
+        if (known_thread_id and known_thread_id != thread_id) or (
+            not known_thread_id and history_thread_ids and thread_id not in history_thread_ids
+        ):
+            self._clear_thread_scoped_history(session)
+        if isinstance(input_info, dict):
+            metadata = dict(input_info.get("metadata") or {})
+            metadata.setdefault("thread_id", thread_id)
+            input_info["metadata"] = metadata
+        if self._session_has_non_system_history_for_thread(session, thread_id):
+            session.metadata.setdefault("thread_id", thread_id)
+            return
+        hydrator = getattr(self._context_manager, "hydrate_thread_context", None)
+        if not callable(hydrator):
+            return
+        try:
+            payload = await hydrator(
+                session_id=session.session_id,
+                thread_id=thread_id,
+                current_message_id=self._current_message_id(input_info),
+                current_endpoint_message_id=self._current_endpoint_message_id(input_info),
+                exact_message_limit=_THREAD_CONTEXT_EXACT_MESSAGE_LIMIT,
+                summary_message_limit=_THREAD_CONTEXT_SUMMARY_MESSAGE_LIMIT,
+                summary_session=self._http_session,
+                api_url=api_url,
+                api_key=api_key,
+                model=model,
+            )
+        except Exception as exc:
+            logger.warning("Thread context hydration failed: %s", exc)
+            return
+        if not isinstance(payload, dict):
+            return
+        summary = str(payload.get("summary") or "").strip()
+        if summary:
+            session.metadata["conversation_summary"] = summary
+        known_message_ids = self._known_thread_context_message_ids(session)
+        hydrated_messages = []
+        for message in payload.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "").strip()
+            content = message.get("content")
+            if role not in {"user", "assistant"} or not isinstance(content, str) or not content.strip():
+                continue
+            metadata = dict(message.get("metadata") or {})
+            message_id = str(metadata.get("thread_context_message_id") or metadata.get("message_id") or "").strip()
+            if message_id and message_id in known_message_ids:
+                continue
+            if message_id:
+                known_message_ids.add(message_id)
+            hydrated_messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "metadata": {
+                        **metadata,
+                        "context_layer": metadata.get("context_layer") or "thread_history",
+                        "thread_id": metadata.get("thread_id") or thread_id,
+                        "transient": False,
+                    },
+                }
+            )
+        if hydrated_messages:
+            session.chat_history.extend(hydrated_messages)
+        session.metadata["thread_id"] = thread_id
+        session.metadata["hydrated_thread_id"] = str(payload.get("thread_id") or thread_id)
+        session.metadata["hydrated_thread_message_count"] = len(hydrated_messages)
+        session.metadata["hydrated_thread_older_count"] = int(payload.get("older_count", 0) or 0)
+        session.metadata["hydrated_thread_context_at"] = utcnow_iso()
+
     async def _build_context_plan(
         self,
         *,
@@ -2751,6 +2901,13 @@ class Brain:
 
         session = self.get_or_create_session(session_id)
         await self._refresh_session_context(session)
+        await self._hydrate_thread_context_if_needed(
+            session,
+            input_info,
+            api_url=api_url,
+            api_key=api_key,
+            model=model,
+        )
         requested_mode = self._get_requested_mode(input_info)
         route_history: list[dict[str, Any]] = []
         switch_count = 0

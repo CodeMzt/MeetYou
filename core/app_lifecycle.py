@@ -103,6 +103,12 @@ async def setup_app_runtime(app) -> None:
             app.core_services.context_pool,
             principal_getter=lambda: app.core_domain.principal.id,
         )
+    thread_context_setter = getattr(app.context_manager, "set_thread_context_services", None)
+    if callable(thread_context_setter):
+        thread_context_setter(
+            thread_service=app.core_services.thread,
+            message_service=app.core_services.message,
+        )
     state_blob_service = app.core_services.state_blob
     await app.memory.init_memory(app.config)
     app.memory.set_store_backend(
