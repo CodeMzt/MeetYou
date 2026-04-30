@@ -44,6 +44,40 @@ class MessageService(ServiceBase):
         with self.session_scope() as session:
             return MessageRepository(session).list_by_thread_id(thread_id)
 
+    def load_thread_context_window(
+        self,
+        *,
+        thread_id,
+        before_message_id: str = "",
+        exclude_endpoint_message_id: str = "",
+        limit: int = 24,
+    ) -> dict:
+        with self.session_scope() as session:
+            return MessageRepository(session).load_thread_context_window(
+                thread_id=thread_id,
+                before_message_id=before_message_id,
+                exclude_endpoint_message_id=exclude_endpoint_message_id,
+                limit=limit,
+            )
+
+    def list_older_thread_context_messages(
+        self,
+        *,
+        thread_id,
+        before_message_id: str = "",
+        exclude_endpoint_message_id: str = "",
+        offset: int = 24,
+        limit: int = 80,
+    ):
+        with self.session_scope() as session:
+            return MessageRepository(session).list_older_thread_context_messages(
+                thread_id=thread_id,
+                before_message_id=before_message_id,
+                exclude_endpoint_message_id=exclude_endpoint_message_id,
+                offset=offset,
+                limit=limit,
+            )
+
     def get_by_endpoint_message_id(
         self,
         *,

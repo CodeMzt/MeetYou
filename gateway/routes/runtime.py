@@ -177,6 +177,46 @@ def _message_response(
     )
 
 
+def _record_context_pool_runtime_user_message(
+    domain,
+    *,
+    message,
+    thread,
+    session,
+    endpoint,
+    active_workspace,
+) -> None:
+    if str(getattr(message, "role", "") or "") != "user":
+        return
+    services = getattr(domain, "services", None)
+    context_pool = getattr(services, "context_pool", None) if services is not None else None
+    principal = getattr(domain, "principal", None)
+    if context_pool is None or principal is None:
+        return
+    workspace_service = getattr(services, "workspace", None)
+    home_workspace = active_workspace
+    get_workspace_by_id = getattr(workspace_service, "get_by_id", None)
+    home_workspace_row_id = getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None)
+    if callable(get_workspace_by_id) and home_workspace_row_id is not None:
+        try:
+            home_workspace = get_workspace_by_id(home_workspace_row_id) or active_workspace
+        except Exception:
+            home_workspace = active_workspace
+    try:
+        context_pool.record_message(
+            principal_id=getattr(principal, "id", None),
+            message=message,
+            thread=thread,
+            session=session,
+            endpoint=endpoint,
+            active_workspace=active_workspace,
+            home_workspace=home_workspace,
+            metadata={"source": "runtime.message"},
+        )
+    except Exception:
+        return
+
+
 def _operation_response(operation, *, thread_id: str = "", workspace_id: str = "") -> RuntimeOperationResponse:
     meta = dict(getattr(operation, "meta", {}) or {})
     execution_target = str(getattr(operation, "execution_target", "") or "").strip()
@@ -697,6 +737,14 @@ def build_runtime_router(gateway) -> APIRouter:
             origin_endpoint_id=origin_endpoint_row_id,
             active_workspace_id=workspace.id,
             meta=metadata,
+        )
+        _record_context_pool_runtime_user_message(
+            domain,
+            message=message,
+            thread=thread,
+            session=session,
+            endpoint=endpoint,
+            active_workspace=workspace,
         )
         source_kind = _resolve_runtime_source_kind(
             endpoint_id=source_id,
