@@ -2,6 +2,23 @@
 
 Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
 
+## 2026-04-30 Endpoint Thread Deletion Rebind Addendum
+
+- Commit sha: `53cfdb5545dabdc8c116eb9b152b3fe746da2801`.
+- Scope: fixed endpoint-owned conversation recovery after a user deletes the Core thread for a WeChat/Feishu external conversation. The shared `GatewayConversationClient` now detects stale `thread_id/session_id` errors, clears the cached context, reconnects the endpoint subscription, re-resolves `/runtime/endpoint-sessions/resolve`, and retries the inbound message once.
+- Root cause: Core binding resolution already created a new thread when an `EndpointThreadBinding` pointed to a deleted thread, but long-lived provider clients kept the old in-memory `thread_id/session_id` and skipped re-resolution because the old WebSocket subscription was still marked acknowledged. New messages were therefore posted to a deleted thread and failed before a new binding could be created.
+- MeetWeChat-specific cache fix: after a rebind, MeetWeChat now writes the new Core `thread_id` back to its compatibility state cache so a provider restart does not resurrect the deleted thread id.
+- Runtime API fix: `/runtime/messages`, `/runtime/sessions`, thread message listing, and operation creation now return controlled `thread_not_found` errors for missing/deleted threads instead of leaking an unclassified KeyError path.
+- Local focused backend tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_gateway_client tests.test_endpoint_thread_binding tests.test_gateway_runtime_api tests.test_meetwechat_adapter tests.test_feishu_input_adapter`, 68 tests).
+- Local frontend typecheck: passed (`npm run typecheck`).
+- Local compile check: passed (`.venv\Scripts\python.exe -m compileall clients gateway sensors`).
+- Local desktop rebuild: passed in order (`scripts\build-desktop-backend.ps1`, then `npm run build`). Local installer regenerated at `meetyou-ui\release\MeetYou Setup 1.0.0.exe`.
+- CI status: passed (`CI`, run `25161423286`, commit `53cfdb5545dabdc8c116eb9b152b3fe746da2801`).
+- Deploy status: passed (`Deploy MeetYou Core`, run `25161423322`, commit `53cfdb5545dabdc8c116eb9b152b3fe746da2801`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=53cfdb5545dabdc8c116eb9b152b3fe746da2801`, `branch=main`, `build_time=2026-04-30T10:52:32Z`).
+- Desktop Release status: passed (`Desktop Release`, run `25161526477`, artifact `meetyou-windows-desktop`, artifact id `6728438937`, size `231613199` bytes).
+- External WeChatBot human confirmation: pending. User should delete a WeChat private/group thread in Desktop, send a fresh message in that same WeChat conversation, and confirm that a new Core thread appears and a real WeChat reply is received.
+
 ## 2026-04-30 SKILL Core Storage Boundary Addendum
 
 - Functional commit sha: `dfea137e0059d63224212335871dc5aeb5d75b0a`.
