@@ -111,6 +111,32 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.kwargs["thread_strategy"], "per_conversation")
         self.assertEqual(client.kwargs["address_id"], "addr.feishu.direct.oc_test")
 
+    async def test_provider_gateway_client_registers_without_thread_binding(self):
+        class _FakeGatewayConversationClient:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            async def start(self):
+                return None
+
+        adapter = FeishuInputAdapter(
+            self.event_bus,
+            self.session_manager,
+            FakeConfig(
+                {
+                    "feishu_chat_registry_path": str(self.registry_path),
+                    "feishu_app_id": "",
+                    "feishu_app_secret": "",
+                }
+            ),
+        )
+
+        with patch("sensors.feishu_input_adapter.GatewayConversationClient", _FakeGatewayConversationClient):
+            client = await adapter._get_provider_gateway_client()  # noqa: SLF001
+
+        self.assertEqual(client.kwargs["endpoint_id"], "feishu.provider.ui")
+        self.assertFalse(client.kwargs["bind_thread"])
+
     async def test_ignores_self_message_from_bot_sender(self):
         payload = {
             "event": {

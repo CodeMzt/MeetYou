@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { AlertTriangle, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import styles from './ConfirmModal.module.css'
 
 interface ConfirmModalProps {
@@ -33,6 +34,8 @@ export default function ConfirmModal({
   onCancel,
 }: ConfirmModalProps) {
   const [typedValue, setTypedValue] = useState('')
+  const titleId = useId()
+  const messageId = useId()
 
   useEffect(() => {
     if (!isOpen) {
@@ -48,7 +51,7 @@ export default function ConfirmModal({
     return typedValue.trim() !== confirmationText.trim()
   }, [confirmationRequired, typedValue, confirmationText])
 
-  return (
+  const modal = (
     <AnimatePresence>
       {isOpen && (
         <div className={styles.overlay}>
@@ -62,6 +65,10 @@ export default function ConfirmModal({
           />
           <motion.div
             className={styles.modal}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={messageId}
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -71,13 +78,13 @@ export default function ConfirmModal({
               <div className={`${styles.iconWrapper} ${isDestructive ? styles.destructiveIcon : styles.primaryIcon}`}>
                 <AlertTriangle size={18} />
               </div>
-              <h3 className={styles.title}>{title}</h3>
+              <h3 className={styles.title} id={titleId}>{title}</h3>
               <button className={styles.closeBtn} onClick={onCancel} title="关闭" disabled={busy}>
                 <X size={16} />
               </button>
             </div>
             <div className={styles.body}>
-              <p className={styles.message}>{message}</p>
+              <p className={styles.message} id={messageId}>{message}</p>
               {confirmationRequired ? (
                 <div className={styles.confirmationBlock}>
                   <div className={styles.confirmationLabelRow}>
@@ -112,4 +119,10 @@ export default function ConfirmModal({
       )}
     </AnimatePresence>
   )
+
+  if (typeof document === 'undefined') {
+    return modal
+  }
+
+  return createPortal(modal, document.body)
 }

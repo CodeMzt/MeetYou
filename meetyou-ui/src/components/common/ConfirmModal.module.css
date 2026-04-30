@@ -7,8 +7,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
-  padding: 20px;
+  z-index: var(--z-modal);
+  padding: 18px;
 }
 
 .backdrop {
@@ -29,9 +29,12 @@
   border-radius: var(--radius-md);
   box-shadow: 0 10px 30px var(--shadow-color), 0 0 0 1px var(--glass-border);
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
+  max-height: calc(100vh - 36px);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  z-index: 1001;
+  z-index: calc(var(--z-modal) + 1);
 }
 
 .header {
@@ -64,10 +67,13 @@
 
 .title {
   flex: 1;
+  min-width: 0;
   font-size: 15px;
+  line-height: 1.35;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .closeBtn {
@@ -95,7 +101,9 @@
 }
 
 .body {
-  padding: 20px;
+  padding: 18px 20px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .message {
@@ -103,6 +111,8 @@
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .confirmationBlock {
@@ -142,6 +152,8 @@
   color: var(--text-primary);
   font-size: 12px;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .confirmationInput {
@@ -167,6 +179,7 @@
   justify-content: flex-end;
   padding: 14px 20px;
   gap: 10px;
+  flex-wrap: wrap;
   background: var(--bg-primary);
   border-top: 1px solid var(--glass-border);
 }
@@ -174,6 +187,7 @@
 .cancelBtn,
 .confirmBtn {
   min-height: 32px;
+  min-width: 64px;
   padding: 0 16px;
   border-radius: var(--radius-sm);
   font-size: 13px;
@@ -215,4 +229,26 @@
 
 .primaryBtn:hover {
   filter: brightness(1.1);
+}
+
+@media (max-width: 380px) {
+  .overlay {
+    padding: 12px;
+  }
+
+  .header,
+  .body,
+  .footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .footer {
+    justify-content: stretch;
+  }
+
+  .cancelBtn,
+  .confirmBtn {
+    flex: 1 1 0;
+  }
 }

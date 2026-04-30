@@ -14,7 +14,7 @@ function thread(thread_id: string, title: string): RuntimeThread {
 }
 
 describe('threadPresentation', () => {
-  it('keeps the default desktop thread first and collapses repeated provider management threads', () => {
+  it('keeps the default desktop thread first and hides provider management threads', () => {
     const items = getVisibleRuntimeThreadItems(
       [
         thread('thr_wechat_new', 'MeetWeChat Provider'),
@@ -28,12 +28,8 @@ describe('threadPresentation', () => {
       'thr_desktop',
     )
 
-    expect(items.map((item) => item.thread.thread_id)).toEqual([
-      'thr_desktop',
-      'thr_wechat_old',
-      'thr_feishu_new',
-    ])
-    expect(items.map((item) => item.title)).toEqual(['桌面聊天', '微信接入', '飞书接入'])
+    expect(items.map((item) => item.thread.thread_id)).toEqual(['thr_desktop'])
+    expect(items.map((item) => item.title)).toEqual(['桌面聊天'])
   })
 
   it('keeps genuinely different external chat threads and labels them clearly', () => {

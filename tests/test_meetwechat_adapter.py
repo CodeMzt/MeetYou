@@ -237,6 +237,15 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
             payload = json.load(handle)
         self.assertTrue(payload["events"]["evt-1"]["acked"])
 
+    async def test_provider_gateway_client_registers_without_thread_binding(self):
+        adapter, _, _, gateway_clients, _ = self._build_adapter()
+
+        await adapter._get_provider_gateway_client()  # noqa: SLF001
+
+        self.assertEqual(len(gateway_clients), 1)
+        self.assertEqual(gateway_clients[0].kwargs["endpoint_id"], "wechat.provider.ui")
+        self.assertFalse(gateway_clients[0].kwargs["bind_thread"])
+
     async def test_guarded_auto_event_still_sends_after_bridge(self):
         adapter, _, meetwechat_client, gateway_clients, state = self._build_adapter()
         event = self._event(mode="guarded_auto")
