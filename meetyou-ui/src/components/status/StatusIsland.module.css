@@ -64,6 +64,7 @@
   position: fixed;
   top: 92px;
   left: max(12px, calc(50vw - 160px));
+  z-index: var(--z-dropdown);
   width: min(320px, calc(100vw - 24px));
   max-height: calc(100vh - 112px);
   box-sizing: border-box;
@@ -81,6 +82,31 @@
   margin-bottom: 12px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.usageNotice {
+  margin: -2px 0 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.usageEmpty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.usageEmptyTitle {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.usageEmptyText {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .usageBar {
@@ -119,4 +145,25 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
+}
+
+.danxiStatusRow {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  font-size: 12px;
+}
+
+.danxiStatusRow span {
+  color: var(--text-secondary);
+}
+
+.danxiStatusRow strong {
+  color: var(--text-primary);
+  font-weight: 500;
+  text-align: right;
 }

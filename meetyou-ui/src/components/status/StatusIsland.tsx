@@ -55,6 +55,11 @@ export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSna
     currentVariant = 'thinking'
   }
 
+  const usageLimitTokens = Math.max(usageSnapshot?.context_limit_tokens || 0, 1)
+  const estimatedContextTokens = usageSnapshot?.current_context_tokens_estimated || 0
+  const contextBreakdown = usageSnapshot?.context_breakdown
+  const usageWidth = (value: number | undefined) => `${Math.min(100, Math.max(0, ((value || 0) / usageLimitTokens) * 100))}%`
+
   useEffect(() => {
     if (!expanded) {
       return
@@ -99,33 +104,48 @@ export default function StatusIsland({ runtimeSnapshot, usageSnapshot, healthSna
 
       {typeof document !== 'undefined' && createPortal(
         <AnimatePresence>
-        {expanded && usageSnapshot && usageSnapshot.usage_ready && (
+        {expanded && (
           <MotionCard ref={dropdownRef} className={styles.usageDropdown}>
-            <div className={styles.usageHeader}>
-              <span>上下文占用</span>
-              <span className="text-gradient">
-                {Math.round(usageSnapshot.current_context_tokens_estimated / 1000)}k / {Math.round(usageSnapshot.context_limit_tokens / 1000)}k
-              </span>
-            </div>
-            
-            <div className={styles.usageBar}>
-              <div className={`${styles.usageChunk} ${styles.system}`} style={{ width: `${(usageSnapshot.context_breakdown.system / usageSnapshot.context_limit_tokens) * 100}%` }} />
-              <div className={`${styles.usageChunk} ${styles.history}`} style={{ width: `${(usageSnapshot.context_breakdown.history / usageSnapshot.context_limit_tokens) * 100}%` }} />
-              <div className={`${styles.usageChunk} ${styles.memory}`} style={{ width: `${(usageSnapshot.context_breakdown.memory_context / usageSnapshot.context_limit_tokens) * 100}%` }} />
-              <div className={`${styles.usageChunk} ${styles.current}`} style={{ width: `${(usageSnapshot.context_breakdown.current_input / usageSnapshot.context_limit_tokens) * 100}%` }} />
-            </div>
+            {usageSnapshot ? (
+              <>
+                <div className={styles.usageHeader}>
+                  <span>上下文占用</span>
+                  <span className="text-gradient">
+                    {Math.round(estimatedContextTokens / 1000)}k / {Math.round(usageLimitTokens / 1000)}k
+                  </span>
+                </div>
 
-            <div className={styles.usageLegend}>
-              <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#ff9500' }}/> 系统</div>
-              <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#34c759' }}/> 历史</div>
-              <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#af52de' }}/> 记忆</div>
-              <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-accent)' }}/> 当前</div>
-            </div>
+                <div className={styles.usageBar}>
+                  <div className={`${styles.usageChunk} ${styles.system}`} style={{ width: usageWidth(contextBreakdown?.system) }} />
+                  <div className={`${styles.usageChunk} ${styles.history}`} style={{ width: usageWidth(contextBreakdown?.history) }} />
+                  <div className={`${styles.usageChunk} ${styles.memory}`} style={{ width: usageWidth(contextBreakdown?.memory_context) }} />
+                  <div className={`${styles.usageChunk} ${styles.current}`} style={{ width: usageWidth(contextBreakdown?.current_input) }} />
+                </div>
+
+                {!usageSnapshot.usage_ready && (
+                  <div className={styles.usageNotice}>上下文统计同步中，首轮回复后会显示更准确的用量。</div>
+                )}
+              </>
+            ) : (
+              <div className={styles.usageEmpty}>
+                <div className={styles.usageEmptyTitle}>上下文与用量</div>
+                <div className={styles.usageEmptyText}>正在同步当前会话的上下文数据。</div>
+              </div>
+            )}
+
+            {usageSnapshot && (
+              <div className={styles.usageLegend}>
+                <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#ff9500' }}/> 系统</div>
+                <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#34c759' }}/> 历史</div>
+                <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: '#af52de' }}/> 记忆</div>
+                <div className={styles.legendItem}><div className={styles.legendDot} style={{ background: 'var(--text-accent)' }}/> 当前</div>
+              </div>
+            )}
             
             {isDanxi && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: 12 }}>
-                <span style={{ color: 'var(--text-secondary)' }}>旦夕状态</span>
-                <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{danxiStatusText || '未连接'}</span>
+              <div className={styles.danxiStatusRow}>
+                <span>旦夕状态</span>
+                <strong>{danxiStatusText || '未连接'}</strong>
               </div>
             )}
           </MotionCard>
