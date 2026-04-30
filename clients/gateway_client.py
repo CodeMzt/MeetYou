@@ -15,7 +15,10 @@ _HTTP_SESSION_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=5)
 
 
 class GatewayClientError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int = 0, code: str = ""):
+        super().__init__(message)
+        self.status_code = int(status_code or 0)
+        self.code = str(code or "").strip()
 
 
 def resolve_core_base_url(config: Any) -> str:
@@ -149,11 +152,53 @@ class GatewayConversationClient:
             json=json_body,
             timeout=_HTTP_REQUEST_TIMEOUT,
         ) as response:
-            payload = await response.json()
+            try:
+                payload = await response.json()
+            except Exception:
+                payload = {"error": {"message": await response.text()}}
             if response.status >= 400:
-                message = payload.get("error", {}).get("message") if isinstance(payload, dict) else str(payload)
-                raise GatewayClientError(f"{response.status} {message}")
+                error = payload.get("error", {}) if isinstance(payload, dict) else {}
+                message = error.get("message") if isinstance(error, dict) else str(payload)
+                code = error.get("code") if isinstance(error, dict) else ""
+                raise GatewayClientError(f"{response.status} {message}", status_code=response.status, code=code)
             return payload
+
+    def _is_stale_thread_context_error(self, exc: BaseException) -> bool:
+        if not self._bind_thread or not isinstance(exc, GatewayClientError):
+            return False
+        code = str(getattr(exc, "code", "") or "").strip()
+        if code in {"thread_not_found", "session_not_found"}:
+            return True
+        status_code = int(getattr(exc, "status_code", 0) or 0)
+        if status_code not in {404, 410}:
+            return False
+        message = str(exc).lower()
+        return "thread" in message or "session" in message
+
+    async def _reset_thread_context(self) -> None:
+        if not self._bind_thread:
+            return
+        was_closed = self._closed
+        self._closed = True
+        self._ws_connected.clear()
+        self._subscription_acknowledged.clear()
+        task = self._ws_task
+        self._ws_task = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            with __import__("contextlib").suppress(asyncio.CancelledError):
+                await task
+        ws = self._ws
+        self._ws = None
+        if ws is not None and not bool(getattr(ws, "closed", False)):
+            close = getattr(ws, "close", None)
+            if callable(close):
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+        self.thread_id = ""
+        self.session_id = ""
+        self._closed = was_closed
 
     async def ensure_context(self) -> None:
         if not self._bind_thread:
@@ -330,26 +375,35 @@ class GatewayConversationClient:
         options: dict[str, Any] | None = None,
         endpoint_message_id: str | None = None,
     ) -> dict[str, Any]:
-        await self.start()
-        payload = await self.request_json(
-            "POST",
-            "/runtime/messages",
-            json_body={
-                "thread_id": self.thread_id,
-                "workspace_id": self.workspace_id,
-                "endpoint_id": self.endpoint_id,
-                "session_id": self.session_id,
-                "endpoint_type": self.provider_type,
-                "display_name": self.display_name,
-                "role": role,
-                "content": content,
-                "metadata": dict(metadata or {}),
-                "preferred_mode": preferred_mode,
-                "options": dict(options or {}),
-                "endpoint_message_id": endpoint_message_id,
-            },
-        )
-        return dict(payload)
+        async def _send_once() -> dict[str, Any]:
+            await self.start()
+            payload = await self.request_json(
+                "POST",
+                "/runtime/messages",
+                json_body={
+                    "thread_id": self.thread_id,
+                    "workspace_id": self.workspace_id,
+                    "endpoint_id": self.endpoint_id,
+                    "session_id": self.session_id,
+                    "endpoint_type": self.provider_type,
+                    "display_name": self.display_name,
+                    "role": role,
+                    "content": content,
+                    "metadata": dict(metadata or {}),
+                    "preferred_mode": preferred_mode,
+                    "options": dict(options or {}),
+                    "endpoint_message_id": endpoint_message_id,
+                },
+            )
+            return dict(payload)
+
+        try:
+            return await _send_once()
+        except GatewayClientError as exc:
+            if not self._is_stale_thread_context_error(exc):
+                raise
+            await self._reset_thread_context()
+            return await _send_once()
 
     async def send_command(self, action: str, **payload: Any) -> None:
         await self.start()

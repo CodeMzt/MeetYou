@@ -215,6 +215,17 @@ def _find_thread(domain, thread_id: str):
     return thread
 
 
+def _require_thread(gateway, domain, thread_id: str):
+    try:
+        return _find_thread(domain, thread_id)
+    except KeyError:
+        gateway._raise_http_error(
+            status_code=404,
+            code="thread_not_found",
+            message=f"Unknown thread: {thread_id}",
+        )
+
+
 def _find_endpoint(domain, endpoint_id: str = ""):
     normalized = str(endpoint_id or "").strip()
     if not normalized:
@@ -520,7 +531,7 @@ def build_runtime_router(gateway) -> APIRouter:
     async def get_thread(thread_id: str, request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
-        thread = _find_thread(domain, thread_id)
+        thread = _require_thread(gateway, domain, thread_id)
         workspace = domain.services.workspace.get_by_id(getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None))
         return _thread_response(thread, getattr(workspace, "workspace_id", ""))
 
@@ -599,7 +610,7 @@ def build_runtime_router(gateway) -> APIRouter:
     async def create_session(payload: RuntimeSessionCreateRequest, request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
-        thread = _find_thread(domain, payload.thread_id)
+        thread = _require_thread(gateway, domain, payload.thread_id)
         workspace = _find_workspace(domain, payload.resolved_active_workspace_id or getattr(thread, "workspace_id", ""))
         endpoint = _find_endpoint(domain, payload.endpoint_id)
         session = domain.services.session.create_session(
@@ -651,7 +662,7 @@ def build_runtime_router(gateway) -> APIRouter:
     async def create_message(payload: RuntimeMessageCreateRequest, request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
-        thread = _find_thread(domain, payload.thread_id)
+        thread = _require_thread(gateway, domain, payload.thread_id)
         workspace = _find_workspace(domain, payload.resolved_active_workspace_id)
         session = domain.services.session.get_by_session_id(payload.session_id) if payload.session_id else None
         endpoint = _find_endpoint(domain, payload.endpoint_id)
@@ -723,7 +734,7 @@ def build_runtime_router(gateway) -> APIRouter:
     async def list_messages(thread_id: str, request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
-        thread = _find_thread(domain, thread_id)
+        thread = _require_thread(gateway, domain, thread_id)
         workspace = domain.services.workspace.get_by_id(getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None))
         return [
             _message_response(message, thread_id=thread.thread_id, workspace_id=getattr(workspace, "workspace_id", ""))
@@ -734,7 +745,7 @@ def build_runtime_router(gateway) -> APIRouter:
     async def create_operation(payload: RuntimeOperationCreateRequest, request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
-        thread = _find_thread(domain, payload.thread_id)
+        thread = _require_thread(gateway, domain, payload.thread_id)
         workspace = _find_workspace(domain, payload.workspace_id)
         try:
             result = await domain.tool_router.dispatch_tool_call(
