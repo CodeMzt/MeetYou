@@ -112,7 +112,45 @@ class SourceCatalogManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(status["available"])
         self.assertEqual(status["source_count"], 3)
+        self.assertIn("profile_alias:academic_research->academic_biomed", status["warnings"])
+        self.assertIn("unsupported_connector:bad_connector", status["warnings"])
         self.assertEqual([item["id"] for item in ordered], ["source_b", "source_a"])
+        self.assertEqual(manager.get_source_profile("academic_research")["name"], "academic_biomed")
+
+    async def test_profile_alias_and_empty_official_diagnostics(self):
+        path = self._write_catalog(
+            {
+                "version": "1",
+                "default_source_profiles": {
+                    "tech_global": {
+                        "preferred_source_ids": [],
+                        "official_only": True,
+                        "primary_domains": [],
+                    }
+                },
+                "context_limits": [],
+                "sources": [
+                    {
+                        "id": "community_blog",
+                        "enabled": True,
+                        "domain": "blog.example.com",
+                        "label": "Blog",
+                        "connector_type": "whitelist_page_reader",
+                        "profiles": ["tech_global"],
+                        "priority": 10,
+                        "primary_source": False,
+                    }
+                ],
+            }
+        )
+        manager = SourceCatalogManager(_FakeConfig({"source_catalog_path": path}))
+
+        status = manager.get_catalog_status()
+
+        self.assertEqual(manager.get_source_profile("tech_global")["name"], "tech_updates")
+        self.assertEqual(manager.get_sources("tech_global"), [])
+        self.assertIn("profile_alias:tech_global->tech_updates", status["warnings"])
+        self.assertIn("profile_empty_official_sources:tech_updates", status["warnings"])
 
     async def test_invalid_json_marks_catalog_unavailable(self):
         tmp_dir = tempfile.TemporaryDirectory()

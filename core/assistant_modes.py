@@ -17,7 +17,7 @@ from core.prompt_assembler import PromptAssembler
 from core.route_runtime import RouteRuntime
 from core.semantic_router import SemanticRouterAgent
 from core.skill_registry import SkillRegistryManager
-from core.source_catalog import SourceCatalogManager
+from core.source_catalog import SourceCatalogManager, normalize_source_profile_name
 
 ASSISTANT_MODE_NORMAL = "general"
 ASSISTANT_MODE_GENERAL = ASSISTANT_MODE_NORMAL
@@ -233,7 +233,7 @@ _DEEP_RESEARCH_HINTS = (
 )
 
 _RESEARCH_PROFILE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "academic": (
+    "academic_biomed": (
         "paper",
         "research paper",
         "journal",
@@ -247,7 +247,7 @@ _RESEARCH_PROFILE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "doi",
         "研究",
     ),
-    "policy": (
+    "policy_global": (
         "policy",
         "regulation",
         "law",
@@ -264,7 +264,7 @@ _RESEARCH_PROFILE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "证监会",
         "药监",
     ),
-    "finance": (
+    "finance_macro": (
         "finance",
         "stock",
         "earnings",
@@ -316,7 +316,7 @@ _DEFAULT_SOURCE_PROFILES = {
         "source_order": ["local", "memory", "notion", "academic"],
         "freshness": "coursework",
     },
-    "tech_global": {
+    "tech_updates": {
         "label": "国际技术",
         "description": "优先使用官方文档、GitHub 发布、标准和供应商变更日志。",
         "primary_domains": [
@@ -330,7 +330,7 @@ _DEFAULT_SOURCE_PROFILES = {
         "source_order": ["official_docs", "standard", "repo_release", "vendor", "media"],
         "freshness": "high",
     },
-    "tech_cn": {
+    "policy_cn": {
         "label": "国内技术",
         "description": "优先使用中文官方文档、云厂商文档和官方仓库。",
         "primary_domains": [
@@ -343,7 +343,7 @@ _DEFAULT_SOURCE_PROFILES = {
         "source_order": ["official_docs", "vendor", "repo_release", "media"],
         "freshness": "high",
     },
-    "academic": {
+    "academic_biomed": {
         "label": "学术资料",
         "description": "优先使用论文、DOI 记录、PubMed 和预印本索引。",
         "primary_domains": [
@@ -355,7 +355,7 @@ _DEFAULT_SOURCE_PROFILES = {
         "source_order": ["paper", "index", "official", "media"],
         "freshness": "medium",
     },
-    "policy": {
+    "policy_global": {
         "label": "政策与监管",
         "description": "优先使用政府和监管机构资料。",
         "primary_domains": [
@@ -369,7 +369,7 @@ _DEFAULT_SOURCE_PROFILES = {
         "source_order": ["government", "regulator", "official", "media"],
         "freshness": "high",
     },
-    "finance": {
+    "finance_macro": {
         "label": "金融资料",
         "description": "优先使用交易所申报、官方投资者关系和监管披露资料。",
         "primary_domains": [
@@ -1094,13 +1094,7 @@ class AssistantModeManager:
         return self._source_catalog.get_source_profiles()
 
     def get_source_profile(self, profile_name: str) -> dict[str, Any]:
-        profiles = self.get_source_profiles()
-        normalized = str(profile_name or "").strip() or "workspace_local"
-        payload = profiles.get(normalized)
-        if payload is None:
-            payload = profiles.get("tech_updates") or profiles.get("workspace_local", {})
-            normalized = "tech_updates" if "tech_updates" in profiles else "workspace_local"
-        return {"name": normalized, **payload}
+        return self._source_catalog.get_source_profile(profile_name)
 
     def get_sources_for_profile(
         self,
@@ -1108,7 +1102,10 @@ class AssistantModeManager:
         *,
         official_only: bool | None = None,
     ) -> list[dict[str, Any]]:
-        return self._source_catalog.get_sources(profile_name, official_only=official_only)
+        return self._source_catalog.get_sources(
+            normalize_source_profile_name(profile_name, fallback="tech_updates"),
+            official_only=official_only,
+        )
 
     def get_source_by_id(self, source_id: str) -> dict[str, Any] | None:
         return self._source_catalog.get_source_by_id(source_id)
@@ -1460,10 +1457,10 @@ class AssistantModeManager:
         return False
 
     def classify_research_source_profile(self, text: str) -> str:
-        classified = self._semantic_router.classify_source_profile(text)
+        classified = normalize_source_profile_name(self._semantic_router.classify_source_profile(text), fallback="")
         if classified:
             return classified
-        classified = self._source_catalog.classify_research_profile(text)
+        classified = normalize_source_profile_name(self._source_catalog.classify_research_profile(text), fallback="")
         if classified:
             return classified
         if _looks_like_chinese(text):

@@ -9,10 +9,15 @@ When to use:
 - Apply when the response needs citations, evidence objects, source tracking, or a clear separation between evidence and inference.
 
 Tool paths:
-- Start with focused evidence gathering through search_web, read_web_page, search_memory, and search_knowledge.
-- Escalate to research_topic, inspect_page, or track_source_updates when the task expands into broader synthesis or ongoing monitoring.
+- For quick public lookups, use search_web with quality=fast and a source_profile when the domain is clear.
+- For direct URLs, use read_web_page or inspect_page instead of sending the URL through search_web.
+- For research, current/latest, official-source, citation-heavy, or contested claims, use research_topic so SourceCatalog governance and evidence_ledger are applied.
+- Escalate to quality=balanced or quality=deep only when the user asks for thoroughness, citations, cross-source verification, high-stakes accuracy, or ongoing monitoring.
+- Use track_source_updates for watchlists and recurring source monitoring, not one-off answers.
 
 Boundaries:
 - Reason about freshness explicitly when the user asks for latest, recent, today, or current information.
-- Use evidence objects and source ids from tools instead of inventing citations.
+- Use only evidence_ledger/source ids returned by tools; never invent citations or cite additional_results as verified evidence.
+- Treat search snippets as unverified unless the source has verification_status=read or comes from a configured SourceCatalog connector.
 - Lead with the answer, then cite sourced claims inline like [1], [2], and distinguish direct evidence, secondary coverage, and inference.
+- When official_only is requested but the returned sources are not primary, say that the result is best-effort and name the gap.
