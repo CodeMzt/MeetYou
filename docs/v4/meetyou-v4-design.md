@@ -1082,9 +1082,9 @@ V4 实现前必须更新：
 ```text
 AGENT.md / AGENTS.md
 README.md
-docs/v4/design.md
-docs/v4/plan.md
-docs/v4/plans/*.md
+docs/v4/meetyou-v4-design.md
+docs/v4/meetyou-v4-scheduled-workflows.md
+docs/v4/endpoint-provider-template.md
 user/*.example.json
 ```
 

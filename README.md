@@ -364,9 +364,10 @@ Frontend acceptance should include a real browser or Electron visual check when 
 - [V4 design](./docs/v4/meetyou-v4-design.md)
 - [V4 scheduled workflows](./docs/v4/meetyou-v4-scheduled-workflows.md)
 - [Endpoint provider template](./docs/v4/endpoint-provider-template.md)
+- [Core API surfaces](./docs/core-api-surfaces.md)
 - [Storage and binary transfer](./docs/storage-and-binary-transfer.md)
+- [Workspace capability model](./docs/workspace-capability-model.md)
 - [Manual startup acceptance](./docs/manual-startup-acceptance.md)
-- [V4 test report](./docs/v4/test-report.md)
 - [Publication readiness checklist](./docs/publication-readiness.md)
 
 ## Community

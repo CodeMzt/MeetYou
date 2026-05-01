@@ -97,6 +97,13 @@ docs/agent-protocol-v1.md
 docs/core-client-agent-architecture.md
 docs/implementation-plan.md
 docs/playwright-mcp.md
+docs/runtime-migration.md
+docs/v3/
+docs/v4/*plan*.md
+docs/v4/*subplan*.md
+docs/v4/*implementation*.md
+docs/v4/test-report.md
+docs/v4/skill-storage-boundary.md
 
 # PyBuilder
 .pybuilder/

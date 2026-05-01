@@ -167,7 +167,7 @@ function Start-ManualAcceptanceStack {
     Write-Section "Next steps"
     Write-Host "1. Wait 10-20 seconds for endpoint providers to connect."
     Write-Host "2. Run: scripts\manual-acceptance.cmd check"
-    Write-Host "3. Record the V4 checks in docs\v4\test-report.md"
+    Write-Host "3. Record the V4 checks in docs\_local\v4-test-report.md"
     return 0
 }
 
@@ -220,7 +220,7 @@ function Run-ManualAcceptanceCheck {
     }
 
     if ($failed) {
-        Write-Warn "At least one check failed. Keep fixing and record the V4 result in docs\v4\test-report.md"
+        Write-Warn "At least one check failed. Keep fixing and record the V4 result in docs\_local\v4-test-report.md"
         return 1
     }
 
@@ -242,7 +242,7 @@ function Run-ManualAcceptanceCheck {
     }
 
     Write-Section "Done"
-    Write-Host "Checks passed. Record UI / thread / run / delivery / operation results in docs\v4\test-report.md."
+    Write-Host "Checks passed. Record UI / thread / run / delivery / operation results in docs\_local\v4-test-report.md."
     return 0
 }
 

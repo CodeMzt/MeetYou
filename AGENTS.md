@@ -33,13 +33,13 @@
 - Development entrypoints remain `python main.py service`, `python main.py cil`, `python main.py desktop-client`, and `python main.py edge-client`; `python main.py` / `python main.py launcher` opens the launcher.
 - Production entrypoints remain `python -m service_runtime`, `python -m desktop_client`, and `python -m edge_client`.
 - Dependencies remain split across `requirements-core.txt`, `requirements-desktop-client.txt`, and `requirements-edge-client.txt`.
-- V4 implementation source of truth is `docs/v4/` plus this file. `docs/v3/` and `docs/archive/v2/` are legacy references only.
+- V4 implementation source of truth is the necessary design material in `docs/v4/` plus this file. Development plans, subplans, historical V3 notes, and phase reports are local/ignored artifacts, not part of the public project body.
 
 ## Repository Workflow
 
 - `main` is the publish branch. A finished task must be committed, pushed, and merged back to `main`; do not leave completed work only on a feature branch or as local uncommitted changes.
 - If work starts on `main`, commit directly to `main` only when the change is already verified and ready to publish. If work starts on another branch, merge it back to `main` after verification and push `main`.
-- Keep documentation for traceability. Do not delete `docs/`, `docs/v4/*plan*.md`, `docs/v3/`, or `docs/archive/` just because they reference historical architecture; clean runtime compatibility code instead.
+- Keep public documentation focused on reusable project design, API surfaces, setup, and acceptance guidance. Ignore or remove development plans, old migration notes, historical architecture drafts, and local reports unless the user explicitly asks to publish them.
 - This Windows environment rejects `rg`. Use PowerShell file scanning (`Get-ChildItem`, `Select-String`), `git ls-files`, or targeted language/tooling commands for repository searches.
 - Publish prep must remove or ignore local-only outputs such as caches, logs, build folders, Electron release artifacts, packaged runtime templates, and screenshot/test artifacts. Do not commit local secrets or runtime state.
 
@@ -160,7 +160,7 @@
   - After Deploy passes, confirm remote Core `/health` and version / commit sha.
   - Start local Desktop against remote Core and test conversation, Streaming, `assistant.progress_notice`, local tools, Scheduler, Heartbeat, and disconnect/reconnect.
   - Test Feishu and WeChatBot last with unique real messages and human confirmation. Never assume external delivery succeeded without human feedback.
-  - Write `docs/v4/test-report.md` with commit sha, CI/Deploy status, remote Core status, local Desktop to remote Core results, and Feishu/WeChatBot human feedback.
+  - Write the local ignored report at `docs/_local/v4-test-report.md` with commit sha, CI/Deploy status, remote Core status, local Desktop to remote Core results, and Feishu/WeChatBot human feedback unless the user explicitly asks to publish the report.
 
 ## Platform Notes
 
