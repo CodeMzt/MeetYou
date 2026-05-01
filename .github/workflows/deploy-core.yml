@@ -49,6 +49,10 @@ jobs:
                   fi
                   git -C "${repo}" checkout -- .env.bak
                 fi
+                if ! git -C "${repo}" diff --quiet || ! git -C "${repo}" diff --cached --quiet; then
+                  echo "Preserving remote tracked local changes before deploy"
+                  git -C "${repo}" stash push -m "meetyou-deploy-preserve-$(date -u +%Y%m%dT%H%M%SZ)"
+                fi
                 break
               fi
             done
