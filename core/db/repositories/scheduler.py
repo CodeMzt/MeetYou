@@ -114,6 +114,39 @@ class ScheduledJobRepository(RepositoryBase):
     def list_all(self) -> list[ScheduledJob]:
         return list(self.session.query(ScheduledJob).order_by(ScheduledJob.job_id.asc()).all())
 
+    def list_due(self, *, now, limit: int = 50) -> list[ScheduledJob]:
+        normalized_limit = max(1, int(limit or 50))
+        return list(
+            self.session.query(ScheduledJob)
+            .filter(ScheduledJob.enabled.is_(True))
+            .filter(ScheduledJob.next_fire_at.is_not(None))
+            .filter(ScheduledJob.next_fire_at <= now)
+            .order_by(ScheduledJob.next_fire_at.asc(), ScheduledJob.job_id.asc())
+            .limit(normalized_limit)
+            .all()
+        )
+
+    def list_missing_next_fire_at(self, *, limit: int = 50) -> list[ScheduledJob]:
+        normalized_limit = max(1, int(limit or 50))
+        return list(
+            self.session.query(ScheduledJob)
+            .filter(ScheduledJob.enabled.is_(True))
+            .filter(ScheduledJob.next_fire_at.is_(None))
+            .order_by(ScheduledJob.job_id.asc())
+            .limit(normalized_limit)
+            .all()
+        )
+
+    def next_fire_at(self):
+        row = (
+            self.session.query(ScheduledJob)
+            .filter(ScheduledJob.enabled.is_(True))
+            .filter(ScheduledJob.next_fire_at.is_not(None))
+            .order_by(ScheduledJob.next_fire_at.asc(), ScheduledJob.job_id.asc())
+            .first()
+        )
+        return row.next_fire_at if row is not None else None
+
     def update(
         self,
         *,

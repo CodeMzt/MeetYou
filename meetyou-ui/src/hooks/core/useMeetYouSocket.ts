@@ -5,6 +5,14 @@ import { parseHealthEnvelope } from '../../protocolClient'
 import type { EndpointContext } from './useEndpointContext'
 
 const ENDPOINT_WS_SCHEMA = 'meetyou.endpoint.ws.v4'
+const ENDPOINT_WS_VERSION = 4
+const ENDPOINT_PROTOCOL_FEATURES = [
+  'tool_snapshot_optional',
+  'connection_prompt',
+  'feature_negotiation',
+  'heartbeat_interval_negotiation',
+  'hello_reject_reason',
+]
 
 function endpointSafeId(value: string, fallback: string): string {
   const normalized = String(value || '')
@@ -39,6 +47,14 @@ export function buildEndpointHandshakeFrames(endpointContext: EndpointContext): 
           display_name: '桌面应用',
           transport_profile: 'desktop_ui_bridge',
           supports_markdown: true,
+        },
+        protocol: {
+          schema: ENDPOINT_WS_SCHEMA,
+          version: ENDPOINT_WS_VERSION,
+          supported_schemas: [ENDPOINT_WS_SCHEMA],
+          supported_versions: [ENDPOINT_WS_VERSION],
+          features: ENDPOINT_PROTOCOL_FEATURES,
+          required_features: [],
         },
         supports_markdown: true,
         endpoints: [
@@ -76,6 +92,7 @@ export function useMeetYouSocket(
   const endpointWsRef = useRef<WebSocket | null>(null)
   const endpointWsContextKeyRef = useRef('')
   const endpointReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const endpointReconnectAttemptRef = useRef(0)
   const [endpointConnectionState, setEndpointConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
 
   const refreshHealth = useCallback(async () => {
@@ -152,6 +169,20 @@ export function useMeetYouSocket(
       const ws = new WebSocket(url)
       endpointWsRef.current = ws
       endpointWsContextKeyRef.current = contextKey
+      let helloAccepted = false
+      let subscriptionAccepted = false
+      let connectionReady = false
+
+      const markReadyIfComplete = () => {
+        if (connectionReady || !helloAccepted || !subscriptionAccepted) {
+          return
+        }
+        connectionReady = true
+        endpointReconnectAttemptRef.current = 0
+        setEndpointConnectionState('connected')
+        dispatchTransport({ type: 'set_connection_state', connectionState: 'connected' })
+        void refreshHealth()
+      }
 
       ws.onmessage = (event) => {
         if (endpointWsRef.current !== ws || endpointWsContextKeyRef.current !== contextKey) {
@@ -159,7 +190,40 @@ export function useMeetYouSocket(
         }
 
         try {
-          applyEndpointWsUpdate(JSON.parse(event.data))
+          const payload = JSON.parse(event.data)
+          if (payload?.schema === ENDPOINT_WS_SCHEMA) {
+            if (payload.type === 'endpoint.hello.ack') {
+              const body = payload.payload && typeof payload.payload === 'object' ? payload.payload : {}
+              if (body.accepted === false) {
+                setEndpointConnectionState('disconnected')
+                dispatchTransport({
+                  type: 'error',
+                  error: {
+                    code: 'endpoint_hello_rejected',
+                    category: 'dependency',
+                    message: String(body.reject_reason?.message || 'Endpoint handshake rejected'),
+                    retryable: false,
+                    details: body.reject_reason && typeof body.reject_reason === 'object' ? body.reject_reason : {},
+                    occurred_at: '',
+                  },
+                })
+                ws.close()
+                return
+              }
+              helloAccepted = true
+              markReadyIfComplete()
+              return
+            }
+            if (payload.type === 'subscription.ack') {
+              const body = payload.payload && typeof payload.payload === 'object' ? payload.payload : {}
+              if (body.active !== false) {
+                subscriptionAccepted = true
+                markReadyIfComplete()
+              }
+              return
+            }
+          }
+          applyEndpointWsUpdate(payload)
         } catch (error) {
           console.error('解析端点实时消息失败:', error)
         }
@@ -173,8 +237,6 @@ export function useMeetYouSocket(
         for (const frame of buildEndpointHandshakeFrames(endpointContext)) {
           ws.send(JSON.stringify(frame))
         }
-        setEndpointConnectionState('connected')
-        void refreshHealth()
       }
 
       ws.onclose = () => {
@@ -187,11 +249,15 @@ export function useMeetYouSocket(
         }
         setEndpointConnectionState('disconnected')
         dispatchTransport({ type: 'set_connection_state', connectionState: 'disconnected' })
+        const reconnectAttempt = endpointReconnectAttemptRef.current
+        endpointReconnectAttemptRef.current = Math.min(reconnectAttempt + 1, 6)
+        const baseDelayMs = Math.min(30000, 1000 * 2 ** reconnectAttempt)
+        const jitterMs = Math.floor(Math.random() * 500)
         endpointReconnectTimeoutRef.current = setTimeout(() => {
           if (!endpointWsRef.current) {
             connectEndpointWs()
           }
-        }, 3000)
+        }, baseDelayMs + jitterMs)
       }
 
       ws.onerror = (error) => {

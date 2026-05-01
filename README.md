@@ -364,7 +364,7 @@ Common subscription payload:
 }
 ```
 
-Core replies with `subscription.ack` and fans out matching `delivery.run_event`, `delivery.message`, `delivery.notice`, and `delivery.operation_update` frames.
+Core replies with `subscription.ack`; providers may change live fan-out with `subscription.update` or remove it with `subscription.stop`. Matching subscriptions receive `delivery.run_event`, `delivery.message`, `delivery.notice`, `delivery.operation_update`, and `delivery.inbox_item` frames.
 
 ### Delivery Frames
 
@@ -374,7 +374,7 @@ Core-to-Provider delivery frame types:
 - `delivery.run_event`: streaming chunks, progress notices, durable run state.
 - `delivery.notice`: non-message notice.
 - `delivery.operation_update`: operation/tool execution state.
-- `delivery.inbox_item`: inbox item delivery where supported.
+- `delivery.inbox_item`: inbox item delivery to a target endpoint or subscribed thread.
 
 Delivery must not generate assistant replies. Final assistant replies are persisted as assistant Messages first, then delivered.
 
@@ -404,7 +404,7 @@ Provider responses:
 - `tool.call.progress`: optional progress signal.
 - `tool.call.result`: final success result.
 - `tool.call.error`: final failure result.
-- `tool.call.cancel`: cancellation signal where implemented.
+- `tool.call.cancel`: cancellation signal for a matching active `call_id`.
 
 Danxi credentials and WebVPN cookies must use encrypted transport. Never log plaintext email, password, cookie, token, encrypted payload plaintext, or credential snapshots.
 
@@ -416,8 +416,8 @@ Danxi credentials and WebVPN cookies must use encrypted transport. Never log pla
 4. Send `endpoint.capabilities.snapshot` for execution endpoints.
 5. Send `endpoint.addresses.snapshot` if the provider has human-visible destinations.
 6. For inbound human messages, call `/runtime/endpoint-sessions/resolve`, then `/runtime/messages`.
-7. Subscribe to the bound thread if the provider needs streaming/delivery fan-out.
-8. Execute `tool.call.request` only inside the Provider runtime and return `tool.call.result` / `tool.call.error`.
+7. Subscribe to the bound thread if the provider needs streaming/delivery fan-out; use `subscription.update` / `subscription.stop` instead of reconnecting to change targets.
+8. Execute `tool.call.request` only inside the Provider runtime and return `tool.call.result` / `tool.call.error`; cancel the matching active call when `tool.call.cancel` arrives.
 
 Do not add `/client/ws`, `source_client_id`, `target_client_id`, Client-owned permissions, Client-owned executable capabilities, or `ClientToolDispatchService`. The old root-level `endpoint_tool_protocol.py` shim is removed; import protocol helpers from `endpoint_tool_sdk.protocol`.
 

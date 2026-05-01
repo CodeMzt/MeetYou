@@ -4,8 +4,13 @@ Bridge Core runtime events to Thread / Run / Delivery surfaces.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 from uuid import uuid4
+
+
+logger = logging.getLogger("meetyou.core.thread_delivery_bridge")
+MESSAGE_SESSION_CACHE_MAX = 512
 
 
 class ThreadDeliveryBridge:
@@ -90,7 +95,8 @@ class ThreadDeliveryBridge:
                 home_workspace=home_workspace_row,
                 metadata={"source": "assistant.message"},
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Context pool message record failed: %s", exc)
             return
 
     async def _publish_thread_event(self, gateway, thread_id: str, *, event_type: str, payload: dict[str, Any]) -> None:
@@ -290,6 +296,8 @@ class ThreadDeliveryBridge:
             workspace_id=getattr(workspace_row, "id", None) or getattr(thread_row, "workspace_id", None),
         )
         self._message_sessions[cache_key] = created
+        while len(self._message_sessions) > MESSAGE_SESSION_CACHE_MAX:
+            self._message_sessions.pop(next(iter(self._message_sessions)))
         return created
 
     async def publish_task_operation_update(

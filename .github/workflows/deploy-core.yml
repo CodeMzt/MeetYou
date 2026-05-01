@@ -1,11 +1,15 @@
 name: Deploy MeetYou Core
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches: [main]
+    types: [completed]
+  workflow_dispatch:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -49,6 +53,20 @@ jobs:
             done
 
             /opt/meetyou/scripts/deploy-core.sh
+
+            CORE_HEALTH_URL="${MEETYOU_CORE_HEALTH_URL:-http://127.0.0.1:8000/health}"
+            echo "Waiting for Core health: ${CORE_HEALTH_URL}"
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -fsS "${CORE_HEALTH_URL}" >/tmp/meetyou-core-health.json; then
+                cat /tmp/meetyou-core-health.json
+                break
+              fi
+              if [ "${attempt}" = "10" ]; then
+                echo "Core health check failed after deploy"
+                exit 1
+              fi
+              sleep 3
+            done
 
             if [ -n "${MEETYOU_REPO}" ] && [ -d "${MEETYOU_REPO}" ]; then
               PROVIDER_ENV_FILE="/etc/meetyou/meetyou-core.env"

@@ -2,6 +2,22 @@
 
 Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
 
+## 2026-05-01 V4 Architecture Optimization Addendum
+
+- Commit sha: pending local commit at the time this addendum was written.
+- Scope: Endpoint protocol contract, UI endpoint readiness, scheduled job due-query path, ToolRouter failure scoring, CI/deploy gates, manual acceptance wiring, and provider template docs.
+- Focused backend protocol/router/scheduler tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_endpoint_tool_protocol tests.test_endpoint_protocol_v4 tests.test_tool_router_v4 tests.test_scheduler_v4`, 23 tests).
+- Full backend discovery: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 608 tests, 1 skipped).
+- Frontend typecheck: passed (`npm run typecheck`).
+- Frontend tests: passed (`npm run test`, 21 files / 87 tests).
+- Frontend build: passed after refreshing local `node_modules` with `npm ci` (`npm run build`; existing Vite chunk warning and Electron author/resource warnings only).
+- V4 acceptance runner compile check: passed (`.venv\Scripts\python.exe -m py_compile scripts\v4_real_acceptance.py`).
+- Electron visual check: passed (`npm run visual:chat-ui`).
+- Visual report: `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\chat-ui-visual-report.json`.
+- Screenshots: `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\main-narrow-island-open-360x520.png`, `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\main-chat-after-send-400x620.png`.
+- Remote CI/Deploy: not run in this local addendum; `.github/workflows/deploy-core.yml` now waits for successful CI or manual dispatch.
+- Remote Core `/health`, Local Desktop against remote Core, Feishu, and WeChatBot human confirmation: not rerun in this local addendum.
+
 ## 2026-05-01 Scheduled Assistant Round Limit Addendum
 
 - Commit sha: `62679e87656577f1f896dcbdf2d900df774eada1`.

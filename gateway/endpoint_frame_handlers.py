@@ -521,21 +521,57 @@ class SubscriptionHandler(EndpointFrameHandler):
     frame_types = ("subscription.start", "subscription.update", "subscription.stop")
 
     async def handle(self, context: EndpointFrameContext) -> None:
-        if context.frame_type != "subscription.start":
-            await context.error(code="unsupported_frame", message=f"unsupported endpoint frame: {context.frame_type}")
+        if context.frame_type == "subscription.stop":
+            target_type = str(context.payload.get("target_type") or "").strip()
+            target_id = str(context.payload.get("target_id") or "").strip()
+            subscription_id = str(context.payload.get("subscription_id") or "").strip()
+            removed = await context.gateway.endpoint_ws_manager.unsubscribe(
+                context.websocket,
+                target_type=target_type,
+                target_id=target_id,
+                subscription_id=subscription_id,
+            )
+            await context.send(
+                "subscription.ack",
+                payload={
+                    "action": "stop",
+                    "subscription_id": subscription_id,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "active": False,
+                    "removed": removed,
+                },
+            )
             return
         target_type = str(context.payload.get("target_type") or "").strip()
         target_id = str(context.payload.get("target_id") or "").strip()
         subscription_id = str(context.payload.get("subscription_id") or "").strip()
-        await context.gateway.endpoint_ws_manager.subscribe(
-            context.websocket,
-            target_type=target_type,
-            target_id=target_id,
-            subscription_id=subscription_id,
-        )
+        if not target_type or not target_id:
+            await context.error(code="subscription_target_required", message="subscription requires target_type and target_id")
+            return
+        if context.frame_type == "subscription.update":
+            await context.gateway.endpoint_ws_manager.update_subscription(
+                context.websocket,
+                target_type=target_type,
+                target_id=target_id,
+                subscription_id=subscription_id,
+            )
+        else:
+            await context.gateway.endpoint_ws_manager.subscribe(
+                context.websocket,
+                target_type=target_type,
+                target_id=target_id,
+                subscription_id=subscription_id,
+            )
         await context.send(
             "subscription.ack",
-            payload={"subscription_id": subscription_id, "target_type": target_type, "target_id": target_id},
+            payload={
+                "action": "update" if context.frame_type == "subscription.update" else "start",
+                "subscription_id": subscription_id,
+                "target_type": target_type,
+                "target_id": target_id,
+                "active": True,
+            },
         )
         replay = context.payload.get("replay", True)
         if isinstance(replay, str):
@@ -555,11 +591,17 @@ class SubscriptionHandler(EndpointFrameHandler):
 
 
 class ToolResultHandler(EndpointFrameHandler):
-    frame_types = ("tool.call.result", "tool.call.accepted", "tool.call.progress", "tool.call.error")
+    frame_types = ("tool.call.result", "tool.call.accepted", "tool.call.progress", "tool.call.error", "tool.call.cancel")
 
     async def handle(self, context: EndpointFrameContext) -> None:
         call_id = str(context.payload.get("call_id") or "").strip()
         if not call_id:
+            return
+        if context.frame_type == "tool.call.cancel":
+            reason = str(context.payload.get("reason") or "endpoint cancelled tool call")
+            error = {"code": "endpoint_tool_cancelled", "message": reason, "retryable": False}
+            call_row = await context.domain.services.tool_router.notify_call_cancelled(call_id, error)
+            await _publish_operation_update(context.gateway, context.domain, call_row, phase="cancelled", error=error)
             return
         if context.frame_type == "tool.call.result":
             result = context.payload.get("result") if isinstance(context.payload.get("result"), dict) else {}

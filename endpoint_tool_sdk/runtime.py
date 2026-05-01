@@ -66,6 +66,7 @@ class EndpointToolRuntimeBase(ABC):
             max_parallel_calls = 2
         self._call_semaphore = asyncio.Semaphore(max(1, min(max_parallel_calls, 4)))
         self._active_call_tasks: set[asyncio.Task] = set()
+        self._active_call_tasks_by_call_id: dict[str, asyncio.Task] = {}
         self._active_call_count = 0
         self._call_locks: dict[str, asyncio.Lock] = {}
         self._send_lock = asyncio.Lock()
@@ -295,11 +296,36 @@ class EndpointToolRuntimeBase(ABC):
             self._logger.info("%s ready: %s", self.runtime_label, payload.get("payload", {}))
             return True
         if message_type == "tool.call.request":
+            envelope_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+            call_id = str(envelope_payload.get("call_id") or "").strip()
             task = asyncio.create_task(self._handle_call_request(ws, payload, session))
             self._active_call_tasks.add(task)
-            task.add_done_callback(self._active_call_tasks.discard)
+            if call_id:
+                self._active_call_tasks_by_call_id[call_id] = task
+
+            def _discard_call_task(done_task: asyncio.Task, *, active_call_id: str = call_id) -> None:
+                self._active_call_tasks.discard(done_task)
+                if active_call_id and self._active_call_tasks_by_call_id.get(active_call_id) is done_task:
+                    self._active_call_tasks_by_call_id.pop(active_call_id, None)
+
+            task.add_done_callback(_discard_call_task)
+            return ready_received
+        if message_type == "tool.call.cancel":
+            self._handle_call_cancel(payload)
             return ready_received
         return ready_received
+
+    def _handle_call_cancel(self, payload: dict[str, Any]) -> None:
+        envelope_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+        call_id = str(envelope_payload.get("call_id") or "").strip()
+        if not call_id:
+            return
+        task = self._active_call_tasks_by_call_id.get(call_id)
+        if task is None or task.done():
+            self._logger.info("%s received cancel for inactive call_id=%s", self.runtime_label, call_id)
+            return
+        task.cancel()
+        self._logger.info("%s cancelled active call_id=%s", self.runtime_label, call_id)
 
     async def handle_delivery_message(self, *, payload: dict[str, Any], ws, session) -> None:
         del ws, session
@@ -389,6 +415,19 @@ class EndpointToolRuntimeBase(ABC):
                 )
             )
             return
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await self._send_ws_json(
+                    ws,
+                    self.build_call_error_message(
+                        call_id=call_id,
+                        correlation_id=correlation_id,
+                        code="tool_call_cancelled",
+                        message="Tool call cancelled",
+                        retryable=False,
+                    )
+                )
+            raise
         except Exception as exc:
             await self._send_ws_json(
                 ws,

@@ -96,15 +96,34 @@ class EndpointWebSocketManager:
     async def subscribe(self, websocket, *, target_type: str, target_id: str, subscription_id: str = "") -> None:
         normalized_target_type = str(target_type or "").strip()
         normalized_target_id = str(target_id or "").strip()
+        normalized_subscription_id = str(subscription_id or "").strip()
         if not normalized_target_type or not normalized_target_id:
             return
         async with self._lock:
             self._subscriptions.setdefault((normalized_target_type, normalized_target_id), set()).add(websocket)
             metadata = dict(self._connection_meta.get(websocket) or {})
-            subscriptions = list(metadata.get("subscriptions") or [])
+            subscriptions = []
+            for item in list(metadata.get("subscriptions") or []):
+                if self._subscription_matches(
+                    item,
+                    subscription_id=normalized_subscription_id,
+                    target_type=normalized_target_type,
+                    target_id=normalized_target_id,
+                ):
+                    key = (
+                        str((item or {}).get("target_type") or "").strip(),
+                        str((item or {}).get("target_id") or "").strip(),
+                    )
+                    sockets = self._subscriptions.get(key)
+                    if sockets and key != (normalized_target_type, normalized_target_id):
+                        sockets.discard(websocket)
+                        if not sockets:
+                            self._subscriptions.pop(key, None)
+                    continue
+                subscriptions.append(item)
             subscriptions.append(
                 {
-                    "subscription_id": str(subscription_id or "").strip(),
+                    "subscription_id": normalized_subscription_id,
                     "target_type": normalized_target_type,
                     "target_id": normalized_target_id,
                 }
@@ -112,6 +131,64 @@ class EndpointWebSocketManager:
             metadata["subscriptions"] = subscriptions
             metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._connection_meta[websocket] = metadata
+
+    async def update_subscription(self, websocket, *, target_type: str, target_id: str, subscription_id: str = "") -> None:
+        await self.unsubscribe(
+            websocket,
+            target_type="" if subscription_id else target_type,
+            target_id="" if subscription_id else target_id,
+            subscription_id=subscription_id,
+        )
+        await self.subscribe(
+            websocket,
+            target_type=target_type,
+            target_id=target_id,
+            subscription_id=subscription_id,
+        )
+
+    async def unsubscribe(self, websocket, *, target_type: str = "", target_id: str = "", subscription_id: str = "") -> int:
+        removed = 0
+        normalized_target_type = str(target_type or "").strip()
+        normalized_target_id = str(target_id or "").strip()
+        normalized_subscription_id = str(subscription_id or "").strip()
+        async with self._lock:
+            metadata = dict(self._connection_meta.get(websocket) or {})
+            subscriptions = list(metadata.get("subscriptions") or [])
+            kept = []
+            for item in subscriptions:
+                if self._subscription_matches(
+                    item,
+                    subscription_id=normalized_subscription_id,
+                    target_type=normalized_target_type,
+                    target_id=normalized_target_id,
+                ):
+                    key = (
+                        str((item or {}).get("target_type") or "").strip(),
+                        str((item or {}).get("target_id") or "").strip(),
+                    )
+                    sockets = self._subscriptions.get(key)
+                    if sockets:
+                        sockets.discard(websocket)
+                        if not sockets:
+                            self._subscriptions.pop(key, None)
+                    removed += 1
+                    continue
+                kept.append(item)
+            metadata["subscriptions"] = kept
+            metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._connection_meta[websocket] = metadata
+        return removed
+
+    @staticmethod
+    def _subscription_matches(item: dict, *, subscription_id: str = "", target_type: str = "", target_id: str = "") -> bool:
+        item_subscription_id = str((item or {}).get("subscription_id") or "").strip()
+        item_target_type = str((item or {}).get("target_type") or "").strip()
+        item_target_id = str((item or {}).get("target_id") or "").strip()
+        if subscription_id and item_subscription_id == subscription_id:
+            return True
+        if target_type and target_id and item_target_type == target_type and item_target_id == target_id:
+            return True
+        return False
 
     def has_subscription(self, *, target_type: str, target_id: str) -> bool:
         key = (str(target_type or "").strip(), str(target_id or "").strip())
@@ -215,6 +292,19 @@ class EndpointWebSocketManager:
         if operation_id:
             delivered += await self.publish_subscription(target_type="operation", target_id=operation_id, frame=frame)
         return delivered
+
+    async def publish_inbox_item(self, *, target_endpoint_id: str = "", thread_id: str = "", payload: dict[str, Any]) -> int:
+        frame = {
+            "schema": ENDPOINT_WS_SCHEMA,
+            "type": "delivery.inbox_item",
+            "endpoint_id": str(target_endpoint_id or "").strip(),
+            "payload": dict(payload or {}),
+        }
+        if target_endpoint_id:
+            return await self.send_to_endpoint(target_endpoint_id, frame)
+        if thread_id:
+            return await self.publish_subscription(target_type="thread", target_id=thread_id, frame=frame)
+        return 0
 
     async def _send_many(self, targets: list, frame: dict[str, Any]) -> int:
         async def _send(websocket) -> bool:

@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
+﻿import { startTransition, useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { fetchRuntimeUsageSnapshot, listThreadMessages, sendRuntimeMessage, submitRuntimeConfirmResponse, submitRuntimeHumanInputResponse, submitRuntimeReplyControl } from '../../runtimeApi'
 import { createInitialChatState, createSystemTurn, createUserTurn, reduceChatState } from '../../chatState'
 import { parseEndpointWsPayload } from '../../protocolClient'
@@ -40,10 +40,10 @@ function lastAssistantActivities(turns: ReturnType<typeof createInitialChatState
 
 function buildAckMessage(ack: AckPayload): string {
   if (ack.action === 'confirm_response') {
-    return '确认结果已提交，服务继续执行。'
+    return 'Confirmation submitted.'
   }
   if (ack.action === 'input_response') {
-    return '补充信息已发送，服务继续执行。'
+    return 'Input submitted.'
   }
   return ''
 }
@@ -82,7 +82,6 @@ export function useChatSession(
   endpointContext: EndpointContext | null,
   sessionId: string,
   endpointId: string,
-  sendEndpointWsCommand: (payload: Record<string, unknown>) => boolean,
   dispatchTransport: any,
   initializeEndpointContext: () => Promise<EndpointContext>
 ) {
@@ -101,7 +100,7 @@ export function useChatSession(
           dispatchChat({ type: 'hydrate_messages', messages })
         })
       } catch (error) {
-        console.error('加载会话历史失败:', error)
+        console.error('鍔犺浇浼氳瘽鍘嗗彶澶辫触:', error)
       }
     },
     [baseUrl],
@@ -118,7 +117,7 @@ export function useChatSession(
           dispatchChat({ type: 'sync_usage', snapshot })
         })
       } catch (error) {
-        console.warn('同步运行用量快照失败:', error)
+        console.warn('鍚屾杩愯鐢ㄩ噺蹇収澶辫触:', error)
       }
     },
     [baseUrl],
@@ -179,7 +178,7 @@ export function useChatSession(
     if (!chatState.confirmRequest) return null
     return {
       requestId: chatState.confirmRequest.requestId,
-      title: '请求确认',
+      title: '璇锋眰纭',
       content: chatState.confirmRequest.content,
       timeoutSeconds: chatState.confirmRequest.timeout,
       defaultDecision: chatState.confirmRequest.defaultDecision,
@@ -220,7 +219,7 @@ export function useChatSession(
           endpoint_id: context.endpointId,
           session_id: context.session.session_id,
           endpoint_type: 'electron',
-          display_name: '桌面应用',
+          display_name: '妗岄潰搴旂敤',
           role: 'user',
           content,
           endpoint_message_id: endpointRequestId,
@@ -231,11 +230,11 @@ export function useChatSession(
           dispatchChat({ type: 'complete_user_turn', optimisticId: endpointRequestId, message })
         })
       } catch (error) {
-        console.error('通过端点 API 发送消息失败:', error)
+        console.error('閫氳繃绔偣 API 鍙戦€佹秷鎭け璐?', error)
         const transportError = {
           code: 'transport_error',
           category: 'dependency' as const,
-          message: error instanceof Error ? error.message : '连接后端失败，请稍后重试',
+          message: error instanceof Error ? error.message : '杩炴帴鍚庣澶辫触锛岃绋嶅悗閲嶈瘯',
           retryable: true,
           details: {},
           occurred_at: '',
@@ -252,7 +251,7 @@ export function useChatSession(
     [baseUrl, endpointContext, initializeEndpointContext, dispatchTransport],
   )
 
-  const sendConfirmResponse = useCallback(async (requestId: string, accepted: boolean, approvalId?: string) => {
+  const sendConfirmResponse = useCallback(async (requestId: string, accepted: boolean) => {
     const turnId = activeTurnIdRef.current
     const resolvedSessionId = endpointContext?.session.session_id || sessionId
     try {
@@ -264,39 +263,21 @@ export function useChatSession(
       startTransition(() => {
         dispatchChat({ type: 'resolve_confirm', requestId, accepted, turnId })
       })
-      return
-    } catch {
-      const sent = sendEndpointWsCommand({
-        action: 'confirm_response',
-        session_id: resolvedSessionId,
-        request_id: requestId,
-        accepted,
-        endpoint_id: endpointId,
-        metadata: {
-          from: 'confirm-dialog',
-          ...(approvalId ? { approval_id: approvalId } : {}),
-        },
-      })
-      if (!sent) {
-        const error = {
-          code: 'transport_error',
-          category: 'dependency' as const,
-          message: '交互通道未连接，无法提交确认结果',
-          retryable: true,
-          details: {},
-          occurred_at: '',
-        }
-        dispatchTransport({ type: 'error', error })
-        startTransition(() => {
-          dispatchChat({ type: 'append_system_turn', turn: createSystemTurn(error.message, true) })
-        })
-        return
+    } catch (submitError) {
+      const error = {
+        code: 'transport_error',
+        category: 'dependency' as const,
+        message: submitError instanceof Error ? submitError.message : 'Unable to submit confirmation response',
+        retryable: true,
+        details: {},
+        occurred_at: '',
       }
+      dispatchTransport({ type: 'error', error })
       startTransition(() => {
-        dispatchChat({ type: 'resolve_confirm', requestId, accepted, turnId })
+        dispatchChat({ type: 'append_system_turn', turn: createSystemTurn(error.message, true) })
       })
     }
-  }, [baseUrl, endpointContext?.session.session_id, endpointId, sendEndpointWsCommand, sessionId, dispatchTransport])
+  }, [baseUrl, endpointContext?.session.session_id, endpointId, sessionId, dispatchTransport])
 
   const sendHumanInputResponse = useCallback(
     async (requestId: string, answerText: string, selectedOption?: string) => {
@@ -319,44 +300,22 @@ export function useChatSession(
             turnId,
           })
         })
-        return
-      } catch {
-        const sent = sendEndpointWsCommand({
-          action: 'input_response',
-          session_id: resolvedSessionId,
-          request_id: requestId,
-          answer_text: normalizedAnswer,
-          selected_option: selectedOption,
-          endpoint_id: endpointId,
-          metadata: { from: 'human-input-panel' },
-        })
-        if (!sent) {
-          const error = {
-            code: 'transport_error',
-            category: 'dependency' as const,
-            message: '交互通道未连接，无法提交补充信息',
-            retryable: true,
-            details: {},
-            occurred_at: '',
-          }
-          dispatchTransport({ type: 'error', error })
-          startTransition(() => {
-            dispatchChat({ type: 'append_system_turn', turn: createSystemTurn(error.message, true) })
-          })
-          return
+      } catch (submitError) {
+        const error = {
+          code: 'transport_error',
+          category: 'dependency' as const,
+          message: submitError instanceof Error ? submitError.message : 'Unable to submit human input response',
+          retryable: true,
+          details: {},
+          occurred_at: '',
         }
+        dispatchTransport({ type: 'error', error })
         startTransition(() => {
-          dispatchChat({
-            type: 'resolve_human_input',
-            requestId,
-            answerText: normalizedAnswer,
-            selectedOption,
-            turnId,
-          })
+          dispatchChat({ type: 'append_system_turn', turn: createSystemTurn(error.message, true) })
         })
       }
     },
-    [baseUrl, endpointContext?.session.session_id, endpointId, sendEndpointWsCommand, sessionId, dispatchTransport],
+    [baseUrl, endpointContext?.session.session_id, endpointId, sessionId, dispatchTransport],
   )
 
   const sendControlCommand = useCallback(
@@ -379,7 +338,7 @@ export function useChatSession(
         const error = {
           code: 'transport_error',
           category: 'dependency' as const,
-          message: submitError instanceof Error ? submitError.message : '交互通道未连接，无法提交控制命令',
+          message: submitError instanceof Error ? submitError.message : '浜や簰閫氶亾鏈繛鎺ワ紝鏃犳硶鎻愪氦鎺у埗鍛戒护',
           retryable: true,
           details: {},
           occurred_at: '',
@@ -412,7 +371,7 @@ export function useChatSession(
         startTransition(() => {
           dispatchChat({
             type: 'append_system_turn',
-            turn: createSystemTurn(update.error.message || '发生错误', true),
+            turn: createSystemTurn(update.error.message || '鍙戠敓閿欒', true),
           })
         })
         break

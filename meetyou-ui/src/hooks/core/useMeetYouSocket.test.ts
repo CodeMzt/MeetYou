@@ -48,6 +48,12 @@ describe('useMeetYouSocket endpoint frames', () => {
           provider_type: 'desktop',
           provider_id: 'desktop-app',
         },
+        protocol: {
+          schema: 'meetyou.endpoint.ws.v4',
+          version: 4,
+          supported_schemas: ['meetyou.endpoint.ws.v4'],
+          supported_versions: [4],
+        },
         endpoints: [
           {
             endpoint_id: 'desktop.desktop-app.ui',

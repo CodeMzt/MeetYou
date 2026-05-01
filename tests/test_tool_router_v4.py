@@ -518,6 +518,38 @@ class ToolRouterV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(endpoint_service.routing_results[0]["endpoint_row_id"], "endpoint-c")
         self.assertTrue(endpoint_service.routing_results[0]["success"])
 
+    async def test_failed_endpoint_dispatch_records_routing_stats(self):
+        endpoint_service = _ScoringEndpointService()
+        router = ToolRouterService(
+            actor_service=_NoopService(),
+            workspace_service=_ScoringWorkspaceService(preferred_endpoint_ids=["desktop.c.executor"]),
+            endpoint_service=endpoint_service,
+            endpoint_capability_service=_ScoringCapabilityService(),
+            session_service=_NoopService(),
+            thread_service=_NoopService(),
+            operation_service=_OperationService(),
+            operation_call_service=_OperationCallService(),
+        )
+        router.set_connected_endpoint_ids_getter(lambda: {"desktop.c.executor"})
+
+        async def _transport(*, endpoint_id, payload):
+            del endpoint_id, payload
+            return False
+
+        router.set_endpoint_transport(_transport)
+
+        with self.assertRaises(ToolRouterError) as raised:
+            await router.dispatch_tool_call(
+                tool_key="utility.echo",
+                arguments={"text": "ok"},
+                workspace_id="personal",
+                confirmed=True,
+            )
+
+        self.assertEqual(raised.exception.code, "target_endpoint_unavailable")
+        self.assertEqual(endpoint_service.routing_results[0]["endpoint_row_id"], "endpoint-c")
+        self.assertFalse(endpoint_service.routing_results[0]["success"])
+
 
 if __name__ == "__main__":
     unittest.main()

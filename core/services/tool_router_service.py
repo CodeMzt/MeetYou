@@ -851,8 +851,17 @@ class ToolRouterService:
         }
         if target.target_type == "external":
             if self._external_transport is None:
+                failed_call = self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "external_executor_unavailable"})
+                self._record_endpoint_routing_result(failed_call, success=False)
                 raise ToolRouterError("external_executor_unavailable", "External executor is unavailable", retryable=True)
-            result = dict(await self._external_transport(endpoint_id=target.target_id, frame=frame) or {})
+            try:
+                result = dict(await self._external_transport(endpoint_id=target.target_id, frame=frame) or {})
+            except Exception:
+                failed_call = self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "external_executor_failed"})
+                self._record_endpoint_routing_result(failed_call, success=False)
+                raise
+            succeeded_call = self._operation_call_service.mark_succeeded(call_id=call.call_id, result=result)
+            self._record_endpoint_routing_result(succeeded_call, success=True)
             if return_operation:
                 return {
                     "status": "succeeded",
@@ -863,7 +872,8 @@ class ToolRouterService:
                 }
             return result
         if self._endpoint_transport is None:
-            self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "endpoint_transport_unavailable"})
+            failed_call = self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "endpoint_transport_unavailable"})
+            self._record_endpoint_routing_result(failed_call, success=False)
             raise ToolRouterError("endpoint_transport_unavailable", "Endpoint transport is unavailable", retryable=True)
 
         loop = asyncio.get_running_loop()
@@ -875,9 +885,11 @@ class ToolRouterService:
             async with self._lock:
                 self._pending.pop(call.call_id, None)
             if target.offline_policy in {"queue_until_online", "store_in_outbox"}:
-                self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "waiting_for_endpoint"})
+                failed_call = self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "waiting_for_endpoint"})
+                self._record_endpoint_routing_result(failed_call, success=False)
                 return {"status": "waiting_for_endpoint", "operation_id": operation.operation_id, "call_id": call.call_id}
-            self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "target_endpoint_unavailable"})
+            failed_call = self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "target_endpoint_unavailable"})
+            self._record_endpoint_routing_result(failed_call, success=False)
             raise ToolRouterError("target_endpoint_unavailable", f"Endpoint is unavailable: {target.target_id}", retryable=True)
         self._operation_call_service.mark_dispatched(call_id=call.call_id)
         try:
@@ -892,7 +904,8 @@ class ToolRouterService:
                 }
             return result
         except asyncio.TimeoutError as exc:
-            self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "endpoint_tool_timeout"})
+            failed_call = self._operation_call_service.mark_failed(call_id=call.call_id, error={"code": "endpoint_tool_timeout"})
+            self._record_endpoint_routing_result(failed_call, success=False)
             raise ToolRouterError("endpoint_tool_timeout", f"Endpoint tool call timed out after {timeout_seconds} seconds", retryable=True) from exc
         finally:
             async with self._lock:
@@ -919,6 +932,27 @@ class ToolRouterService:
                         str(error.get("message") or "Endpoint tool call failed"),
                         details=dict(error or {}),
                         retryable=bool(error.get("retryable", False)),
+                    )
+                )
+        return call_row
+
+    async def notify_call_cancelled(self, call_id: str, error: dict[str, Any] | None = None):
+        payload = dict(error or {})
+        payload.setdefault("code", "endpoint_tool_cancelled")
+        payload.setdefault("message", "Endpoint tool call cancelled")
+        payload.setdefault("retryable", False)
+        marker = getattr(self._operation_call_service, "mark_cancelled", None)
+        call_row = marker(call_id=call_id, error=payload) if callable(marker) else self._operation_call_service.mark_failed(call_id=call_id, error=payload)
+        self._record_endpoint_routing_result(call_row, success=False)
+        async with self._lock:
+            future = self._pending.get(call_id)
+            if future is not None and not future.done():
+                future.set_exception(
+                    ToolRouterError(
+                        str(payload.get("code") or "endpoint_tool_cancelled"),
+                        str(payload.get("message") or "Endpoint tool call cancelled"),
+                        details=payload,
+                        retryable=bool(payload.get("retryable", False)),
                     )
                 )
         return call_row

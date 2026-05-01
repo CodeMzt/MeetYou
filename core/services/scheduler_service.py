@@ -74,6 +74,30 @@ class SchedulerService(ServiceBase):
         with self.session_scope() as session:
             return ScheduledJobRepository(session).list_all()
 
+    def list_due_jobs(self, *, now=None, limit: int = 50):
+        with self.session_scope() as session:
+            return ScheduledJobRepository(session).list_due(now=now or utcnow(), limit=limit)
+
+    def ensure_missing_next_fire_times(self, *, limit: int = 50) -> int:
+        updated = 0
+        with self.session_scope() as session:
+            repo = ScheduledJobRepository(session)
+            for row in repo.list_missing_next_fire_at(limit=limit):
+                row.next_fire_at = compute_next_fire_at(
+                    trigger_type=row.trigger_type,
+                    trigger_config=row.trigger_config,
+                    timezone_name=row.timezone,
+                    after=utcnow(),
+                )
+                updated += 1
+            if updated:
+                session.flush()
+        return updated
+
+    def next_fire_at(self):
+        with self.session_scope() as session:
+            return ScheduledJobRepository(session).next_fire_at()
+
     def ensure_system_heartbeat(self, *, interval_seconds: int = 600):
         with self.session_scope() as session:
             repo = ScheduledJobRepository(session)

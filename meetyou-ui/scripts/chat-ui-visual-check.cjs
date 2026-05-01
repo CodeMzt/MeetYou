@@ -160,8 +160,20 @@ function sendConnectionAck() {
     schema: 'meetyou.endpoint.ws.v4',
     type: 'endpoint.hello.ack',
     payload: {
+      accepted: true,
       target_id: threadId,
       status: 'connected',
+    },
+  })
+  sendWs({
+    schema: 'meetyou.endpoint.ws.v4',
+    type: 'subscription.ack',
+    payload: {
+      action: 'start',
+      subscription_id: `sub-${threadId}`,
+      target_type: 'thread',
+      target_id: threadId,
+      active: true,
     },
   })
 }

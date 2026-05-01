@@ -2014,18 +2014,14 @@ class App:
                     wait_seconds = 1
                 else:
                     now = datetime.now(timezone.utc)
-                    jobs = list(self.core_domain.services.scheduler.list_jobs())
+                    self.core_domain.services.scheduler.ensure_missing_next_fire_times(limit=100)
+                    next_fire_at = _ensure_utc_datetime(self.core_domain.services.scheduler.next_fire_at())
+                    if next_fire_at is not None:
+                        wait_seconds = max(1, min(wait_seconds, int((next_fire_at - now).total_seconds()) + 1))
+                    jobs = list(self.core_domain.services.scheduler.list_due_jobs(now=now, limit=50))
                     for job in jobs:
                         job_id = str(getattr(job, "job_id", "") or "").strip()
-                        interval_seconds = self._scheduler_interval_seconds(job)
-                        if interval_seconds > 0:
-                            wait_seconds = max(1, min(wait_seconds, interval_seconds))
                         if not job_id or not bool(getattr(job, "enabled", True)):
-                            continue
-                        if getattr(job, "next_fire_at", None) is None:
-                            job = self.core_domain.services.scheduler.ensure_next_fire_at(job_id=job_id)
-                        next_fire_at = _ensure_utc_datetime(getattr(job, "next_fire_at", None))
-                        if next_fire_at is None or next_fire_at > now:
                             continue
                         leased_job = self.core_domain.services.scheduler.acquire_due_lease(
                             job_id=job_id,
@@ -2036,7 +2032,7 @@ class App:
                             continue
                         try:
                             await self._run_scheduler_job_once(leased_job)
-                            self.core_domain.services.scheduler.mark_fired(job_id=job_id, fired_at=now)
+                            self.core_domain.services.scheduler.mark_fired(job_id=job_id, fired_at=datetime.now(timezone.utc))
                         except Exception:
                             self.core_domain.services.scheduler.release_lease(job_id=job_id)
                             raise

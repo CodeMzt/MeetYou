@@ -193,6 +193,12 @@ class ToolCallErrorPayload(BaseModel):
     finished_at: str = ""
 
 
+class ToolCallCancelPayload(BaseModel):
+    call_id: str
+    reason: str = ""
+    cancelled_at: str = ""
+
+
 def build_endpoint_envelope(
     *,
     envelope_type: str,
@@ -426,6 +432,27 @@ def build_tool_call_error_message(
                 "retryable": retryable,
             },
             "finished_at": utcnow_iso(),
+        },
+    )
+
+
+def build_tool_call_cancel_message(
+    *,
+    endpoint_id: str,
+    call_id: str,
+    message_id: str = "",
+    correlation_id: str = "",
+    reason: str = "",
+) -> dict[str, Any]:
+    return build_endpoint_envelope(
+        envelope_type="tool.call.cancel",
+        endpoint_id=str(endpoint_id or "").strip(),
+        message_id=message_id or f"msg_{uuid4().hex}",
+        correlation_id=correlation_id,
+        payload={
+            "call_id": str(call_id or "").strip(),
+            "reason": str(reason or "").strip(),
+            "cancelled_at": utcnow_iso(),
         },
     )
 

@@ -6,7 +6,7 @@ import styles from './ActionCard.module.css'
 
 interface ActionCardProps {
   turn: ChatTurn
-  sendConfirmResponse: (requestId: string, accepted: boolean, approvalId?: string) => void
+  sendConfirmResponse: (requestId: string, accepted: boolean) => void
   sendHumanInputResponse: (requestId: string, answerText: string, selectedOption?: string) => void
 }
 
@@ -71,10 +71,10 @@ export default function ActionCard({
               )}
             </div>
             <div className={styles.buttonGroup}>
-              <button className={`${styles.btn} ${styles.btnCancel}`} onClick={() => sendConfirmResponse(confirmRequest.requestId, false, confirmRequest.approvalId)}>
+              <button className={`${styles.btn} ${styles.btnCancel}`} onClick={() => sendConfirmResponse(confirmRequest.requestId, false)}>
                 拒绝
               </button>
-              <button className={`${styles.btn} ${styles.btnConfirm}`} onClick={() => sendConfirmResponse(confirmRequest.requestId, true, confirmRequest.approvalId)}>
+              <button className={`${styles.btn} ${styles.btnConfirm}`} onClick={() => sendConfirmResponse(confirmRequest.requestId, true)}>
                 允许执行
               </button>
             </div>

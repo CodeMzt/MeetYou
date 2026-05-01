@@ -47,7 +47,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
 
   const {
     endpointConnectionState,
-    sendEndpointWsCommand,
     refreshHealth,
   } = useMeetYouSocket(
     baseUrl,
@@ -73,7 +72,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     endpointContext,
     sessionId,
     endpointId,
-    sendEndpointWsCommand,
     dispatchTransport,
     initializeEndpointContext
   )

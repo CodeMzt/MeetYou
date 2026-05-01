@@ -86,3 +86,15 @@ class OperationCallService(ServiceBase):
                     metadata={"error": dict(error or {})},
                 )
             return row
+
+    def mark_cancelled(self, *, call_id: str, error: dict | None = None):
+        with self.session_scope() as session:
+            row = OperationCallRepository(session).update_status(call_id=call_id, status="cancelled", error=error or {})
+            if row is not None:
+                OperationRepository(session).update_status(
+                    operation_id=row.operation_id,
+                    status="cancelled",
+                    result_summary=str((error or {}).get("message") or "Tool call cancelled"),
+                    metadata={"error": dict(error or {})},
+                )
+            return row

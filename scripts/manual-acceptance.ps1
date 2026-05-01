@@ -4,7 +4,8 @@ param(
     [string]$BaseUrl = "http://127.0.0.1:8000",
     [switch]$SkipService,
     [switch]$SkipDesktopClient,
-    [switch]$SkipUi
+    [switch]$SkipUi,
+    [switch]$SkipRealAcceptance
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,6 +103,7 @@ function Show-Help {
     Write-Host "  -SkipService"
     Write-Host "  -SkipDesktopClient"
     Write-Host "  -SkipUi"
+    Write-Host "  -SkipRealAcceptance"
     Write-Host ""
     Write-Host "Notes:"
     Write-Host "  - For remote Core checks, keep Core running and point BaseUrl at the remote service."
@@ -222,8 +224,25 @@ function Run-ManualAcceptanceCheck {
         return 1
     }
 
+    if (-not $SkipRealAcceptance) {
+        Write-Section "V4 real acceptance"
+        $acceptanceScript = Join-Path $RepoRoot "scripts\v4_real_acceptance.py"
+        $acceptanceArgs = @($acceptanceScript, "--base-url", $BaseUrl.TrimEnd("/"))
+        if ($SkipUi) {
+            $acceptanceArgs += "--skip-ui"
+        }
+        & $PythonExe @acceptanceArgs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "V4 real acceptance failed"
+            return $LASTEXITCODE
+        }
+        Write-Ok "V4 real acceptance passed"
+    } else {
+        Write-Warn "V4 real acceptance skipped"
+    }
+
     Write-Section "Done"
-    Write-Host "API checks passed. Next, validate UI / thread / run / delivery / operation flows and record docs\v4\test-report.md."
+    Write-Host "Checks passed. Record UI / thread / run / delivery / operation results in docs\v4\test-report.md."
     return 0
 }
 

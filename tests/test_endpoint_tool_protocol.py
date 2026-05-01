@@ -8,6 +8,7 @@ from endpoint_tool_sdk.protocol import (
     build_endpoint_capabilities_snapshot,
     build_endpoint_heartbeat,
     build_endpoint_hello,
+    build_tool_call_cancel_message,
     build_tool_call_request,
 )
 
@@ -59,6 +60,20 @@ class EndpointToolProtocolTests(unittest.TestCase):
         self.assertEqual(payload["payload"]["tool_key"], "shell.exec")
         self.assertNotIn("target_endpoint_id", payload["payload"])
         self.assertNotIn("target_" + "agent_id", payload["payload"])
+
+    def test_tool_call_cancel_uses_endpoint_protocol_schema(self):
+        payload = build_tool_call_cancel_message(
+            endpoint_id="desktop.desktop-main.executor",
+            call_id="call_1",
+            message_id="msg_cancel",
+            reason="user requested stop",
+        )
+
+        self.assertEqual(payload["schema"], ENDPOINT_TOOL_PROTOCOL_SCHEMA)
+        self.assertEqual(payload["type"], "tool.call.cancel")
+        self.assertEqual(payload["endpoint_id"], "desktop.desktop-main.executor")
+        self.assertEqual(payload["payload"]["call_id"], "call_1")
+        self.assertEqual(payload["payload"]["reason"], "user requested stop")
 
 
 if __name__ == "__main__":

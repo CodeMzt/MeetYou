@@ -1,36 +1,20 @@
-# Runtime Migration Notes V4
+﻿# Runtime Migration Notes V4
 
-V4 是开发期替换，不做 V3 兼容层。
-
-## 已迁移入口
-
+Current rule: /client/* and /client/ws are removed V3 surfaces. Do not register removed-response compatibility handlers; use /runtime/* for Runtime HTTP, /endpoint/ws for provider realtime, and /desktop/* only as the local Desktop bridge/proxy surface.
+V4 鏄紑鍙戞湡鏇挎崲锛屼笉鍋?V3 鍏煎灞傘€?
+## 宸茶縼绉诲叆鍙?
 - Runtime HTTP: `/runtime/*`
 - Endpoint realtime: `/endpoint/ws`
-- Desktop local bridge: `/desktop/*`，只代理 `/runtime/*`、`/operator/*`、`/developer/*`
+- Desktop local bridge: `/desktop/*`锛屽彧浠ｇ悊 `/runtime/*`銆乣/operator/*`銆乣/developer/*`
 
-旧 `/client/*` 和 `/client/ws` 不再承载业务；清理期拒绝路由只能返回 removed 响应。
+## 宸茶縼绉绘ā鍨?
+- Client 姒傚康闄嶇骇涓?Endpoint Provider銆?- `source_client_id` / `target_client_id` 鏇挎崲涓?`origin_endpoint_id`銆乣target_endpoint_id`銆乣execution_target_id`銆?- `core.local` 鏄?Core 杩涚▼鍐?ExecutionTarget銆?- Delivery 鍙仛鎶曢€掞紝涓嶇敓鎴愬洖澶嶃€?- Streaming 璧?RunEventLog + Delivery fan-out銆?- Scheduler 鍙栦唬鏃?TaskManager 鍚庡彴璋冨害鎺у埗娴併€?- Procedure 鍒犻櫎锛屽鐢ㄥ伐浣滄祦鏀圭敤 SKILL銆?
+## 閰嶇疆娉ㄦ剰
 
-## 已迁移模型
+- `user/config.json` 鏄湰鍦拌繍琛岄厤缃紝secret 鏀?`.env`銆?- 鏈湴鐪熷疄娴嬭瘯濡傞渶閬垮紑杩滅▼ Core 閰嶇疆锛屽簲浣跨敤褰撳墠杩涚▼鐜鍙橀噺瑕嗙洊锛屼笉瑕佹敼鐪熷疄 `.env`銆?- Desktop Provider 浣跨敤 `user/desktop_client.json`銆?- Edge Provider 浣跨敤 `user/edge_client.json`銆?- Core-side MCP 涓?Desktop local MCP 鍒嗗埆浣跨敤 `user/core_mcp_servers.json` 鍜?`user/mcp_servers.json`銆?
+## 楠岃瘉
 
-- Client 概念降级为 Endpoint Provider。
-- `source_client_id` / `target_client_id` 替换为 `origin_endpoint_id`、`target_endpoint_id`、`execution_target_id`。
-- `core.local` 是 Core 进程内 ExecutionTarget。
-- Delivery 只做投递，不生成回复。
-- Streaming 走 RunEventLog + Delivery fan-out。
-- Scheduler 取代旧 TaskManager 后台调度控制流。
-- Procedure 删除，复用工作流改用 SKILL。
-
-## 配置注意
-
-- `user/config.json` 是本地运行配置，secret 放 `.env`。
-- 本地真实测试如需避开远程 Core 配置，应使用当前进程环境变量覆盖，不要改真实 `.env`。
-- Desktop Provider 使用 `user/desktop_client.json`。
-- Edge Provider 使用 `user/edge_client.json`。
-- Core-side MCP 与 Desktop local MCP 分别使用 `user/core_mcp_servers.json` 和 `user/mcp_servers.json`。
-
-## 验证
-
-迁移相关改动至少跑：
+杩佺Щ鐩稿叧鏀瑰姩鑷冲皯璺戯細
 
 - backend unittest discovery
 - migration / bootstrap tests
@@ -39,4 +23,4 @@ V4 是开发期替换，不做 V3 兼容层。
 - tool router tests
 - delivery tests
 - frontend typecheck / test / build
-- 本地 Core + Desktop + UI 真实测试
+- 鏈湴 Core + Desktop + UI 鐪熷疄娴嬭瘯
