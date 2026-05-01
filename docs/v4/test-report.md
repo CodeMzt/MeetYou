@@ -4,7 +4,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 
 ## 2026-05-01 V4 Architecture Optimization Addendum
 
-- Commit sha: pending local commit at the time this addendum was written.
+- Functional commit sha: `79bf5f3388724a21ec8c7fd1b8e00c3f8dda755d`.
 - Scope: Endpoint protocol contract, UI endpoint readiness, scheduled job due-query path, ToolRouter failure scoring, CI/deploy gates, manual acceptance wiring, provider template docs, and Linux-compatible local object-store path resolution exposed by remote full discovery.
 - Focused backend protocol/router/scheduler/object-store tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_object_store tests.test_endpoint_tool_protocol tests.test_endpoint_protocol_v4 tests.test_tool_router_v4 tests.test_scheduler_v4`, 29 tests).
 - Full backend discovery: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 608 tests, 1 skipped).
@@ -15,8 +15,10 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Electron visual check: passed (`npm run visual:chat-ui`).
 - Visual report: `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\chat-ui-visual-report.json`.
 - Screenshots: `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\main-narrow-island-open-360x520.png`, `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\main-chat-after-send-400x620.png`.
-- Remote CI/Deploy: not run in this local addendum; `.github/workflows/deploy-core.yml` now waits for successful CI or manual dispatch.
-- Remote Core `/health`, Local Desktop against remote Core, Feishu, and WeChatBot human confirmation: not rerun in this local addendum.
+- CI status: passed (`CI`, run `25201497492`, commit `79bf5f3388724a21ec8c7fd1b8e00c3f8dda755d`). The first full-discovery publish attempt failed on Ubuntu because legacy local object-store attachment paths used Windows separators; the follow-up commit fixed normalized slash-key handling.
+- Deploy status: passed (`Deploy MeetYou Core`, run `25201575635`, commit `79bf5f3388724a21ec8c7fd1b8e00c3f8dda755d`), triggered by successful CI through `workflow_run`.
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=79bf5f3388724a21ec8c7fd1b8e00c3f8dda755d`, `branch=main`, `build_time=2026-05-01T04:00:31Z`).
+- Local Desktop against remote Core, Feishu, and WeChatBot human confirmation: not rerun in this architecture optimization addendum.
 
 ## 2026-05-01 Scheduled Assistant Round Limit Addendum
 
