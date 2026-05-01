@@ -2,6 +2,9 @@
   "name": "meetyou-ui",
   "version": "1.0.0",
   "description": "MeetYou Desktop Floating Widget",
+  "private": true,
+  "author": "MeetYou Contributors",
+  "license": "MIT",
   "main": "dist-electron/main.js",
   "build": {
     "appId": "com.meetyou.app",
@@ -49,7 +52,10 @@
     "visual:workspace-governance": "electron scripts/workspace-governance-visual-check.cjs",
     "visual:chat-ui": "electron scripts/chat-ui-visual-check.cjs",
     "visual:settings-skill": "electron scripts/settings-skill-visual-check.cjs",
-    "build": "tsc && vite build && electron-builder",
+    "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File ..\\scripts\\build-desktop-backend.ps1",
+    "build:ui": "tsc && vite build",
+    "build:installer": "electron-builder",
+    "build": "npm run build:backend && npm run build:ui && npm run build:installer",
     "preview": "vite preview"
   },
   "dependencies": {

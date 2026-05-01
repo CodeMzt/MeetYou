@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible MeetYou problem.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include real tokens, cookies, credentials, private hostnames, chat IDs, personal paths, or screenshots with sensitive data.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reproducible sequence.
+      placeholder: |
+        1. Start Core with ...
+        2. Connect endpoint ...
+        3. Send ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Windows 11, Python 3.11, Node.js 20, PostgreSQL 16
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste only redacted logs.
+      render: text

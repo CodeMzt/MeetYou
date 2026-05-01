@@ -1,117 +1,105 @@
 # MeetYou
 
-MeetYou 是一个以 LLM 为核心的个人智能体系统。当前主线是 **V4: Core-owned Runtime + Endpoint Routing**：
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
-```text
-Electron UI -> desktop_client backend ----\
-CIL / HTTP surfaces -----------------------> Core Service -> Thread / Message / Run
-Edge Endpoint Providers ------------------/        |        Scheduler / Heartbeat
-External Endpoint Providers --------------/        v        Memory / Operation / Delivery
-                                            ToolRouter -> ExecutionTarget
+MeetYou is a personal agent runtime built around LLMs, local desktop execution, scheduled workflows, memory, and multi-channel delivery. The current architecture line is **V4: Core-owned Runtime + Endpoint Routing**.
+
+The short version: Core owns conversations and runtime state; endpoint providers connect humans, devices, tools, and third-party channels without owning the conversation model.
+
+```mermaid
+flowchart LR
+    Human["Human / External Channels"] --> Providers["Endpoint Providers<br/>Desktop / Edge / Feishu / WeChatBot"]
+    UI["Electron Desktop UI"] --> Desktop["desktop_client backend"]
+    CIL["CIL / HTTP Surfaces"] --> Core["Core Service"]
+    Desktop --> Core
+    Providers --> Core
+
+    Core --> Thread["Thread / Message / Run"]
+    Core --> Scheduler["Scheduler / system.heartbeat"]
+    Core --> Memory["Memory / Context"]
+    Core --> Delivery["Delivery / RunEvent fan-out"]
+    Core --> Router["ToolRouter"]
+    Router --> Targets["ExecutionTarget<br/>core.local / endpoint executors"]
+
+    Store[(PostgreSQL<br/>Alembic migrations)] <--> Core
 ```
 
-Core 统一拥有 Thread、Message、Run、Scheduler、Heartbeat、Memory、Operation 和 Delivery。Desktop、Edge、Feishu、WeChatBot、webhook、email 等只作为 Endpoint Provider 接入，不拥有会话、运行、调度、投递或工具执行语义。V4 的权威实现边界在 [AGENTS.md](./AGENTS.md) 和 [docs/v4/](./docs/v4/)；`docs/v3/`、`docs/archive/` 和历史计划文档只作为留痕资料保留。
+## Why MeetYou Exists
 
-## Current Architecture
+Most assistant projects mix chat UI, tool execution, memory, scheduling, and channel delivery into one surface. That is convenient early on, but it becomes fragile when the same assistant needs to run from a desktop window, an edge machine, Feishu, WeChatBot, scheduled jobs, or future providers.
 
-### Core Service
+MeetYou separates those responsibilities:
 
-Core 是服务端主链，负责：
+- **Core is the source of truth** for threads, messages, runs, scheduler state, heartbeat, memory, operations, and delivery.
+- **Endpoint Providers are runtime surfaces**. Desktop, Edge, Feishu, WeChatBot, webhook, email, and similar surfaces expose endpoints and capabilities, but they do not own conversations or scheduling semantics.
+- **Tool execution is explicit**. Tool dispatch flows through ToolRouter and ExecutionTarget; permissions live on Actor, Workspace, and RunPolicy; executable capability lives on EndpointCapability.
+- **Workflow reuse uses SKILL**. Reusable guidance is modeled as SKILL files rather than V3 Procedure APIs.
 
-- Thread / Message / Run runtime
-- Scheduler / `system.heartbeat` / Memory / Operation / Delivery
-- ToolRouter / ExecutionTarget 调度
-- Actor / Workspace / RunPolicy 权限判断
-- PostgreSQL 持久化与 Alembic migration
-- FastAPI `/runtime/*` HTTP facade 和 `GET /endpoint/ws` WebSocket 协议
+## What It Can Do
 
-入口：
+- Run a Core assistant service with persistent Thread / Message / Run state.
+- Stream assistant output through RunEventLog and delivery fan-out.
+- Connect Desktop and Edge endpoint providers through the V4 `/endpoint/ws` protocol.
+- Route local file, shell, workspace, and MCP capabilities through endpoint execution targets rather than embedding them in Core.
+- Deliver replies, notices, run events, and operation updates to endpoint addresses.
+- Support scheduled workflows, scheduled delivery, and the non-deletable `system.heartbeat` job.
+- Maintain memory and context pools for assistant grounding.
+- Provide an Electron + React desktop UI with thread, operation, attachment, memory, workspace, and settings surfaces.
+- Integrate optional external providers such as Feishu and WeChatBot.
+- Keep Danxi credentials behind encrypted transport and avoid plaintext credential exposure in logs or docs examples.
 
-```powershell
-python main.py service
-python -m service_runtime
-```
+## Current Status
 
-### Endpoint Provider
+MeetYou is an active V4 codebase. It is usable for development and self-hosted experimentation, but it is still a fast-moving personal agent runtime rather than a polished end-user product.
 
-Endpoint Provider 是 Core 外部的连接与能力运行时。Provider 可以暴露一个或多个 Endpoint，例如 Desktop UI endpoint、Desktop executor endpoint、Edge executor endpoint。Provider 内部的人类可见目的地，例如飞书会话、微信群、微信私聊，必须建模为 `EndpointAddress`，不能再建模为 Client。
-
-主要 Provider：
-
-- `desktop_client/`: 桌面本地后端和本地执行能力，通过 `/endpoint/ws` 连接 Core。
-- `edge_client/`: 边缘执行 Provider，按 workspace 暴露 endpoint capabilities。
-- `endpoint_providers/`: Feishu、WeChatBot 等外部 Provider。
-- `endpoint_tool_sdk/`: Endpoint WebSocket 协议、帧构造和 Provider runtime 基类。
-
-入口：
-
-```powershell
-python main.py desktop-client
-python main.py edge-client
-python -m desktop_client
-python -m edge_client
-python -m endpoint_providers.feishu
-python -m endpoint_providers.meetwechat
-```
-
-### Frontend
-
-`meetyou-ui/` 是 Electron + React 桌面 UI。Renderer 默认访问本地 desktop backend；desktop backend 再代理到 Core 的 `/runtime/*`、`/operator/*` 或 `/developer/*`。Frontend 不应自行发明 Core 协议名。
-
-关键文件：
-
-- `meetyou-ui/electron/main.ts`: Electron main process。
-- `meetyou-ui/src/main.tsx`: Renderer entry。
-- `meetyou-ui/src/hooks/useMeetYou.ts`: UI 访问 Core 的主链 hook。
-- `meetyou-ui/src/windowBridge.ts`: Electron bridge。
-
-开发启动：
-
-```powershell
-cd meetyou-ui
-npm install
-npm run dev
-```
+The repository is Windows-oriented by default because the desktop provider, launcher, PowerShell scripts, and Electron packaging paths are currently optimized for Windows. Core deployment also supports Linux systemd and Docker-style service layouts.
 
 ## Repository Layout
 
-```text
-main.py               Development launcher and runtime entrypoints
-core/                 Core assembly, lifecycle, domain services, state, modes
-gateway/              FastAPI HTTP facade and V4 Endpoint WebSocket surface
-service_runtime/      Production Core runtime entrypoint
-endpoint_tool_sdk/    Endpoint protocol and Provider runtime SDK
-desktop_client/       Desktop Endpoint Provider runtime and local backend
-edge_client/          Edge Endpoint Provider runtime
-endpoint_providers/   Feishu / WeChatBot external Endpoint Providers
-meetyou-ui/           Electron + React desktop UI
-tools/                Tool implementations registered through Core capability path
-adapters/             LLM and external service adapters
-sensors/              Input/output adapters and event sensors
-platform_layer/       Host platform abstractions
-prompt/               Prompt, assistant mode, and SKILL-facing guidance assets
-docs/                 Documentation; V4 source of truth is docs/v4/
-tests/                Automated regression tests
-user/                 Local config templates and ignored runtime state
-```
+| Path | Purpose |
+| --- | --- |
+| `main.py` | Development launcher and runtime entrypoints. |
+| `core/` | Core assembly, lifecycle, domain services, state, modes, memory, scheduler, delivery, and ToolRouter. |
+| `gateway/` | FastAPI HTTP facade and V4 Endpoint WebSocket surface. |
+| `service_runtime/` | Production Core runtime entrypoint. |
+| `endpoint_tool_sdk/` | Endpoint protocol helpers and provider runtime SDK. |
+| `desktop_client/` | Desktop Endpoint Provider runtime and local backend. |
+| `edge_client/` | Edge Endpoint Provider runtime. |
+| `endpoint_providers/` | Optional Feishu / WeChatBot external providers. |
+| `meetyou-ui/` | Electron + React desktop UI. |
+| `tools/` | Tool implementations registered through the Core capability path. |
+| `prompt/` | Prompt, assistant mode, and SKILL guidance assets. |
+| `docs/v4/` | V4 design source of truth and release verification notes. |
+| `tests/` | Backend regression and V4 protocol tests. |
+| `user/` | Local config templates; real runtime state is ignored by Git. |
 
-## Core HTTP Interface
+## Architecture Boundaries
 
-Formal V4 HTTP facade is `/runtime/*`. Local Desktop may expose `/desktop/*` and proxy to `/runtime/*`, `/operator/*` or `/developer/*`; it must not proxy to old `/client/*`. Gateway auth can use `Authorization: Bearer <token>` or `X-API-Key: <token>` when configured.
+- The formal V4 HTTP facade is `/runtime/*`.
+- The only V4 real-time provider entrypoint is `GET /endpoint/ws`.
+- Local Desktop `/desktop/*` may proxy to `/runtime/*`, `/operator/*`, or `/developer/*`.
+- `/client/*`, `/client/ws`, `source_client_id`, `target_client_id`, and Client-owned execution semantics are removed from V4 runtime code.
+- Provider-internal human destinations, such as Feishu chats or WeChat private/group chats, are `EndpointAddress` records.
+- `assistant.progress_notice` is a RunEvent / Runtime Action and must not become a ToolRouter call or final assistant message.
+- Final assistant replies must be persisted as assistant messages by MessageService.
 
-Common runtime routes:
+See [AGENTS.md](./AGENTS.md) and [docs/v4/](./docs/v4/) for the detailed implementation rules.
+
+## Core Runtime HTTP Contract
+
+Endpoint Providers and desktop surfaces should talk to Core through the V4 runtime facade. The public shape is intentionally endpoint-oriented rather than client-oriented.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Process health probe. |
+| `GET` | `/health` | Service health and build metadata. |
 | `GET` | `/runtime/workspaces` | List visible workspaces and workspace execution policy. |
-| `GET` | `/runtime/workspaces/{workspace_id}/endpoints` | List available endpoint capabilities for a workspace. |
-| `GET` | `/runtime/threads` | List active threads. |
-| `POST` | `/runtime/threads` | Create a thread. Runtime modes are `general`, `automation`, `danxi`. |
+| `GET` | `/runtime/workspaces/{workspace_id}/endpoints` | List endpoint capabilities visible to a workspace. |
+| `GET` | `/runtime/threads` | List active Core threads. |
+| `POST` | `/runtime/threads` | Create a Core thread. Runtime modes are `general`, `automation`, and `danxi`. |
 | `POST` | `/runtime/threads/default` | Resolve or create a default thread for a workspace/key. |
 | `GET` | `/runtime/threads/{thread_id}` | Read thread metadata. |
-| `DELETE` | `/runtime/threads/{thread_id}` | Soft delete/archive a thread where allowed. |
-| `POST` | `/runtime/endpoint-sessions/resolve` | Resolve an Endpoint conversation into Core thread + session + binding. |
+| `DELETE` | `/runtime/threads/{thread_id}` | Soft delete or archive a thread where allowed. |
+| `POST` | `/runtime/endpoint-sessions/resolve` | Resolve a provider conversation into Core thread, session, and binding. |
 | `POST` | `/runtime/sessions` | Create a runtime session for an endpoint and thread. |
 | `PATCH` | `/runtime/sessions/{session_id}/active-workspace` | Switch active workspace for a session. |
 | `POST` | `/runtime/messages` | Persist an inbound message and trigger Core reply flow. |
@@ -120,14 +108,14 @@ Common runtime routes:
 | `GET` | `/runtime/operations/{operation_id}` | Read operation state. |
 | `POST` | `/runtime/sessions/{session_id}/confirm-response` | Resolve a confirmation request. |
 | `POST` | `/runtime/sessions/{session_id}/human-input-response` | Resolve a human-input request. |
-| `POST` | `/runtime/sessions/{session_id}/reply-control` | Send runtime reply-control action such as stop/regenerate guidance. |
+| `POST` | `/runtime/sessions/{session_id}/reply-control` | Send stop/regenerate-style runtime reply control. |
 | `POST` | `/runtime/approvals/{approval_id}/decision` | Approve or reject a pending operation approval. |
 | `POST` | `/runtime/attachments/upload-ticket` | Create an attachment upload ticket. |
 | `PUT` | `/runtime/attachments/upload/{ticket_id}` | Upload attachment bytes. |
 | `POST` | `/runtime/attachments/{attachment_id}/complete` | Complete attachment metadata after upload. |
 | `GET` | `/runtime/attachments/{attachment_id}/download-ticket` | Create a download ticket. |
 
-Minimal Endpoint session flow:
+Minimal endpoint session resolution:
 
 ```http
 POST /runtime/endpoint-sessions/resolve
@@ -139,20 +127,16 @@ Content-Type: application/json
   "workspace_id": "personal",
   "provider_type": "feishu",
   "endpoint_type": "feishu_ui",
-  "conversation_key": "chat:oc_xxx",
-  "address_id": "addr.feishu.group.oc_xxx",
+  "conversation_key": "chat:<provider-conversation-id>",
+  "address_id": "addr.feishu.group.<stable-id>",
   "thread_strategy": "per_conversation",
   "title": "Feishu group"
 }
 ```
 
-Response returns:
+The response returns a Core `thread`, a runtime `session`, and an endpoint-thread `binding`. Final assistant replies must be persisted as assistant messages in that thread.
 
-- `thread`: Core Thread; final assistant replies must be persisted here by MessageService.
-- `session`: active runtime session bound to the endpoint.
-- `binding`: Endpoint conversation to Core Thread binding.
-
-Minimal message flow:
+Minimal inbound message:
 
 ```http
 POST /runtime/messages
@@ -165,20 +149,13 @@ Content-Type: application/json
   "endpoint_id": "feishu.main.ui",
   "workspace_id": "personal",
   "role": "user",
-  "content": "帮我总结今天的安排",
+  "content": "Summarize today's plan",
   "metadata": {
     "source_kind": "feishu",
-    "address_id": "addr.feishu.group.oc_xxx"
+    "address_id": "addr.feishu.group.<stable-id>"
   }
 }
 ```
-
-Important runtime rules:
-
-- Delivery is responsible for delivering `message`、`run_event`、`notice`、`operation_update`; Delivery must not generate replies.
-- Streaming flows through RunEventLog plus Delivery fan-out.
-- `assistant.progress_notice` is a RunEvent / Runtime Action. It must not go through ToolRouter, must not create Operation / OperationCall, and must not become final assistant message content.
-- Tool dispatch flows through ToolRouter plus ExecutionTarget. Permissions live on Actor / Workspace / RunPolicy; execution ability lives on EndpointCapability.
 
 ## Endpoint WebSocket Protocol
 
@@ -189,251 +166,88 @@ GET /endpoint/ws
 Authorization: Bearer <token>
 ```
 
-Envelope schema is `meetyou.endpoint.ws.v4`. Every frame is a JSON object:
+Every frame uses the `meetyou.endpoint.ws.v4` envelope:
 
 ```json
 {
   "schema": "meetyou.endpoint.ws.v4",
   "type": "endpoint.hello",
-  "message_id": "msg_...",
-  "sent_at": "2026-04-30T00:00:00Z",
+  "message_id": "msg_xxx",
+  "sent_at": "2026-05-01T00:00:00Z",
   "endpoint_id": "desktop.main.executor",
   "correlation_id": "",
   "payload": {}
 }
 ```
 
-### Lifecycle
+Provider handshake:
 
-Provider handshake order:
-
-1. Provider sends `endpoint.hello`.
+1. Provider sends `endpoint.hello` with provider identity, endpoint list, and V4 protocol offer.
 2. Core replies `endpoint.hello.ack`.
 3. Provider sends `endpoint.capabilities.snapshot` when Core requests `requires_capabilities_snapshot`.
 4. Core replies `endpoint.ready`.
-5. Provider sends periodic `endpoint.heartbeat`.
-6. Provider sends `endpoint.goodbye` before intentional disconnect.
+5. Provider sends `endpoint.addresses.snapshot` if it owns human-visible provider addresses.
+6. Provider sends periodic `endpoint.heartbeat` for connection keepalive only.
+7. Provider sends `endpoint.goodbye` before intentional disconnect.
 
-`endpoint.hello` must include a V4 protocol offer. Missing protocol offers are rejected; Core no longer keeps legacy WebSocket compatibility handlers.
+Formal V4 frame groups:
 
-```json
-{
-  "type": "endpoint.hello",
-  "payload": {
-    "provider": {
-      "provider_type": "desktop",
-      "provider_id": "desktop-main",
-      "display_name": "Desktop Main",
-      "transport_profile": "desktop_wss",
-      "supports_markdown": true
-    },
-    "endpoints": [
-      {
-        "endpoint_id": "desktop.desktop-main.ui",
-        "endpoint_type": "desktop_ui",
-        "roles": ["input", "output"],
-        "workspace_ids": ["personal"],
-        "supports_markdown": true
-      },
-      {
-        "endpoint_id": "desktop.desktop-main.executor",
-        "endpoint_type": "desktop_executor",
-        "roles": ["execution"],
-        "workspace_ids": ["personal"],
-        "supports_markdown": true
-      }
-    ],
-    "protocol": {
-      "schema": "meetyou.endpoint.ws.v4",
-      "version": 4,
-      "supported_schemas": ["meetyou.endpoint.ws.v4"],
-      "supported_versions": [4],
-      "features": [
-        "tool_snapshot_optional",
-        "connection_prompt",
-        "feature_negotiation",
-        "heartbeat_interval_negotiation",
-        "hello_reject_reason"
-      ],
-      "required_features": []
-    }
-  }
-}
-```
+| Group | Frames |
+| --- | --- |
+| Lifecycle | `endpoint.hello`, `endpoint.hello.ack`, `endpoint.capabilities.snapshot`, `endpoint.ready`, `endpoint.heartbeat`, `endpoint.goodbye` |
+| Address | `endpoint.addresses.snapshot`, `endpoint.address.upsert`, `endpoint.address.delete` |
+| Subscription | `subscription.start`, `subscription.ack`, `subscription.update`, `subscription.stop` |
+| Delivery | `delivery.message`, `delivery.run_event`, `delivery.notice`, `delivery.operation_update`, `delivery.inbox_item` |
+| Tool | `tool.call.request`, `tool.call.accepted`, `tool.call.progress`, `tool.call.result`, `tool.call.error`, `tool.call.cancel` |
 
-Successful `endpoint.hello.ack`:
+Address-targeted `delivery.message` and `delivery.notice` payloads include `target_address_id`, `target_provider_type`, `target_address_type`, and `target_external_ref`. Cross-provider human-visible delivery should target an `EndpointAddress` through Delivery.
 
-```json
-{
-  "type": "endpoint.hello.ack",
-  "payload": {
-    "accepted": true,
-    "protocol": {
-      "selected_schema": "meetyou.endpoint.ws.v4",
-      "selected_version": 4,
-      "enabled_features": ["tool_snapshot_optional", "connection_prompt"],
-      "disabled_features": [],
-      "compatibility_mode": "negotiated"
-    },
-    "connection_id": "conn_xxx",
-    "requires_capabilities_snapshot": true,
-    "heartbeat_interval_seconds": 20,
-    "registered_endpoints": ["desktop.desktop-main.ui", "desktop.desktop-main.executor"]
-  }
-}
-```
+## Developing An Endpoint Provider
 
-Rejected handshake uses `accepted=false` and `reject_reason.code`, for example `endpoint_protocol_required`, `unsupported_endpoint_protocol`, or `unsupported_endpoint_features`.
+Use [docs/v4/endpoint-provider-template.md](./docs/v4/endpoint-provider-template.md) as the implementation checklist. The usual path is:
 
-### Capabilities
+1. Choose a stable provider id, provider type, endpoint ids, and endpoint roles.
+2. Model provider-internal human destinations as `EndpointAddress`, not as clients.
+3. Implement the `/endpoint/ws` lifecycle handshake and feature negotiation.
+4. Send endpoint capability snapshots for executable tools and UI/input/output roles.
+5. Maintain subscriptions for thread, workspace, or address delivery streams.
+6. Resolve inbound provider conversations through `/runtime/endpoint-sessions/resolve`.
+7. Persist inbound user messages through `/runtime/messages`.
+8. Execute tool calls only when routed through `tool.call.request`; report progress, result, error, or cancellation with matching `call_id`.
+9. Add conformance tests for hello, capability snapshot, address upsert/delete, subscription start/update/stop, delivery fan-out, tool result/error/cancel, and reconnect behavior.
 
-Capabilities are endpoint execution abilities. They are not Client permissions.
+Provider implementation entrypoints:
 
-```json
-{
-  "type": "endpoint.capabilities.snapshot",
-  "endpoint_id": "desktop.desktop-main.executor",
-  "payload": {
-    "endpoint_id": "desktop.desktop-main.executor",
-    "revision": 1,
-    "capabilities": [
-      {
-        "capability_id": "endpoint.desktop.desktop-main.executor.shell.exec",
-        "tool_id": "endpoint.desktop.desktop-main.executor.shell.exec",
-        "tool_key": "shell.exec",
-        "display_name": "Shell Exec",
-        "enabled": true,
-        "risk_level": "write",
-        "input_schema": {"type": "object"}
-      }
-    ]
-  }
-}
-```
+| Path | Use |
+| --- | --- |
+| `endpoint_tool_sdk/protocol.py` | Frame builders and payload models. |
+| `endpoint_tool_sdk/runtime.py` | Base runtime for provider WebSocket handling and tool call dispatch. |
+| `endpoint_tool_sdk/security.py` | Local endpoint security helpers. |
+| `desktop_client/runtime.py` | Desktop provider runtime reference. |
+| `edge_client/runtime.py` | Edge provider runtime reference. |
+| `endpoint_providers/feishu.py` | External Feishu provider wiring. |
+| `endpoint_providers/meetwechat.py` | External WeChatBot provider wiring. |
+| `tests/test_endpoint_protocol_v4.py` | Protocol-level test examples. |
+| `tests/test_endpoint_tool_protocol.py` | Tool frame test examples. |
 
-Core stores the snapshot on EndpointCapability and invalidates ToolRouter cache. Tool routing decisions should use abstract `tool_key` plus policy, then target an `execution_target_id` / endpoint capability.
+## Quick Start
 
-### EndpointAddress
+### Prerequisites
 
-Provider-internal destinations are `EndpointAddress` records. Use these frames when the Provider discovers or changes human-visible delivery targets:
+- Windows for the full desktop development path.
+- Python 3.11+.
+- Node.js 20+ for the Electron UI.
+- PostgreSQL for the formal persistence layer.
 
-- `endpoint.addresses.snapshot`
-- `endpoint.address.upsert`
-- `endpoint.address.delete`
-
-Address payload fields:
-
-```json
-{
-  "address_id": "addr.feishu.group.oc_xxx",
-  "endpoint_id": "feishu.main.ui",
-  "provider_type": "feishu",
-  "address_type": "group",
-  "external_ref": "oc_xxx",
-  "display_name": "Project Group",
-  "workspace_scope": ["personal"],
-  "status": "sendable",
-  "capabilities": ["receive_message"],
-  "metadata": {"supports_markdown": false}
-}
-```
-
-Address-targeted `delivery.message` and `delivery.notice` payloads include:
-
-- `target_address_id`
-- `target_provider_type`
-- `target_address_type`
-- `target_external_ref`
-
-### Subscriptions
-
-Provider can subscribe to Core events:
-
-- `subscription.start`
-- `subscription.update`
-- `subscription.stop`
-
-Common subscription payload:
-
-```json
-{
-  "subscription_id": "sub-thread-1",
-  "target_type": "thread",
-  "target_id": "thr_xxx",
-  "last_seen_event_seq": 0
-}
-```
-
-Core replies with `subscription.ack`; providers may change live fan-out with `subscription.update` or remove it with `subscription.stop`. Matching subscriptions receive `delivery.run_event`, `delivery.message`, `delivery.notice`, `delivery.operation_update`, and `delivery.inbox_item` frames.
-
-### Delivery Frames
-
-Core-to-Provider delivery frame types:
-
-- `delivery.message`: human-visible message delivery.
-- `delivery.run_event`: streaming chunks, progress notices, durable run state.
-- `delivery.notice`: non-message notice.
-- `delivery.operation_update`: operation/tool execution state.
-- `delivery.inbox_item`: inbox item delivery to a target endpoint or subscribed thread.
-
-Delivery must not generate assistant replies. Final assistant replies are persisted as assistant Messages first, then delivered.
-
-### Tool Frames
-
-Core requests endpoint execution with `tool.call.request`:
-
-```json
-{
-  "type": "tool.call.request",
-  "endpoint_id": "desktop.desktop-main.executor",
-  "payload": {
-    "operation_id": "op_xxx",
-    "call_id": "call_xxx",
-    "workspace_id": "personal",
-    "tool_id": "endpoint.desktop.desktop-main.executor.shell.exec",
-    "tool_key": "shell.exec",
-    "arguments": {"cmd": "echo ok"},
-    "encrypted_arguments": {}
-  }
-}
-```
-
-Provider responses:
-
-- `tool.call.accepted`: optional accepted signal.
-- `tool.call.progress`: optional progress signal.
-- `tool.call.result`: final success result.
-- `tool.call.error`: final failure result.
-- `tool.call.cancel`: cancellation signal for a matching active `call_id`.
-
-Danxi credentials and WebVPN cookies must use encrypted transport. Never log plaintext email, password, cookie, token, encrypted payload plaintext, or credential snapshots.
-
-## Develop A New Endpoint Provider
-
-1. Add a provider config with `provider_id`, `provider_type`, `workspace_ids`, Core base URL, and `core_access_token`.
-2. Connect to `GET /endpoint/ws` with `Authorization: Bearer <core_access_token>` or `X-API-Key`.
-3. Send `endpoint.hello` with provider metadata, endpoint rows, and V4 protocol offer.
-4. Send `endpoint.capabilities.snapshot` for execution endpoints.
-5. Send `endpoint.addresses.snapshot` if the provider has human-visible destinations.
-6. For inbound human messages, call `/runtime/endpoint-sessions/resolve`, then `/runtime/messages`.
-7. Subscribe to the bound thread if the provider needs streaming/delivery fan-out; use `subscription.update` / `subscription.stop` instead of reconnecting to change targets.
-8. Execute `tool.call.request` only inside the Provider runtime and return `tool.call.result` / `tool.call.error`; cancel the matching active call when `tool.call.cancel` arrives.
-
-Do not add `/client/ws`, `source_client_id`, `target_client_id`, Client-owned permissions, Client-owned executable capabilities, or `ClientToolDispatchService`. The old root-level `endpoint_tool_protocol.py` shim is removed; import protocol helpers from `endpoint_tool_sdk.protocol`.
-
-## Install
-
-Full development environment:
+### Install
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-cd meetyou-ui
-npm install
 ```
 
-Production dependency layers:
+For split production installs:
 
 ```powershell
 pip install -r requirements-core.txt
@@ -441,40 +255,64 @@ pip install -r requirements-desktop-client.txt
 pip install -r requirements-edge-client.txt
 ```
 
-## Configure
-
-`user/config.json` is required. Copy templates before first startup. Secrets belong in `.env`.
+Frontend setup:
 
 ```powershell
-copy user\config.example.json user\config.json
-copy user\tools.example.json user\tools.json
-copy user\cmd_policy.example.json user\cmd_policy.json
-copy user\source_catalog.example.json user\source_catalog.json
-copy user\memory_graph.example.json user\memory_graph.json
-copy user\desktop_client.example.json user\desktop_client.json
-copy user\edge_client.example.json user\edge_client.json
+cd meetyou-ui
+npm install
 ```
 
-Common environment variables:
+### Configure
 
-```dotenv
-MEETYOU_DATABASE_URL=
-MEETYOU_GATEWAY_ACCESS_TOKEN=
-MEETYOU_CLIENT_ACCESS_TOKEN=
-MEETYOU_CORE_BASE_URL=http://127.0.0.1:8000
-MEETYOU_FEISHU_ENABLE=false
-MEETYOU_MEETWECHAT_ENABLE=false
-MEETYOU_CREDENTIAL_SECRET=
+Copy templates and fill local secrets outside Git:
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item user\config.example.json user\config.json
+Copy-Item user\desktop_client.example.json user\desktop_client.json
+Copy-Item user\edge_client.example.json user\edge_client.json
 ```
 
-Notes:
+Important rules:
 
-- `MEETYOU_CLIENT_ACCESS_TOKEN` is still the deployed variable name for Endpoint Provider access to Core. Do not introduce `MEETYOU_AGENT_*`.
-- `user/core_mcp_servers.json` is for Core-side safe MCP only.
-- `user/mcp_servers.json` is for Desktop Provider local MCP only.
-- `user/` runtime state is ignored; Git keeps only examples and `user/README.md`.
+- Real secrets belong in `.env` or local `user/*.json` files that are ignored by Git.
+- `user/config.json` is required for normal startup.
+- PostgreSQL is the formal persistence layer; service startup runs Alembic migrations through `bootstrap_core_domain()`.
+- Use `MEETYOU_CLIENT_ACCESS_TOKEN` or Gateway/Core access tokens for provider access.
 
-## Start
+### Run
+
+Core service:
+
+```powershell
+python main.py service
+```
+
+Desktop provider:
+
+```powershell
+python main.py desktop-client
+```
+
+Edge provider:
+
+```powershell
+python main.py edge-client
+```
+
+Electron UI development:
+
+```powershell
+cd meetyou-ui
+npm run dev
+```
+
+Desktop runtime config sources:
+
+- Development mode reads the repository root `.env` and `user/desktop_client.json`, then Electron starts the local backend with `python main.py desktop-client`.
+- Packaged mode does not read the development checkout. It seeds Electron `userData\meetyou-runtime` from the installer resource `resources/runtime-template`, then reads `%APPDATA%\MeetYou\meetyou-runtime\.env` and `%APPDATA%\MeetYou\meetyou-runtime\user\desktop_client.json`.
+- The renderer talks only to the local desktop bridge under `/desktop/*`. The default bridge is `127.0.0.1:38951`; if that address is occupied by another process, Electron switches to an available port before exposing the bridge URL to the renderer.
+- `npm run build` builds the packaged Python desktop backend before Electron Builder runs, so installers include `resources/desktop-backend` and the runtime template. The default runtime template comes from `user/desktop_client.example.json`, not the local real config or `.env`. Set `MEETYOU_DESKTOP_RELEASE_CORE_BASE_URL` for a release Core URL, or point `MEETYOU_DESKTOP_RUNTIME_CONFIG_FILE` / `MEETYOU_DESKTOP_RUNTIME_ENV_FILE` at explicit release templates when a packaged runtime needs prefilled values.
 
 Launcher:
 
@@ -482,81 +320,59 @@ Launcher:
 python main.py
 ```
 
-Development entrypoints:
+## Verification
+
+Backend:
 
 ```powershell
-python main.py service
-python main.py cil
-python main.py desktop-client
-python main.py edge-client
+.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```
 
-Production entrypoints:
-
-```powershell
-python -m service_runtime
-python -m desktop_client
-python -m edge_client
-```
-
-Desktop chain should be verified as:
-
-```text
-service -> UI -> desktop backend managed by UI -> desktop provider session -> /endpoint/ws runtime
-```
-
-Linux systemd deployment helpers:
-
-```bash
-sudo bash scripts/linux/install-core-systemd.sh
-sudo bash scripts/linux/install-feishu-provider-systemd.sh
-sudo bash scripts/linux/install-meetwechat-provider-systemd.sh
-```
-
-## Verify
-
-Backend focused checks:
-
-```powershell
-python -m compileall core gateway tools desktop_client edge_client endpoint_tool_sdk service_runtime main.py
-python -m compileall endpoint_providers
-python -m unittest tests.test_gateway_runtime_api tests.test_gateway_surface_routes tests.test_endpoint_tool_protocol tests.test_endpoint_provider_protocols
-```
-
-Frontend checks:
+Frontend:
 
 ```powershell
 cd meetyou-ui
 npm run typecheck
 npm run test
+npm run build:ui
+```
+
+Desktop installer build on Windows:
+
+```powershell
+cd meetyou-ui
 npm run build
 ```
 
-Frontend acceptance cannot stop at typecheck/unit tests. Any UI behavior or layout change must run a real browser or Electron session and save screenshots under an ignored local artifact directory such as `meetyou-ui/visual-artifacts/`; the completion note must include the screenshot path.
-
-Cross-surface or release-level verification:
+Manual V4 acceptance:
 
 ```powershell
-scripts\manual-acceptance.cmd start
 scripts\manual-acceptance.cmd check
 ```
 
-V4 release-grade verification should cover Python tests, frontend typecheck/build/test, migration tests, endpoint protocol tests, scheduler tests, tool router tests, delivery tests, local Core + Desktop + UI, remote Core health/version, and real Feishu/WeChatBot messages with human confirmation. Record results in [docs/v4/test-report.md](./docs/v4/test-report.md).
+Frontend acceptance should include a real browser or Electron visual check when UI behavior changes.
 
-## Publish
+## Security And Privacy
 
-- `main` is the publish branch. Completed work must be committed, pushed, and merged back to `main`.
-- Desktop Release artifacts are published to GitHub Releases when a tag matching `desktop-v*` is pushed, or when the workflow is manually dispatched with a tag. The workflow stages only non-empty top-level installer assets from `meetyou-ui/release/` into `meetyou-ui/release-assets/`, then uploads those staged assets. It does not upload `win-unpacked/` internals, bundled Python package metadata, DLLs, or Electron language packs as individual Release assets.
-- Release artifacts, packaged runtime templates, screenshots, caches, logs, local `.env`, real `user/*.json`, and runtime databases must not be committed.
-- Core Service owns database migration and protocol negotiation. Only claim safe Core rollback when the matching PostgreSQL snapshot is retained.
-- External Provider failure must not block Core deployment; providers can reconnect to `/endpoint/ws` after Core is healthy.
+- The repository tracks examples, not real local runtime state.
+- `.env`, `.env.*`, `user/*.json`, logs, build outputs, release artifacts, local databases, and packaged runtime folders are ignored.
+- Do not paste credentials, cookies, tokens, chat IDs, personal screenshots, or private hostnames into issues, logs, docs, tests, or screenshots.
+- Report vulnerabilities through [SECURITY.md](./SECURITY.md).
 
 ## Documentation
 
-- [AGENTS.md](./AGENTS.md): repository rules, boundaries, verification order, publish requirements.
-- [docs/v4/meetyou-v4-design.md](./docs/v4/meetyou-v4-design.md): V4 architecture design.
-- [docs/v4/meetyou-v4-plan.md](./docs/v4/meetyou-v4-plan.md): V4 implementation plan.
-- [docs/v4/meetyou-v4-scheduled-workflows.md](./docs/v4/meetyou-v4-scheduled-workflows.md): Scheduled Workflow.
-- [docs/v4/meetyou-v4-endpoint-address-scheduled-delivery.md](./docs/v4/meetyou-v4-endpoint-address-scheduled-delivery.md): EndpointAddress scheduled delivery.
-- [docs/v4/test-report.md](./docs/v4/test-report.md): V4 verification report.
-- [user/README.md](./user/README.md): local config directory rules.
+- [V4 design](./docs/v4/meetyou-v4-design.md)
+- [V4 scheduled workflows](./docs/v4/meetyou-v4-scheduled-workflows.md)
+- [Endpoint provider template](./docs/v4/endpoint-provider-template.md)
+- [Storage and binary transfer](./docs/storage-and-binary-transfer.md)
+- [Manual startup acceptance](./docs/manual-startup-acceptance.md)
+- [V4 test report](./docs/v4/test-report.md)
+- [Publication readiness checklist](./docs/publication-readiness.md)
+
+## Community
+
+- License: [MIT](./LICENSE)
+- Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- Security policy: [SECURITY.md](./SECURITY.md)
+- Support: [SUPPORT.md](./SUPPORT.md)

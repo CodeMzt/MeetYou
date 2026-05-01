@@ -1,7 +1,11 @@
 param(
     [string]$Python = "",
     [string]$OutputDir = "meetyou-ui\resources\desktop-backend",
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [string]$RuntimeConfigFile = "",
+    [string]$RuntimeEnvFile = "",
+    [switch]$IncludeLocalRuntimeConfig,
+    [switch]$IncludeLocalEnv
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,14 +75,57 @@ function Write-Utf8NoBomFile {
     [System.IO.File]::WriteAllText($Path, $Content, $Encoding)
 }
 
-$DesktopConfigSource = Join-Path $RepoRoot "user\desktop_client.json"
-if (-not (Test-Path $DesktopConfigSource)) {
+function Resolve-RepoPath {
+    param([string] $Value)
+    if (-not $Value) {
+        return ""
+    }
+    if ([System.IO.Path]::IsPathRooted($Value)) {
+        return $Value
+    }
+    return (Join-Path $RepoRoot $Value)
+}
+
+function Test-LoopbackUrl {
+    param([string] $Value)
+    return $Value -match "^https?://(127\.0\.0\.1|localhost)(:\d+)?/?$"
+}
+
+function Get-ReleaseCoreBaseUrl {
+    $Explicit = [string] $env:MEETYOU_DESKTOP_RELEASE_CORE_BASE_URL
+    if ($Explicit.Trim()) {
+        return $Explicit.Trim()
+    }
+    $Fallback = [string] $env:MEETYOU_CORE_BASE_URL
+    if ($Fallback.Trim() -and -not (Test-LoopbackUrl $Fallback.Trim())) {
+        return $Fallback.Trim()
+    }
+    return ""
+}
+
+$ExplicitRuntimeConfigFile = $RuntimeConfigFile
+if (-not $ExplicitRuntimeConfigFile) {
+    $ExplicitRuntimeConfigFile = [string] $env:MEETYOU_DESKTOP_RUNTIME_CONFIG_FILE
+}
+
+if ($ExplicitRuntimeConfigFile) {
+    $DesktopConfigSource = Resolve-RepoPath $ExplicitRuntimeConfigFile
+} elseif ($IncludeLocalRuntimeConfig -and (Test-Path (Join-Path $RepoRoot "user\desktop_client.json"))) {
+    $DesktopConfigSource = Join-Path $RepoRoot "user\desktop_client.json"
+} else {
     $DesktopConfigSource = Join-Path $RepoRoot "user\desktop_client.example.json"
+}
+if (-not (Test-Path $DesktopConfigSource)) {
+    throw "Desktop runtime config template was not found: $DesktopConfigSource"
 }
 $DesktopConfig = Get-Content $DesktopConfigSource -Raw | ConvertFrom-Json
 Set-JsonProperty -Object $DesktopConfig -Name "core_access_token" -Value ""
 Set-JsonProperty -Object $DesktopConfig -Name "gateway_access_token" -Value ""
 Set-JsonProperty -Object $DesktopConfig -Name "local_bridge_access_token" -Value ""
+$ReleaseCoreBaseUrl = Get-ReleaseCoreBaseUrl
+if ($ReleaseCoreBaseUrl -and -not (Test-LoopbackUrl $ReleaseCoreBaseUrl)) {
+    Set-JsonProperty -Object $DesktopConfig -Name "core_base_url" -Value $ReleaseCoreBaseUrl.TrimEnd("/")
+}
 if (-not $DesktopConfig.local_bridge_host) {
     Set-JsonProperty -Object $DesktopConfig -Name "local_bridge_host" -Value "127.0.0.1"
 }
@@ -104,9 +151,23 @@ $RuntimeEnvKeys = @(
     "MEETYOU_CREDENTIAL_SECRET",
     "MEETYOU_CORE_BASE_URL"
 )
-$RuntimeEnvSource = Join-Path $RepoRoot ".env"
-if (Test-Path $RuntimeEnvSource) {
-    $RuntimeEnvLines = @()
+
+$ExplicitRuntimeEnvFile = $RuntimeEnvFile
+if (-not $ExplicitRuntimeEnvFile) {
+    $ExplicitRuntimeEnvFile = [string] $env:MEETYOU_DESKTOP_RUNTIME_ENV_FILE
+}
+$RuntimeEnvSource = ""
+if ($ExplicitRuntimeEnvFile) {
+    $RuntimeEnvSource = Resolve-RepoPath $ExplicitRuntimeEnvFile
+} elseif ($IncludeLocalEnv) {
+    $RuntimeEnvSource = Join-Path $RepoRoot ".env"
+}
+
+$RuntimeEnvLines = @()
+if ($RuntimeEnvSource) {
+    if (-not (Test-Path $RuntimeEnvSource)) {
+        throw "Desktop runtime env template was not found: $RuntimeEnvSource"
+    }
     foreach ($Line in Get-Content $RuntimeEnvSource) {
         foreach ($Key in $RuntimeEnvKeys) {
             if ($Line -match ("^\s*" + [regex]::Escape($Key) + "\s*=")) {
@@ -115,12 +176,23 @@ if (Test-Path $RuntimeEnvSource) {
             }
         }
     }
-    if ($RuntimeEnvLines.Count -gt 0) {
-        Write-Utf8NoBomFile `
-            -Path (Join-Path $RuntimeTemplateDir ".env") `
-            -Content (($RuntimeEnvLines -join "`n") + "`n")
-    }
+} elseif ($ReleaseCoreBaseUrl -and -not (Test-LoopbackUrl $ReleaseCoreBaseUrl)) {
+    $RuntimeEnvLines += "MEETYOU_CORE_BASE_URL=$ReleaseCoreBaseUrl"
+}
+
+if ($RuntimeEnvLines.Count -gt 0) {
+    Write-Utf8NoBomFile `
+        -Path (Join-Path $RuntimeTemplateDir ".env") `
+        -Content (($RuntimeEnvLines -join "`n") + "`n")
 }
 
 Write-Host "Desktop backend built: $ExePath"
 Write-Host "Desktop runtime template prepared: $RuntimeTemplateDir"
+Write-Host "Desktop runtime config template source: $DesktopConfigSource"
+if ($RuntimeEnvSource) {
+    Write-Host "Desktop runtime env template source: $RuntimeEnvSource"
+} elseif ($RuntimeEnvLines.Count -gt 0) {
+    Write-Host "Desktop runtime env template source: build environment"
+} else {
+    Write-Host "Desktop runtime env template source: none"
+}

@@ -75,4 +75,4 @@ jobs:
       - name: Frontend build on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: meetyou-ui
-        run: npm run build
+        run: npm run build:ui

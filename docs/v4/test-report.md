@@ -13,11 +13,11 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Frontend build: passed after refreshing local `node_modules` with `npm ci` (`npm run build`; existing Vite chunk warning and Electron author/resource warnings only).
 - V4 acceptance runner compile check: passed (`.venv\Scripts\python.exe -m py_compile scripts\v4_real_acceptance.py`).
 - Electron visual check: passed (`npm run visual:chat-ui`).
-- Visual report: `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\chat-ui-visual-report.json`.
-- Screenshots: `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\main-narrow-island-open-360x520.png`, `C:\Users\19243\AppData\Local\Temp\meetyou-chat-ui-visual\main-chat-after-send-400x620.png`.
+- Visual report: `%TEMP%\meetyou-chat-ui-visual\chat-ui-visual-report.json`.
+- Screenshots: `%TEMP%\meetyou-chat-ui-visual\main-narrow-island-open-360x520.png`, `%TEMP%\meetyou-chat-ui-visual\main-chat-after-send-400x620.png`.
 - CI status: passed (`CI`, run `25201497492`, commit `79bf5f3388724a21ec8c7fd1b8e00c3f8dda755d`). The first full-discovery publish attempt failed on Ubuntu because legacy local object-store attachment paths used Windows separators; the follow-up commit fixed normalized slash-key handling.
 - Deploy status: passed (`Deploy MeetYou Core`, run `25201575635`, commit `79bf5f3388724a21ec8c7fd1b8e00c3f8dda755d`), triggered by successful CI through `workflow_run`.
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=79bf5f3388724a21ec8c7fd1b8e00c3f8dda755d`, `branch=main`, `build_time=2026-05-01T04:00:31Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=79bf5f3388724a21ec8c7fd1b8e00c3f8dda755d`, `branch=main`, `build_time=2026-05-01T04:00:31Z`).
 - Local Desktop against remote Core, Feishu, and WeChatBot human confirmation: not rerun in this architecture optimization addendum.
 
 ## 2026-05-01 Scheduled Assistant Round Limit Addendum
@@ -29,7 +29,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Local full backend discovery: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 602 tests, 1 skipped).
 - CI status: passed (`CI`, run `25199168381`, commit `62679e87656577f1f896dcbdf2d900df774eada1`).
 - Deploy status: passed after rerunning an initial SSH handshake failure (`Deploy MeetYou Core`, run `25199168366`, commit `62679e87656577f1f896dcbdf2d900df774eada1`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=62679e87656577f1f896dcbdf2d900df774eada1`, `branch=main`, `build_time=2026-05-01T02:21:27Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=62679e87656577f1f896dcbdf2d900df774eada1`, `branch=main`, `build_time=2026-05-01T02:21:27Z`).
 - Local Desktop -> remote Core real acceptance: not rerun for this focused Scheduler/Brain backend policy change.
 - External Feishu / WeChatBot human confirmation: not rerun for this focused Scheduler/Brain backend policy change.
 
@@ -44,7 +44,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Local desktop rebuild: passed in order (`scripts\build-desktop-backend.ps1 -SkipInstall`, then `npm run build`). Backend executable: `meetyou-ui\resources\desktop-backend\desktop_client\desktop_client.exe`; installer: `meetyou-ui\release\MeetYou Setup 1.0.0.exe`.
 - CI status: passed (`CI`, run `25165729420`, commit `de103e1957dd564ad2ce3dcd0a48d01e3107a225`).
 - Deploy status: passed (`Deploy MeetYou Core`, run `25165729374`, commit `de103e1957dd564ad2ce3dcd0a48d01e3107a225`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=de103e1957dd564ad2ce3dcd0a48d01e3107a225`, `branch=main`, `build_time=2026-04-30T12:37:47Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=de103e1957dd564ad2ce3dcd0a48d01e3107a225`, `branch=main`, `build_time=2026-04-30T12:37:47Z`).
 - Local Desktop -> remote Core real acceptance: not rerun for this focused UI/runtime control fix.
 - External Feishu / WeChatBot human confirmation: not rerun for this focused UI/runtime control fix.
 
@@ -61,7 +61,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Local desktop rebuild: passed in order (`scripts\build-desktop-backend.ps1`, then `npm run build`). Local installer regenerated at `meetyou-ui\release\MeetYou Setup 1.0.0.exe`.
 - CI status: passed (`CI`, run `25161423286`, commit `53cfdb5545dabdc8c116eb9b152b3fe746da2801`).
 - Deploy status: passed (`Deploy MeetYou Core`, run `25161423322`, commit `53cfdb5545dabdc8c116eb9b152b3fe746da2801`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=53cfdb5545dabdc8c116eb9b152b3fe746da2801`, `branch=main`, `build_time=2026-04-30T10:52:32Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=53cfdb5545dabdc8c116eb9b152b3fe746da2801`, `branch=main`, `build_time=2026-04-30T10:52:32Z`).
 - Desktop Release status: passed (`Desktop Release`, run `25161526477`, artifact `meetyou-windows-desktop`, artifact id `6728438937`, size `231613199` bytes).
 - External WeChatBot human confirmation: pending. User should delete a WeChat private/group thread in Desktop, send a fresh message in that same WeChat conversation, and confirm that a new Core thread appears and a real WeChat reply is received.
 
@@ -77,7 +77,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Desktop build: passed (`npm run build`); installer regenerated at `meetyou-ui\release\MeetYou Setup 1.0.0.exe`.
 - CI status: passed (`CI`, run `25155924106`, commit `dfea137e0059d63224212335871dc5aeb5d75b0a`).
 - Deploy status: passed (`Deploy MeetYou Core`, run `25155924083`, commit `dfea137e0059d63224212335871dc5aeb5d75b0a`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=dfea137e0059d63224212335871dc5aeb5d75b0a`, `branch=main`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=dfea137e0059d63224212335871dc5aeb5d75b0a`, `branch=main`).
 - Remote SKILL API probe: passed. `GET /operator/skills?skill_type=reusable&query=task_recognition` and `GET /operator/skills/task_recognition` returned `storage_ref=core://skills/reusable/task_recognition`, empty `storage_path`, and detail content.
 - Remote V4 real acceptance without UI: passed (`logs\v4-remote-skill-boundary-acceptance.json`, marker `V4OK_20260430084321_6881e9`, streaming marker `V4STREAM_20260430084322_35c806`, replay seq `15`).
 - Local Desktop Provider -> remote Core real acceptance: passed (`logs\v4-remote-skill-boundary-desktop-acceptance.json`, provider `desktop.remote-skill-boundary-20260430164437.executor`, marker `V4OK_20260430084534_652e71`, real Desktop tool marker `DESKTOP_TOOL_20260430084541_89bc28`, replay seq `14`).
@@ -123,7 +123,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Local desktop rebuild: passed in the correct order (`scripts\build-desktop-backend.ps1` first, then `npm run build` so the Electron installer includes the regenerated desktop backend). Local installer path: `meetyou-ui\release\MeetYou Setup 1.0.0.exe`.
 - CI status: passed (`CI`, run `25143441597`, commit `46d07effe91c98e73f047b82ce4dc2cc7d82424a`).
 - Deploy status: passed (`Deploy MeetYou Core`, run `25143441584`, commit `46d07effe91c98e73f047b82ce4dc2cc7d82424a`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=46d07effe91c98e73f047b82ce4dc2cc7d82424a`, `branch=main`, `build_time=2026-04-30T01:59:50Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=46d07effe91c98e73f047b82ce4dc2cc7d82424a`, `branch=main`, `build_time=2026-04-30T01:59:50Z`).
 - Desktop Release status: passed (`Desktop Release`, run `25143542163`, artifact `meetyou-windows-desktop`, artifact id `6721516126`, size `231604874` bytes).
 - External WeChatBot human confirmation: not rerun in this addendum. The previous requested marker `WX_REAL_20260430_0756_12B533` remains pending until a fresh user-sent WeChat message is observed and confirmed.
 
@@ -139,9 +139,9 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Local full backend discovery: attempted earlier in the same change batch and timed out after 5 minutes without failure output; focused protocol/runtime/provider coverage above passed.
 - CI status: passed (`CI`, run `25139807849`, commit `12b5335876f102e92e7ca9b1ab3ae348350bcc73`).
 - Deploy status: passed (`Deploy MeetYou Core`, run `25139807858`, commit `12b5335876f102e92e7ca9b1ab3ae348350bcc73`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=12b5335876f102e92e7ca9b1ab3ae348350bcc73`, `branch=main`, `build_time=2026-04-29T23:49:14Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=12b5335876f102e92e7ca9b1ab3ae348350bcc73`, `branch=main`, `build_time=2026-04-29T23:49:14Z`).
 - Remote endpoint status after deploy: `feishu.provider.ui` online and `wechat.provider.ui` online in workspace `personal`; deploy logs also show `meetyou-feishu-provider.service` and `meetyou-meetwechat-provider.service` restarted as running.
-- Remote V4 real acceptance: passed with proxy bypass (`NO_PROXY=core.maziteng.cn,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://core.maziteng.cn --skip-ui`).
+- Remote V4 real acceptance: passed with proxy bypass (`NO_PROXY=<core-host>,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://<core-host> --skip-ui`).
 - Remote acceptance marker: `V4OK_20260429235343_731152`; streaming marker `V4STREAM_20260429235344_36106f`; thread `thr_8db99b5850b8440a9ff9abfffa6dd331`; ToolRouter operation `op_1adfa63b3149430aa7c6de4e55798242`; replay seq `15`.
 - WeChatBot human confirmation: pending. Requested human marker `WX_REAL_20260430_0756_12B533`; a 4-minute remote thread poll did not observe that marker, so no fresh WeChat human receipt can be claimed yet.
 
@@ -153,7 +153,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Local compile check: passed (`.venv\Scripts\python.exe -m compileall clients core sensors endpoint_providers`).
 - CI status: passed (`CI`, run `25110659977`, commit `82bdb8849915451baf85f6a641a1b10e92162f3d`).
 - Deploy status: passed (`Deploy MeetYou Core`, run `25110659925`, commit `82bdb8849915451baf85f6a641a1b10e92162f3d`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=82bdb8849915451baf85f6a641a1b10e92162f3d`, `branch=main`, `build_time=2026-04-29T13:07:43Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=82bdb8849915451baf85f6a641a1b10e92162f3d`, `branch=main`, `build_time=2026-04-29T13:07:43Z`).
 - Remote endpoint status after deploy: `desktop.mzt-desktop-client.executor` online, `desktop.mzt-desktop-client.ui` online, `feishu.provider.ui` online, and `wechat.provider.ui` online.
 - Remote Core + local Desktop real acceptance: passed (`logs\v4-remote-provider-deploy-acceptance.json`, marker `V4OK_20260429130949_3a305f`, streaming marker `V4STREAM_20260429130949_7b2f81`, real Desktop tool marker `DESKTOP_TOOL_20260429130956_1443d7`, replay seq `17`).
 - Root cause for Feishu / WeChatBot no-response report: V4 correctly removed external adapter startup from Core lifecycle, but deployment still only restarted `meetyou-core.service`; therefore external provider processes were offline. The first deploy follow-up installed provider systemd units, the second added non-interactive sudo, and the third aligned provider `User/Group` with the running Core service user.
@@ -170,7 +170,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Frontend build: passed (`npm run build`; existing Electron author, Vite CJS, and chunk-size warnings only).
 - CI status: passed (`CI`, run `25102124569`, commit `3546f8fbce8f4102091105bac98bceea43038327`).
 - Deploy status: passed (`Deploy MeetYou Core`, run `25102124602`, commit `3546f8fbce8f4102091105bac98bceea43038327`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=3546f8fbce8f4102091105bac98bceea43038327`, `build_time=2026-04-29T09:50:15Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=3546f8fbce8f4102091105bac98bceea43038327`, `build_time=2026-04-29T09:50:15Z`).
 - Remote endpoint status after deploy: `feishu.provider.ui` online, `wechat.provider.ui` online, and local `desktop.mzt-desktop-client.executor` online against remote Core.
 - Remote Core + local Desktop real acceptance: passed (`logs\v4-remote-toolrouter-corefix-acceptance.json`, marker `V4OK_20260429095334_d00df3`, streaming marker `V4STREAM_20260429095335_fd3c43`, real Desktop tool marker `DESKTOP_TOOL_20260429095342_61e2ee`, replay seq `16`).
 - ToolRouter Core tool probe: passed. `list_delivery_targets` executed through `/runtime/operations` as `core.local`, operation `op_231f292f111444c58f3abd16fb29df94`.
@@ -186,7 +186,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Scope: added `EndpointAddress`, `ActorDeliveryPreference`, address-targeted Delivery payloads, provider address frames, persistent Scheduler due/lease fields, and high-level assistant tools `list_delivery_targets`, `set_delivery_preference`, `send_delivery_message`, `create_scheduled_delivery`, and `manage_scheduled_deliveries`.
 - CI status: passed (`CI`, run `25096453118`, branch `main`, push at `2026-04-29T07:31:36Z`).
 - Deploy status: passed (`Deploy MeetYou Core`, run `25096453071`, branch `main`, push at `2026-04-29T07:31:36Z`).
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `live=true`, `ready=true`, `build_info.git_commit=cbba889fdb11cc820697460074b68831de0e606d`, `branch=main`, `build_time=2026-04-29T07:32:05Z`).
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `live=true`, `ready=true`, `build_info.git_commit=cbba889fdb11cc820697460074b68831de0e606d`, `branch=main`, `build_time=2026-04-29T07:32:05Z`).
 - Python tests: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 523 tests, 1 skipped).
 - Frontend typecheck: passed (`npm run typecheck`).
 - Frontend tests: passed (`npm run test`, 17 files / 71 tests).
@@ -194,7 +194,7 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 - Endpoint protocol tests: passed for `endpoint.addresses.snapshot`, `endpoint.address.upsert`, `endpoint.address.delete`, and address-targeted delivery payloads (`tests.test_endpoint_address_v4`, full discovery).
 - Scheduler tests: passed for daily/cron/one-shot calculation, persistent due fields, system heartbeat guardrails, and scheduled delivery tool creation (`tests.test_schedule_time_v4`, `tests.test_scheduler_tools_v4`, full discovery).
 - Delivery tests: passed for `send_delivery_message` through `EndpointAddress` and non-streaming Feishu/MeetWeChat duplicate suppression. Address-targeted frames are handled by provider-level connections; chat-scoped thread subscriptions ignore address-targeted frames to avoid duplicate sends.
-- Remote Core real acceptance: passed with proxy bypass (`NO_PROXY=core.maziteng.cn,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://core.maziteng.cn --skip-ui --json-out logs\v4-remote-endpoint-address-scheduled-delivery-acceptance.json`).
+- Remote Core real acceptance: passed with proxy bypass (`NO_PROXY=<core-host>,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://<core-host> --skip-ui --json-out logs\v4-remote-endpoint-address-scheduled-delivery-acceptance.json`).
 - Remote acceptance marker: `V4OK_20260429074025_65ec6d`; streaming marker `V4STREAM_20260429074026_69812a`; thread `thr_b0b4cbeffe994aa1872f685c777d56b5`; ToolRouter operation `op_c331d467fed34c25907f770cce29490e`; replay seq `15`.
 - Local Desktop -> remote Core: not rerun in this addendum because no desktop provider endpoint was supplied to the acceptance command; previous real Desktop validation remains recorded below.
 - Feishu / WeChatBot human confirmation: not rerun in this addendum. Previous human-confirmed external results remain recorded below; this addendum adds automated regression coverage for the Feishu/MeetWeChat non-streaming duplicate path and address-targeted provider delivery.
@@ -246,13 +246,13 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 
 - CI status: passed (`CI`, run `25089783209`, commit `376ff4ce85efa7bb844acd2a67c55b814f9605e5`)
 - Deploy status: passed (`Deploy MeetYou Core`, run `25089783172`, commit `376ff4ce85efa7bb844acd2a67c55b814f9605e5`)
-- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `live=true`, `ready=true`, `degraded=false`)
+- Remote Core `/health`: passed (`https://<core-host>/health`, `status=ready`, `live=true`, `ready=true`, `degraded=false`)
 - Remote Core version / commit sha: passed (`build_info.git_commit=376ff4ce85efa7bb844acd2a67c55b814f9605e5`, `branch=main`, `component=core`, `build_time=2026-04-29T03:43:15Z`)
 
 ## Local Desktop -> Remote Core Real Tests
 
-- Desktop Provider target: local bridge `http://127.0.0.1:38954`, provider id `remote-hotfix-20260429094734`, connected to `https://core.maziteng.cn`
-- Remote acceptance command: passed with local proxy bypass (`NO_PROXY=core.maziteng.cn,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://core.maziteng.cn --skip-ui --desktop-tool-endpoint desktop.remote-hotfix-20260429094734.executor --json-out logs\v4-remote-feishu-loopfix-acceptance.json`)
+- Desktop Provider target: local bridge `http://127.0.0.1:38954`, provider id `remote-hotfix-20260429094734`, connected to `https://<core-host>`
+- Remote acceptance command: passed with local proxy bypass (`NO_PROXY=<core-host>,127.0.0.1,localhost`; `.venv\Scripts\python.exe scripts\v4_real_acceptance.py --base-url https://<core-host> --skip-ui --desktop-tool-endpoint desktop.remote-hotfix-20260429094734.executor --json-out logs\v4-remote-feishu-loopfix-acceptance.json`)
 - Conversation / Streaming / `assistant.progress_notice`: passed (marker `V4OK_20260429035007_92927e`, streaming marker `V4STREAM_20260429035009_de4258`, thread `thr_5f379c36d5e748fea1909ff5496d404a`)
 - Real Desktop Provider tool through remote Core: passed (`utility.echo`, target `desktop.remote-hotfix-20260429094734.executor`, operation `op_da45a75ee8594df7ad1e4776140675d4`, marker `DESKTOP_TOOL_20260429035017_035cc0`)
 - Scheduler / Heartbeat / disconnect-reconnect: passed (`system.heartbeat` interval round-trip, disposable ordinary job `acceptance.v4ok_20260429035007_92927e`, replay seq `14`)

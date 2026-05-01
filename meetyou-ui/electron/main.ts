@@ -169,6 +169,33 @@ function parseDesktopBridgeHost(value: string) {
   }
 }
 
+function parseDesktopBridgePort(value: string) {
+  try {
+    const port = Number.parseInt(new URL(value).port || '', 10)
+    return Number.isFinite(port) && port > 0 ? port : DEFAULT_DESKTOP_BRIDGE_PORT
+  } catch {
+    return DEFAULT_DESKTOP_BRIDGE_PORT
+  }
+}
+
+function canBindDesktopBridge(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+    let settled = false
+    const finish = (available: boolean) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      resolve(available)
+    }
+    server.once('error', () => finish(false))
+    server.listen(port, host, () => {
+      server.close((error) => finish(!error))
+    })
+  })
+}
+
 function allocateDesktopBridgePort(host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -198,6 +225,15 @@ async function moveDesktopBridgeToAvailablePort(reason: string) {
   process.env.MEETYOU_DESKTOP_LOCAL_PORT = String(port)
   setDesktopBridgeBaseUrl(`http://${host}:${port}`)
   console.warn(`[desktop-backend] using alternate local bridge ${desktopBridgeBaseUrl}: ${reason}`)
+}
+
+async function ensureDesktopBridgeAddressAvailable() {
+  const host = parseDesktopBridgeHost(desktopBridgeBaseUrl)
+  const port = parseDesktopBridgePort(desktopBridgeBaseUrl)
+  if (await canBindDesktopBridge(host, port)) {
+    return
+  }
+  await moveDesktopBridgeToAvailablePort(`configured bridge ${desktopBridgeBaseUrl} is already in use`)
 }
 
 function resolveWorkspacePython() {
@@ -447,6 +483,7 @@ async function waitForDesktopBackend(timeoutMs = DESKTOP_BACKEND_READY_TIMEOUT_M
 }
 
 async function ensureDesktopBackendStarted() {
+  ensurePackagedRuntimeFiles()
   setDesktopBridgeBaseUrl(resolveDesktopBridgeBaseUrl())
   const existingStatus = await waitForDesktopBackend(500)
   if (existingStatus && !app.isPackaged && isDesktopBackendBuildAligned(existingStatus)) {
@@ -457,15 +494,22 @@ async function ensureDesktopBackendStarted() {
     const actualCommit = desktopBackendGitCommit(existingStatus) || 'unknown'
     const expectedCommit = expectedUiGitCommit() || 'unknown'
     await moveDesktopBridgeToAvailablePort(`existing bridge is not owned by this process (ui=${expectedCommit}, backend=${actualCommit})`)
+  } else {
+    try {
+      await ensureDesktopBridgeAddressAvailable()
+    } catch (error) {
+      console.warn(`[desktop-backend] failed to probe local bridge port: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
   if (desktopBackendProcess && desktopBackendProcess.exitCode == null) {
     return
   }
-  ensurePackagedRuntimeFiles()
   if (app.isPackaged) {
     const backendExecutable = resolvePackagedBackendExecutable()
     if (!fs.existsSync(backendExecutable)) {
-      console.warn(`[desktop-backend] packaged backend executable not found: ${backendExecutable}`)
+      const message = `Packaged desktop backend executable not found: ${backendExecutable}. Rebuild the installer with npm run build so resources/desktop-backend is included.`
+      console.warn(`[desktop-backend] ${message}`)
+      dialog.showErrorBox('MeetYou desktop backend missing', message)
       return
     }
     desktopBridgeAccessToken = crypto.randomBytes(24).toString('hex')

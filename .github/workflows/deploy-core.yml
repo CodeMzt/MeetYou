@@ -25,6 +25,7 @@ jobs:
             MEETYOU_ENV_BAK_REPO=""
             MEETYOU_ENV_BAK_BACKUP=""
             MEETYOU_REPO=""
+            MEETYOU_REPO_SLUG="${MEETYOU_REPO_SLUG:-${{ github.repository }}}"
 
             restore_env_bak() {
               if [ -n "${MEETYOU_ENV_BAK_REPO}" ] && [ -n "${MEETYOU_ENV_BAK_BACKUP}" ] && [ -f "${MEETYOU_ENV_BAK_BACKUP}" ]; then
@@ -37,7 +38,7 @@ jobs:
             for gitdir in $(find /opt/meetyou -maxdepth 4 -type d -name .git 2>/dev/null); do
               repo="$(dirname "${gitdir}")"
               origin="$(git -C "${repo}" remote get-url origin 2>/dev/null || true)"
-              if printf '%s' "${origin}" | grep -qi 'CodeMzt/MeetYou'; then
+              if printf '%s' "${origin}" | grep -Fqi -- "${MEETYOU_REPO_SLUG}"; then
                 MEETYOU_REPO="${repo}"
                 if git -C "${repo}" ls-files --error-unmatch .env.bak >/dev/null 2>&1; then
                   MEETYOU_ENV_BAK_REPO="${repo}"

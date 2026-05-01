@@ -56,7 +56,7 @@
 - 推荐资源：相关链接和学习材料
 
 ### 4. 保存位置
-- 建议路径：项目docs目录下，如 `E:\Documents\Project\MeetYou\docs\daily_research_digest_YYYYMMDD.md`
+- 建议路径：项目 docs 目录下，如 `<repo>\docs\daily_research_digest_YYYYMMDD.md`
 - 命名规范：`daily_research_digest_` + 日期后缀，便于版本管理
 
 ### 5. 定时任务集成
