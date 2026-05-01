@@ -20,6 +20,7 @@ except ImportError:
 from adapters.base import StreamEvent, ToolCallInfo
 from core.assistant_modes import RouteDecision
 from core.brain import Brain
+from core.endpoint_tool_bundles import EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE
 from core.status import RuntimeStatus
 
 
@@ -134,6 +135,9 @@ class FakeToolsManager:
             "general_tool": self._build_tool_schema("general_tool"),
             "automation_tool": self._build_tool_schema("automation_tool"),
             "danxi_tool": self._build_tool_schema("danxi_tool"),
+            "danxi_list_posts": self._build_tool_schema("danxi_list_posts"),
+            "danxi_search_posts": self._build_tool_schema("danxi_search_posts"),
+            "danxi_set_webvpn_cookie": self._build_tool_schema("danxi_set_webvpn_cookie"),
             "research_topic": self._build_tool_schema("research_topic"),
             "inspect_page": self._build_tool_schema("inspect_page"),
             "track_source_updates": self._build_tool_schema("track_source_updates"),
@@ -216,6 +220,8 @@ class _FakeModeManager:
         tool_bundle = [f"{mode}_tool"]
         if mode == "general":
             tool_bundle = ["general_tool", "research_topic", "inspect_page"]
+        elif mode == "danxi":
+            tool_bundle = ["danxi_list_posts", "danxi_search_posts", "danxi_set_webvpn_cookie"]
         lowered = content.lower()
         if any(token in lowered for token in ("watchlist", "track updates", "source updates", "research report", "citations", "evidence")):
             source_profile = "tech_updates"
@@ -2207,6 +2213,143 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(session.metadata["current_route"]["mcp_servers"], [])
             self.assertEqual(session.metadata["current_route"]["endpoint_tool_scope"], "basic")
+        finally:
+            await brain.close_brain()
+
+    async def test_external_endpoint_bundle_preserves_preferred_danxi_mode_tools(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 4,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ]
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-external-preferred-danxi",
+                {
+                    "role": "user",
+                    "content": "切换到 Danxi 模式并看热门帖子。",
+                    "metadata": {
+                        "transport": "feishu",
+                        "response_transport": "non_streaming_external_client",
+                        "tool_scope": "basic",
+                        "allowed_tool_bundle": list(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE),
+                        "allowed_mcp_servers": [],
+                        "preferred_mode": "danxi",
+                    },
+                },
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-external-preferred-danxi")
+            tool_names = adapter.stream_calls[0]["tool_names"]
+            self.assertEqual(session.metadata["current_mode"], "danxi")
+            self.assertIn("danxi_list_posts", tool_names)
+            self.assertIn("danxi_search_posts", tool_names)
+            self.assertIn("danxi_set_webvpn_cookie", tool_names)
+            self.assertNotIn("danxi_tool", tool_names)
+        finally:
+            await brain.close_brain()
+
+    async def test_external_endpoint_bundle_preserves_danxi_tools_after_in_turn_switch(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(
+                        type="tool_calls",
+                        tool_calls=[
+                            ToolCallInfo(
+                                id="switch-1",
+                                name="switch_assistant_mode",
+                                arguments_str='{"mode":"danxi","reason":"Need Danxi forum tools"}',
+                            )
+                        ],
+                    ),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 4,
+                            "completion_tokens": 1,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 5,
+                        },
+                    ),
+                ],
+                [
+                    StreamEvent(type="text", text="done"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 5,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 7,
+                        },
+                    ),
+                ],
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-external-switch-danxi",
+                {
+                    "role": "user",
+                    "content": "先判断是否需要切换，然后用 Danxi 工具处理。",
+                    "metadata": {
+                        "transport": "feishu",
+                        "response_transport": "non_streaming_external_client",
+                        "tool_scope": "basic",
+                        "allowed_tool_bundle": list(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE),
+                        "allowed_mcp_servers": [],
+                    },
+                },
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-external-switch-danxi")
+            self.assertIn("switch_assistant_mode", adapter.stream_calls[0]["tool_names"])
+            self.assertIn("danxi_list_posts", adapter.stream_calls[1]["tool_names"])
+            self.assertIn("danxi_search_posts", adapter.stream_calls[1]["tool_names"])
+            self.assertIn("danxi_set_webvpn_cookie", adapter.stream_calls[1]["tool_names"])
+            self.assertEqual(session.metadata["current_mode"], "danxi")
+            self.assertEqual(session.metadata["route_history"][-1]["origin"], "switch_tool")
+            self.assertIn("danxi_list_posts", session.metadata["current_route"]["tool_bundle"])
         finally:
             await brain.close_brain()
 

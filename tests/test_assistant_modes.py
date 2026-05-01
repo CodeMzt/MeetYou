@@ -500,6 +500,8 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertEqual(route.requested_mode, "danxi")
         self.assertEqual(route.current_mode, "danxi")
         self.assertEqual(route.source_profile, "campus_forum")
+        self.assertIn("danxi_set_webvpn_cookie", route.tool_bundle)
+        self.assertIn("danxi_clear_webvpn_cookie", route.tool_bundle)
         self.assertIn("danxi_list_posts", route.tool_bundle)
         self.assertIn("danxi_search_posts", route.tool_bundle)
         self.assertIn("summarize_text", route.tool_bundle)
@@ -721,6 +723,8 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "danxi_login",
                     "danxi_logout",
                     "danxi_get_session_status",
+                    "danxi_set_webvpn_cookie",
+                    "danxi_clear_webvpn_cookie",
                     "danxi_list_divisions",
                     "danxi_list_tags",
                     "danxi_list_posts",

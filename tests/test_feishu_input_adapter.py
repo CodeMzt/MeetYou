@@ -255,6 +255,9 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_client.messages[0][1]["metadata"]["progress_notice_policy"], "prefer_before_nontrivial_final")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["tool_scope"], "basic")
         self.assertIn("emit_progress_notice", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("danxi_list_posts", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("manage_schedule", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("manage_tasks", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
         self.assertNotIn("send_endpoint_message", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
         self.assertIsNone(fake_client.messages[0][1]["preferred_mode"])
         self.assertTrue(self.event_bus.inbound_queue.empty())
@@ -318,6 +321,8 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         await adapter.handle_event(payload)
 
         self.assertEqual(fake_client.messages[0][1]["preferred_mode"], "danxi")
+        self.assertIn("danxi_list_posts", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("danxi_set_webvpn_cookie", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
 
     async def test_handle_event_sends_confirm_over_gateway_client(self):
         class _FakeOutput:

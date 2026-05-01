@@ -431,6 +431,8 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
             "danxi_login",
             "danxi_logout",
             "danxi_get_session_status",
+            "danxi_set_webvpn_cookie",
+            "danxi_clear_webvpn_cookie",
             "danxi_list_divisions",
             "danxi_list_tags",
             "danxi_list_posts",
@@ -1019,6 +1021,24 @@ def _unique_strings(values: list[Any] | tuple[Any, ...] | None) -> list[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def get_default_assistant_capability_tools(*, include_basic: bool = True) -> list[str]:
+    tools: list[Any] = []
+    if include_basic:
+        tools.extend(_DEFAULT_BASIC_MODE_TOOLS)
+    for mode in ASSISTANT_MODES:
+        bundle = _DEFAULT_MODE_TOOL_BUNDLES.get(mode, {})
+        tools.extend(bundle.get("tools", []))
+    for skill in _DEFAULT_SKILL_REGISTRY.values():
+        if isinstance(skill, dict):
+            tools.extend(skill.get("tools", []))
+            tools.extend(skill.get("fallback_tools", []))
+    for scene in _DEFAULT_SCENE_DEFINITIONS.values():
+        if isinstance(scene, dict):
+            tools.extend(scene.get("tools", []))
+            tools.extend(scene.get("fallback_tools", []))
+    return _unique_strings(tools)
 
 
 def _normalize_mode(value: Any, *, fallback: str = ASSISTANT_MODE_NORMAL) -> str:

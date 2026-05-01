@@ -241,6 +241,9 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["progress_notice_policy"], "prefer_before_nontrivial_final")
         self.assertEqual(gateway_clients[0].messages[0]["metadata"]["tool_scope"], "basic")
         self.assertIn("search_web", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("danxi_list_posts", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("manage_schedule", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
+        self.assertIn("manage_tasks", gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"])
         self.assertEqual(
             gateway_clients[0].messages[0]["metadata"]["allowed_tool_bundle"],
             MEETWECHAT_BASIC_TOOL_BUNDLE,

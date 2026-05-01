@@ -2,10 +2,17 @@
 
 from typing import Any
 
+from core.assistant_modes import get_default_assistant_capability_tools
+
 
 ENDPOINT_ALWAYS_AVAILABLE_TOOLS = ("emit_progress_notice",)
 
-EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE = [
+_EXTERNAL_ENDPOINT_DENIED_TOOLS = {
+    "exec_sys_cmd",
+    "send_endpoint_message",
+}
+
+_EXTERNAL_ENDPOINT_BASELINE_TOOLS = [
     "ask_human",
     "get_current_system_time",
     "list_skills",
@@ -35,6 +42,30 @@ EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE = [
     "organize_notes",
     "extract_action_items",
 ]
+
+
+def _unique_allowed_tools(values: list[str] | tuple[str, ...]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        tool_name = str(item or "").strip()
+        if not tool_name or tool_name in _EXTERNAL_ENDPOINT_DENIED_TOOLS or tool_name in seen:
+            continue
+        seen.add(tool_name)
+        result.append(tool_name)
+    return result
+
+
+def _build_external_endpoint_basic_tool_bundle() -> list[str]:
+    return _unique_allowed_tools(
+        [
+            *_EXTERNAL_ENDPOINT_BASELINE_TOOLS,
+            *get_default_assistant_capability_tools(include_basic=True),
+        ]
+    )
+
+
+EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE = _build_external_endpoint_basic_tool_bundle()
 
 
 def ensure_endpoint_always_available_tools(metadata: dict[str, Any] | None) -> dict[str, Any]:

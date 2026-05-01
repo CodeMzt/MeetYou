@@ -688,6 +688,8 @@ def build_runtime_router(gateway) -> APIRouter:
         endpoint = _find_endpoint(domain, payload.endpoint_id)
         source_id = str(getattr(endpoint, "endpoint_id", "") or payload.endpoint_id or "ui.endpoint")
         metadata = dict(payload.metadata or {})
+        if payload.preferred_mode:
+            metadata["preferred_mode"] = payload.preferred_mode
         role = payload.role or "user"
         endpoint_message_id = str(payload.endpoint_message_id or "").strip()
         origin_endpoint_row_id = getattr(endpoint, "id", None)

@@ -394,6 +394,7 @@ class GatewayRuntimeApiTests(unittest.TestCase):
             "endpoint_type": "wechat",
             "content": "hello",
             "metadata": {"source": "wechat"},
+            "preferred_mode": "danxi",
             "endpoint_message_id": "meetwechat:dedup:stable",
         }
 
@@ -406,7 +407,11 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertTrue(second.json()["idempotent_replay"])
         self.assertEqual(second.json()["message_id"], first.json()["message_id"])
         self.assertEqual(len(message_service.rows), 1)
+        self.assertEqual(message_service.rows[0].meta["preferred_mode"], "danxi")
         self.assertEqual(event_bus.inbound_queue.qsize(), 1)
+        event = event_bus.inbound_queue.get_nowait()
+        self.assertEqual(event.metadata["preferred_mode"], "danxi")
+        self.assertEqual(event.source.metadata["preferred_mode"], "danxi")
 
     def test_runtime_user_message_records_context_pool_item(self):
         class _MessageService:
