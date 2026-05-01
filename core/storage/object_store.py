@@ -52,16 +52,21 @@ class LocalObjectStore:
         return self._root
 
     @staticmethod
+    def _path_from_normalized_key(normalized: str) -> Path:
+        parts = [part for part in str(normalized or "").split("/") if part]
+        return Path(*parts) if parts else Path("")
+
+    @staticmethod
     def _to_relative_path(object_key: str) -> Path:
         normalized = str(object_key or "").strip().replace("\\", "/").lstrip("/")
         if normalized.startswith("attachments/"):
             normalized = normalized[len("attachments/") :]
-        return Path(normalized.replace("/", "\\"))
+        return LocalObjectStore._path_from_normalized_key(normalized)
 
     @staticmethod
     def _to_legacy_relative_path(object_key: str) -> Path:
-        normalized = str(object_key or "").strip().replace("/", "\\").lstrip("\\")
-        return Path(normalized)
+        normalized = str(object_key or "").strip().replace("\\", "/").lstrip("/")
+        return LocalObjectStore._path_from_normalized_key(normalized)
 
     def _resolve_existing_path(self, object_key: str) -> Path:
         primary = self.root / self._to_relative_path(object_key)

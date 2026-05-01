@@ -5,8 +5,8 @@ Status: local V4 validation, CI, Deploy, and remote Core verification passed for
 ## 2026-05-01 V4 Architecture Optimization Addendum
 
 - Commit sha: pending local commit at the time this addendum was written.
-- Scope: Endpoint protocol contract, UI endpoint readiness, scheduled job due-query path, ToolRouter failure scoring, CI/deploy gates, manual acceptance wiring, and provider template docs.
-- Focused backend protocol/router/scheduler tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_endpoint_tool_protocol tests.test_endpoint_protocol_v4 tests.test_tool_router_v4 tests.test_scheduler_v4`, 23 tests).
+- Scope: Endpoint protocol contract, UI endpoint readiness, scheduled job due-query path, ToolRouter failure scoring, CI/deploy gates, manual acceptance wiring, provider template docs, and Linux-compatible local object-store path resolution exposed by remote full discovery.
+- Focused backend protocol/router/scheduler/object-store tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_object_store tests.test_endpoint_tool_protocol tests.test_endpoint_protocol_v4 tests.test_tool_router_v4 tests.test_scheduler_v4`, 29 tests).
 - Full backend discovery: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 608 tests, 1 skipped).
 - Frontend typecheck: passed (`npm run typecheck`).
 - Frontend tests: passed (`npm run test`, 21 files / 87 tests).
