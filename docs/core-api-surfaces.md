@@ -42,6 +42,8 @@ Runtime HTTP 涓昏璧勬簮锛?
 `POST /runtime/sessions/{session_id}/reply-control` is the V4 conversation control entrypoint for `stop`, `append_guidance`, `regenerate`, and `rollback`. UI surfaces must use this Runtime HTTP facade instead of sending bare control payloads over `/endpoint/ws`.
 
 Danxi 璧勬簮涔熷湪 `/runtime/danxi/*` 涓嬨€傜櫥褰曞拰 WebVPN Cookie 鏇存柊鍙帴鍙楀姞瀵嗚浇鑽锋垨鏈嶅姟绔幆澧冨嚟鎹紝涓嶆帴鍙楁槑鏂囧瘑鐮併€丆ookie 鎴?token銆?
+
+`GET /runtime/danxi/posts/{hole_id}/floors` exposes paginated replies with `offset` as a zero-based reply cursor and returns `next_offset` for the next page.
 ## Endpoint Protocol
 
 Endpoint Provider 鍙彁渚涚鐐瑰拰鑳藉姏锛屼笉鎷ユ湁浼氳瘽銆佽繍琛屻€佽蹇嗐€佽皟搴︺€佹姇閫掓垨鏉冮檺璇箟銆?

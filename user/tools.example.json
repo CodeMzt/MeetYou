@@ -1472,7 +1472,7 @@
       "type": "function",
       "function": {
         "name": "danxi_list_floors",
-        "description": "List replies (floors) for a Danxi post.",
+        "description": "List replies (floors) for a Danxi post. Use offset as the zero-based reply cursor; use next_offset from the previous response for the next page.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -1480,13 +1480,16 @@
               "type": "integer"
             },
             "offset": {
-              "type": "integer"
+              "type": "integer",
+              "description": "Zero-based reply offset. Use 0 for the first page, then the previous response's next_offset."
             },
             "size": {
-              "type": "integer"
+              "type": "integer",
+              "description": "Page size for replies. Values are capped by the runtime."
             },
             "include_all": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Fetch all replies and ignore offset/size when true."
             },
             "session_key": {
               "type": "string"

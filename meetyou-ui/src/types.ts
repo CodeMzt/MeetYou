@@ -140,6 +140,12 @@ export interface DanxiListResponse<T = Record<string, unknown>> {
   count: number
   items: T[]
   scope?: string
+  hole_id?: number
+  offset?: number
+  size?: number
+  next_offset?: number
+  has_more?: boolean
+  include_all?: boolean
 }
 
 export interface DanxiPostResponse {

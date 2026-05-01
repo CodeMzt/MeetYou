@@ -225,6 +225,43 @@ class DanxiToolsTests(unittest.TestCase):
         self.assertEqual(params["offset"], "2026-04-15T10:00:00Z")
         self.assertNotIn("start_time", params)
 
+    def test_list_floors_translates_offset_to_floor_cursor(self):
+        tools = DanxiTools()
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=False,
+            webvpn_cookie="",
+            http=_FakeSession([]),
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        with patch.object(
+            DanxiTools,
+            "_request_json",
+            return_value=[
+                {"floor_id": 2035489, "hole_id": 218579},
+                {"floor_id": 2035491, "hole_id": 218579},
+                {"floor_id": 2035496, "hole_id": 218579},
+            ],
+        ) as request_json:
+            payload = tools.danxi_list_floors(218579, offset=3, size=3)
+
+        request_json.assert_called_once()
+        self.assertEqual(request_json.call_args.args[:2], ("GET", f"{tools.API_BASE}/floors"))
+        self.assertEqual(
+            request_json.call_args.kwargs["params"],
+            {"start_floor": 3, "length": 3, "hole_id": 218579},
+        )
+        self.assertEqual(payload["offset"], 3)
+        self.assertEqual(payload["size"], 3)
+        self.assertEqual(payload["next_offset"], 6)
+        self.assertTrue(payload["has_more"])
+        self.assertEqual([item["floor_id"] for item in payload["items"]], [2035489, 2035491, 2035496])
+
     def test_request_relogs_on_unauthorized(self):
         fake_http = _FakeSession(
             [

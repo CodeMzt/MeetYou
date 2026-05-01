@@ -344,13 +344,27 @@ class DanxiTools:
         session_key: str = "",
     ) -> dict[str, Any]:
         state = self._get_session(session_key)
+        normalized_hole_id = int(hole_id)
         if include_all:
-            params = {"start_floor": 0, "length": 0, "hole_id": int(hole_id)}
-            data = self._request_json("GET", f"{self.API_BASE}/floors", state=state, params=params)
+            request_offset = 0
+            request_size = 0
         else:
-            params = {"offset": max(0, int(offset or 0)), "size": max(1, min(int(size or 20), 100))}
-            data = self._request_json("GET", f"{self.API_BASE}/holes/{int(hole_id)}/floors", state=state, params=params)
-        return {"hole_id": int(hole_id), "count": len(data) if isinstance(data, list) else 0, "items": data}
+            request_offset = max(0, int(offset or 0))
+            request_size = max(1, min(int(size or 20), 100))
+        params = {"start_floor": request_offset, "length": request_size, "hole_id": normalized_hole_id}
+        data = self._request_json("GET", f"{self.API_BASE}/floors", state=state, params=params)
+        count = len(data) if isinstance(data, list) else 0
+        next_offset = request_offset + count
+        return {
+            "hole_id": normalized_hole_id,
+            "offset": request_offset,
+            "size": request_size,
+            "next_offset": next_offset,
+            "has_more": bool(not include_all and request_size > 0 and count >= request_size),
+            "include_all": bool(include_all),
+            "count": count,
+            "items": data,
+        }
 
     def danxi_search_posts(
         self,

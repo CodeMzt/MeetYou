@@ -11,6 +11,7 @@ import {
   getDanxiProfile,
   resolveDanxiMessageTarget,
   getDanxiSessionStatus,
+  listDanxiFloors,
   listDanxiPosts,
   listOperatorSourceProfiles,
   listRuntimeThreads,
@@ -468,6 +469,35 @@ describe('runtimeApi', () => {
 
     expect(session.logged_in).toBe(true)
     expect(posts.items[0]?.hole_id).toBe(101)
+  })
+
+  it('passes Danxi floor pagination through runtime API', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          hole_id: 218579,
+          offset: 3,
+          size: 3,
+          next_offset: 6,
+          has_more: true,
+          count: 3,
+          items: [{ floor_id: 2035489 }, { floor_id: 2035491 }, { floor_id: 2035496 }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const floors = await listDanxiFloors('http://127.0.0.1:8000', 218579, {
+      offset: 3,
+      size: 3,
+    })
+
+    expect(floors.next_offset).toBe(6)
+    expect(floors.items[0]?.floor_id).toBe(2035489)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/desktop/danxi/posts/218579/floors?offset=3&size=3',
+      expect.anything(),
+    )
   })
 
   it('loads Danxi profile and supports reply/edit/delete/summary facades', async () => {

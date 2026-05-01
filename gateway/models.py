@@ -743,6 +743,8 @@ class RuntimeDanxiSessionResponse(BaseModel):
 
 
 class RuntimeDanxiListResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     count: int = 0
     items: list[Any] = Field(default_factory=list)
     scope: str = ""
