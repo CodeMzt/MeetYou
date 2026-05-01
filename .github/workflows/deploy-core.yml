@@ -53,6 +53,9 @@ jobs:
                   echo "Preserving remote tracked local changes before deploy"
                   git -C "${repo}" stash push -m "meetyou-deploy-preserve-$(date -u +%Y%m%dT%H%M%SZ)"
                 fi
+                git -C "${repo}" fetch origin main
+                git -C "${repo}" checkout main
+                git -C "${repo}" reset --hard origin/main
                 break
               fi
             done
