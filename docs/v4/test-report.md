@@ -2,6 +2,19 @@
 
 Status: local V4 validation, CI, Deploy, and remote Core verification passed for the latest deploy. Latest WeChatBot human confirmation is still pending a fresh user-sent WeChat marker.
 
+## 2026-05-01 Scheduled Assistant Round Limit Addendum
+
+- Commit sha: `62679e87656577f1f896dcbdf2d900df774eada1`.
+- Scope: removed the default model/tool round cap from Scheduler-owned assistant turns. `max_rounds=0` now means unlimited, new Scheduled Workflow and Scheduled Delivery templates default to `0`, and legacy templates that stored the old default `max_rounds=6` without an explicit marker are interpreted as unlimited.
+- Local focused backend tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_background_agent tests.test_brain_runtime tests.test_scheduler_tools_v4 tests.test_scheduler_job_runtime_v4`, 52 tests).
+- Local tool registry tests: passed (`.venv\Scripts\python.exe -m unittest tests.test_tool_runtime`, 13 tests).
+- Local full backend discovery: passed (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`, 602 tests, 1 skipped).
+- CI status: passed (`CI`, run `25199168381`, commit `62679e87656577f1f896dcbdf2d900df774eada1`).
+- Deploy status: passed after rerunning an initial SSH handshake failure (`Deploy MeetYou Core`, run `25199168366`, commit `62679e87656577f1f896dcbdf2d900df774eada1`).
+- Remote Core `/health`: passed (`https://core.maziteng.cn/health`, `status=ready`, `ready=true`, `degraded=false`, `build_info.git_commit=62679e87656577f1f896dcbdf2d900df774eada1`, `branch=main`, `build_time=2026-05-01T02:21:27Z`).
+- Local Desktop -> remote Core real acceptance: not rerun for this focused Scheduler/Brain backend policy change.
+- External Feishu / WeChatBot human confirmation: not rerun for this focused Scheduler/Brain backend policy change.
+
 ## 2026-04-30 Desktop Reply Control / Heartbeat Streaming Addendum
 
 - Functional commit sha: `de103e1957dd564ad2ce3dcd0a48d01e3107a225`.
