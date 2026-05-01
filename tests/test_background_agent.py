@@ -39,6 +39,27 @@ class _MissingReasoningAdapter:
         return {"content": "done", "tool_calls": []}
 
 
+class _ManyToolRoundAdapter:
+    def __init__(self, tool_rounds=7):
+        self.calls = []
+        self.tool_rounds = tool_rounds
+
+    async def chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
+        self.calls.append([dict(message) for message in messages])
+        if len(self.calls) <= self.tool_rounds:
+            return {
+                "content": "",
+                "tool_calls": [
+                    ToolCallInfo(
+                        id=f"call_{len(self.calls)}",
+                        name="exec_sys_cmd",
+                        arguments_str='{"cmd":"date"}',
+                    )
+                ],
+            }
+        return {"content": "done", "tool_calls": []}
+
+
 class _FakeToolsManager:
     async def call_tool(self, tool_name, args, **kwargs):
         return ToolCallResult.success(
@@ -91,6 +112,23 @@ class BackgroundAgentRunnerTests(unittest.IsolatedAsyncioTestCase):
         assistant = adapter.calls[1][1]
         self.assertIn("reasoning_content", assistant)
         self.assertEqual(assistant["reasoning_content"], "")
+
+    async def test_zero_max_rounds_means_unlimited(self):
+        adapter = _ManyToolRoundAdapter(tool_rounds=7)
+        runner = BackgroundAgentRunner(adapter, _FakeToolsManager())
+
+        result = await runner.run(
+            session=None,
+            api_url="https://api.example.test/chat/completions",
+            api_key="key",
+            model="model",
+            messages=[{"role": "user", "content": "Keep using tools until finished"}],
+            tools=[],
+            max_rounds=0,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(adapter.calls), 8)
 
 
 if __name__ == "__main__":

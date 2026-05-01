@@ -298,10 +298,11 @@ class SchedulerTools:
     @staticmethod
     def _workflow_tool_policy(tool_policy: dict[str, Any] | None) -> dict[str, Any]:
         payload = dict(tool_policy or {})
+        max_rounds_explicit = "max_rounds" in payload
         try:
-            max_rounds = int(payload.get("max_rounds") or 6)
+            max_rounds = int(payload.get("max_rounds") or 0)
         except (TypeError, ValueError):
-            max_rounds = 6
+            max_rounds = 0
         return {
             "tool_bundle": _string_list(
                 payload.get("tool_bundle")
@@ -323,7 +324,8 @@ class SchedulerTools:
             "preferred_target_endpoint_ids": _string_list(payload.get("preferred_target_endpoint_ids")),
             "preferred_endpoint_provider_types": _string_list(payload.get("preferred_endpoint_provider_types")),
             "tool_target_routing_policy": str(payload.get("tool_target_routing_policy") or "balanced").strip() or "balanced",
-            "max_rounds": max(max_rounds, 1),
+            "max_rounds": max(max_rounds, 0),
+            "max_rounds_explicit": max_rounds_explicit,
         }
 
     def _trigger_regular_job(self, job, *, workspace_id: str = "") -> dict[str, Any]:
@@ -570,6 +572,7 @@ class SchedulerTools:
                     "output_kinds": output_settings["output_kinds"],
                 },
                 "max_rounds": tool_policy_payload["max_rounds"],
+                "max_rounds_explicit": tool_policy_payload["max_rounds_explicit"],
                 "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or "personal"),
                 "thread_id": output_settings["thread_id"],
                 "session_id": output_settings["session_id"],
@@ -629,7 +632,7 @@ class SchedulerTools:
             mode="automation",
             tool_policy={
                 "tool_bundle": ["get_current_system_time", "emit_progress_notice"],
-                "max_rounds": 4,
+                "max_rounds": 0,
             },
             output_policy={
                 "workflow_subtype": "delivery",
@@ -718,6 +721,7 @@ class SchedulerTools:
                         "preferred_endpoint_provider_types": normalized_policy["preferred_endpoint_provider_types"],
                         "tool_target_routing_policy": normalized_policy["tool_target_routing_policy"],
                         "max_rounds": normalized_policy["max_rounds"],
+                        "max_rounds_explicit": normalized_policy["max_rounds_explicit"],
                     }
                 )
             if output_policy is not None:

@@ -15,6 +15,14 @@ from core.tool_runtime import ToolCallResult, ToolErrorCategory, ToolSourceType,
 logger = logging.getLogger("meetyou.background_agent")
 
 
+def normalize_background_max_rounds(value: Any) -> int | None:
+    try:
+        normalized = int(value or 0)
+    except (TypeError, ValueError):
+        normalized = 0
+    return normalized if normalized > 0 else None
+
+
 class BackgroundAgentRunner:
     def __init__(self, adapter, tools_manager):
         self._adapter = adapter
@@ -36,7 +44,7 @@ class BackgroundAgentRunner:
         session_id: str = "",
         source=None,
         route_context: dict[str, Any] | None = None,
-        max_rounds: int = 6,
+        max_rounds: int = 0,
         adapter_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         history = [dict(message) for message in messages]
@@ -45,8 +53,11 @@ class BackgroundAgentRunner:
         last_tool_names: list[str] = []
         completed_task_keys: list[str] = []
         manage_task_actions: list[dict[str, Any]] = []
+        max_round_limit = normalize_background_max_rounds(max_rounds)
+        round_count = 0
 
-        for _ in range(max_rounds):
+        while max_round_limit is None or round_count < max_round_limit:
+            round_count += 1
             result = await self._adapter.chat(
                 session,
                 api_url,

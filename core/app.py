@@ -1837,6 +1837,12 @@ class App:
             **self._runtime_principal_context(),
         )
         try:
+            max_rounds = int(run_template.get("max_rounds") or 0)
+        except (TypeError, ValueError):
+            max_rounds = 0
+        if max_rounds == 6 and not bool(run_template.get("max_rounds_explicit")):
+            max_rounds = 0
+        try:
             try:
                 result = await self.brain.run_background_turn(
                     api_url=self.config.get("api_url") or "",
@@ -1848,7 +1854,7 @@ class App:
                     source=make_source(SourceKind.SYSTEM.value, "scheduler"),
                     route_context=route_context,
                     adapter_options=Brain._build_adapter_options(self._build_model_options({})),
-                    max_rounds=int(run_template.get("max_rounds") or 6),
+                    max_rounds=max_rounds,
                 )
             except Exception as exc:
                 logger.exception("Scheduled job %s failed during background turn", getattr(job, "job_id", ""))

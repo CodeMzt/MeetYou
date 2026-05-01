@@ -31,6 +31,7 @@ from core.assistant_modes import (
     RouteDecision,
 )
 from core.brain_session import BrainSession
+from core.background_agent import normalize_background_max_rounds
 from core.public_contract import to_internal_assistant_mode
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.model_capabilities import ModelContextBudgetResolver
@@ -2100,7 +2101,7 @@ class Brain:
         tools: list[dict[str, Any]] | None = None,
         source=None,
         route_context: dict[str, Any] | None = None,
-        max_rounds: int = 6,
+        max_rounds: int = 0,
         adapter_options: dict[str, Any] | None = None,
         tool_activity_callback=None,
         phase_callback=None,
@@ -2133,9 +2134,12 @@ class Brain:
         last_tool_names: list[str] = []
         completed_task_keys: list[str] = []
         manage_task_actions: list[dict[str, Any]] = []
+        max_round_limit = normalize_background_max_rounds(max_rounds)
+        round_count = 0
 
         try:
-            for _ in range(max_rounds):
+            while max_round_limit is None or round_count < max_round_limit:
+                round_count += 1
                 if phase_callback:
                     self.set_session_runtime_state(
                         normalized_session_id,

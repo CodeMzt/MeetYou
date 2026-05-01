@@ -936,6 +936,7 @@ class Heart:
                                 session_id=self._session_id,
                                 source=self._source,
                                 route_context=self._heartbeat_route_context(tools),
+                                max_rounds=6,
                             )
                         finally:
                             reset_event_context(agent_token)

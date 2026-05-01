@@ -343,7 +343,24 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.run_template["schema"], "meetyou.scheduler.workflow.v1")
         self.assertEqual(job.run_template["workflow_type"], "assistant_run")
         self.assertEqual(job.run_template["tool_bundle"], ["get_current_system_time", "summarize_text"])
+        self.assertEqual(job.run_template["max_rounds"], 3)
+        self.assertTrue(job.run_template["max_rounds_explicit"])
         self.assertEqual(job.run_template["output_policy"]["output_kinds"], ["assistant_message"])
+
+    async def test_create_scheduled_workflow_defaults_to_unlimited_rounds(self):
+        tools, scheduler, *_ = self._tools()
+
+        payload = await tools.create_scheduled_workflow(
+            name="Deep daily digest",
+            schedule={"type": "daily", "time_of_day": "09:30", "timezone": "Asia/Shanghai"},
+            instruction="Research and summarize everything needed.",
+            output_policy={"output_kinds": ["assistant_message"]},
+        )
+
+        self.assertTrue(payload["ok"])
+        job = scheduler.jobs[payload["job"]["job_id"]]
+        self.assertEqual(job.run_template["max_rounds"], 0)
+        self.assertFalse(job.run_template["max_rounds_explicit"])
 
     async def test_create_scheduled_workflow_rejects_non_persisted_assistant_output(self):
         tools, *_ = self._tools()
@@ -388,6 +405,8 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.run_template["workflow_subtype"], "delivery")
         self.assertEqual(job.run_template["generation_policy"], "generate_at_fire_time")
         self.assertEqual(job.run_template["instruction"], "Say good morning.")
+        self.assertEqual(job.run_template["max_rounds"], 0)
+        self.assertTrue(job.run_template["max_rounds_explicit"])
 
         deliveries = await tools.manage_scheduled_deliveries(action="list")
         workflows = await tools.manage_scheduled_workflows(action="list")

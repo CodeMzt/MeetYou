@@ -667,7 +667,7 @@
             },
             "run_template": {
               "type": "object",
-              "description": "Assistant turn template for core.workflow.assistant_turn jobs. Common fields: prompt, messages, thread_id, create_thread, tool_bundle, mcp_servers, preferred_tool_key, preferred_target_endpoint_ids, preferred_endpoint_provider_types, tool_target_routing_policy, max_rounds.",
+              "description": "Assistant turn template for core.workflow.assistant_turn jobs. Common fields: prompt, messages, thread_id, create_thread, tool_bundle, mcp_servers, preferred_tool_key, preferred_target_endpoint_ids, preferred_endpoint_provider_types, tool_target_routing_policy, max_rounds. max_rounds=0 means no round limit.",
               "default": {}
             },
             "execution_policy": {

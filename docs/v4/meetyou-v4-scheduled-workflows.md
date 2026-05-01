@@ -50,9 +50,11 @@ At fire time Core:
     "output_kinds": ["assistant_message"],
     "delivery_targets": []
   },
-  "max_rounds": 6
+  "max_rounds": 0
 }
 ```
+
+`max_rounds=0` means the scheduled assistant run has no model/tool round limit. Set a positive value only for workflows that need an explicit cap. Legacy workflow templates that stored the previous default `max_rounds=6` without an explicit marker are interpreted as unlimited.
 
 Current `workflow_type` values:
 

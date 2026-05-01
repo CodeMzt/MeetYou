@@ -348,6 +348,28 @@ class ToolCallingAdapter:
         )
 
 
+class BackgroundToolLoopAdapter:
+    def __init__(self, tool_rounds=7):
+        self.calls = 0
+        self.tool_rounds = tool_rounds
+
+    async def chat(self, session, api_url, api_key, model, messages, tools=None, **kwargs):
+        del session, api_url, api_key, model, messages, tools, kwargs
+        self.calls += 1
+        if self.calls <= self.tool_rounds:
+            return {
+                "content": "",
+                "tool_calls": [
+                    ToolCallInfo(
+                        id=f"tool-{self.calls}",
+                        name="lookup_profile",
+                        arguments_str='{"name":"Alex"}',
+                    )
+                ],
+            }
+        return {"content": "done", "tool_calls": []}
+
+
 class MissingReasoningToolAdapter:
     def __init__(self):
         self.call_count = 0
@@ -548,6 +570,36 @@ class ProviderContextRetryAdapter:
 
 
 class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_background_turn_zero_max_rounds_means_unlimited(self):
+        adapter = BackgroundToolLoopAdapter(tool_rounds=7)
+        tools_manager = FakeToolsManager()
+        brain = Brain(
+            adapter,
+            tools_manager,
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            result = await brain.run_background_turn(
+                session_id="background-unlimited",
+                api_url="https://api.example.test/chat/completions",
+                api_key="key",
+                model="model",
+                messages=[{"role": "user", "content": "Use tools until done"}],
+                tools=[tools_manager._build_tool_schema("lookup_profile")],
+                max_rounds=0,
+            )
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["content"], "done")
+            self.assertEqual(adapter.calls, 8)
+            self.assertEqual(len(tools_manager.calls), 7)
+        finally:
+            await brain.close_brain()
+
     async def test_brain_hydrates_persisted_thread_context_once(self):
         adapter = QueuedStreamAdapter(
             rounds=[

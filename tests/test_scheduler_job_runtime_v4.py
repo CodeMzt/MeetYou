@@ -192,6 +192,24 @@ class SchedulerJobRuntimeV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(services.delivery.calls[0]["message_type"], "message")
         self.assertEqual(len(app.gateway.events), 3)
         self.assertEqual(app.brain.calls[0]["route_context"]["tool_bundle"], ["get_current_system_time"])
+        self.assertEqual(app.brain.calls[0]["max_rounds"], 0)
+
+    async def test_scheduler_job_treats_legacy_default_six_as_unlimited(self):
+        app, job, _ = self._make_app()
+        job.run_template["max_rounds"] = 6
+
+        await App._run_assistant_scheduled_job(app, job, workspace_id="personal", manual=True)
+
+        self.assertEqual(app.brain.calls[0]["max_rounds"], 0)
+
+    async def test_scheduler_job_preserves_explicit_positive_max_rounds(self):
+        app, job, _ = self._make_app()
+        job.run_template["max_rounds"] = 6
+        job.run_template["max_rounds_explicit"] = True
+
+        await App._run_assistant_scheduled_job(app, job, workspace_id="personal", manual=True)
+
+        self.assertEqual(app.brain.calls[0]["max_rounds"], 6)
 
 
 if __name__ == "__main__":
