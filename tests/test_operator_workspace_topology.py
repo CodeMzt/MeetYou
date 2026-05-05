@@ -96,6 +96,42 @@ class OperatorWorkspaceTopologyTests(unittest.TestCase):
         self.assertEqual(address["workspace_ids"], ["personal"])
         self.assertEqual(personal["endpoint_count"], 1)
 
+    def test_topology_hides_retired_acceptance_probe_endpoints_by_default(self):
+        endpoint = self.services.endpoint.ensure_endpoint(
+            endpoint_id="desktop.v4check-deadbeef.executor",
+            endpoint_type="desktop_executor",
+            provider_type="desktop",
+            transport_type="websocket",
+            workspace_scope=["personal"],
+            status="online",
+            metadata={
+                "provider": {
+                    "provider_id": "v4check-deadbeef",
+                    "display_name": "V4 Acceptance Endpoint",
+                    "transport_profile": "acceptance_ws",
+                }
+            },
+        )
+        self.services.endpoint_workspace_membership.seed_endpoint_memberships(
+            endpoint_row_id=endpoint.id,
+            workspace_ids=["personal"],
+        )
+        self.services.endpoint.retire_acceptance_probe_endpoints()
+
+        response = self.client.get("/operator/workspace-topology", headers=self._headers())
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        endpoint_ids = {item["endpoint_id"] for item in payload["endpoints"]}
+        personal = next(item for item in payload["workspaces"] if item["workspace_id"] == "personal")
+
+        self.assertNotIn("desktop.v4check-deadbeef.executor", endpoint_ids)
+        self.assertEqual(personal["endpoint_count"], 1)
+
+        archived = self.client.get("/operator/workspace-topology?include_archived=true", headers=self._headers())
+        self.assertEqual(archived.status_code, 200, archived.text)
+        archived_ids = {item["endpoint_id"] for item in archived.json()["endpoints"]}
+        self.assertIn("desktop.v4check-deadbeef.executor", archived_ids)
+
     def test_endpoint_move_sets_primary_and_keeps_existing_membership(self):
         response = self.client.patch(
             "/operator/endpoints/desktop.main.executor/primary-workspace",

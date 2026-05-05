@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from uuid import uuid4
 
+from core.db.base import utcnow
 from core.db.repositories import (
     ActorDeliveryPreferenceRepository,
     DeliveryAttemptRepository,
@@ -18,6 +19,9 @@ from core.db.repositories import (
     ThreadRepository,
 )
 from core.services.base import ServiceBase
+
+
+HIDDEN_ENDPOINT_STATUSES = {"archived", "retired"}
 
 
 class EndpointThreadBindingError(ValueError):
@@ -37,6 +41,28 @@ def _string_list(values) -> list[str]:
         seen.add(item)
         result.append(item)
     return result
+
+
+def is_acceptance_probe_endpoint(endpoint) -> bool:
+    endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip().lower()
+    endpoint_type = str(getattr(endpoint, "endpoint_type", "") or "").strip().lower()
+    meta = dict(getattr(endpoint, "meta", {}) or {})
+    provider = meta.get("provider") if isinstance(meta.get("provider"), dict) else {}
+    provider_id = str(provider.get("provider_id") or "").strip().lower()
+    transport_profile = str(provider.get("transport_profile") or "").strip().lower()
+    display_name = str(provider.get("display_name") or meta.get("display_name") or "").strip().lower()
+    endpoint_id_matches = endpoint_id.startswith(("desktop.v4check-", "edge.v4check-")) and endpoint_id.endswith(
+        (".ui", ".executor")
+    )
+    provider_matches = provider_id.startswith("v4check-") and transport_profile == "acceptance_ws"
+    name_matches = display_name == "v4 acceptance endpoint" and endpoint_type in {"desktop_ui", "desktop_executor", "edge_executor"}
+    return endpoint_id_matches or provider_matches or name_matches
+
+
+def endpoint_hidden_from_operator(endpoint) -> bool:
+    status = str(getattr(endpoint, "status", "") or "").strip().lower()
+    meta = dict(getattr(endpoint, "meta", {}) or {})
+    return status in HIDDEN_ENDPOINT_STATUSES or bool(meta.get("operator_hidden")) or is_acceptance_probe_endpoint(endpoint)
 
 
 class EndpointRegistryService(ServiceBase):
@@ -79,6 +105,30 @@ class EndpointRegistryService(ServiceBase):
     def list_all(self):
         with self.session_scope() as session:
             return EndpointRepository(session).list_all()
+
+    def retire_acceptance_probe_endpoints(self) -> int:
+        retired = 0
+        retired_at = utcnow().isoformat()
+        with self.session_scope() as session:
+            endpoint_repo = EndpointRepository(session)
+            capability_repo = EndpointCapabilityRepository(session)
+            for endpoint in endpoint_repo.list_all():
+                if not is_acceptance_probe_endpoint(endpoint):
+                    continue
+                meta = dict(getattr(endpoint, "meta", {}) or {})
+                already_retired = bool(meta.get("operator_hidden")) and str(getattr(endpoint, "status", "") or "") == "archived"
+                endpoint.status = "archived"
+                meta["operator_hidden"] = True
+                meta["operator_hidden_reason"] = "v4_acceptance_probe"
+                meta.setdefault("retired_at", retired_at)
+                endpoint.meta = meta
+                for capability in capability_repo.list_for_endpoint(endpoint_id=endpoint.id):
+                    capability.enabled = False
+                if not already_retired:
+                    retired += 1
+            if retired:
+                session.flush()
+        return retired
 
     def set_status(self, *, endpoint_id: str, status: str):
         with self.session_scope() as session:

@@ -119,6 +119,41 @@ class EndpointWorkspaceMembershipTests(unittest.TestCase):
                 workspace_id="personal",
             )
 
+    def test_acceptance_probe_cleanup_archives_endpoint_and_disables_capabilities(self):
+        endpoint = self.services.endpoint.ensure_endpoint(
+            endpoint_id="desktop.v4check-deadbeef.executor",
+            endpoint_type="desktop_executor",
+            provider_type="desktop",
+            transport_type="websocket",
+            workspace_scope=["personal"],
+            status="online",
+            metadata={
+                "provider": {
+                    "provider_id": "v4check-deadbeef",
+                    "display_name": "V4 Acceptance Endpoint",
+                    "transport_profile": "acceptance_ws",
+                }
+            },
+        )
+        self.services.endpoint_workspace_membership.seed_endpoint_memberships(
+            endpoint_row_id=endpoint.id,
+            workspace_ids=["personal"],
+        )
+        self.services.endpoint_capability.upsert_capability(
+            endpoint_row_id=endpoint.id,
+            tool_key="utility.echo",
+            capability_id="endpoint.desktop.v4check-deadbeef.executor.utility.echo",
+        )
+
+        retired = self.services.endpoint.retire_acceptance_probe_endpoints()
+        refreshed = self.services.endpoint.get_by_endpoint_id("desktop.v4check-deadbeef.executor")
+        capabilities = self.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)
+
+        self.assertEqual(retired, 1)
+        self.assertEqual(refreshed.status, "archived")
+        self.assertTrue((refreshed.meta or {}).get("operator_hidden"))
+        self.assertFalse(any(capability.enabled for capability in capabilities))
+
 
 class EndpointWorkspaceMembershipMigrationTests(unittest.TestCase):
     @classmethod

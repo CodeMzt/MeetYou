@@ -103,8 +103,13 @@ const LANE_TOP = 82
 const LANE_GAP = 22
 const ENDPOINT_WIDTH = 146
 const ENDPOINT_HEIGHT = 54
-const ADDRESS_WIDTH = 96
-const ADDRESS_HEIGHT = 28
+const ADDRESS_HEIGHT = 26
+const ADDRESS_GAP = 6
+const ENDPOINT_COLUMN_GAP = 12
+const ENDPOINT_ROW_GAP = 20
+const LANE_HEADER_HEIGHT = 44
+const LANE_BOTTOM_PADDING = 16
+const ENDPOINTS_PER_ROW = 3
 
 function normalizeSearch(value: string): string {
   return value.trim().toLowerCase()
@@ -140,6 +145,12 @@ function computeTopologyLayout(topology: WorkspaceTopology): TopologyLayout {
   const workspaces = topology.workspaces.length > 0
     ? topology.workspaces
     : [{ workspace_id: 'unassigned', title: 'Unassigned', status: 'active', base_mode: 'general', description: '', endpoint_count: 0, online_endpoint_count: 0 }]
+  const addressesByEndpoint = new Map<string, WorkspaceTopologyAddress[]>()
+  topology.addresses.forEach((address) => {
+    const bucket = addressesByEndpoint.get(address.endpoint_id) || []
+    bucket.push(address)
+    addressesByEndpoint.set(address.endpoint_id, bucket)
+  })
   const endpointsByPrimary = new Map<string, WorkspaceTopologyEndpoint[]>()
   topology.endpoints.forEach((endpoint) => {
     const workspaceId = endpoint.primary_workspace_id || endpoint.workspace_ids[0] || workspaces[0]?.workspace_id || 'unassigned'
@@ -149,11 +160,20 @@ function computeTopologyLayout(topology: WorkspaceTopology): TopologyLayout {
   })
 
   const lanes = new Map<string, { x: number; y: number; width: number; height: number }>()
+  const rowHeightsByWorkspace = new Map<string, number[]>()
   let cursorY = LANE_TOP
   workspaces.forEach((workspace) => {
-    const endpoints = endpointsByPrimary.get(workspace.workspace_id) || []
-    const rows = Math.max(1, Math.ceil(endpoints.length / 3))
-    const height = 122 + Math.max(0, rows - 1) * 74
+    const endpoints = (endpointsByPrimary.get(workspace.workspace_id) || []).slice().sort((a, b) => a.endpoint_id.localeCompare(b.endpoint_id))
+    const rowCount = Math.max(1, Math.ceil(endpoints.length / ENDPOINTS_PER_ROW))
+    const rowHeights = Array.from({ length: rowCount }, (_, rowIndex) => {
+      const rowEndpoints = endpoints.slice(rowIndex * ENDPOINTS_PER_ROW, rowIndex * ENDPOINTS_PER_ROW + ENDPOINTS_PER_ROW)
+      const maxAddressCount = Math.max(0, ...rowEndpoints.map((endpoint) => Math.min(addressesByEndpoint.get(endpoint.endpoint_id)?.length || 0, 4)))
+      const addressStackHeight = maxAddressCount > 0 ? ADDRESS_GAP + maxAddressCount * (ADDRESS_HEIGHT + ADDRESS_GAP) : 0
+      return ENDPOINT_HEIGHT + addressStackHeight
+    })
+    const rowsHeight = rowHeights.reduce((sum, rowHeight) => sum + rowHeight, 0)
+    const height = LANE_HEADER_HEIGHT + rowsHeight + Math.max(0, rowCount - 1) * ENDPOINT_ROW_GAP + LANE_BOTTOM_PADDING
+    rowHeightsByWorkspace.set(workspace.workspace_id, rowHeights)
     lanes.set(workspace.workspace_id, { x: LANE_X, y: cursorY, width: LANE_WIDTH, height })
     cursorY += height + LANE_GAP
   })
@@ -166,22 +186,17 @@ function computeTopologyLayout(topology: WorkspaceTopology): TopologyLayout {
       .slice()
       .sort((a, b) => a.endpoint_id.localeCompare(b.endpoint_id))
       .forEach((endpoint, index) => {
-        const col = index % 3
-        const row = Math.floor(index / 3)
+        const col = index % ENDPOINTS_PER_ROW
+        const row = Math.floor(index / ENDPOINTS_PER_ROW)
+        const rowHeights = rowHeightsByWorkspace.get(workspaceId) || []
+        const yOffset = rowHeights.slice(0, row).reduce((sum, rowHeight) => sum + rowHeight + ENDPOINT_ROW_GAP, 0)
         endpointPositions.set(endpoint.endpoint_id, {
-          x: lane.x + 160 + col * 158,
-          y: lane.y + 44 + row * 74,
+          x: lane.x + 160 + col * (ENDPOINT_WIDTH + ENDPOINT_COLUMN_GAP),
+          y: lane.y + LANE_HEADER_HEIGHT + yOffset,
           width: ENDPOINT_WIDTH,
           height: ENDPOINT_HEIGHT,
         })
       })
-  })
-
-  const addressesByEndpoint = new Map<string, WorkspaceTopologyAddress[]>()
-  topology.addresses.forEach((address) => {
-    const bucket = addressesByEndpoint.get(address.endpoint_id) || []
-    bucket.push(address)
-    addressesByEndpoint.set(address.endpoint_id, bucket)
   })
 
   const addressPositions = new Map<string, { x: number; y: number; width: number; height: number }>()
@@ -194,9 +209,9 @@ function computeTopologyLayout(topology: WorkspaceTopology): TopologyLayout {
       .slice(0, 4)
       .forEach((address, index) => {
         addressPositions.set(address.address_id, {
-          x: endpoint.x + 8 + (index % 2) * 72,
-          y: endpoint.y + endpoint.height + 12 + Math.floor(index / 2) * 32,
-          width: ADDRESS_WIDTH,
+          x: endpoint.x,
+          y: endpoint.y + endpoint.height + ADDRESS_GAP + index * (ADDRESS_HEIGHT + ADDRESS_GAP),
+          width: endpoint.width,
           height: ADDRESS_HEIGHT,
         })
       })
@@ -868,7 +883,10 @@ function TopologyCanvas({ topology, workspaceMap, addressesByEndpoint, selection
             <span
               key={`hidden-${endpoint.endpoint_id}`}
               className={styles.hiddenAddressBadge}
-              style={{ left: endpointPosition.x + 104, top: endpointPosition.y + endpointPosition.height + 46 }}
+              style={{
+                left: endpointPosition.x + endpointPosition.width - 34,
+                top: endpointPosition.y + endpointPosition.height + ADDRESS_GAP + 4 * (ADDRESS_HEIGHT + ADDRESS_GAP),
+              }}
             >
               +{hiddenAddressCount}
             </span>

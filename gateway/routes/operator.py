@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from core.config import ConfigManager
 from core.exceptions import ConfigError
 from core.protocol_schema import build_ui_protocol_schema
+from core.services.endpoint_service import endpoint_hidden_from_operator
 from core.source_catalog import SourceCatalogManager
 
 from gateway.models import (
@@ -441,7 +442,7 @@ def build_operator_router(gateway) -> APIRouter:
         return HealthEnvelopeResponse(schema_name="meetyou.http.v1", health=health_payload)
 
     @router.get("/endpoints", response_model=list[OperatorEndpointResponse])
-    async def list_endpoints(request: Request):
+    async def list_endpoints(request: Request, include_archived: bool = False):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         snapshots = await gateway.endpoint_ws_manager.snapshot()
@@ -452,6 +453,8 @@ def build_operator_router(gateway) -> APIRouter:
                 by_endpoint.setdefault(endpoint_id, []).append(dict(item))
         rows = []
         for endpoint in domain.services.endpoint.list_all():
+            if not include_archived and endpoint_hidden_from_operator(endpoint):
+                continue
             endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
             connections = by_endpoint.get(endpoint_id, [])
             connected = bool(connections)
@@ -499,8 +502,12 @@ def build_operator_router(gateway) -> APIRouter:
 
         endpoint_payloads: list[OperatorTopologyEndpointResponse] = []
         endpoint_membership_service = getattr(domain.services, "endpoint_workspace_membership", None)
+        visible_endpoint_row_ids = set()
         for endpoint in domain.services.endpoint.list_all():
+            if not include_archived and endpoint_hidden_from_operator(endpoint):
+                continue
             endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
+            visible_endpoint_row_ids.add(getattr(endpoint, "id", None))
             connections = by_endpoint.get(endpoint_id, [])
             memberships = _membership_payloads(
                 domain,
@@ -554,6 +561,8 @@ def build_operator_router(gateway) -> APIRouter:
         address_membership_service = getattr(domain.services, "endpoint_address_workspace_membership", None)
         for address in domain.services.endpoint_address.list_addresses() if hasattr(domain.services.endpoint_address, "list_addresses") else []:
             endpoint = domain.services.endpoint.get_by_id(getattr(address, "endpoint_id", None))
+            if not include_archived and getattr(endpoint, "id", None) not in visible_endpoint_row_ids:
+                continue
             memberships = _membership_payloads(
                 domain,
                 address_membership_service.list_for_address(address_row_id=address.id) if address_membership_service is not None else [],

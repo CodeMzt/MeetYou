@@ -311,6 +311,7 @@ def bootstrap_core_domain(
             metadata=item.get("metadata"),
         )
         workspaces[item["workspace_id"]] = workspace
+    services.endpoint.retire_acceptance_probe_endpoints()
     return CoreDomainContext(
         database_url=resolved_database_url,
         engine=engine,
