@@ -1,4 +1,4 @@
-import { Database, Gauge, LayoutTemplate, MessageSquareMore, Minus, Paperclip, Pin, PinOff, Settings, Wrench, X } from 'lucide-react'
+import { Database, Gauge, LayoutTemplate, MessageSquareMore, Minus, Pin, PinOff, Settings, Wrench, X } from 'lucide-react'
 import { RuntimeWorkspace, ConnectionState } from '../../types'
 import { getConnectionText } from '../../utils/statusFormatting'
 import { WINDOW_OPEN_CHANNEL } from '../../windowBridge'
@@ -26,7 +26,6 @@ export default function Titlebar({
   const handleOpenDashboard = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.dashboard)
   const handleOpenSettings = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.settings)
   const handleOpenWorkspacePanel = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.workspace)
-  const handleOpenAttachments = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.attachments)
   const handleOpenDanxi = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.danxi)
   const handleOpenStats = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.context)
   const handleOpenDevtools = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.runtimeDebug)
@@ -61,9 +60,6 @@ export default function Titlebar({
           </button>
           <button className={styles.iconBtn} onClick={handleOpenWorkspacePanel} title="工作区">
             <LayoutTemplate size={15} />
-          </button>
-          <button className={styles.iconBtn} onClick={handleOpenAttachments} title="附件管理">
-            <Paperclip size={15} />
           </button>
           <button className={styles.iconBtn} onClick={handleOpenDanxi} title="旦夕">
             <MessageSquareMore size={15} />

@@ -2,7 +2,6 @@ import { fetchWithAuth, readErrorMessage, resolveAccessToken } from './apiClient
 import { parseRuntimeUsageEnvelope } from './protocolClient'
 import type {
   AssistantMode,
-  RuntimeAttachmentRecord,
   AvailableEndpoint,
   ContextPoolQueryResponse,
   DanxiActionResponse,
@@ -23,24 +22,6 @@ import type {
   RuntimeUsageSnapshot,
   RuntimeWorkspace,
 } from './types'
-
-export interface RuntimeAttachmentDownloadTicket {
-  attachment_id: string
-  ticket_id: string
-  download_url: string
-  fallback_download_url: string
-  download_strategy: string
-  expires_at: string
-  mime_type: string
-  file_name: string
-  size_bytes: number
-}
-
-export interface RuntimeAttachmentDownloadPlan {
-  mode: 'direct' | 'proxy'
-  url: string
-  fileName: string
-}
 
 export interface MemoryClearResult {
   ok: boolean
@@ -64,19 +45,6 @@ export interface MemoryRecordMutationResult {
 
 function buildDesktopUrl(baseUrl: string, path: string): string {
   return `${baseUrl}/desktop${path}`
-}
-
-function isProxyAttachmentDownloadUrl(url: string): boolean {
-  const value = String(url || '').trim()
-  if (!value) {
-    return false
-  }
-  try {
-    const parsed = new URL(value, 'http://127.0.0.1')
-    return parsed.pathname.includes('/desktop/attachments/content/')
-  } catch {
-    return value.includes('/desktop/attachments/content/')
-  }
 }
 
 function toEndpointWsBaseUrl(baseUrl: string): string {
@@ -630,127 +598,6 @@ export async function submitRuntimeReplyControl(
     },
   )
   return readJsonOrThrow(response, '提交控制命令失败')
-}
-
-export async function createRuntimeAttachmentUploadTicket(
-  baseUrl: string,
-  payload: {
-    owner_type: string
-    owner_id: string
-    kind: string
-    mime_type: string
-    file_name?: string
-    size_bytes?: number
-    lifecycle_policy?: string
-    endpoint_id?: string
-  },
-): Promise<{
-  attachment_id: string
-  ticket_id: string
-  upload_url: string
-  expires_at: string
-  object_key: string
-  status: string
-}> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/attachments/upload-ticket'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  return readJsonOrThrow(response, '创建附件上传票据失败')
-}
-
-export async function uploadRuntimeAttachmentContent(
-  uploadUrl: string,
-  file: Blob,
-): Promise<{
-  attachment_id: string
-  ticket_id: string
-  status: string
-  size_bytes: number
-  sha256: string
-}> {
-  const response = await fetchWithAuth(uploadUrl, {
-    method: 'PUT',
-    body: file,
-  })
-  return readJsonOrThrow(response, '上传附件内容失败')
-}
-
-export async function completeRuntimeAttachment(
-  baseUrl: string,
-  attachmentId: string,
-  payload: { ticket_id?: string; sha256?: string; size_bytes?: number },
-): Promise<RuntimeAttachmentRecord> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}/complete`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  return readJsonOrThrow<RuntimeAttachmentRecord>(response, '完成附件上传失败')
-}
-
-export async function listRuntimeThreadAttachments(
-  baseUrl: string,
-  threadId: string,
-): Promise<RuntimeAttachmentRecord[]> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/attachments`))
-  return readJsonOrThrow<RuntimeAttachmentRecord[]>(response, '加载附件列表失败')
-}
-
-export async function deleteRuntimeAttachment(
-  baseUrl: string,
-  attachmentId: string,
-): Promise<RuntimeAttachmentRecord> {
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}`), {
-    method: 'DELETE',
-  })
-  return readJsonOrThrow<RuntimeAttachmentRecord>(response, '删除附件失败')
-}
-
-export async function createRuntimeAttachmentDownloadTicket(
-  baseUrl: string,
-  attachmentId: string,
-  endpointId?: string,
-): Promise<RuntimeAttachmentDownloadTicket> {
-  const query = endpointId ? `?endpoint_id=${encodeURIComponent(endpointId)}` : ''
-  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/attachments/${encodeURIComponent(attachmentId)}/download-ticket${query}`))
-  return readJsonOrThrow(response, '创建附件下载票据失败')
-}
-
-export function resolveRuntimeAttachmentDownloadPlan(ticket: RuntimeAttachmentDownloadTicket): RuntimeAttachmentDownloadPlan {
-  const directUrl = String(ticket.download_url || '').trim()
-  const fallbackUrl = String(ticket.fallback_download_url || '').trim()
-  const strategy = String(ticket.download_strategy || '').trim().toLowerCase()
-  const fileName = String(ticket.file_name || ticket.attachment_id || 'attachment.bin').trim() || 'attachment.bin'
-  const hasProxyStyleDirectUrl = isProxyAttachmentDownloadUrl(directUrl)
-  const shouldUseDirectUrl =
-    Boolean(directUrl) &&
-    (
-      strategy === 'presigned' ||
-      (!hasProxyStyleDirectUrl && (!fallbackUrl || directUrl !== fallbackUrl))
-    )
-  if (shouldUseDirectUrl) {
-    return {
-      mode: 'direct',
-      url: directUrl,
-      fileName,
-    }
-  }
-  return {
-    mode: 'proxy',
-    url: fallbackUrl || directUrl,
-    fileName,
-  }
-}
-
-export async function downloadRuntimeAttachmentContent(downloadUrl: string): Promise<Blob> {
-  const response = await fetchWithAuth(downloadUrl)
-  if (!response.ok) {
-    const failure = await readErrorMessage(response, '下载附件内容失败')
-    throw new Error(failure.message)
-  }
-  return response.blob()
 }
 
 export async function fetchRuntimeUsageSnapshot(

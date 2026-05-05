@@ -41,12 +41,6 @@ SUPPORTED_PROVIDER_OPTIONS = (
 
 SUPPORTED_PROVIDER_VALUES = tuple(option["value"] for option in SUPPORTED_PROVIDER_OPTIONS)
 
-OBJECT_STORE_BACKEND_OPTIONS = (
-    {"label": "本地文件系统", "value": "local"},
-    {"label": "文件系统", "value": "filesystem"},
-    {"label": "S3 兼容存储", "value": "s3_compatible"},
-)
-
 WEB_SEARCH_QUALITY_OPTIONS = (
     {"label": "自适应", "value": "adaptive"},
     {"label": "快速", "value": "fast"},
@@ -177,65 +171,6 @@ CONFIG_FIELD_SCHEMAS: dict[str, dict[str, Any]] = {
     "gateway_access_token": {
         "title": "网关访问令牌",
         "description": "HTTP 与 WebSocket 访问统一使用的受保护令牌。",
-        "group": "secrets",
-        "input": "password",
-        "advanced": True,
-    },
-    "object_store_backend": {
-        "title": "对象存储后端",
-        "description": "附件内容存储使用的后端实现。支持 local/filesystem 与 s3_compatible；下载仍默认经核心服务代理内容返回。",
-        "group": "advanced",
-        "input": "select",
-        "options": list(OBJECT_STORE_BACKEND_OPTIONS),
-        "advanced": True,
-    },
-    "attachment_storage_root": {
-        "title": "附件本地存储目录",
-        "description": "local/filesystem 后端保存附件内容的根目录；切到 s3_compatible 时该目录不再作为主存储位置。",
-        "group": "advanced",
-        "input": "text",
-        "advanced": True,
-        "placeholder": "user/attachments",
-        "control": "directory",
-        "help_text": "选择本机可写目录；相对路径会按运行目录解析。",
-        "examples": ["user/attachments", "E:\\Documents\\MeetYou\\attachments"],
-    },
-    "object_store_endpoint": {
-        "title": "对象存储端点",
-        "description": "当 object_store_backend=s3_compatible 时生效，用于填写 MinIO / S3 兼容服务的访问端点。",
-        "group": "advanced",
-        "input": "text",
-        "advanced": True,
-        "placeholder": "https://minio.example.com",
-        "help_text": "仅在 S3 兼容存储时使用，填写服务根地址。",
-        "examples": ["https://minio.example.com", "http://127.0.0.1:9000"],
-    },
-    "object_store_bucket": {
-        "title": "对象存储桶",
-        "description": "当 object_store_backend=s3_compatible 时必填，用于指定附件写入的存储桶。",
-        "group": "advanced",
-        "input": "text",
-        "advanced": True,
-        "placeholder": "meetyou-attachments",
-    },
-    "object_store_region": {
-        "title": "对象存储区域",
-        "description": "当 object_store_backend=s3_compatible 时可选，用于指定 S3 / MinIO 兼容服务的区域。",
-        "group": "advanced",
-        "input": "text",
-        "advanced": True,
-        "placeholder": "us-east-1",
-    },
-    "object_store_access_key": {
-        "title": "对象存储访问密钥",
-        "description": "当 object_store_backend=s3_compatible 时使用的访问密钥。",
-        "group": "secrets",
-        "input": "password",
-        "advanced": True,
-    },
-    "object_store_secret_key": {
-        "title": "对象存储私密密钥",
-        "description": "当 object_store_backend=s3_compatible 时使用的私密密钥。",
         "group": "secrets",
         "input": "password",
         "advanced": True,

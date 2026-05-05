@@ -16,7 +16,6 @@ export const WINDOW_HASH_ROUTE = {
   dashboard: '#/dashboard',
   settings: '#/settings',
   workspace: '#/workspace',
-  attachments: '#/attachments',
   danxi: '#/danxi',
   context: '#/context',
   runtimeDebug: '#/runtime-debug',
@@ -32,7 +31,6 @@ export const WINDOW_OPEN_CHANNEL = {
   dashboard: 'open-dashboard',
   settings: 'open-settings',
   workspace: 'open-workspace',
-  attachments: 'open-attachments',
   danxi: 'open-danxi',
   context: 'open-context',
   runtimeDebug: 'open-runtime-debug',
@@ -50,10 +48,6 @@ export const WINDOW_SYNC_CHANNEL = {
   workspace: {
     update: 'workspace-window-updated',
     request: 'request-workspace-window',
-  },
-  attachments: {
-    update: 'attachments-window-updated',
-    request: 'request-attachments-window',
   },
   danxi: {
     update: 'danxi-window-updated',

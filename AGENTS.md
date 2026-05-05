@@ -93,7 +93,7 @@
 - Endpoint provider runtime tasks live in `desktop_client/` or `edge_client/`; do not bypass endpoint execution by changing Core directly.
 - External Endpoint Provider SDKs that capture an event loop or own a transport loop must initialize and run on provider-owned worker context, not on Core's main asyncio loop. Feishu/Lark long connection is the canonical example.
 - Runtime source identity must follow the endpoint provider. Feishu and WeChat runtime messages must enter Core as `source.kind=feishu` / `source.kind=wechat`, not as generic `web` messages.
-- Treat changes as cross-surface if they touch gateway routes, WebSocket payloads, config loading, attachment streams, `core/db/*`, `desktop_client/runtime.py`, `edge_client/runtime.py`, or `meetyou-ui/src/hooks/useMeetYou.ts`.
+- Treat changes as cross-surface if they touch gateway routes, WebSocket payloads, config loading, `core/db/*`, `desktop_client/runtime.py`, `edge_client/runtime.py`, or `meetyou-ui/src/hooks/useMeetYou.ts`.
 - Danxi-related tasks usually touch `tools/danxi_tools.py`, `core/public_contract.py`, `core/assistant_modes.py`, `core/credential_transport.py`, `gateway/models.py`, `gateway/routes/runtime.py`, `gateway/routes/operator.py`, `meetyou-ui/src/`, `meetyou-ui/electron/`, and `docs/`. Do not put Danxi forum access into Desktop Provider or temporary MCP.
 
 ## High Risk Areas

@@ -1,7 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
-import AttachmentsWindow from './AttachmentsWindow'
 import ContextWindow from './ContextWindow'
 import DanxiWindow from './DanxiWindow'
 import Dashboard from './Dashboard'
@@ -18,7 +17,6 @@ const ROUTE_COMPONENTS: Record<string, React.ReactNode> = {
   [WINDOW_HASH_ROUTE.settings]: <SettingsWindow />,
   [WINDOW_HASH_ROUTE.workspace]: <WorkspaceWindow />,
   [WINDOW_HASH_ROUTE.danxi]: <DanxiWindow />,
-  [WINDOW_HASH_ROUTE.attachments]: <AttachmentsWindow />,
   [WINDOW_HASH_ROUTE.context]: <ContextWindow />,
   [WINDOW_HASH_ROUTE.runtimeDebug]: <RuntimeDebugWindow />,
 }

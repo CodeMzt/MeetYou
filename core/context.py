@@ -181,14 +181,14 @@ class ContextManager:
         return (4, 0)
 
     @staticmethod
-    def _has_attachment_or_source(value: Any) -> bool:
+    def _has_source_reference(value: Any) -> bool:
         if isinstance(value, dict):
-            for key in ("attachment_id", "attachments", "source_id", "source_ids", "citation_ids"):
+            for key in ("source_id", "source_ids", "citation_ids"):
                 if value.get(key):
                     return True
-            return any(ContextManager._has_attachment_or_source(item) for item in value.values())
+            return any(ContextManager._has_source_reference(item) for item in value.values())
         if isinstance(value, list):
-            return any(ContextManager._has_attachment_or_source(item) for item in value)
+            return any(ContextManager._has_source_reference(item) for item in value)
         return False
 
     @staticmethod
@@ -790,16 +790,16 @@ class ContextManager:
                 lines.append(content_line[:640] + " ...[truncated_for_summary]")
             else:
                 lines.append(content_line)
-        if self._has_attachment_or_source(content_value):
-            lines.append("traceability: attachment/source id detected in content")
+        if self._has_source_reference(content_value):
+            lines.append("traceability: source id detected in content")
         tool_calls_line = self._summary_line("tool_calls", message.get("tool_calls"))
         if tool_calls_line:
             lines.append(tool_calls_line)
         provider_items_line = self._summary_line("provider_items", message.get("provider_items"))
         if provider_items_line:
             lines.append(provider_items_line)
-        if self._has_attachment_or_source(message.get("provider_items")):
-            lines.append("traceability: attachment/source id detected in provider_items")
+        if self._has_source_reference(message.get("provider_items")):
+            lines.append("traceability: source id detected in provider_items")
         tool_call_id_line = self._summary_line("tool_call_id", message.get("tool_call_id"))
         if tool_call_id_line:
             lines.append(tool_call_id_line)

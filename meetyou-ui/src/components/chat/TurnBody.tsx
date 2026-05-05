@@ -2,7 +2,6 @@ import { RefreshCw } from 'lucide-react'
 import { ChatTurn, RuntimeStateSnapshot } from '../../types'
 import { getRuntimeTitle } from '../../utils/statusFormatting'
 import ActivityBlock from './ActivityBlock'
-import AttachmentList from './AttachmentList'
 import ReasoningBlock from './ReasoningBlock'
 import MarkdownRenderer from './MarkdownRenderer'
 import styles from './TurnBody.module.css'
@@ -13,10 +12,9 @@ interface TurnBodyProps {
   runtimeSnapshot: RuntimeStateSnapshot | null
   isLastAssistantTurn?: boolean
   onRegenerate?: () => void
-  onDownloadAttachment?: (attachmentId: string) => void
 }
 
-export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, onRegenerate, onDownloadAttachment }: TurnBodyProps) {
+export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, onRegenerate }: TurnBodyProps) {
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
   const displayContent = turn.role === 'assistant' ? normalizeAssistantDisplayText(turn.content) : turn.content
   const showActionBar = !turn.isStreaming && turn.role === 'assistant' && !isBusy && isLastAssistantTurn && Boolean(onRegenerate)
@@ -46,8 +44,6 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, o
       ) : placeholderText ? (
         <div className={styles.placeholder}>{placeholderText}</div>
       ) : null}
-      <AttachmentList attachments={turn.attachments || []} onDownloadAttachment={onDownloadAttachment} />
-      
       {turn.isStreaming && turn.content && <span className={styles.cursorBlink}>▍</span>}
       {turn.error && <div className={styles.error}>{turn.error}</div>}
 

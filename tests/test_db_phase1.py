@@ -14,7 +14,6 @@ from core.db.base import utcnow
 from core.db.engine import create_db_engine, create_session_factory
 from core.db.repositories import (
     ApprovalRepository,
-    AttachmentRepository,
     ContextPoolRepository,
     EndpointCapabilityRepository,
     EndpointRepository,
@@ -91,7 +90,6 @@ class DatabasePhase1Tests(unittest.TestCase):
                 "sessions",
                 "operations",
                 "approvals",
-                "attachments",
                 "context_pool_items",
                 "actors",
                 "endpoints",
@@ -122,7 +120,6 @@ class DatabasePhase1Tests(unittest.TestCase):
             session_repo = SessionRepository(session)
             operation_repo = OperationRepository(session)
             approval_repo = ApprovalRepository(session)
-            attachment_repo = AttachmentRepository(session)
 
             principal = principal_repo.create(principal_key="self", display_name="Self")
             endpoint = endpoint_repo.upsert(
@@ -187,16 +184,6 @@ class DatabasePhase1Tests(unittest.TestCase):
                 approval_type="high_risk_action",
                 risk_level="write",
             )
-            attachment = attachment_repo.create(
-                attachment_id=f"att_{uuid.uuid4().hex}",
-                owner_type="operation",
-                owner_id=operation.operation_id,
-                kind="image",
-                mime_type="image/png",
-                object_key="ops/test.png",
-                size_bytes=128,
-                origin_endpoint_id=endpoint.id,
-            )
             session.commit()
 
             self.assertIsNotNone(principal_repo.get_by_principal_key("self"))
@@ -208,7 +195,6 @@ class DatabasePhase1Tests(unittest.TestCase):
             self.assertIsNotNone(context_pool_repo.get_by_context_id(context_item.context_id))
             self.assertIsNotNone(operation_repo.get_by_operation_id(operation.operation_id))
             self.assertIsNotNone(approval_repo.get_by_approval_id(approval.approval_id))
-            self.assertIsNotNone(attachment_repo.get_by_attachment_id(attachment.attachment_id))
 
     def test_database_connection_is_available_for_phase1(self):
         with self.engine.connect() as conn:

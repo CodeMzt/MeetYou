@@ -795,17 +795,6 @@ class Heart:
                         self._api_key,
                         self._model,
                     )
-                    attachment_cleanup_result = {
-                        "expired_download_tickets": 0,
-                        "expired_upload_tickets": 0,
-                        "expired_attachments": 0,
-                        "deleted_objects": 0,
-                    }
-                    attachment_service = getattr(self._core_services, "attachment", None) if self._core_services is not None else None
-                    if attachment_service is not None:
-                        cleanup_expired_resources = getattr(attachment_service, "cleanup_expired_resources", None)
-                        if callable(cleanup_expired_resources):
-                            attachment_cleanup_result = dict(cleanup_expired_resources() or attachment_cleanup_result)
                     self._last_housekeeping_at = _utcnow_iso()
                     self._last_housekeeping_error = ""
                     self._update_job(
@@ -820,7 +809,6 @@ class Heart:
                         last_result={
                             "status": "ok",
                             "at": self._last_housekeeping_at,
-                            "attachments": attachment_cleanup_result,
                         },
                         last_delivery=delivery_payload(state="not_applicable"),
                     )

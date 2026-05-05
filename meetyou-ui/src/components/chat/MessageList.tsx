@@ -17,7 +17,6 @@ interface MessageListProps {
   pendingHumanInput: HumanInputRequestPayload | null
   sendConfirmResponse: (requestId: string, accepted: boolean, approvalId?: string) => void
   sendHumanInputResponse: (requestId: string, val: string, option?: string) => void
-  onDownloadAttachment?: (attachmentId: string) => void
   sendControlCommand?: (action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback', params?: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string }) => void
 }
 
@@ -32,7 +31,6 @@ export default function MessageList({
   pendingHumanInput,
   sendConfirmResponse,
   sendHumanInputResponse,
-  onDownloadAttachment,
   sendControlCommand
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -145,7 +143,6 @@ export default function MessageList({
                     turn={message}
                     runtimeSnapshot={runtimeSnapshot}
                     isLastAssistantTurn={isLastAssistantTurn}
-                    onDownloadAttachment={onDownloadAttachment}
                     onRegenerate={sendControlCommand ? () => sendControlCommand('regenerate', { turn_id: message.turnId }) : undefined}
                   />
                   {(message.confirmRequest || message.humanInputRequest || message.confirmResponse || message.humanInputResponse) && (

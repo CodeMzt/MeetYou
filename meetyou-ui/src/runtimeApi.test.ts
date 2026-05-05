@@ -16,14 +16,11 @@ import {
   listOperatorSourceProfiles,
   listRuntimeThreads,
   loginDanxiSession,
-  resolveRuntimeAttachmentDownloadPlan,
   updateDanxiReply,
   updateDanxiWebvpnCookie,
   updateOperatorWorkspaceGovernance,
   updateDesktopMemoryRecordStatus,
 } from './runtimeApi'
-import { DEFAULT_BASE_URL } from './windowBridge'
-
 const originalFetch = globalThis.fetch
 const originalLocalStorage = globalThis.localStorage
 
@@ -655,65 +652,6 @@ describe('runtimeApi', () => {
     expect(profiles[1]?.official_only).toBe(true)
   })
 
-  it('downloads attachment content with auth headers', async () => {
-    vi.resetModules()
-    globalThis.localStorage = {
-      getItem: vi.fn().mockReturnValue('test-token'),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-      clear: vi.fn(),
-      key: vi.fn(),
-      length: 0,
-    } as unknown as Storage
-
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response('attachment-body', {
-        status: 200,
-        headers: { 'Content-Type': 'text/plain' },
-      }),
-    ) as typeof fetch
-
-    const { downloadRuntimeAttachmentContent: downloadAttachment } = await import('./runtimeApi')
-    const blob = await downloadAttachment(`${DEFAULT_BASE_URL}/desktop/attachments/content/att_1?ticket_id=down_1`)
-
-    expect(await blob.text()).toBe('attachment-body')
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      `${DEFAULT_BASE_URL}/desktop/attachments/content/att_1?ticket_id=down_1`,
-      expect.objectContaining({
-        headers: expect.any(Headers),
-      }),
-    )
-    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] || []
-    const headers = init?.headers as Headers
-    expect(headers.get('Authorization')).toBe('Bearer test-token')
-  })
-
-  it('downloads direct attachment urls without local bridge auth headers', async () => {
-    vi.resetModules()
-    globalThis.localStorage = {
-      getItem: vi.fn().mockReturnValue('test-token'),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-      clear: vi.fn(),
-      key: vi.fn(),
-      length: 0,
-    } as unknown as Storage
-
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response('attachment-body', {
-        status: 200,
-        headers: { 'Content-Type': 'text/plain' },
-      }),
-    ) as typeof fetch
-
-    const { downloadRuntimeAttachmentContent: downloadAttachment } = await import('./runtimeApi')
-    await downloadAttachment('https://minio.example.com/presigned/att_1')
-
-    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0] || []
-    const headers = new Headers(init?.headers)
-    expect(headers.get('Authorization')).toBeNull()
-  })
-
   it('creates websocket urls against the desktop endpoint bridge', async () => {
     vi.resetModules()
     globalThis.localStorage = {
@@ -740,63 +678,4 @@ describe('runtimeApi', () => {
     )
   })
 
-  it('prefers direct browser download for presigned attachment tickets', () => {
-    const plan = resolveRuntimeAttachmentDownloadPlan({
-      attachment_id: 'att_1',
-      ticket_id: 'down_1',
-      download_url: 'https://minio.example.com/presigned/att_1',
-      fallback_download_url: 'http://127.0.0.1:8000/desktop/attachments/content/att_1?ticket_id=down_1',
-      download_strategy: 'presigned',
-      expires_at: '2026-04-13T00:00:00Z',
-      mime_type: 'image/png',
-      file_name: 'capture.png',
-      size_bytes: 1024,
-    })
-
-    expect(plan).toEqual({
-      mode: 'direct',
-      url: 'https://minio.example.com/presigned/att_1',
-      fileName: 'capture.png',
-    })
-  })
-
-  it('falls back to proxy download plan for non-presigned tickets', () => {
-    const plan = resolveRuntimeAttachmentDownloadPlan({
-      attachment_id: 'att_2',
-      ticket_id: 'down_2',
-      download_url: 'http://127.0.0.1:8000/desktop/attachments/content/att_2?ticket_id=down_2',
-      fallback_download_url: 'http://127.0.0.1:8000/desktop/attachments/content/att_2?ticket_id=down_2',
-      download_strategy: 'proxy',
-      expires_at: '2026-04-13T00:00:00Z',
-      mime_type: 'application/pdf',
-      file_name: 'report.pdf',
-      size_bytes: 2048,
-    })
-
-    expect(plan).toEqual({
-      mode: 'proxy',
-      url: 'http://127.0.0.1:8000/desktop/attachments/content/att_2?ticket_id=down_2',
-      fileName: 'report.pdf',
-    })
-  })
-
-  it('treats non-proxy direct urls as direct download even without strategy', () => {
-    const plan = resolveRuntimeAttachmentDownloadPlan({
-      attachment_id: 'att_3',
-      ticket_id: 'down_3',
-      download_url: 'https://minio.example.com/presigned/att_3?X-Amz-Signature=demo',
-      fallback_download_url: '',
-      download_strategy: '',
-      expires_at: '2026-04-13T00:00:00Z',
-      mime_type: 'image/jpeg',
-      file_name: 'photo.jpg',
-      size_bytes: 4096,
-    })
-
-    expect(plan).toEqual({
-      mode: 'direct',
-      url: 'https://minio.example.com/presigned/att_3?X-Amz-Signature=demo',
-      fileName: 'photo.jpg',
-    })
-  })
 })

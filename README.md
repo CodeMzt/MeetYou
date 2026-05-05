@@ -44,7 +44,7 @@ MeetYou separates those responsibilities:
 - Deliver replies, notices, run events, and operation updates to endpoint addresses.
 - Support scheduled workflows, scheduled delivery, and the non-deletable `system.heartbeat` job.
 - Maintain memory and context pools for assistant grounding.
-- Provide an Electron + React desktop UI with thread, operation, attachment, memory, workspace, and settings surfaces.
+- Provide an Electron + React desktop UI with thread, operation, memory, workspace, and settings surfaces.
 - Integrate optional external providers such as Feishu and WeChatBot.
 - Keep Danxi credentials behind encrypted transport and avoid plaintext credential exposure in logs or docs examples.
 
@@ -110,10 +110,6 @@ Endpoint Providers and desktop surfaces should talk to Core through the V4 runti
 | `POST` | `/runtime/sessions/{session_id}/human-input-response` | Resolve a human-input request. |
 | `POST` | `/runtime/sessions/{session_id}/reply-control` | Send stop/regenerate-style runtime reply control. |
 | `POST` | `/runtime/approvals/{approval_id}/decision` | Approve or reject a pending operation approval. |
-| `POST` | `/runtime/attachments/upload-ticket` | Create an attachment upload ticket. |
-| `PUT` | `/runtime/attachments/upload/{ticket_id}` | Upload attachment bytes. |
-| `POST` | `/runtime/attachments/{attachment_id}/complete` | Complete attachment metadata after upload. |
-| `GET` | `/runtime/attachments/{attachment_id}/download-ticket` | Create a download ticket. |
 
 Minimal endpoint session resolution:
 

@@ -95,7 +95,6 @@ export interface OperationView extends RuntimeOperation {
   detail: string
   result: Record<string, unknown>
   error: Record<string, unknown>
-  attachments: AttachmentObjectView[]
   tone: OperationStatusTone
   summary: string
   isBlocking: boolean
@@ -440,41 +439,6 @@ export interface TurnActivity {
   createdAt: number
 }
 
-export interface AttachmentObjectView {
-  attachmentId: string
-  ownerType?: string
-  ownerId?: string
-  kind?: string
-  fileName: string
-  mimeType?: string
-  sizeBytes?: number
-  status?: string
-  lifecyclePolicy?: string
-  expiresAt?: string
-  createdAt?: string
-  updatedAt?: string
-  downloadUrl?: string
-  fallbackDownloadUrl?: string
-  downloadStrategy?: string
-}
-
-export interface RuntimeAttachmentRecord {
-  attachment_id: string
-  owner_type: string
-  owner_id: string
-  kind: string
-  mime_type: string
-  file_name: string
-  object_key: string
-  size_bytes: number
-  lifecycle_policy: string
-  expires_at: string
-  sha256: string
-  status: string
-  created_at: string
-  updated_at: string
-}
-
 export interface StatusFeedback {
   id: string
   text: string
@@ -500,7 +464,6 @@ export interface ChatTurn {
   confirmResponse?: { accepted: boolean } | null
   humanInputRequest?: HumanInputRequestPayload | null
   humanInputResponse?: { answerText: string; selectedOption?: string } | null
-  attachments?: AttachmentObjectView[]
 }
 
 export interface ConfirmRequestPayload {

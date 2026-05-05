@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Request
 from core.credential_transport import CredentialTransportError, decrypt_json_payload
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
@@ -15,12 +15,6 @@ from gateway.models import (
     RuntimeActiveWorkspacePatchRequest,
     RuntimeApprovalDecisionRequest,
     RuntimeApprovalResponse,
-    RuntimeAttachmentCompleteRequest,
-    RuntimeAttachmentDownloadTicketResponse,
-    RuntimeAttachmentResponse,
-    RuntimeAttachmentUploadResult,
-    RuntimeAttachmentUploadTicketRequest,
-    RuntimeAttachmentUploadTicketResponse,
     RuntimeConfirmResponseRequest,
     RuntimeConfirmResponseResult,
     RuntimeDanxiActionResponse,
@@ -419,14 +413,6 @@ def _raise_runtime_dependency_error(gateway, exc: Exception, *, code: str = "run
         message=str(exc),
         retryable=False,
     )
-
-
-def _public_base_url(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
-
-
-def _attachment_record_response(record: dict[str, Any]) -> RuntimeAttachmentResponse:
-    return RuntimeAttachmentResponse(**record)
 
 
 def _decrypt_danxi_credentials(gateway, sealed_payload: dict[str, Any] | None, *, purpose: str) -> dict[str, Any]:
@@ -992,137 +978,6 @@ def build_runtime_router(gateway) -> APIRouter:
             limit=limit,
         )
         return ContextPoolQueryResponse(query=q, count=len(rows), items=rows)
-
-    @router.post("/attachments/upload-ticket", response_model=RuntimeAttachmentUploadTicketResponse)
-    async def create_attachment_upload_ticket(payload: RuntimeAttachmentUploadTicketRequest, request: Request):
-        gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        endpoint = _find_endpoint(domain, payload.endpoint_id)
-        attachment, ticket = domain.services.attachment.create_upload_ticket(
-            owner_type=payload.owner_type,
-            owner_id=payload.owner_id,
-            issuer_type="endpoint" if endpoint is not None else "runtime",
-            issuer_ref=payload.endpoint_id or "runtime.http",
-            kind=payload.kind,
-            mime_type=payload.mime_type,
-            file_name=payload.file_name,
-            size_bytes=payload.size_bytes,
-            lifecycle_policy=payload.lifecycle_policy,
-            origin_endpoint_id=getattr(endpoint, "id", None),
-        )
-        record = domain.services.attachment.build_attachment_record_view(attachment)
-        return RuntimeAttachmentUploadTicketResponse(
-            attachment_id=attachment.attachment_id,
-            ticket_id=ticket.ticket_id,
-            upload_url=f"{_public_base_url(request)}/runtime/attachments/upload/{ticket.ticket_id}",
-            expires_at=ticket.expires_at,
-            object_key=attachment.object_key,
-            status=attachment.status,
-            created_at=str(record.get("created_at") or ""),
-            updated_at=str(record.get("updated_at") or ""),
-        )
-
-    @router.put("/attachments/upload/{ticket_id}", response_model=RuntimeAttachmentUploadResult)
-    async def upload_attachment_content(ticket_id: str, request: Request):
-        gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        try:
-            attachment = domain.services.attachment.store_upload_content(ticket_id, await request.body())
-        except ValueError as exc:
-            _raise_runtime_dependency_error(gateway, exc, code=str(exc))
-        record = domain.services.attachment.build_attachment_record_view(attachment)
-        return RuntimeAttachmentUploadResult(
-            attachment_id=attachment.attachment_id,
-            ticket_id=ticket_id,
-            status=attachment.status,
-            size_bytes=int(record.get("size_bytes") or 0),
-            sha256=str(record.get("sha256") or ""),
-            created_at=str(record.get("created_at") or ""),
-            updated_at=str(record.get("updated_at") or ""),
-            uploaded_at=str(record.get("uploaded_at") or ""),
-        )
-
-    @router.post("/attachments/{attachment_id}/complete", response_model=RuntimeAttachmentResponse)
-    async def complete_attachment(attachment_id: str, payload: RuntimeAttachmentCompleteRequest, request: Request):
-        gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        try:
-            attachment = domain.services.attachment.complete_attachment(
-                attachment_id=attachment_id,
-                ticket_id=payload.ticket_id,
-                sha256=payload.sha256,
-                size_bytes=payload.size_bytes,
-            )
-        except ValueError as exc:
-            _raise_runtime_dependency_error(gateway, exc, code=str(exc))
-        return _attachment_record_response(domain.services.attachment.build_attachment_record_view(attachment))
-
-    @router.get("/threads/{thread_id}/attachments", response_model=list[RuntimeAttachmentResponse])
-    async def list_thread_attachments(thread_id: str, request: Request, include_deleted: bool = False, limit: int = 100):
-        gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        records = domain.services.attachment.list_attachments(
-            owner_type="thread",
-            owner_id=thread_id,
-            include_deleted=include_deleted,
-            limit=limit,
-        )
-        return [_attachment_record_response(record) for record in records]
-
-    @router.delete("/attachments/{attachment_id}", response_model=RuntimeAttachmentResponse)
-    async def delete_attachment(attachment_id: str, request: Request):
-        gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        try:
-            record = domain.services.attachment.delete_attachment(attachment_id)
-        except ValueError as exc:
-            _raise_runtime_dependency_error(gateway, exc, code=str(exc))
-        return _attachment_record_response(record)
-
-    @router.get("/attachments/{attachment_id}/download-ticket", response_model=RuntimeAttachmentDownloadTicketResponse)
-    async def create_attachment_download_ticket(attachment_id: str, request: Request):
-        gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        try:
-            ticket = domain.services.attachment.create_download_ticket(
-                attachment_id=attachment_id,
-                issuer_type="runtime",
-                issuer_ref="runtime.http",
-                fallback_download_url="",
-            )
-        except ValueError as exc:
-            _raise_runtime_dependency_error(gateway, exc, code=str(exc))
-        attachment = ticket["attachment"]
-        fallback_url = (
-            f"{_public_base_url(request)}/runtime/attachments/content/{attachment_id}"
-            f"?ticket_id={ticket['ticket_id']}"
-        )
-        download_url = str(ticket.get("download_url") or "").strip() or fallback_url
-        return RuntimeAttachmentDownloadTicketResponse(
-            attachment_id=attachment_id,
-            ticket_id=ticket["ticket_id"],
-            download_url=download_url,
-            fallback_download_url=fallback_url,
-            download_strategy=str(ticket.get("download_strategy") or "proxy"),
-            expires_at=str(ticket.get("expires_at") or ""),
-            mime_type=str(getattr(attachment, "mime_type", "") or ""),
-            file_name=str((getattr(attachment, "meta", {}) or {}).get("file_name") or attachment_id),
-            size_bytes=int(getattr(attachment, "size_bytes", 0) or 0),
-        )
-
-    @router.get("/attachments/content/{attachment_id}")
-    async def get_attachment_content(attachment_id: str, request: Request, ticket_id: str = ""):
-        gateway._require_http_auth(request)
-        domain = gateway._require_core_domain()
-        try:
-            attachment = domain.services.attachment.validate_download_ticket(
-                attachment_id=attachment_id,
-                ticket_id=ticket_id,
-            )
-            content = domain.services.attachment.read_attachment_bytes(attachment_id)
-        except ValueError as exc:
-            _raise_runtime_dependency_error(gateway, exc, code=str(exc))
-        return Response(content=content, media_type=str(getattr(attachment, "mime_type", "") or "application/octet-stream"))
 
     @router.post("/danxi/session/login", response_model=RuntimeDanxiSessionResponse)
     async def danxi_login(payload: RuntimeDanxiSessionLoginRequest, request: Request):

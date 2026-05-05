@@ -8,12 +8,10 @@ from alembic.config import Config as AlembicConfig
 
 from core.config import ConfigManager
 from core.db.engine import create_db_engine, create_session_factory, get_database_url
-from core.storage.object_store import build_object_store
 from core.services import (
     ActorService,
     ActorDeliveryPreferenceService,
     ApprovalService,
-    AttachmentService,
     CapabilityService,
     ConfigStateService,
     ContextPoolService,
@@ -190,7 +188,6 @@ def build_core_services(session_factory) -> CoreServices:
         operation=operation,
         operation_call=operation_call,
         approval=ApprovalService(session_factory),
-        attachment=AttachmentService(session_factory),
         message=MessageService(session_factory),
         config_state=ConfigStateService(session_factory),
         context_pool=ContextPoolService(session_factory),
@@ -278,7 +275,6 @@ def bootstrap_core_domain(
     config: ConfigManager | None = None,
     *,
     database_url: str | None = None,
-    attachment_storage_root: Path | None = None,
     run_migrations: bool = True,
 ) -> CoreDomainContext:
     resolved_config = config or ConfigManager()
@@ -288,9 +284,7 @@ def bootstrap_core_domain(
 
     engine = create_db_engine(resolved_database_url)
     session_factory = create_session_factory(engine)
-    object_store = build_object_store(resolved_config, storage_root_override=attachment_storage_root)
     services = build_core_services(session_factory)
-    services.attachment = AttachmentService(session_factory, storage_root=attachment_storage_root, object_store=object_store)
     _ensure_v4_system_records(services)
 
     principal = services.principal.ensure_principal(

@@ -182,7 +182,6 @@ class ToolCallResultPayload(BaseModel):
     call_id: str
     status: str = "succeeded"
     result: dict[str, Any] = Field(default_factory=dict)
-    attachment_outputs: list[dict[str, Any]] = Field(default_factory=list)
     finished_at: str = ""
 
 
@@ -388,7 +387,6 @@ def build_tool_call_result_message(
     call_id: str,
     correlation_id: str,
     result: dict[str, Any],
-    attachment_outputs: list[dict[str, Any]] | None = None,
     provider_type: str = "desktop",
 ) -> dict[str, Any]:
     return build_endpoint_envelope(
@@ -400,7 +398,6 @@ def build_tool_call_result_message(
             "call_id": call_id,
             "status": "succeeded",
             "result": dict(result or {}),
-            "attachment_outputs": list(attachment_outputs or []),
             "finished_at": utcnow_iso(),
         },
     )

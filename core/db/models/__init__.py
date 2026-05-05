@@ -1,5 +1,4 @@
 from core.db.models.approval import Approval
-from core.db.models.attachment import Attachment, AttachmentUploadTicket
 from core.db.models.actor import Actor
 from core.db.models.capability import Capability, CapabilityWorkspaceBinding
 from core.db.models.config_entry import ConfigEntry
@@ -28,8 +27,6 @@ from core.db.models.workspace import Workspace
 
 __all__ = [
     "Approval",
-    "Attachment",
-    "AttachmentUploadTicket",
     "Actor",
     "ActorDeliveryPreference",
     "Capability",

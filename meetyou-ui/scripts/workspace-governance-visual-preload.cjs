@@ -30,7 +30,6 @@ const workspacePayload = {
       approval_required: false,
       approval_status: '',
       approval_id: '',
-      attachments: [],
     },
     {
       operation_id: 'op_visual_approval',
@@ -54,7 +53,6 @@ const workspacePayload = {
       approval_required: true,
       approval_status: 'pending',
       approval_id: 'approval_visual',
-      attachments: [],
     },
   ],
   workspace: {

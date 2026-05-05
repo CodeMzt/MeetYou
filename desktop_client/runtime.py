@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import Any
-
-import aiohttp
 
 from endpoint_tool_sdk.protocol import ENDPOINT_TOOL_SCHEMA
 from endpoint_tool_sdk.runtime import EndpointToolRuntimeBase, ToolExecutionError, ToolExecutionOutcome
@@ -77,89 +74,6 @@ class DesktopClientRuntime(EndpointToolRuntimeBase):
         except Exception as exc:
             logger.exception("Desktop Endpoint Provider MCP initialization failed: %s", exc)
 
-    @staticmethod
-    def _split_result_payload(result: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        payload = dict(result or {})
-        attachment_outputs = payload.pop("attachment_outputs", [])
-        if not isinstance(attachment_outputs, list):
-            attachment_outputs = []
-        return payload, [dict(item) for item in attachment_outputs if isinstance(item, dict)]
-
-    async def _request_json(self, session: aiohttp.ClientSession, method: str, url: str, **kwargs) -> dict[str, Any]:
-        async with session.request(method, url, **kwargs) as response:
-            payload = await response.json(content_type=None)
-            if response.status >= 400:
-                raise RuntimeError(str(payload))
-            if not isinstance(payload, dict):
-                raise RuntimeError(f"unexpected response payload: {payload!r}")
-            return payload
-
-    async def _upload_attachment_outputs(
-        self,
-        session: aiohttp.ClientSession,
-        *,
-        operation_id: str,
-        attachment_outputs: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        uploaded: list[dict[str, Any]] = []
-        base_url = self.config.core_base_url.rstrip("/")
-        for item in attachment_outputs:
-            local_path = Path(str(item.get("local_path") or "")).expanduser().resolve()
-            if not local_path.exists() or not local_path.is_file():
-                raise RuntimeError(f"attachment local_path not found: {local_path}")
-            content = await asyncio.to_thread(local_path.read_bytes)
-            ticket = await self._request_json(
-                session,
-                "POST",
-                f"{base_url}/runtime/attachments/upload-ticket",
-                json={
-                    "endpoint_id": self.config.provider_id,
-                    "owner_type": str(item.get("owner_type") or "operation").strip() or "operation",
-                    "owner_id": str(item.get("owner_id") or operation_id).strip() or operation_id,
-                    "kind": str(item.get("kind") or "file").strip() or "file",
-                    "mime_type": str(item.get("mime_type") or "application/octet-stream").strip() or "application/octet-stream",
-                    "file_name": str(item.get("file_name") or local_path.name).strip() or local_path.name,
-                    "size_bytes": len(content),
-                    "lifecycle_policy": str(item.get("lifecycle_policy") or "normal").strip() or "normal",
-                },
-            )
-            await self._request_json(session, "PUT", str(ticket.get("upload_url") or ""), data=content)
-            complete = await self._request_json(
-                session,
-                "POST",
-                f"{base_url}/runtime/attachments/{ticket['attachment_id']}/complete",
-                json={
-                    "ticket_id": ticket["ticket_id"],
-                },
-            )
-            local_file_deleted = False
-            cleanup_requested = bool(item.get("cleanup_local")) or (
-                str(item.get("kind") or "").strip().lower() == "screenshot"
-            ) or (
-                str(item.get("lifecycle_policy") or "").strip().lower() == "ephemeral"
-            )
-            if cleanup_requested:
-                try:
-                    await asyncio.to_thread(local_path.unlink)
-                    local_file_deleted = True
-                except FileNotFoundError:
-                    local_file_deleted = True
-            uploaded.append(
-                {
-                    "attachment_id": complete.get("attachment_id"),
-                    "kind": item.get("kind") or "file",
-                    "mime_type": complete.get("mime_type"),
-                    "file_name": complete.get("file_name"),
-                    "size_bytes": complete.get("size_bytes"),
-                    "lifecycle_policy": complete.get("lifecycle_policy"),
-                    "expires_at": complete.get("expires_at"),
-                    "sha256": complete.get("sha256"),
-                    "status": complete.get("status"),
-                    "local_file_deleted": local_file_deleted,
-                }
-            )
-        return uploaded
-
     def build_hello_message(self) -> dict[str, Any]:
         return build_hello(self.config)
 
@@ -191,7 +105,6 @@ class DesktopClientRuntime(EndpointToolRuntimeBase):
             call_id=call_id,
             correlation_id=correlation_id,
             result=outcome.result,
-            attachment_outputs=outcome.attachment_outputs,
         )
 
     def build_call_error_message(
@@ -232,16 +145,14 @@ class DesktopClientRuntime(EndpointToolRuntimeBase):
         envelope_payload: dict[str, Any],
         session,
     ) -> ToolExecutionOutcome:
-        operation_id = str(envelope_payload.get("operation_id") or "")
+        del envelope_payload, session
         handler = self._handlers.get(tool_key)
         if handler is None and self._mcp_runtime.can_handle(tool_key):
             try:
                 result = await self._mcp_runtime.call_tool(tool_key, arguments)
             except Exception as exc:
                 raise ToolExecutionError("mcp_call_failed", str(exc)) from exc
-            result_payload, attachment_outputs = self._split_result_payload(result)
-            uploaded = await self._upload_attachment_outputs(session, operation_id=operation_id, attachment_outputs=attachment_outputs)
-            return ToolExecutionOutcome(result=result_payload, attachment_outputs=uploaded)
+            return ToolExecutionOutcome(result=dict(result or {}))
         if handler is None:
             raise ToolExecutionError("tool_not_implemented", f"Tool not implemented: {tool_key or tool_id}")
         try:
@@ -250,9 +161,7 @@ class DesktopClientRuntime(EndpointToolRuntimeBase):
             raise ToolExecutionError(exc.code, exc.message) from exc
         except Exception as exc:
             raise ToolExecutionError("tool_execution_failed", str(exc)) from exc
-        result_payload, attachment_outputs = self._split_result_payload(result)
-        uploaded = await self._upload_attachment_outputs(session, operation_id=operation_id, attachment_outputs=attachment_outputs)
-        return ToolExecutionOutcome(result=result_payload, attachment_outputs=uploaded)
+        return ToolExecutionOutcome(result=dict(result or {}))
 
     @staticmethod
     def _collect_metrics() -> dict[str, float | int]:

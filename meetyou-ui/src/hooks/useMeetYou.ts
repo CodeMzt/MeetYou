@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { triggerAttachmentDownload } from '../attachmentTransfers'
 import type { StatusFeedback } from '../types'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
 import {
@@ -10,18 +9,12 @@ import {
   useOperations,
 } from './core'
 import { parseEndpointWsPayload } from '../protocolClient'
-import {
-  completeRuntimeAttachment,
-  createRuntimeAttachmentUploadTicket,
-  uploadRuntimeAttachmentContent
-} from '../runtimeApi'
 
 const STATUS_FEEDBACK_TTL_MS = 6000
 
 export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const autoInitializeAttemptedRef = useRef(false)
   const [statusFeedback, setStatusFeedback] = useState<StatusFeedback | null>(null)
-  const [attachmentInventoryVersion, setAttachmentInventoryVersion] = useState(0)
 
   const {
     endpointContext,
@@ -96,15 +89,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     }, STATUS_FEEDBACK_TTL_MS)
     return () => window.clearTimeout(timer)
   }, [statusFeedback])
-
-  const publishStatusFeedback = useCallback((text: string, tone: StatusFeedback['tone']) => {
-    setStatusFeedback({
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      text,
-      tone,
-      createdAt: Date.now(),
-    })
-  }, [])
 
   const applyEndpointWsUpdate = useCallback((rawPayload: unknown) => {
     const update = parseEndpointWsPayload(rawPayload)
@@ -205,44 +189,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return 'connected' as const
   }, [endpointConnectionState, endpointContext, transportState.connectionState])
 
-  const uploadAttachment = useCallback(async (file: File) => {
-    try {
-      const context = endpointContext ?? (await initializeEndpointContext())
-      const ticket = await createRuntimeAttachmentUploadTicket(baseUrl, {
-        owner_type: 'thread',
-        owner_id: context.threadId,
-        kind: file.type.startsWith('image/') ? 'image' : 'file',
-        mime_type: file.type || 'application/octet-stream',
-        file_name: file.name,
-        size_bytes: file.size,
-        endpoint_id: context.endpointId,
-      })
-      const uploadResult = await uploadRuntimeAttachmentContent(ticket.upload_url, file)
-      const attachment = await completeRuntimeAttachment(baseUrl, ticket.attachment_id, {
-        ticket_id: ticket.ticket_id,
-        sha256: uploadResult.sha256,
-        size_bytes: uploadResult.size_bytes,
-      })
-      setAttachmentInventoryVersion((current) => current + 1)
-      publishStatusFeedback(`附件上传成功：${file.name}`, 'success')
-      return attachment
-    } catch (error) {
-      publishStatusFeedback(`附件上传失败：${error instanceof Error ? error.message : '未知错误'}`, 'error')
-      return null
-    }
-  }, [baseUrl, endpointContext, initializeEndpointContext, publishStatusFeedback])
-
-  const downloadAttachment = useCallback(async (attachmentId: string) => {
-    try {
-      const context = endpointContext ?? (await initializeEndpointContext())
-      await triggerAttachmentDownload(baseUrl, attachmentId, context.endpointId)
-      return true
-    } catch (error) {
-      publishStatusFeedback(`附件下载失败：${error instanceof Error ? error.message : '未知错误'}`, 'error')
-      return null
-    }
-  }, [baseUrl, endpointContext, initializeEndpointContext, publishStatusFeedback])
-
   useEffect(() => {
     window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.runtimeDebug.update, { sessionId, baseUrl })
   }, [baseUrl, sessionId])
@@ -275,16 +221,6 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     pendingHumanInput,
   ])
 
-  useEffect(() => {
-    window.ipcRenderer?.send(WINDOW_SYNC_CHANNEL.attachments.update, {
-      baseUrl,
-      threadId: endpointContext?.threadId || '',
-      endpointId,
-      workspaceTitle: endpointContext?.workspace?.title || endpointContext?.workspace?.workspace_id || '',
-      attachmentInventoryVersion,
-    })
-  }, [attachmentInventoryVersion, baseUrl, endpointContext?.threadId, endpointContext?.workspace, endpointId])
-
   return {
     messages: chatState.messages,
     operations,
@@ -308,14 +244,11 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     lastError: transportState.lastError,
     archivedTurnCount: chatState.archivedTurnCount,
     statusFeedback,
-    attachmentInventoryVersion,
     sendMessage,
     decideOperationApproval,
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
-    uploadAttachment,
-    downloadAttachment,
     createThread: createAndSelectRuntimeThread,
     deleteThread: deleteRuntimeThreadAndSelect,
     refreshHealth,

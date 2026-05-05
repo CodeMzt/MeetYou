@@ -13,7 +13,7 @@ from aiohttp import web
 
 from build_info import load_build_info
 from desktop_client.config import DesktopClientConfig
-from desktop_client.core_client import DesktopCoreClient, rewrite_attachment_ticket, rewrite_download_ticket
+from desktop_client.core_client import DesktopCoreClient
 
 
 logger = logging.getLogger("meetyou.desktop_client.desktop_api")
@@ -158,13 +158,6 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("POST", "/desktop/sessions/{session_id}/confirm-response", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/confirm-response"),
         DesktopApiRoute("POST", "/desktop/sessions/{session_id}/human-input-response", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/human-input-response"),
         DesktopApiRoute("POST", "/desktop/sessions/{session_id}/reply-control", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/reply-control"),
-        DesktopApiRoute("POST", "/desktop/attachments/upload-ticket", lambda _request: "/runtime/attachments/upload-ticket", rewrite_json=rewrite_attachment_ticket),
-        DesktopApiRoute("PUT", "/desktop/attachments/upload/{ticket_id}", lambda request: f"/runtime/attachments/upload/{request.match_info['ticket_id']}", binary_response=True),
-        DesktopApiRoute("POST", "/desktop/attachments/{attachment_id}/complete", lambda request: f"/runtime/attachments/{request.match_info['attachment_id']}/complete"),
-        DesktopApiRoute("GET", "/desktop/threads/{thread_id}/attachments", lambda request: f"/runtime/threads/{request.match_info['thread_id']}/attachments"),
-        DesktopApiRoute("DELETE", "/desktop/attachments/{attachment_id}", lambda request: f"/runtime/attachments/{request.match_info['attachment_id']}"),
-        DesktopApiRoute("GET", "/desktop/attachments/{attachment_id}/download-ticket", lambda request: f"/runtime/attachments/{request.match_info['attachment_id']}/download-ticket", rewrite_json=rewrite_download_ticket),
-        DesktopApiRoute("GET", "/desktop/attachments/content/{attachment_id}", lambda request: f"/runtime/attachments/content/{request.match_info['attachment_id']}", binary_response=True),
         DesktopApiRoute("GET", "/desktop/danxi/session", lambda _request: "/runtime/danxi/session"),
         DesktopApiRoute("POST", "/desktop/danxi/session/login", lambda _request: "/runtime/danxi/session/login"),
         DesktopApiRoute("PATCH", "/desktop/danxi/session/webvpn-cookie", lambda _request: "/runtime/danxi/session/webvpn-cookie"),

@@ -1,7 +1,6 @@
 import { Activity, AlertTriangle, CheckCircle2, Loader2, PlayCircle, MoreHorizontal } from 'lucide-react'
 import type { OperationView } from '../../types'
 import { formatOperationStatusLabel } from '../../utils/statusFormatting'
-import AttachmentList from './AttachmentList'
 import styles from './OperationPanel.module.css'
 
 function formatPhaseLabel(phase: string): string {
@@ -18,7 +17,6 @@ interface OperationPanelProps {
   operations: OperationView[]
   onApprove?: (approvalId: string) => void
   onReject?: (approvalId: string) => void
-  onDownloadAttachment?: (attachmentId: string) => void
 }
 
 function pickIcon(tone: string) {
@@ -29,7 +27,7 @@ function pickIcon(tone: string) {
   return <Activity size={14} />
 }
 
-export default function OperationPanel({ operations, onApprove, onReject, onDownloadAttachment }: OperationPanelProps) {
+export default function OperationPanel({ operations, onApprove, onReject }: OperationPanelProps) {
   if (!operations.length) {
     return null
   }
@@ -84,7 +82,6 @@ export default function OperationPanel({ operations, onApprove, onReject, onDown
                 {JSON.stringify(operation.error.details, null, 2)}
               </div>
             )}
-            <AttachmentList attachments={operation.attachments} title="附件" onDownloadAttachment={onDownloadAttachment} />
           </div>
         ))}
       </div>

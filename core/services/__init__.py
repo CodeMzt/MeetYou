@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core.services.approval_service import ApprovalService
-from core.services.attachment_service import AttachmentService
 from core.services.actor_service import ActorService
 from core.services.capability_service import CapabilityService
 from core.services.config_state_service import ConfigStateService
@@ -64,7 +63,6 @@ class CoreServices:
     operation: OperationService
     operation_call: OperationCallService
     approval: ApprovalService
-    attachment: AttachmentService
     message: MessageService
     config_state: ConfigStateService
     context_pool: ContextPoolService
@@ -75,7 +73,6 @@ class CoreServices:
 __all__ = [
     "ApprovalService",
     "ActorDeliveryPreferenceService",
-    "AttachmentService",
     "ActorService",
     "CapabilityService",
     "ConfigStateService",

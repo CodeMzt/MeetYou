@@ -141,8 +141,6 @@ _ENV_KEY_MAP = {
     "api_key": "MEETYOU_API_KEY",
     "heartbeat_api_key": "MEETYOU_HEARTBEAT_API_KEY",
     "embedding_api_key": "MEETYOU_EMBEDDING_API_KEY",
-    "object_store_access_key": "MEETYOU_OBJECT_STORE_ACCESS_KEY",
-    "object_store_secret_key": "MEETYOU_OBJECT_STORE_SECRET_KEY",
     "database_url": "MEETYOU_DATABASE_URL",
     "gateway_access_token": "MEETYOU_GATEWAY_ACCESS_TOKEN",
     "feishu_app_id": "MEETYOU_FEISHU_APP_ID",

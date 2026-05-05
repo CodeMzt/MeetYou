@@ -14,7 +14,7 @@ V4 鐨勫澶栨帴鍙ｆ寜鑱岃矗鍒嗗眰锛屼笉鍐嶄繚鐣?V3 Client 
 
 ## Runtime 璧勬簮
 
-Core 鎷ユ湁浠ヤ笅璧勬簮鍜岃涔夛細Thread銆丮essage銆丷un銆丷unEvent銆丼cheduler銆丠eartbeat銆丮emory銆丱peration銆丏elivery銆丄ttachment銆丆ontextPool銆?
+Core 鎷ユ湁浠ヤ笅璧勬簮鍜岃涔夛細Thread銆丮essage銆丷un銆丷unEvent銆丼cheduler銆丠eartbeat銆丮emory銆丱peration銆丏elivery銆丆ontextPool銆?
 
 Runtime HTTP 涓昏璧勬簮锛?
 
@@ -30,12 +30,6 @@ Runtime HTTP 涓昏璧勬簮锛?
 - `GET /runtime/workspaces`
 - `GET /runtime/workspaces/{workspace_id}/endpoints`
 - `GET /runtime/context-pool/query`
-- `POST /runtime/attachments/upload-ticket`
-- `PUT /runtime/attachments/upload/{ticket_id}`
-- `POST /runtime/attachments/{attachment_id}/complete`
-- `GET /runtime/threads/{thread_id}/attachments`
-- `GET /runtime/attachments/{attachment_id}/download-ticket`
-- `GET /runtime/attachments/content/{attachment_id}`
 
 `POST /runtime/messages` accepts `endpoint_message_id` for Endpoint Provider inbound idempotency. For the same thread, endpoint, role, and `endpoint_message_id`, Core returns the existing Message with `idempotent_replay=true` and does not enqueue another assistant run.
 

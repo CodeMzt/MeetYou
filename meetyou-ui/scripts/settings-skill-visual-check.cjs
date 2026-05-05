@@ -102,18 +102,6 @@ function schemaEnvelope() {
           ],
           advanced: false,
         },
-        {
-          key: 'attachment_storage_root',
-          title: '附件本地存储目录',
-          description: 'local/filesystem 后端保存附件内容的根目录。',
-          group: 'advanced',
-          input: 'text',
-          control: 'directory',
-          placeholder: 'user/attachments',
-          help_text: '选择本机可写目录；相对路径会按运行目录解析。',
-          examples: ['user/attachments'],
-          advanced: false,
-        },
       ],
     },
   }
@@ -141,14 +129,6 @@ function configSnapshot() {
       web_search_quality: {
         key: 'web_search_quality',
         value: 'adaptive',
-        is_secret: false,
-        has_value: true,
-        source: 'config',
-        env_key: null,
-      },
-      attachment_storage_root: {
-        key: 'attachment_storage_root',
-        value: 'user/attachments',
         is_secret: false,
         has_value: true,
         source: 'config',

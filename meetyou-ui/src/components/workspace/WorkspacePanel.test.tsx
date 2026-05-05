@@ -73,7 +73,6 @@ describe('WorkspacePanel', () => {
             approval_required: true,
             approval_status: 'pending',
             approval_id: 'approval_1',
-            attachments: [],
           },
         ] as OperationView[]}
         approvalDisplay={null}

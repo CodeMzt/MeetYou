@@ -35,8 +35,6 @@ export default function App() {
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
-    uploadAttachment,
-    downloadAttachment,
     createThread,
     deleteThread,
     refreshWorkspace,
@@ -165,7 +163,6 @@ export default function App() {
             pendingHumanInput={pendingHumanInput}
             sendConfirmResponse={sendConfirmResponse}
             sendHumanInputResponse={sendHumanInputResponse}
-            onDownloadAttachment={(attachmentId) => void downloadAttachment(attachmentId)}
             sendControlCommand={sendControlCommand}
           />
         </div>
@@ -185,7 +182,6 @@ export default function App() {
         pendingHumanInput={pendingHumanInput}
         runtimeSnapshot={runtimeSnapshot}
         sendControlCommand={sendControlCommand}
-        onUploadAttachment={(file) => void uploadAttachment(file)}
       />
     </div>
   )

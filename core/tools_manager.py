@@ -20,7 +20,6 @@ from core.tool_runtime import (
     should_expose_mcp_tool,
 )
 from core.services.tool_router_service import ToolRouterError
-from tools.attachment_tools import AttachmentTools
 from tools.memory_tools import MemoryTools
 from tools.danxi_tools import get_shared_danxi_tools
 from tools.document_tools import DocumentTools
@@ -110,7 +109,6 @@ class ToolsManager:
     def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None, task_manager=None, config=None):
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
-        self._attachment_tools = AttachmentTools()
         self._memory_tools = MemoryTools(memory)
         self._web_search_tools = WebSearchTools(mcp_manager, config=config)
         self._danxi_tools = get_shared_danxi_tools()
@@ -173,9 +171,6 @@ class ToolsManager:
             "load_skill": self._scenario_tools.load_skill,
             "create_skill": self._scenario_tools.create_skill,
             "manage_skill": self._scenario_tools.manage_skill,
-            "list_attachments": self._attachment_tools.list_attachments,
-            "read_attachment": self._attachment_tools.read_attachment,
-            "delete_attachment": self._attachment_tools.delete_attachment,
             "list_workspaces": self._workspace_tools.list_workspaces,
             "switch_workspace": self._workspace_tools.switch_workspace,
             "summarize_text": self._lightweight_tools.summarize_text,
@@ -280,7 +275,6 @@ class ToolsManager:
 
     def set_core_domain(self, core_domain) -> None:
         self._core_domain = core_domain
-        self._attachment_tools.set_core_domain(core_domain)
         self._scheduler_tools.set_core_domain(core_domain)
         self._thread_tools.set_core_domain(core_domain)
         self._workspace_tools.set_core_domain(core_domain)

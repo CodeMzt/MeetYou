@@ -5,7 +5,7 @@ import contextlib
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 import aiohttp
@@ -27,7 +27,6 @@ Handler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 @dataclass(slots=True)
 class ToolExecutionOutcome:
     result: dict[str, Any]
-    attachment_outputs: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ToolExecutionError(RuntimeError):

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import aiohttp
 from dataclasses import dataclass
-from typing import Callable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from desktop_client.config import DesktopClientConfig
@@ -57,44 +56,6 @@ def build_core_auth_headers(token: str) -> dict[str, str]:
     if not resolved:
         return {}
     return {"Authorization": f"Bearer {resolved}"}
-
-
-def rewrite_url_to_local_desktop(url: str, config: DesktopClientConfig) -> str:
-    value = str(url or "").strip()
-    if not value:
-        return ""
-    parsed = urlsplit(value)
-    if parsed.path.startswith("/runtime/attachments/content/"):
-        local = urlsplit(config.local_bridge_base_url)
-        local_path = parsed.path.replace("/runtime/attachments/content/", "/desktop/attachments/content/", 1)
-        return urlunsplit((local.scheme, local.netloc, local_path, parsed.query, parsed.fragment))
-    if value.startswith("/runtime/attachments/content/"):
-        local = urlsplit(config.local_bridge_base_url)
-        local_path = value.replace("/runtime/attachments/content/", "/desktop/attachments/content/", 1)
-        return urlunsplit((local.scheme, local.netloc, local_path, "", ""))
-    return value
-
-
-def rewrite_attachment_ticket(core_payload: object, config: DesktopClientConfig) -> object:
-    if not isinstance(core_payload, dict):
-        return core_payload
-    rewritten = dict(core_payload)
-    ticket_id = str(rewritten.get("ticket_id") or "").strip()
-    if ticket_id:
-        rewritten["upload_url"] = f"{config.local_bridge_base_url}/desktop/attachments/upload/{ticket_id}"
-    return rewritten
-
-
-def rewrite_download_ticket(core_payload: object, config: DesktopClientConfig) -> object:
-    if not isinstance(core_payload, dict):
-        return core_payload
-    rewritten = dict(core_payload)
-    rewritten["download_url"] = rewrite_url_to_local_desktop(str(rewritten.get("download_url") or ""), config)
-    rewritten["fallback_download_url"] = rewrite_url_to_local_desktop(
-        str(rewritten.get("fallback_download_url") or ""),
-        config,
-    )
-    return rewritten
 
 
 class DesktopCoreClient:

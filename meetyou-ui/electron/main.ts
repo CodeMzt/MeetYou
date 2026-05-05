@@ -22,7 +22,6 @@ let settingsWin: BrowserWindow | null = null
 let runtimeDebugWin: BrowserWindow | null = null
 let contextWin: BrowserWindow | null = null
 let workspaceWin: BrowserWindow | null = null
-let attachmentsWin: BrowserWindow | null = null
 let danxiWin: BrowserWindow | null = null
 let danxiAuthWin: BrowserWindow | null = null
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
@@ -30,7 +29,6 @@ const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 let latestRuntimeDebugWindow = { sessionId: '', baseUrl: DEFAULT_BASE_URL }
 let latestContextWindow = { usageSnapshot: null }
 let latestWorkspaceWindow = null
-let latestAttachmentsWindow = null
 let latestDanxiWindow = { baseUrl: DEFAULT_BASE_URL, preferredMode: 'general', workspaceTitle: '' }
 let danxiAuthPromise: Promise<any> | null = null
 let danxiAuthResolver: ((value: any) => void) | null = null
@@ -829,54 +827,6 @@ function createWorkspaceWindow() {
   })
 }
 
-function createAttachmentsWindow() {
-  if (attachmentsWin) {
-    if (attachmentsWin.isMinimized()) attachmentsWin.restore()
-    attachmentsWin.focus()
-    return
-  }
-
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width, height } = primaryDisplay.workAreaSize
-
-  const windowWidth = 720
-  const windowHeight = 700
-
-  attachmentsWin = new BrowserWindow({
-    width: windowWidth,
-    height: windowHeight,
-    x: width / 2 - windowWidth / 2,
-    y: height / 2 - windowHeight / 2,
-    icon: path.join(process.env.VITE_PUBLIC || '', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
-    transparent: true,
-    frame: false,
-    resizable: true,
-    minWidth: 620,
-    minHeight: 620,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  })
-
-  if (process.platform === 'win32') {
-    attachmentsWin.setBackgroundMaterial('mica')
-  } else if (process.platform === 'darwin') {
-    attachmentsWin.setVibrancy('popover')
-  }
-
-  if (VITE_DEV_SERVER_URL) {
-    attachmentsWin.loadURL(`${VITE_DEV_SERVER_URL}${WINDOW_HASH_ROUTE.attachments}`)
-  } else {
-    attachmentsWin.loadFile(path.join(process.env.DIST || '', 'index.html'), { hash: WINDOW_HASH_ROUTE.attachments.slice(1) })
-  }
-
-  attachmentsWin.on('closed', () => {
-    attachmentsWin = null
-  })
-}
-
 function createDanxiWindow() {
   if (danxiWin) {
     if (danxiWin.isMinimized()) danxiWin.restore()
@@ -1161,9 +1111,6 @@ function createWindow() {
   ipcMain.on(WINDOW_OPEN_CHANNEL.workspace, () => {
     createWorkspaceWindow()
   })
-  ipcMain.on(WINDOW_OPEN_CHANNEL.attachments, () => {
-    createAttachmentsWindow()
-  })
   ipcMain.on(WINDOW_OPEN_CHANNEL.danxi, () => {
     createDanxiWindow()
   })
@@ -1190,13 +1137,6 @@ function createWindow() {
   })
   ipcMain.on(WINDOW_SYNC_CHANNEL.workspace.request, (e) => {
     e.sender.send(WINDOW_SYNC_CHANNEL.workspace.update, latestWorkspaceWindow)
-  })
-  ipcMain.on(WINDOW_SYNC_CHANNEL.attachments.update, (_e, data) => {
-    latestAttachmentsWindow = data
-    forwardWindowState(attachmentsWin, WINDOW_SYNC_CHANNEL.attachments.update, data)
-  })
-  ipcMain.on(WINDOW_SYNC_CHANNEL.attachments.request, (e) => {
-    e.sender.send(WINDOW_SYNC_CHANNEL.attachments.update, latestAttachmentsWindow)
   })
   ipcMain.on(WINDOW_SYNC_CHANNEL.danxi.update, (_e, data) => {
     latestDanxiWindow = data

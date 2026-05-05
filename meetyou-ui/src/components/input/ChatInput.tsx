@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Send, Settings2, Sparkles, BrainCircuit, Square, Paperclip } from 'lucide-react'
+import { Send, Settings2, Sparkles, BrainCircuit, Square } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { AssistantMode, ThinkingOverride, ConfirmRequestPayload, HumanInputRequestPayload, RuntimeStateSnapshot, ConnectionState } from '../../types'
 import styles from './ChatInput.module.css'
@@ -32,7 +32,6 @@ interface ChatInputProps {
   pendingHumanInput: HumanInputRequestPayload | null
   runtimeSnapshot: RuntimeStateSnapshot | null
   sendControlCommand?: (action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback', params?: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string }) => void
-  onUploadAttachment?: (file: File) => void
 }
 
 export default function ChatInput({
@@ -49,12 +48,10 @@ export default function ChatInput({
   pendingHumanInput,
   runtimeSnapshot,
   sendControlCommand,
-  onUploadAttachment,
 }: ChatInputProps) {
   const [showOptions, setShowOptions] = useState(false)
   const dockRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerLocked = Boolean(confirmRequest || pendingHumanInput)
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
 
@@ -163,28 +160,6 @@ export default function ChatInput({
         >
           <Settings2 size={18} />
         </button>
-
-        <button
-          className={styles.settingsBtn}
-          onClick={() => fileInputRef.current?.click()}
-          disabled={composerLocked}
-          title="上传附件"
-        >
-          <Paperclip size={18} />
-        </button>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          className={styles.hiddenFileInput}
-          onChange={(event) => {
-            const file = event.target.files?.[0]
-            if (file) {
-              onUploadAttachment?.(file)
-            }
-            event.currentTarget.value = ''
-          }}
-        />
 
         <textarea
           ref={textareaRef}

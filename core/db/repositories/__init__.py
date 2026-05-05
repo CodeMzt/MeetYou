@@ -1,6 +1,4 @@
 from core.db.repositories.approval import ApprovalRepository
-from core.db.repositories.attachment import AttachmentRepository
-from core.db.repositories.attachment_upload_ticket import AttachmentUploadTicketRepository
 from core.db.repositories.actor import ActorRepository
 from core.db.repositories.capability import CapabilityRepository
 from core.db.repositories.config_entry import ConfigEntryRepository
@@ -31,8 +29,6 @@ from core.db.repositories.workspace import WorkspaceRepository
 __all__ = [
     "ApprovalRepository",
     "ActorDeliveryPreferenceRepository",
-    "AttachmentRepository",
-    "AttachmentUploadTicketRepository",
     "ActorRepository",
     "CapabilityRepository",
     "ConfigEntryRepository",

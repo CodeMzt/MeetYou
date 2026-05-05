@@ -176,14 +176,12 @@ def build_call_result(
     call_id: str,
     correlation_id: str,
     result: dict[str, Any],
-    attachment_outputs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return build_tool_call_result_message(
         provider_id=config.provider_id,
         call_id=call_id,
         correlation_id=correlation_id,
         result=result,
-        attachment_outputs=attachment_outputs,
     )
 
 

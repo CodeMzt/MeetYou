@@ -1,6 +1,5 @@
 import { startTransition, useCallback, useState } from 'react'
 import { decideRuntimeApproval } from '../../runtimeApi'
-import { normalizeAttachmentObjects } from '../../attachmentObject'
 import { createSystemTurn } from '../../chatState'
 import { parseEndpointWsPayload } from '../../protocolClient'
 import type { EndpointContext } from './useEndpointContext'
@@ -51,10 +50,6 @@ function applyOperationEvent(
   const detail = event.detail || existing?.detail || ''
   const result = hasResultPayload ? nextResult : existing?.result || {}
   const error = event.error || existing?.error || {}
-  const attachments = hasResultPayload
-    ? normalizeAttachmentObjects(nextResult.attachment_outputs)
-    : existing?.attachments || []
-  
   const next: OperationView = {
     operation_id: event.operationId,
     thread_id: event.threadId,
@@ -74,7 +69,6 @@ function applyOperationEvent(
     detail,
     result,
     error,
-    attachments,
     tone: deriveOperationTone(status),
     summary: deriveOperationSummary(result, error, detail, phase, status),
     isBlocking: false,

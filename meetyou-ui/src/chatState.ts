@@ -83,7 +83,6 @@ export function createUserTurn(content: string, turnId = '', clientRequestId = '
 export function createSystemTurn(
   content: string,
   isError = false,
-  attachments: ChatTurn['attachments'] = [],
 ): ChatTurn {
   return {
     id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -96,7 +95,6 @@ export function createSystemTurn(
     isStreaming: false,
     createdAt: Date.now(),
     error: isError ? content : undefined,
-    attachments,
     temporary: false,
   }
 }
