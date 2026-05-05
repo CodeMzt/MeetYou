@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 import unittest
 
@@ -73,6 +74,18 @@ class OperatorWorkspaceTopologyTests(unittest.TestCase):
             core_domain=SimpleNamespace(principal=self.principal, services=self.services),
             access_token="operator-token",
         )
+        self.gateway = gateway
+        self._ws = object()
+        asyncio.run(gateway.endpoint_ws_manager.connect(self._ws))
+        asyncio.run(
+            gateway.endpoint_ws_manager.bind_endpoint(
+                self._ws,
+                endpoint_id="desktop.main.executor",
+                connection_id="test-conn-1",
+                provider={"provider_type": "desktop", "provider_id": "desktop-main", "display_name": "Desktop Main"},
+                metadata={"endpoint_ids": ["desktop.main.executor"]},
+            )
+        )
         self.client = TestClient(gateway.app)
 
     def tearDown(self):
@@ -95,6 +108,70 @@ class OperatorWorkspaceTopologyTests(unittest.TestCase):
         self.assertIn("shell.exec", endpoint["executable_tools"])
         self.assertEqual(address["workspace_ids"], ["personal"])
         self.assertEqual(personal["endpoint_count"], 1)
+        self.assertEqual(personal["online_endpoint_count"], 1)
+
+    def test_topology_hides_offline_system_and_presentation_role_endpoints_by_default(self):
+        stale_endpoint = self.services.endpoint.ensure_endpoint(
+            endpoint_id="desktop.old.executor",
+            endpoint_type="desktop_executor",
+            provider_type="desktop",
+            transport_type="websocket",
+            workspace_scope=["personal"],
+            metadata={"display_name": "Old Desktop"},
+        )
+        self.services.endpoint_workspace_membership.seed_endpoint_memberships(
+            endpoint_row_id=stale_endpoint.id,
+            workspace_ids=["personal"],
+        )
+        ui_endpoint = self.services.endpoint.ensure_endpoint(
+            endpoint_id="desktop.main.ui",
+            endpoint_type="desktop_ui",
+            provider_type="desktop",
+            transport_type="websocket",
+            workspace_scope=["personal"],
+            metadata={"display_name": "Desktop Main UI"},
+        )
+        self.services.endpoint_workspace_membership.seed_endpoint_memberships(
+            endpoint_row_id=ui_endpoint.id,
+            workspace_ids=["personal"],
+        )
+        asyncio.run(
+            self.gateway.endpoint_ws_manager.bind_endpoint(
+                self._ws,
+                endpoint_id="desktop.main.executor",
+                connection_id="test-conn-1",
+                provider={"provider_type": "desktop", "provider_id": "desktop-main", "display_name": "Desktop Main"},
+                metadata={"endpoint_ids": ["desktop.main.executor", "desktop.main.ui"]},
+            )
+        )
+        core_endpoint = self.services.endpoint.ensure_endpoint(
+            endpoint_id="core.scheduler",
+            endpoint_type="core_scheduler",
+            provider_type="core",
+            transport_type="inproc",
+            workspace_scope=["personal"],
+        )
+        self.services.endpoint_workspace_membership.seed_endpoint_memberships(
+            endpoint_row_id=core_endpoint.id,
+            workspace_ids=["personal"],
+        )
+
+        response = self.client.get("/operator/workspace-topology", headers=self._headers())
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        endpoint_ids = {item["endpoint_id"] for item in payload["endpoints"]}
+        personal = next(item for item in payload["workspaces"] if item["workspace_id"] == "personal")
+
+        self.assertEqual(endpoint_ids, {"desktop.main.executor"})
+        self.assertEqual(personal["endpoint_count"], 1)
+        self.assertEqual(personal["online_endpoint_count"], 1)
+
+        diagnostic = self.client.get("/operator/workspace-topology?include_offline=true&include_system=true", headers=self._headers())
+        self.assertEqual(diagnostic.status_code, 200, diagnostic.text)
+        diagnostic_ids = {item["endpoint_id"] for item in diagnostic.json()["endpoints"]}
+        self.assertIn("desktop.old.executor", diagnostic_ids)
+        self.assertIn("core.scheduler", diagnostic_ids)
+        self.assertNotIn("desktop.main.ui", diagnostic_ids)
 
     def test_topology_hides_retired_acceptance_probe_endpoints_by_default(self):
         endpoint = self.services.endpoint.ensure_endpoint(
@@ -127,7 +204,7 @@ class OperatorWorkspaceTopologyTests(unittest.TestCase):
         self.assertNotIn("desktop.v4check-deadbeef.executor", endpoint_ids)
         self.assertEqual(personal["endpoint_count"], 1)
 
-        archived = self.client.get("/operator/workspace-topology?include_archived=true", headers=self._headers())
+        archived = self.client.get("/operator/workspace-topology?include_archived=true&include_offline=true", headers=self._headers())
         self.assertEqual(archived.status_code, 200, archived.text)
         archived_ids = {item["endpoint_id"] for item in archived.json()["endpoints"]}
         self.assertIn("desktop.v4check-deadbeef.executor", archived_ids)

@@ -22,6 +22,8 @@ from core.services.base import ServiceBase
 
 
 HIDDEN_ENDPOINT_STATUSES = {"archived", "retired"}
+CORE_INTERNAL_ENDPOINT_IDS = {"core.local", "core.scheduler", "core.inbox", "core.notification"}
+PRESENTATION_ENDPOINT_TYPES = {"desktop_ui", "edge_ui"}
 
 
 class EndpointThreadBindingError(ValueError):
@@ -63,6 +65,20 @@ def endpoint_hidden_from_operator(endpoint) -> bool:
     status = str(getattr(endpoint, "status", "") or "").strip().lower()
     meta = dict(getattr(endpoint, "meta", {}) or {})
     return status in HIDDEN_ENDPOINT_STATUSES or bool(meta.get("operator_hidden")) or is_acceptance_probe_endpoint(endpoint)
+
+
+def endpoint_is_core_internal(endpoint) -> bool:
+    endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip().lower()
+    endpoint_type = str(getattr(endpoint, "endpoint_type", "") or "").strip().lower()
+    provider_type = str(getattr(endpoint, "provider_type", "") or "").strip().lower()
+    return provider_type == "core" or endpoint_id in CORE_INTERNAL_ENDPOINT_IDS or endpoint_type.startswith("core_")
+
+
+def endpoint_is_presentation_role(endpoint) -> bool:
+    endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip().lower()
+    endpoint_type = str(getattr(endpoint, "endpoint_type", "") or "").strip().lower()
+    provider_type = str(getattr(endpoint, "provider_type", "") or "").strip().lower()
+    return provider_type in {"desktop", "edge"} and (endpoint_id.endswith(".ui") or endpoint_type in PRESENTATION_ENDPOINT_TYPES)
 
 
 class EndpointRegistryService(ServiceBase):
