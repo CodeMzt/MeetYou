@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from clients.gateway_client import GatewayConversationClient, resolve_core_base_url
+from endpoint_providers.runtime_connection import EndpointRuntimeConnection, resolve_core_base_url
 from adapters.feishu_ws_client import FeishuWSClient
 from core.endpoint_tool_bundles import EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE
 from core.io_protocol import (
@@ -63,10 +63,10 @@ class FeishuInputAdapter:
             self._config.get("feishu_chat_registry_path") or "user/feishu_chat_ids.json"
         )
         self._known_chat_ids = self._load_known_chat_ids()
-        self._gateway_clients: dict[str, GatewayConversationClient] = {}
-        self._provider_gateway_client: GatewayConversationClient | None = None
-        self._gateway_base_url = resolve_core_base_url(self._config)
-        self._gateway_access_token = str(self._config.get("gateway_access_token") or "").strip()
+        self._endpoint_connections: dict[str, EndpointRuntimeConnection] = {}
+        self._provider_endpoint_connection: EndpointRuntimeConnection | None = None
+        self._core_base_url = resolve_core_base_url(self._config)
+        self._core_access_token = str(self._config.get("gateway_access_token") or "").strip()
         self._client = FeishuWSClient(
             self._app_id,
             self._config.get("feishu_app_secret") or "",
@@ -107,16 +107,16 @@ class FeishuInputAdapter:
             "metadata": {"chat_type": normalized_type, "supports_markdown": False},
         }
 
-    async def _get_provider_gateway_client(self) -> GatewayConversationClient:
-        if self._provider_gateway_client is None:
+    async def _get_provider_endpoint_connection(self) -> EndpointRuntimeConnection:
+        if self._provider_endpoint_connection is None:
             known_chat_ids = sorted(self._known_chat_ids | self._configured_chat_ids())
-            self._provider_gateway_client = GatewayConversationClient(
-                base_url=self._gateway_base_url,
+            self._provider_endpoint_connection = EndpointRuntimeConnection(
+                base_url=self._core_base_url,
                 provider_id="feishu-provider",
                 provider_type="feishu",
                 display_name="Feishu Provider",
                 workspace_id="personal",
-                access_token=self._gateway_access_token,
+                access_token=self._core_access_token,
                 thread_title="Feishu Provider",
                 endpoint_id=self._provider_endpoint_id,
                 endpoint_addresses=[self._address_payload(chat_id) for chat_id in known_chat_ids],
@@ -128,19 +128,19 @@ class FeishuInputAdapter:
                     else None
                 ),
             )
-        await self._provider_gateway_client.start()
-        return self._provider_gateway_client
+        await self._provider_endpoint_connection.start()
+        return self._provider_endpoint_connection
 
-    async def _get_gateway_client(self, chat_id: str) -> GatewayConversationClient:
-        client = self._gateway_clients.get(chat_id)
+    async def _get_endpoint_connection(self, chat_id: str) -> EndpointRuntimeConnection:
+        client = self._endpoint_connections.get(chat_id)
         if client is None:
-            client = GatewayConversationClient(
-                base_url=self._gateway_base_url,
+            client = EndpointRuntimeConnection(
+                base_url=self._core_base_url,
                 provider_id=f"feishu-chat-{chat_id}",
                 provider_type="feishu",
                 display_name=f"Feishu {chat_id}",
                 workspace_id="personal",
-                access_token=self._gateway_access_token,
+                access_token=self._core_access_token,
                 thread_title=f"Feishu Chat {chat_id}",
                 endpoint_id=self._provider_endpoint_id,
                 conversation_key=f"feishu:chat:{chat_id}",
@@ -153,7 +153,7 @@ class FeishuInputAdapter:
                     else None
                 ),
             )
-            self._gateway_clients[chat_id] = client
+            self._endpoint_connections[chat_id] = client
         await client.start()
         return client
 
@@ -267,7 +267,7 @@ class FeishuInputAdapter:
             or ""
         )
         self._record_chat_id(chat_id, message, sender_id)
-        client = await self._get_gateway_client(chat_id)
+        client = await self._get_endpoint_connection(chat_id)
         with __import__("contextlib").suppress(Exception):
             await client.upsert_address(self._address_payload(chat_id, chat_type=message.get("chat_type", "")))
         source = make_source(
@@ -339,7 +339,7 @@ class FeishuInputAdapter:
             metadata={
                 "source": "feishu",
                 "transport": "feishu",
-                "response_transport": "non_streaming_external_client",
+                "response_transport": "non_streaming_endpoint_provider",
                 "supports_streaming_reply": False,
                 "supports_markdown": False,
                 "progress_notice_policy": "prefer_before_nontrivial_final",
@@ -354,15 +354,15 @@ class FeishuInputAdapter:
         )
 
     async def run(self):
-        await self._get_provider_gateway_client()
+        await self._get_provider_endpoint_connection()
         await self._client.start()
 
     async def close(self):
-        for client in self._gateway_clients.values():
+        for client in self._endpoint_connections.values():
             await client.close()
-        self._gateway_clients.clear()
-        if self._provider_gateway_client is not None:
-            await self._provider_gateway_client.close()
-            self._provider_gateway_client = None
+        self._endpoint_connections.clear()
+        if self._provider_endpoint_connection is not None:
+            await self._provider_endpoint_connection.close()
+            self._provider_endpoint_connection = None
         await self._client.stop()
 

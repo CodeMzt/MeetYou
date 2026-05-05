@@ -2157,7 +2157,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
-    async def test_client_allowed_tool_bundle_overrides_mode_tools(self):
+    async def test_endpoint_allowed_tool_bundle_overrides_mode_tools(self):
         adapter = QueuedStreamAdapter(
             rounds=[
                 [
@@ -2186,7 +2186,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         try:
             async for _ in brain.input_brain(
-                "session-client-tool-scope",
+                "session-endpoint-tool-scope",
                 {
                     "role": "user",
                     "content": "Analyze the local project files.",
@@ -2202,7 +2202,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-            session = brain.get_or_create_session("session-client-tool-scope")
+            session = brain.get_or_create_session("session-endpoint-tool-scope")
             tool_names = adapter.stream_calls[0]["tool_names"]
             self.assertIn("research_topic", tool_names)
             self.assertIn("inspect_page", tool_names)
@@ -2251,7 +2251,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     "content": "切换到 Danxi 模式并看热门帖子。",
                     "metadata": {
                         "transport": "feishu",
-                        "response_transport": "non_streaming_external_client",
+                        "response_transport": "non_streaming_endpoint_provider",
                         "tool_scope": "basic",
                         "allowed_tool_bundle": list(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE),
                         "allowed_mcp_servers": [],
@@ -2330,7 +2330,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     "content": "先判断是否需要切换，然后用 Danxi 工具处理。",
                     "metadata": {
                         "transport": "feishu",
-                        "response_transport": "non_streaming_external_client",
+                        "response_transport": "non_streaming_endpoint_provider",
                         "tool_scope": "basic",
                         "allowed_tool_bundle": list(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE),
                         "allowed_mcp_servers": [],
@@ -2353,7 +2353,7 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
-    async def test_non_streaming_external_client_gets_progress_notice_policy_prompt(self):
+    async def test_non_streaming_endpoint_provider_gets_progress_notice_policy_prompt(self):
         adapter = QueuedStreamAdapter(
             rounds=[
                 [
@@ -2382,13 +2382,13 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         try:
             async for _ in brain.input_brain(
-                "session-non-stream-client",
+                "session-non-stream-endpoint",
                 {
                     "role": "user",
                     "content": "Please prepare a multi-step research answer.",
                     "metadata": {
                         "transport": "meetwechat",
-                        "response_transport": "non_streaming_external_client",
+                        "response_transport": "non_streaming_endpoint_provider",
                         "supports_streaming_reply": False,
                         "progress_notice_policy": "prefer_before_nontrivial_final",
                         "tool_scope": "basic",
@@ -2402,10 +2402,10 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-            session = brain.get_or_create_session("session-non-stream-client")
+            session = brain.get_or_create_session("session-non-stream-endpoint")
             self.assertEqual(
-                session.metadata["current_route"]["client_response"]["response_transport"],
-                "non_streaming_external_client",
+                session.metadata["current_route"]["endpoint_response"]["response_transport"],
+                "non_streaming_endpoint_provider",
             )
             system_text = "\n".join(
                 str(message.get("content") or "")

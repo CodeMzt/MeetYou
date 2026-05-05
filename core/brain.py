@@ -1259,28 +1259,28 @@ class Brain:
                 "progress_notice_policy",
             }
         ):
-            client_response = dict(route_dict.get("client_response") or {})
-            transport = str(metadata.get("transport") or client_response.get("transport") or "").strip()
+            endpoint_response = dict(route_dict.get("endpoint_response") or {})
+            transport = str(metadata.get("transport") or endpoint_response.get("transport") or "").strip()
             response_transport = str(
                 metadata.get("response_transport")
-                or client_response.get("response_transport")
+                or endpoint_response.get("response_transport")
                 or ""
             ).strip()
             if transport:
-                client_response["transport"] = transport
+                endpoint_response["transport"] = transport
             if response_transport:
-                client_response["response_transport"] = response_transport
+                endpoint_response["response_transport"] = response_transport
             if "supports_streaming_reply" in metadata:
-                client_response["supports_streaming_reply"] = bool(metadata.get("supports_streaming_reply"))
+                endpoint_response["supports_streaming_reply"] = bool(metadata.get("supports_streaming_reply"))
             progress_notice_policy = str(
                 metadata.get("progress_notice_policy")
-                or client_response.get("progress_notice_policy")
+                or endpoint_response.get("progress_notice_policy")
                 or ""
             ).strip()
             if progress_notice_policy:
-                client_response["progress_notice_policy"] = progress_notice_policy
-            if client_response:
-                route_dict["client_response"] = client_response
+                endpoint_response["progress_notice_policy"] = progress_notice_policy
+            if endpoint_response:
+                route_dict["endpoint_response"] = endpoint_response
         route_dict["disable_tools"] = bool(metadata.get("disable_tools"))
         if metadata.get("disable_tools"):
             route_dict["tool_bundle"] = []
@@ -1634,13 +1634,13 @@ class Brain:
         )
 
     @staticmethod
-    def _build_client_response_policy_messages(route_context: dict[str, Any]) -> list[dict]:
-        client_response = route_context.get("client_response")
-        if not isinstance(client_response, dict):
+    def _build_endpoint_response_policy_messages(route_context: dict[str, Any]) -> list[dict]:
+        endpoint_response = route_context.get("endpoint_response")
+        if not isinstance(endpoint_response, dict):
             return []
-        if bool(client_response.get("supports_streaming_reply", True)):
+        if bool(endpoint_response.get("supports_streaming_reply", True)):
             return []
-        progress_notice_policy = str(client_response.get("progress_notice_policy") or "").strip()
+        progress_notice_policy = str(endpoint_response.get("progress_notice_policy") or "").strip()
         if progress_notice_policy not in {"prefer_before_nontrivial_final", "required_before_nontrivial_final"}:
             return []
         tool_bundle = [
@@ -1650,8 +1650,8 @@ class Brain:
         ]
         if tool_bundle and "emit_progress_notice" not in tool_bundle:
             return []
-        transport = str(client_response.get("transport") or "external").strip()
-        response_transport = str(client_response.get("response_transport") or "non_streaming_external_client").strip()
+        transport = str(endpoint_response.get("transport") or "external").strip()
+        response_transport = str(endpoint_response.get("response_transport") or "non_streaming_endpoint_provider").strip()
         return [
             {
                 "role": "system",
@@ -1692,7 +1692,7 @@ class Brain:
                 prompt_text = self._mode_manager.get_prompt_for_mode(mode)
             if prompt_text:
                 messages.append({"role": "system", "content": prompt_text})
-        messages.extend(self._build_client_response_policy_messages(route_context))
+        messages.extend(self._build_endpoint_response_policy_messages(route_context))
         messages.extend(self._build_mode_switch_policy_messages(requested_mode))
         return messages
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from clients.gateway_client import resolve_core_base_url
+from endpoint_providers.runtime_connection import resolve_core_base_url
 from desktop_client.config import DesktopClientConfig
 from desktop_client.config import load_desktop_client_config
 from desktop_client.mcp_runtime import DesktopClientMCPRuntime

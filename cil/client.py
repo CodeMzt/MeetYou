@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - optional at import time
     TextArea = None
 
 from core.logger import setup_logger
-from clients.gateway_client import GatewayConversationClient
+from endpoint_providers.runtime_connection import EndpointRuntimeConnection
 
 logger = logging.getLogger("meetyou.cil")
 
@@ -50,7 +50,7 @@ class CILClient:
         self._streaming = False
         self._stream_prefix_pending = False
         self._connection_logged = False
-        self._conversation = GatewayConversationClient(
+        self._conversation = EndpointRuntimeConnection(
             base_url=self.base_url,
             provider_id=self.source_id,
             provider_type="cil",

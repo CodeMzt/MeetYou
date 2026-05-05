@@ -303,7 +303,7 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
             async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
-        class _FakeGatewayClient:
+        class _FakeEndpointConnection:
             def __init__(self):
                 self.human_input_responses = []
 
@@ -324,7 +324,7 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
                 raise AssertionError("send_command should not be used")
 
         fake_output = _FakeOutput()
-        fake_client = _FakeGatewayClient()
+        fake_client = _FakeEndpointConnection()
         adapter = FeishuInputAdapter(
             event_bus,
             session_manager,
@@ -338,10 +338,10 @@ class HumanInputFlowTests(unittest.IsolatedAsyncioTestCase):
             output_adapter=fake_output,
         )
 
-        async def _fake_get_gateway_client(chat_id: str):
+        async def _fake_get_endpoint_connection(chat_id: str):
             return fake_client
 
-        adapter._get_gateway_client = _fake_get_gateway_client  # type: ignore[assignment]
+        adapter._get_endpoint_connection = _fake_get_endpoint_connection  # type: ignore[assignment]
 
         await adapter.handle_event(
             {

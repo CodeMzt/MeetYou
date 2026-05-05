@@ -377,7 +377,7 @@ class V4Acceptance:
                 "content": prompt,
                 "metadata": {
                     "supports_streaming_reply": False,
-                    "response_transport": "non_streaming_external_client",
+                    "response_transport": "non_streaming_endpoint_provider",
                     "progress_notice_autostart": True,
                     "progress_notice_content": f"正在验证 V4 链路 {self.marker}",
                     "acceptance_marker": self.marker,

@@ -16,7 +16,7 @@ _HTTP_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15, sock_connect=5, sock_rea
 _HTTP_SESSION_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=5)
 
 
-class GatewayClientError(RuntimeError):
+class EndpointRuntimeConnectionError(RuntimeError):
     def __init__(self, message: str, *, status_code: int = 0, code: str = ""):
         super().__init__(message)
         self.status_code = int(status_code or 0)
@@ -32,7 +32,7 @@ def resolve_core_base_url(config: Any) -> str:
     if configured_url:
         if configured_url.startswith(("http://", "https://")):
             return configured_url.rstrip("/")
-        raise GatewayClientError("MEETYOU_CORE_BASE_URL/core_base_url must start with http:// or https://")
+        raise EndpointRuntimeConnectionError("MEETYOU_CORE_BASE_URL/core_base_url must start with http:// or https://")
 
     get_value = getattr(config, "get", None)
     host_value = get_value("gateway_host") if callable(get_value) else ""
@@ -44,7 +44,7 @@ def resolve_core_base_url(config: Any) -> str:
     return f"http://{host}:{port}"
 
 
-class GatewayConversationClient:
+class EndpointRuntimeConnection:
     def __init__(
         self,
         *,
@@ -162,11 +162,11 @@ class GatewayConversationClient:
                 error = payload.get("error", {}) if isinstance(payload, dict) else {}
                 message = error.get("message") if isinstance(error, dict) else str(payload)
                 code = error.get("code") if isinstance(error, dict) else ""
-                raise GatewayClientError(f"{response.status} {message}", status_code=response.status, code=code)
+                raise EndpointRuntimeConnectionError(f"{response.status} {message}", status_code=response.status, code=code)
             return payload
 
     def _is_stale_thread_context_error(self, exc: BaseException) -> bool:
-        if not self._bind_thread or not isinstance(exc, GatewayClientError):
+        if not self._bind_thread or not isinstance(exc, EndpointRuntimeConnectionError):
             return False
         code = str(getattr(exc, "code", "") or "").strip()
         if code in {"thread_not_found", "session_not_found"}:
@@ -212,7 +212,7 @@ class GatewayConversationClient:
                 return
             workspaces = await self.request_json("GET", "/runtime/workspaces")
             if not isinstance(workspaces, list) or not workspaces:
-                raise GatewayClientError("No available workspaces")
+                raise EndpointRuntimeConnectionError("No available workspaces")
             workspace = next((item for item in workspaces if item.get("workspace_id") == self.workspace_id), workspaces[0])
             self.workspace_id = str(workspace.get("workspace_id") or self.workspace_id)
 
@@ -237,7 +237,7 @@ class GatewayConversationClient:
                 },
             )
             if not isinstance(resolved, dict):
-                raise GatewayClientError("Unexpected endpoint session resolution response")
+                raise EndpointRuntimeConnectionError("Unexpected endpoint session resolution response")
             thread = resolved.get("thread") if isinstance(resolved.get("thread"), dict) else {}
             session = resolved.get("session") if isinstance(resolved.get("session"), dict) else {}
             self.thread_id = str(thread.get("thread_id") or session.get("thread_id") or self.thread_id)
@@ -333,7 +333,7 @@ class GatewayConversationClient:
     async def upsert_address(self, address: dict[str, Any]) -> None:
         await self.start()
         if self._ws is None or self._ws.closed:
-            raise GatewayClientError("Endpoint websocket is not connected")
+            raise EndpointRuntimeConnectionError("Endpoint websocket is not connected")
         payload = dict(address or {})
         payload["endpoint_id"] = self.endpoint_id
         await self._ws.send_json(
@@ -402,7 +402,7 @@ class GatewayConversationClient:
 
         try:
             return await _send_once()
-        except GatewayClientError as exc:
+        except EndpointRuntimeConnectionError as exc:
             if not self._is_stale_thread_context_error(exc):
                 raise
             await self._reset_thread_context()
@@ -411,7 +411,7 @@ class GatewayConversationClient:
     async def send_command(self, action: str, **payload: Any) -> None:
         await self.start()
         if self._ws is None or self._ws.closed:
-            raise GatewayClientError("Endpoint websocket is not connected")
+            raise EndpointRuntimeConnectionError("Endpoint websocket is not connected")
         await self._ws.send_json(
             {
                 "schema": "meetyou.endpoint.ws.v4",

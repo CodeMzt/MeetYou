@@ -16,7 +16,7 @@ from adapters.meetwechat_client import (
     MeetWeChatHTTPError,
     MeetWeChatSendResult,
 )
-from clients.gateway_client import GatewayConversationClient, resolve_core_base_url
+from endpoint_providers.runtime_connection import EndpointRuntimeConnection, resolve_core_base_url
 from core.endpoint_tool_bundles import EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE
 from core.delivery_formatting import markdown_to_plain_text
 from core.interaction_response_service import InteractionResponseService
@@ -958,13 +958,13 @@ class MeetWeChatInputAdapter:
         client: MeetWeChatClient | None = None,
         state_store: MeetWeChatStateStore | None = None,
         output_adapter: MeetWeChatOutputService | None = None,
-        gateway_client_factory: Callable[..., Any] = GatewayConversationClient,
+        endpoint_connection_factory: Callable[..., Any] = EndpointRuntimeConnection,
     ):
         self._event_bus = event_bus
         self._interaction_responses = InteractionResponseService(event_bus)
         self._core_session_manager = session_manager
         self._config = config
-        self._gateway_client_factory = gateway_client_factory
+        self._endpoint_connection_factory = endpoint_connection_factory
         self._policy = MeetWeChatProxyPolicy.from_config(config.get("meetwechat_proxy_policy") or {})
         self._client = client or MeetWeChatClient(
             base_url=str(config.get("meetwechat_base_url") or DEFAULT_MEETWECHAT_BASE_URL),
@@ -982,9 +982,9 @@ class MeetWeChatInputAdapter:
             state_store=self._state_store,
             policy=self._policy,
         )
-        self._gateway_clients: dict[str, Any] = {}
-        self._provider_gateway_client: Any | None = None
-        self._gateway_client_last_used: dict[str, float] = {}
+        self._endpoint_connections: dict[str, Any] = {}
+        self._provider_endpoint_connection: Any | None = None
+        self._endpoint_connection_last_used: dict[str, float] = {}
         self._gateway_endpoint_idle_ttl_seconds = _safe_positive_int(
             config.get("meetwechat_gateway_endpoint_idle_ttl_seconds"),
             DEFAULT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS,
@@ -1006,8 +1006,8 @@ class MeetWeChatInputAdapter:
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self._cursor = ""
 
-        self._gateway_base_url = resolve_core_base_url(self._config)
-        self._gateway_access_token = str(self._config.get("gateway_access_token") or "").strip()
+        self._core_base_url = resolve_core_base_url(self._config)
+        self._core_access_token = str(self._config.get("gateway_access_token") or "").strip()
 
     @property
     def _provider_endpoint_id(self) -> str:
@@ -1048,15 +1048,15 @@ class MeetWeChatInputAdapter:
                 )
         return addresses
 
-    async def _get_provider_gateway_client(self) -> Any:
-        if self._provider_gateway_client is None:
-            self._provider_gateway_client = self._gateway_client_factory(
-                base_url=self._gateway_base_url,
+    async def _get_provider_endpoint_connection(self) -> Any:
+        if self._provider_endpoint_connection is None:
+            self._provider_endpoint_connection = self._endpoint_connection_factory(
+                base_url=self._core_base_url,
                 provider_id="meetwechat-provider",
                 provider_type="wechat",
                 display_name="MeetWeChat Provider",
                 workspace_id="personal",
-                access_token=self._gateway_access_token,
+                access_token=self._core_access_token,
                 thread_title="MeetWeChat Provider",
                 endpoint_id=self._provider_endpoint_id,
                 endpoint_addresses=await self._discover_address_snapshot(),
@@ -1064,14 +1064,14 @@ class MeetWeChatInputAdapter:
                 bind_thread=False,
                 event_handler=lambda payload: self._output_adapter.send_runtime_event("", payload),
             )
-        await self._provider_gateway_client.start()
-        return self._provider_gateway_client
+        await self._provider_endpoint_connection.start()
+        return self._provider_endpoint_connection
 
     async def run(self) -> None:
         self._closed = False
         self._persistent_workers = True
         await self._client.init()
-        await self._get_provider_gateway_client()
+        await self._get_provider_endpoint_connection()
         self._ensure_inbound_workers()
         if self._poll_task is None or self._poll_task.done():
             self._poll_task = asyncio.create_task(self._run_poll_loop())
@@ -1086,17 +1086,17 @@ class MeetWeChatInputAdapter:
                 await self._poll_task
             self._poll_task = None
         await self._stop_inbound_workers()
-        for client in self._gateway_clients.values():
+        for client in self._endpoint_connections.values():
             close = getattr(client, "close", None)
             if callable(close):
                 await close()
-        self._gateway_clients.clear()
-        if self._provider_gateway_client is not None:
-            close = getattr(self._provider_gateway_client, "close", None)
+        self._endpoint_connections.clear()
+        if self._provider_endpoint_connection is not None:
+            close = getattr(self._provider_endpoint_connection, "close", None)
             if callable(close):
                 await close()
-            self._provider_gateway_client = None
-        self._gateway_client_last_used.clear()
+            self._provider_endpoint_connection = None
+        self._endpoint_connection_last_used.clear()
         await self._output_adapter.close()
         await self._state_store.close()
         await self._client.close()
@@ -1124,7 +1124,7 @@ class MeetWeChatInputAdapter:
                 if cursor:
                     self._cursor = cursor
                 backoff_seconds = base_backoff
-                await self._close_idle_gateway_clients()
+                await self._close_idle_endpoint_connections()
                 await asyncio.sleep(
                     _safe_positive_int(
                         self._config.get("meetwechat_poll_interval_seconds"),
@@ -1236,7 +1236,7 @@ class MeetWeChatInputAdapter:
         confirm_value = _parse_confirm_response(text)
         pending_confirm = self._output_adapter.get_pending_confirm_request(participant_key)
         if confirm_value is not None and pending_confirm:
-            client = await self._get_gateway_client(event)
+            client = await self._get_endpoint_connection(event)
             await self._submit_confirm(client, pending_confirm, confirm_value, event)
             self._output_adapter.clear_pending_confirm_request(participant_key, pending_confirm)
             await self._state_store.mark_event_status(
@@ -1250,7 +1250,7 @@ class MeetWeChatInputAdapter:
 
         pending_human_input = self._output_adapter.resolve_human_input(participant_key, text)
         if pending_human_input is not None:
-            client = await self._get_gateway_client(event)
+            client = await self._get_endpoint_connection(event)
             await self._submit_human_input(client, pending_human_input, event)
             await self._state_store.mark_event_status(
                 event.event_id,
@@ -1278,7 +1278,7 @@ class MeetWeChatInputAdapter:
             chat_id=event.chat_id,
             identity_key=identity_key,
         )
-        client = await self._get_gateway_client(event)
+        client = await self._get_endpoint_connection(event)
         with contextlib.suppress(Exception):
             await client.upsert_address(
                 self._address_payload(
@@ -1297,7 +1297,7 @@ class MeetWeChatInputAdapter:
                 preferred_mode=_infer_preferred_mode(text),
                 endpoint_message_id=identity_key,
             )
-            await self._remember_gateway_client_thread(event, client)
+            await self._remember_endpoint_connection_thread(event, client)
         except Exception as exc:
             self._output_adapter.discard_pending(event.chat_id, event.event_id)
             reason = f"bridge:{exc.__class__.__name__}"
@@ -1450,18 +1450,18 @@ class MeetWeChatInputAdapter:
         prefix = "group" if event.chat_type == "group" else "chat"
         return f"wechat:meetwechat:{prefix}:{event.chat_id}"
 
-    async def _close_idle_gateway_clients(self) -> None:
-        if self._gateway_endpoint_idle_ttl_seconds <= 0 or not self._gateway_clients:
+    async def _close_idle_endpoint_connections(self) -> None:
+        if self._gateway_endpoint_idle_ttl_seconds <= 0 or not self._endpoint_connections:
             return
         now = asyncio.get_running_loop().time()
         stale_keys = [
             key
-            for key, last_used in self._gateway_client_last_used.items()
+            for key, last_used in self._endpoint_connection_last_used.items()
             if now - float(last_used or 0) >= self._gateway_endpoint_idle_ttl_seconds
         ]
         for conversation_key in stale_keys:
-            client = self._gateway_clients.pop(conversation_key, None)
-            self._gateway_client_last_used.pop(conversation_key, None)
+            client = self._endpoint_connections.pop(conversation_key, None)
+            self._endpoint_connection_last_used.pop(conversation_key, None)
             if client is None:
                 continue
             close = getattr(client, "close", None)
@@ -1469,19 +1469,19 @@ class MeetWeChatInputAdapter:
                 with contextlib.suppress(Exception):
                     await close()
 
-    async def _get_gateway_client(self, event: MeetWeChatEvent) -> Any:
+    async def _get_endpoint_connection(self, event: MeetWeChatEvent) -> Any:
         conversation_key = self._conversation_key(event)
-        client = self._gateway_clients.get(conversation_key)
+        client = self._endpoint_connections.get(conversation_key)
         if client is None:
             digest = hashlib.sha256(conversation_key.encode("utf-8")).hexdigest()[:20]
             thread_id = self._state_store.get_thread_id(conversation_key)
-            client = self._gateway_client_factory(
-                base_url=self._gateway_base_url,
+            client = self._endpoint_connection_factory(
+                base_url=self._core_base_url,
                 provider_id=f"meetwechat-{digest}",
                 provider_type="wechat",
                 display_name=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
                 workspace_id="personal",
-                access_token=self._gateway_access_token,
+                access_token=self._core_access_token,
                 thread_title=f"MeetWeChat {event.chat_type} {_mask(event.chat_id)}",
                 thread_id=thread_id,
                 endpoint_id=self._provider_endpoint_id,
@@ -1498,15 +1498,15 @@ class MeetWeChatInputAdapter:
                     payload,
                 ),
             )
-            self._gateway_clients[conversation_key] = client
+            self._endpoint_connections[conversation_key] = client
         await client.start()
-        self._gateway_client_last_used[conversation_key] = asyncio.get_running_loop().time()
+        self._endpoint_connection_last_used[conversation_key] = asyncio.get_running_loop().time()
         thread_id = str(getattr(client, "thread_id", "") or "")
         if thread_id:
             await self._state_store.set_thread_id(conversation_key, thread_id)
         return client
 
-    async def _remember_gateway_client_thread(self, event: MeetWeChatEvent, client: Any) -> None:
+    async def _remember_endpoint_connection_thread(self, event: MeetWeChatEvent, client: Any) -> None:
         thread_id = str(getattr(client, "thread_id", "") or "")
         if not thread_id:
             return
@@ -1529,7 +1529,7 @@ class MeetWeChatInputAdapter:
         return {
             "source": "wechat",
             "transport": "meetwechat",
-            "response_transport": "non_streaming_external_client",
+            "response_transport": "non_streaming_endpoint_provider",
             "supports_streaming_reply": False,
             "supports_markdown": False,
             "progress_notice_policy": "prefer_before_nontrivial_final",

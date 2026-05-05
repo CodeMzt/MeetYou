@@ -5,13 +5,13 @@ from urllib.parse import parse_qs, urlsplit
 
 import aiohttp
 
-from clients.gateway_client import GatewayClientError, GatewayConversationClient
+from endpoint_providers.runtime_connection import EndpointRuntimeConnection, EndpointRuntimeConnectionError
 from endpoint_tool_sdk.protocol import ENDPOINT_TOOL_PROTOCOL_SCHEMA
 
 
-class GatewayConversationClientTests(unittest.TestCase):
+class EndpointRuntimeConnectionTests(unittest.TestCase):
     def test_endpoint_ws_url_includes_stable_endpoint_identity(self):
-        client = GatewayConversationClient(
+        connection = EndpointRuntimeConnection(
             base_url="http://127.0.0.1:8000",
             provider_id="feishu-oc-test",
             provider_type="feishu",
@@ -19,9 +19,9 @@ class GatewayConversationClientTests(unittest.TestCase):
             workspace_id="personal",
             thread_id="thr-1",
         )
-        client.session_id = "sess-1"
+        connection.session_id = "sess-1"
 
-        parsed = urlsplit(client._build_endpoint_ws_url())
+        parsed = urlsplit(connection._build_endpoint_ws_url())
         query = parse_qs(parsed.query)
 
         self.assertEqual(parsed.path, "/endpoint/ws")
@@ -76,11 +76,11 @@ class _FakeIncomingWs:
             raise StopAsyncIteration from exc
 
 
-class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
+class EndpointRuntimeConnectionAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_provider_only_endpoint_does_not_create_thread_binding(self):
         calls = []
 
-        class _ContextClient(GatewayConversationClient):
+        class _ContextConnection(EndpointRuntimeConnection):
             async def request_json(self, method, path, *, params=None, json_body=None):
                 calls.append((method, path, dict(params or {}), dict(json_body or {})))
                 if path == "/runtime/workspaces":
@@ -93,7 +93,7 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
                     }
                 raise AssertionError(path)
 
-        client = _ContextClient(
+        connection = _ContextConnection(
             base_url="http://127.0.0.1:8000",
             provider_id="feishu-provider",
             provider_type="feishu",
@@ -103,16 +103,16 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
             bind_thread=False,
         )
 
-        await client.ensure_context()
+        await connection.ensure_context()
 
-        self.assertEqual(client.thread_id, "")
-        self.assertEqual(client.session_id, "")
+        self.assertEqual(connection.thread_id, "")
+        self.assertEqual(connection.session_id, "")
         self.assertEqual(calls, [])
 
     async def test_thread_bound_endpoint_resolves_endpoint_owned_session(self):
         calls = []
 
-        class _ContextClient(GatewayConversationClient):
+        class _ContextConnection(EndpointRuntimeConnection):
             async def request_json(self, method, path, *, params=None, json_body=None):
                 calls.append((method, path, dict(params or {}), dict(json_body or {})))
                 if path == "/runtime/workspaces":
@@ -125,7 +125,7 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
                     }
                 raise AssertionError(path)
 
-        client = _ContextClient(
+        connection = _ContextConnection(
             base_url="http://127.0.0.1:8000",
             provider_id="feishu-chat-oc-test",
             provider_type="feishu",
@@ -136,10 +136,10 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
             thread_strategy="per_conversation",
         )
 
-        await client.ensure_context()
+        await connection.ensure_context()
 
-        self.assertEqual(client.thread_id, "thr-chat")
-        self.assertEqual(client.session_id, "sess-chat")
+        self.assertEqual(connection.thread_id, "thr-chat")
+        self.assertEqual(connection.session_id, "sess-chat")
         self.assertEqual([item[1] for item in calls], ["/runtime/workspaces", "/runtime/endpoint-sessions/resolve"])
         self.assertEqual(calls[1][3]["endpoint_id"], "feishu.feishu-chat-oc-test.ui")
         self.assertEqual(calls[1][3]["conversation_key"], "feishu:chat:oc_test")
@@ -150,7 +150,7 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
         calls = []
         resolve_count = 0
 
-        class _ContextClient(GatewayConversationClient):
+        class _ContextConnection(EndpointRuntimeConnection):
             async def start(self):
                 await self.ensure_context()
 
@@ -174,7 +174,11 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
                     }
                 if path == "/runtime/messages":
                     if json_body.get("thread_id") == "thr-old":
-                        raise GatewayClientError("404 Unknown thread: thr-old", status_code=404, code="thread_not_found")
+                        raise EndpointRuntimeConnectionError(
+                            "404 Unknown thread: thr-old",
+                            status_code=404,
+                            code="thread_not_found",
+                        )
                     return {
                         "message_id": "msg-new",
                         "thread_id": json_body.get("thread_id"),
@@ -182,7 +186,7 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
                     }
                 raise AssertionError(path)
 
-        client = _ContextClient(
+        connection = _ContextConnection(
             base_url="http://127.0.0.1:8000",
             provider_id="meetwechat-chat-test",
             provider_type="wechat",
@@ -192,17 +196,17 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
             thread_strategy="per_conversation",
         )
 
-        response = await client.send_message("hello", endpoint_message_id="evt-1")
+        response = await connection.send_message("hello", endpoint_message_id="evt-1")
 
         message_calls = [item for item in calls if item[1] == "/runtime/messages"]
         self.assertEqual(resolve_count, 2)
         self.assertEqual([item[3]["thread_id"] for item in message_calls], ["thr-old", "thr-new"])
         self.assertEqual(response["thread_id"], "thr-new")
-        self.assertEqual(client.thread_id, "thr-new")
-        self.assertEqual(client.session_id, "sess-new")
+        self.assertEqual(connection.thread_id, "thr-new")
+        self.assertEqual(connection.session_id, "sess-new")
 
-    async def test_endpoint_subscription_disables_replay_for_external_side_effect_clients(self):
-        client = GatewayConversationClient(
+    async def test_endpoint_subscription_disables_replay_for_external_side_effect_providers(self):
+        connection = EndpointRuntimeConnection(
             base_url="http://127.0.0.1:8000",
             provider_id="feishu-oc-test",
             provider_type="feishu",
@@ -210,17 +214,17 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
             workspace_id="personal",
             thread_id="thr-1",
         )
-        client.session_id = "sess-1"
+        connection.session_id = "sess-1"
         ws = _FakeWs()
-        client._http_session = _FakeHttpSession(ws)  # noqa: SLF001
+        connection._http_session = _FakeHttpSession(ws)  # noqa: SLF001
 
         async def _noop():
             return None
 
-        client.ensure_context = _noop  # type: ignore[method-assign]
-        client._ensure_http_session = _noop  # type: ignore[method-assign]  # noqa: SLF001
+        connection.ensure_context = _noop  # type: ignore[method-assign]
+        connection._ensure_http_session = _noop  # type: ignore[method-assign]  # noqa: SLF001
 
-        await client._connect_ws()  # noqa: SLF001
+        await connection._connect_ws()  # noqa: SLF001
 
         self.assertEqual(ws.sent[0]["type"], "endpoint.hello")
         self.assertEqual(ws.sent[0]["payload"]["protocol"]["schema"], ENDPOINT_TOOL_PROTOCOL_SCHEMA)
@@ -229,7 +233,7 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ws.sent[1]["payload"]["replay"])
 
     async def test_provider_only_endpoint_connects_without_thread_subscription(self):
-        client = GatewayConversationClient(
+        connection = EndpointRuntimeConnection(
             base_url="http://127.0.0.1:8000",
             provider_id="meetwechat-provider",
             provider_type="wechat",
@@ -239,14 +243,14 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
             bind_thread=False,
         )
         ws = _FakeWs()
-        client._http_session = _FakeHttpSession(ws)  # noqa: SLF001
+        connection._http_session = _FakeHttpSession(ws)  # noqa: SLF001
 
         async def _noop():
             return None
 
-        client._ensure_http_session = _noop  # type: ignore[method-assign]  # noqa: SLF001
+        connection._ensure_http_session = _noop  # type: ignore[method-assign]  # noqa: SLF001
 
-        await client._connect_ws()  # noqa: SLF001
+        await connection._connect_ws()  # noqa: SLF001
 
         self.assertEqual([item["type"] for item in ws.sent], ["endpoint.hello"])
         self.assertEqual(ws.sent[0]["endpoint_id"], "wechat.provider.ui")
@@ -254,7 +258,7 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_readiness_waits_for_subscription_ack_not_hello_ack(self):
         observed = []
-        client = GatewayConversationClient(
+        connection = EndpointRuntimeConnection(
             base_url="http://127.0.0.1:8000",
             provider_id="feishu-oc-test",
             provider_type="feishu",
@@ -264,26 +268,26 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
             event_handler=lambda payload: observed.append(
                 (
                     payload.get("type"),
-                    client._ws_connected.is_set(),  # noqa: SLF001
-                    client._subscription_acknowledged.is_set(),  # noqa: SLF001
+                    connection._ws_connected.is_set(),  # noqa: SLF001
+                    connection._subscription_acknowledged.is_set(),  # noqa: SLF001
                 )
             ),
         )
-        client._ws = _FakeIncomingWs(  # noqa: SLF001
+        connection._ws = _FakeIncomingWs(  # noqa: SLF001
             [
                 {"type": "endpoint.hello.ack"},
                 {"type": "subscription.ack"},
             ]
         )
 
-        await client._read_ws()  # noqa: SLF001
+        await connection._read_ws()  # noqa: SLF001
 
         self.assertEqual(observed[0], ("endpoint.hello.ack", False, False))
         self.assertEqual(observed[1], ("subscription.ack", True, True))
 
     async def test_provider_only_start_readiness_waits_for_hello_ack(self):
         observed = []
-        client = GatewayConversationClient(
+        connection = EndpointRuntimeConnection(
             base_url="http://127.0.0.1:8000",
             provider_id="meetwechat-provider",
             provider_type="wechat",
@@ -293,18 +297,18 @@ class GatewayConversationClientAsyncTests(unittest.IsolatedAsyncioTestCase):
             event_handler=lambda payload: observed.append(
                 (
                     payload.get("type"),
-                    client._ws_connected.is_set(),  # noqa: SLF001
-                    client._subscription_acknowledged.is_set(),  # noqa: SLF001
+                    connection._ws_connected.is_set(),  # noqa: SLF001
+                    connection._subscription_acknowledged.is_set(),  # noqa: SLF001
                 )
             ),
         )
-        client._ws = _FakeIncomingWs(  # noqa: SLF001
+        connection._ws = _FakeIncomingWs(  # noqa: SLF001
             [
                 {"type": "endpoint.hello.ack"},
             ]
         )
 
-        await client._read_ws()  # noqa: SLF001
+        await connection._read_ws()  # noqa: SLF001
 
         self.assertEqual(observed[0], ("endpoint.hello.ack", True, True))
 

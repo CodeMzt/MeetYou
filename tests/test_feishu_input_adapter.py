@@ -17,7 +17,7 @@ class FakeConfig:
         return self._values.get(key)
 
 
-class FakeGatewayClient:
+class FakeEndpointConnection:
     def __init__(self):
         self.messages = []
         self.commands = []
@@ -49,12 +49,12 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
-        self.fake_client = FakeGatewayClient()
+        self.fake_client = FakeEndpointConnection()
 
         async def _fake_get_client(chat_id: str):
             return self.fake_client
 
-        self.adapter._get_gateway_client = _fake_get_client  # type: ignore[assignment]
+        self.adapter._get_endpoint_connection = _fake_get_client  # type: ignore[assignment]
 
     async def asyncTearDown(self):
         self.tmpdir.cleanup()
@@ -84,8 +84,8 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.event_bus.inbound_queue.empty())
         self.assertTrue(self.registry_path.exists())
 
-    async def test_gateway_client_uses_endpoint_owned_conversation_strategy(self):
-        class _FakeGatewayConversationClient:
+    async def test_endpoint_connection_uses_endpoint_owned_conversation_strategy(self):
+        class _FakeEndpointRuntimeConnection:
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
 
@@ -104,15 +104,15 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        with patch("sensors.feishu_input_adapter.GatewayConversationClient", _FakeGatewayConversationClient):
-            client = await adapter._get_gateway_client("oc_test")  # noqa: SLF001
+        with patch("sensors.feishu_input_adapter.EndpointRuntimeConnection", _FakeEndpointRuntimeConnection):
+            client = await adapter._get_endpoint_connection("oc_test")  # noqa: SLF001
 
         self.assertEqual(client.kwargs["conversation_key"], "feishu:chat:oc_test")
         self.assertEqual(client.kwargs["thread_strategy"], "per_conversation")
         self.assertEqual(client.kwargs["address_id"], "addr.feishu.direct.oc_test")
 
-    async def test_provider_gateway_client_registers_without_thread_binding(self):
-        class _FakeGatewayConversationClient:
+    async def test_provider_endpoint_connection_registers_without_thread_binding(self):
+        class _FakeEndpointRuntimeConnection:
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
 
@@ -131,8 +131,8 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        with patch("sensors.feishu_input_adapter.GatewayConversationClient", _FakeGatewayConversationClient):
-            client = await adapter._get_provider_gateway_client()  # noqa: SLF001
+        with patch("sensors.feishu_input_adapter.EndpointRuntimeConnection", _FakeEndpointRuntimeConnection):
+            client = await adapter._get_provider_endpoint_connection()  # noqa: SLF001
 
         self.assertEqual(client.kwargs["endpoint_id"], "feishu.provider.ui")
         self.assertFalse(client.kwargs["bind_thread"])
@@ -184,7 +184,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fake_client.messages[0][0], "hello twice")
         self.assertTrue(self.event_bus.inbound_queue.empty())
 
-    async def test_handle_event_uses_gateway_client_when_output_adapter_present(self):
+    async def test_handle_event_uses_endpoint_connection_when_output_adapter_present(self):
         class _FakeOutput:
             def get_pending_confirm_request(self, chat_id: str):
                 return None
@@ -195,7 +195,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
-        class _FakeGatewayClient:
+        class _FakeEndpointConnection:
             def __init__(self):
                 self.messages = []
                 self.commands = []
@@ -222,12 +222,12 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
             output_adapter=fake_output,
         )
-        fake_client = _FakeGatewayClient()
+        fake_client = _FakeEndpointConnection()
 
         async def _fake_get_client(chat_id: str):
             return fake_client
 
-        adapter._get_gateway_client = _fake_get_client  # type: ignore[assignment]
+        adapter._get_endpoint_connection = _fake_get_client  # type: ignore[assignment]
 
         payload = {
             "event": {
@@ -250,7 +250,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_client.messages[0][0], "hello from feishu")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["chat_id"], "oc_test")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["transport"], "feishu")
-        self.assertEqual(fake_client.messages[0][1]["metadata"]["response_transport"], "non_streaming_external_client")
+        self.assertEqual(fake_client.messages[0][1]["metadata"]["response_transport"], "non_streaming_endpoint_provider")
         self.assertFalse(fake_client.messages[0][1]["metadata"]["supports_streaming_reply"])
         self.assertEqual(fake_client.messages[0][1]["metadata"]["progress_notice_policy"], "prefer_before_nontrivial_final")
         self.assertEqual(fake_client.messages[0][1]["metadata"]["tool_scope"], "basic")
@@ -273,7 +273,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
-        class _FakeGatewayClient:
+        class _FakeEndpointConnection:
             def __init__(self):
                 self.messages = []
 
@@ -295,12 +295,12 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
             output_adapter=_FakeOutput(),
         )
-        fake_client = _FakeGatewayClient()
+        fake_client = _FakeEndpointConnection()
 
         async def _fake_get_client(chat_id: str):
             return fake_client
 
-        adapter._get_gateway_client = _fake_get_client  # type: ignore[assignment]
+        adapter._get_endpoint_connection = _fake_get_client  # type: ignore[assignment]
 
         payload = {
             "event": {
@@ -324,7 +324,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("danxi_list_posts", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
         self.assertIn("danxi_set_webvpn_cookie", fake_client.messages[0][1]["metadata"]["allowed_tool_bundle"])
 
-    async def test_handle_event_sends_confirm_over_gateway_client(self):
+    async def test_handle_event_sends_confirm_over_endpoint_connection(self):
         class _FakeOutput:
             def get_pending_confirm_request(self, chat_id: str):
                 return "req-1"
@@ -335,7 +335,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
-        class _FakeGatewayClient:
+        class _FakeEndpointConnection:
             def __init__(self):
                 self.commands = []
                 self.confirm_calls = []
@@ -365,12 +365,12 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
             output_adapter=_FakeOutput(),
         )
-        fake_client = _FakeGatewayClient()
+        fake_client = _FakeEndpointConnection()
 
         async def _fake_get_client(chat_id: str):
             return fake_client
 
-        adapter._get_gateway_client = _fake_get_client  # type: ignore[assignment]
+        adapter._get_endpoint_connection = _fake_get_client  # type: ignore[assignment]
 
         payload = {
             "event": {
@@ -393,7 +393,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_client.confirm_calls, [{"request_id": "req-1", "accepted": True, "reason": ""}])
         self.assertEqual(fake_client.commands, [])
 
-    async def test_handle_event_sends_human_input_over_gateway_client(self):
+    async def test_handle_event_sends_human_input_over_endpoint_connection(self):
         class _FakeOutput:
             def get_pending_confirm_request(self, chat_id: str):
                 return None
@@ -408,7 +408,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
-        class _FakeGatewayClient:
+        class _FakeEndpointConnection:
             def __init__(self):
                 self.commands = []
                 self.input_calls = []
@@ -440,12 +440,12 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
             output_adapter=_FakeOutput(),
         )
-        fake_client = _FakeGatewayClient()
+        fake_client = _FakeEndpointConnection()
 
         async def _fake_get_client(chat_id: str):
             return fake_client
 
-        adapter._get_gateway_client = _fake_get_client  # type: ignore[assignment]
+        adapter._get_endpoint_connection = _fake_get_client  # type: ignore[assignment]
 
         payload = {
             "event": {
@@ -472,7 +472,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_client.commands, [])
         self.assertTrue(self.event_bus.inbound_queue.empty())
 
-    async def test_handle_event_falls_back_to_gateway_command_when_confirm_resource_fails(self):
+    async def test_handle_event_falls_back_to_runtime_command_when_confirm_resource_fails(self):
         class _FakeOutput:
             def get_pending_confirm_request(self, chat_id: str):
                 return "req-confirm-2"
@@ -483,7 +483,7 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             async def send_runtime_event(self, chat_id: str, payload: dict):
                 return None
 
-        class _FakeGatewayClient:
+        class _FakeEndpointConnection:
             def __init__(self):
                 self.commands = []
 
@@ -511,12 +511,12 @@ class FeishuInputAdapterTests(unittest.IsolatedAsyncioTestCase):
             ),
             output_adapter=_FakeOutput(),
         )
-        fake_client = _FakeGatewayClient()
+        fake_client = _FakeEndpointConnection()
 
         async def _fake_get_client(chat_id: str):
             return fake_client
 
-        adapter._get_gateway_client = _fake_get_client  # type: ignore[assignment]
+        adapter._get_endpoint_connection = _fake_get_client  # type: ignore[assignment]
 
         payload = {
             "event": {
