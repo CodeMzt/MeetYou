@@ -13,6 +13,7 @@ import { createSystemTurn } from '../../chatState'
 import type { AvailableEndpoint, RuntimeSession, RuntimeThread, RuntimeWorkspace, RuntimeErrorPayload } from '../../types'
 
 export const DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS = 10000
+const RUNTIME_THREAD_LIST_LIMIT = 200
 
 export interface EndpointContext {
   workspace: RuntimeWorkspace
@@ -92,7 +93,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
   const loadRuntimeThreads = useCallback(async (workspaceId: string) => {
     const threads = await listRuntimeThreads(baseUrl, {
       workspace_id: workspaceId,
-      limit: 50,
+      limit: RUNTIME_THREAD_LIST_LIMIT,
     })
     setRuntimeThreads(threads)
     return threads
@@ -261,25 +262,31 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     return await createContextForThread(workspace, thread)
   }, [baseUrl, createContextForThread, endpointContext, loadRuntimeThreads])
 
-  const deleteRuntimeThreadAndSelect = useCallback(async (threadId: string) => {
-    const normalizedThreadId = String(threadId || '').trim()
-    if (!normalizedThreadId) {
+  const deleteRuntimeThreadAndSelect = useCallback(async (threadIdOrIds: string | string[]) => {
+    const normalizedThreadIds = Array.from(new Set(
+      (Array.isArray(threadIdOrIds) ? threadIdOrIds : [threadIdOrIds])
+        .map((threadId) => String(threadId || '').trim())
+        .filter(Boolean),
+    ))
+    if (normalizedThreadIds.length === 0) {
       return null
     }
     const activeContext = endpointContext ?? (await initializeEndpointContext())
-    const deletingDefaultThread = Boolean(defaultThreadId && normalizedThreadId === defaultThreadId)
-    const result = await deleteRuntimeThread(baseUrl, normalizedThreadId, { force: true })
-    if (!result.deleted) {
-      const message = runtimeThreadDeleteErrorMessage(result.reason)
-      if (message) {
-        throw new Error(message)
+    const deletingDefaultThread = Boolean(defaultThreadId && normalizedThreadIds.includes(defaultThreadId))
+    for (const normalizedThreadId of normalizedThreadIds) {
+      const result = await deleteRuntimeThread(baseUrl, normalizedThreadId, { force: true })
+      if (!result.deleted) {
+        const message = runtimeThreadDeleteErrorMessage(result.reason)
+        if (message) {
+          throw new Error(message)
+        }
       }
     }
     const threads = await loadRuntimeThreads(activeContext.workspace.workspace_id)
     if (deletingDefaultThread) {
       setDefaultThreadId('')
     }
-    if (activeContext.threadId !== normalizedThreadId) {
+    if (!normalizedThreadIds.includes(activeContext.threadId)) {
       return null
     }
     let fallback = deletingDefaultThread

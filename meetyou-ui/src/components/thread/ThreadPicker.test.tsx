@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import ThreadPicker from './ThreadPicker'
+import ThreadPicker, { getThreadDeleteTargetIds } from './ThreadPicker'
 import type { RuntimeThreadPresentation } from '../../threadPresentation'
 
 function item(thread_id: string, title: string, rawTitle = title): RuntimeThreadPresentation {
@@ -35,5 +35,21 @@ describe('ThreadPicker', () => {
     expect(markup).toContain('桌面聊天')
     expect(markup).toContain('aria-haspopup="listbox"')
     expect(markup).not.toContain('MeetWeChat Provider')
+  })
+
+  it('groups legacy Desktop Chat cleanup targets and deletes the active one last', () => {
+    const items = [
+      item('thr_active', 'Desktop Chat 1', 'Desktop Chat'),
+      item('thr_old_a', 'Desktop Chat 2', 'Desktop Chat'),
+      item('thr_named', '新会话', '新会话'),
+      item('thr_old_b', 'Desktop Chat 3', 'Desktop Chat'),
+    ]
+
+    expect(getThreadDeleteTargetIds(items, items[1], 'thr_active')).toEqual([
+      'thr_old_a',
+      'thr_old_b',
+      'thr_active',
+    ])
+    expect(getThreadDeleteTargetIds(items, items[2], 'thr_active')).toEqual(['thr_named'])
   })
 })

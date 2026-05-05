@@ -11,7 +11,44 @@ interface ThreadPickerProps {
   activeThreadId: string
   onSelectThread: (threadId: string) => void | Promise<void>
   onCreateThread: (title?: string) => unknown | Promise<unknown>
-  onDeleteThread: (threadId: string) => unknown | Promise<unknown>
+  onDeleteThread: (threadId: string | string[]) => unknown | Promise<unknown>
+}
+
+function normalizedTitle(value: string): string {
+  return String(value || '').trim().toLowerCase()
+}
+
+function isLegacyDesktopChatTitle(value: string): boolean {
+  return normalizedTitle(value) === 'desktop chat'
+}
+
+export function getThreadDeleteTargetIds(
+  items: RuntimeThreadPresentation[],
+  target: RuntimeThreadPresentation,
+  activeThreadId = '',
+): string[] {
+  const targetId = String(target.thread.thread_id || '').trim()
+  if (!targetId) {
+    return []
+  }
+  const targetRawTitle = String(target.rawTitle || target.thread.title || target.title || '').trim()
+  if (!isLegacyDesktopChatTitle(targetRawTitle)) {
+    return [targetId]
+  }
+  const ids = items
+    .filter((item) => isLegacyDesktopChatTitle(item.rawTitle || item.thread.title || item.title))
+    .map((item) => String(item.thread.thread_id || '').trim())
+    .filter(Boolean)
+  const uniqueIds = Array.from(new Set(ids.length > 0 ? ids : [targetId]))
+  return uniqueIds.sort((left, right) => {
+    if (left === activeThreadId) {
+      return 1
+    }
+    if (right === activeThreadId) {
+      return -1
+    }
+    return 0
+  })
 }
 
 export default function ThreadPicker({
@@ -143,10 +180,13 @@ export default function ThreadPicker({
     if (!deleteTarget || deletingThreadId) {
       return
     }
-    const threadId = deleteTarget.thread.thread_id
-    setDeletingThreadId(threadId)
+    const threadIds = getThreadDeleteTargetIds(items, deleteTarget, activeThreadId)
+    if (threadIds.length === 0) {
+      return
+    }
+    setDeletingThreadId(threadIds[0])
     try {
-      await onDeleteThread(threadId)
+      await onDeleteThread(threadIds.length === 1 ? threadIds[0] : threadIds)
       setDeleteTarget(null)
       setDeleteError('')
       setOpen(false)
@@ -237,9 +277,19 @@ export default function ThreadPicker({
         isOpen={Boolean(deleteTarget)}
         title="删除会话"
         message={
-          deleteError
-            ? `删除失败：${deleteError}`
-            : `确认删除“${deleteTarget?.title || ''}”？该会话会从列表中移除。`
+          (() => {
+            if (deleteError) {
+              return `删除失败：${deleteError}`
+            }
+            if (!deleteTarget) {
+              return ''
+            }
+            const targetIds = getThreadDeleteTargetIds(items, deleteTarget, activeThreadId)
+            if (targetIds.length > 1) {
+              return `确认清理 ${targetIds.length} 个“${deleteTarget.rawTitle || deleteTarget.title}”历史会话？这些会话会从列表中移除。`
+            }
+            return `确认删除“${deleteTarget.title || ''}”？该会话会从列表中移除。`
+          })()
         }
         confirmText={deletingThreadId ? '删除中...' : '删除'}
         cancelText="取消"
