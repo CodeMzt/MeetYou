@@ -26,7 +26,6 @@ describe('ThreadPicker', () => {
       <ThreadPicker
         items={[item('thr_desktop', '桌面聊天'), item('thr_wechat', '微信接入', 'MeetWeChat Provider')]}
         activeThreadId="thr_desktop"
-        defaultThreadId="thr_desktop"
         onSelectThread={vi.fn()}
         onCreateThread={vi.fn()}
         onDeleteThread={vi.fn()}

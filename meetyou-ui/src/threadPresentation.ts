@@ -23,7 +23,8 @@ function normalizeTitle(value: string): string {
 
 export function classifyRuntimeThread(thread: RuntimeThread, defaultThreadId = ''): RuntimeThreadKind {
   const title = normalizeTitle(thread.title)
-  if (thread.thread_id === defaultThreadId || title.includes('桌面') || title.includes('desktop') || title.includes('frontend')) {
+  const normalizedDefaultThreadId = String(defaultThreadId || '').trim()
+  if (normalizedDefaultThreadId && thread.thread_id === normalizedDefaultThreadId) {
     return 'desktop'
   }
   if (title.includes('scheduled job') || title.includes('定时') || title.includes('计划任务')) {
@@ -77,7 +78,7 @@ function baseTitleForThread(thread: RuntimeThread, kind: RuntimeThreadKind): str
 function duplicateIdentityKey(thread: RuntimeThread, kind: RuntimeThreadKind): string {
   const rawTitle = normalizeTitle(thread.title)
   if (kind === 'desktop') {
-    return 'desktop'
+    return `thread:${thread.thread_id}`
   }
   if (kind === 'wechat_provider' || kind === 'feishu_provider') {
     return kind
@@ -90,20 +91,16 @@ function duplicateIdentityKey(thread: RuntimeThread, kind: RuntimeThreadKind): s
 
 function priorityForThread(
   thread: RuntimeThread,
-  kind: RuntimeThreadKind,
   activeThreadId: string,
   defaultThreadId: string,
 ): number {
   if (thread.thread_id === defaultThreadId) {
     return 0
   }
-  if (kind === 'desktop') {
+  if (thread.thread_id === activeThreadId) {
     return 1
   }
-  if (thread.thread_id === activeThreadId) {
-    return 2
-  }
-  return 3
+  return 2
 }
 
 export function getVisibleRuntimeThreadItems(
@@ -120,7 +117,7 @@ export function getVisibleRuntimeThreadItems(
       thread,
       kind,
       index,
-      priority: priorityForThread(thread, kind, activeThreadId, defaultThreadId),
+      priority: priorityForThread(thread, activeThreadId, defaultThreadId),
       baseTitle: baseTitleForThread(thread, kind),
       duplicateKey: duplicateIdentityKey(thread, kind),
     }]

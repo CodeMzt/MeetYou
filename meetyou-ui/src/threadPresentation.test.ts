@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getVisibleRuntimeThreadItems } from './threadPresentation'
+import { classifyRuntimeThread, getVisibleRuntimeThreadItems } from './threadPresentation'
 import type { RuntimeThread } from './types'
 
 function thread(thread_id: string, title: string): RuntimeThread {
@@ -14,7 +14,7 @@ function thread(thread_id: string, title: string): RuntimeThread {
 }
 
 describe('threadPresentation', () => {
-  it('keeps the default desktop thread first and hides provider management threads', () => {
+  it('keeps the default desktop thread first without collapsing peer desktop-titled threads', () => {
     const items = getVisibleRuntimeThreadItems(
       [
         thread('thr_wechat_new', 'MeetWeChat Provider'),
@@ -28,8 +28,13 @@ describe('threadPresentation', () => {
       'thr_desktop',
     )
 
-    expect(items.map((item) => item.thread.thread_id)).toEqual(['thr_desktop'])
-    expect(items.map((item) => item.title)).toEqual(['桌面聊天'])
+    expect(items.map((item) => item.thread.thread_id)).toEqual(['thr_desktop', 'thr_desktop_old'])
+    expect(items.map((item) => item.title)).toEqual(['桌面聊天 1', '桌面聊天 2'])
+  })
+
+  it('only treats the resolved default thread as the desktop bootstrap thread', () => {
+    expect(classifyRuntimeThread(thread('thr_named_desktop', 'Desktop Chat'), 'thr_default')).toBe('other')
+    expect(classifyRuntimeThread(thread('thr_default', 'Untitled'), 'thr_default')).toBe('desktop')
   })
 
   it('keeps genuinely different external chat threads and labels them clearly', () => {

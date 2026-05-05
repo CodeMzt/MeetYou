@@ -266,11 +266,9 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     if (!normalizedThreadId) {
       return null
     }
-    if (defaultThreadId && normalizedThreadId === defaultThreadId) {
-      throw new Error('默认桌面会话不能删除')
-    }
     const activeContext = endpointContext ?? (await initializeEndpointContext())
-    const result = await deleteRuntimeThread(baseUrl, normalizedThreadId, { force: true })
+    const deletingDefaultThread = Boolean(defaultThreadId && normalizedThreadId === defaultThreadId)
+    const result = await deleteRuntimeThread(baseUrl, normalizedThreadId, { force: deletingDefaultThread })
     if (!result.deleted) {
       const message = runtimeThreadDeleteErrorMessage(result.reason)
       if (message) {
@@ -278,10 +276,15 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
       }
     }
     const threads = await loadRuntimeThreads(activeContext.workspace.workspace_id)
+    if (deletingDefaultThread) {
+      setDefaultThreadId('')
+    }
     if (activeContext.threadId !== normalizedThreadId) {
       return null
     }
-    let fallback = threads.find((item) => item.thread_id === defaultThreadId) ?? threads[0] ?? null
+    let fallback = deletingDefaultThread
+      ? threads[0] ?? null
+      : threads.find((item) => item.thread_id === defaultThreadId) ?? threads[0] ?? null
     if (!fallback) {
       fallback = await ensureDefaultRuntimeThread(baseUrl, {
         workspace_id: activeContext.workspace.workspace_id,

@@ -9,7 +9,6 @@ import styles from './ThreadPicker.module.css'
 interface ThreadPickerProps {
   items: RuntimeThreadPresentation[]
   activeThreadId: string
-  defaultThreadId: string
   onSelectThread: (threadId: string) => void | Promise<void>
   onCreateThread: (title?: string) => unknown | Promise<unknown>
   onDeleteThread: (threadId: string) => unknown | Promise<unknown>
@@ -18,7 +17,6 @@ interface ThreadPickerProps {
 export default function ThreadPicker({
   items,
   activeThreadId,
-  defaultThreadId,
   onSelectThread,
   onCreateThread,
   onDeleteThread,
@@ -125,7 +123,7 @@ export default function ThreadPicker({
 
   const requestDelete = (item: RuntimeThreadPresentation) => {
     const threadId = item.thread.thread_id
-    if (!threadId || threadId === defaultThreadId || deletingThreadId) {
+    if (!threadId || items.length <= 1 || deletingThreadId) {
       return
     }
     setDeleteError('')
@@ -198,7 +196,7 @@ export default function ThreadPicker({
           {items.map((item) => {
             const active = item.thread.thread_id === activeThreadId
             const detail = item.rawTitle === item.title ? item.thread.thread_id.slice(-8) : item.rawTitle
-            const canDelete = item.thread.thread_id !== defaultThreadId
+            const canDelete = items.length > 1
             return (
               <div
                 key={item.thread.thread_id}
