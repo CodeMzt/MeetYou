@@ -35,6 +35,32 @@ jobs:
             }
             trap restore_env_bak EXIT
 
+            sanitize_diagnostics() {
+              sed -E 's/((password|passwd|token|secret|cookie|authorization|api[-_]?key|access[-_]?token|refresh[-_]?token)[^:=]{0,40}[:=][[:space:]]*)[^[:space:],;)}]+/\1[REDACTED]/Ig'
+            }
+
+            dump_core_diagnostics() {
+              CORE_HEALTH_URL="${MEETYOU_CORE_HEALTH_URL:-http://127.0.0.1:8000/health}"
+              echo "::group::Core diagnostics"
+              echo "[diagnostics] systemctl show"
+              sudo -n systemctl show meetyou-core.service \
+                -p ActiveState \
+                -p SubState \
+                -p ExecMainCode \
+                -p ExecMainStatus \
+                -p NRestarts \
+                -p MainPID 2>&1 | sanitize_diagnostics || true
+              echo "[diagnostics] systemctl status"
+              sudo -n systemctl --no-pager --full status meetyou-core.service 2>&1 | sanitize_diagnostics || true
+              echo "[diagnostics] recent core journal"
+              sudo -n journalctl -u meetyou-core.service -n 240 --no-pager 2>&1 | sanitize_diagnostics || true
+              echo "[diagnostics] listening sockets"
+              sudo -n ss -ltnp 2>&1 | sanitize_diagnostics || true
+              echo "[diagnostics] local health probe: ${CORE_HEALTH_URL}"
+              curl -fsS "${CORE_HEALTH_URL}" 2>&1 | sanitize_diagnostics || true
+              echo "::endgroup::"
+            }
+
             for gitdir in $(find /opt/meetyou -maxdepth 4 -type d -name .git 2>/dev/null); do
               repo="$(dirname "${gitdir}")"
               origin="$(git -C "${repo}" remote get-url origin 2>/dev/null || true)"
@@ -60,7 +86,12 @@ jobs:
               fi
             done
 
-            /opt/meetyou/scripts/deploy-core.sh
+            /opt/meetyou/scripts/deploy-core.sh || {
+              status="$?"
+              echo "Remote deploy-core.sh failed with exit code ${status}"
+              dump_core_diagnostics
+              exit "${status}"
+            }
 
             CORE_HEALTH_URL="${MEETYOU_CORE_HEALTH_URL:-http://127.0.0.1:8000/health}"
             echo "Waiting for Core health: ${CORE_HEALTH_URL}"
@@ -71,6 +102,7 @@ jobs:
               fi
               if [ "${attempt}" = "10" ]; then
                 echo "Core health check failed after deploy"
+                dump_core_diagnostics
                 exit 1
               fi
               sleep 3
