@@ -37,6 +37,7 @@ class WorkspaceRepository(RepositoryBase):
         workspace_id: str,
         title: str | None = None,
         description: str | None = None,
+        status: str | None = None,
         base_mode: str | None = None,
         prompt_overlay: str | None = None,
         default_execution_target: str | None = None,
@@ -49,6 +50,8 @@ class WorkspaceRepository(RepositoryBase):
             workspace.title = title
         if description is not None:
             workspace.description = description
+        if status is not None:
+            workspace.status = status
         if base_mode is not None:
             workspace.base_mode = base_mode
         if prompt_overlay is not None:
@@ -68,5 +71,8 @@ class WorkspaceRepository(RepositoryBase):
     def get_by_id(self, row_id) -> Workspace | None:
         return self.session.query(Workspace).filter_by(id=row_id).one_or_none()
 
-    def list_all(self) -> list[Workspace]:
-        return list(self.session.query(Workspace).order_by(Workspace.workspace_id).all())
+    def list_all(self, *, include_archived: bool = False) -> list[Workspace]:
+        query = self.session.query(Workspace)
+        if not include_archived:
+            query = query.filter(Workspace.status != "archived")
+        return list(query.order_by(Workspace.workspace_id).all())

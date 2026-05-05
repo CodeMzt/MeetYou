@@ -8,10 +8,12 @@ from core.db.models.endpoint import (
     DeliveryAttempt,
     Endpoint,
     EndpointAddress,
+    EndpointAddressWorkspaceMembership,
     EndpointCapability,
     EndpointConnection,
     EndpointOutbox,
     EndpointThreadBinding,
+    EndpointWorkspaceMembership,
 )
 from core.db.models.memory_record import MemoryRecordModel, MemoryWorkspaceTag
 from core.db.models.message import Message
@@ -36,10 +38,12 @@ __all__ = [
     "DeliveryAttempt",
     "Endpoint",
     "EndpointAddress",
+    "EndpointAddressWorkspaceMembership",
     "EndpointCapability",
     "EndpointConnection",
     "EndpointOutbox",
     "EndpointThreadBinding",
+    "EndpointWorkspaceMembership",
     "MemoryRecordModel",
     "MemoryWorkspaceTag",
     "Message",

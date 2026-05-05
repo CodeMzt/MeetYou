@@ -10,10 +10,12 @@ from core.db.models.endpoint import (
     DeliveryAttempt,
     Endpoint,
     EndpointAddress,
+    EndpointAddressWorkspaceMembership,
     EndpointCapability,
     EndpointConnection,
     EndpointOutbox,
     EndpointThreadBinding,
+    EndpointWorkspaceMembership,
 )
 from core.db.repositories.base import RepositoryBase
 
@@ -57,7 +59,10 @@ class EndpointRepository(RepositoryBase):
             row.status = status
             row.labels = list(labels or [])
             row.priority = int(priority or 100)
-            row.meta = dict(metadata or row.meta or {})
+            if metadata is not None:
+                merged = dict(row.meta or {})
+                merged.update(dict(metadata or {}))
+                row.meta = merged
         self.session.flush()
         return row
 
@@ -268,6 +273,99 @@ class EndpointCapabilityRepository(RepositoryBase):
         return disabled
 
 
+class EndpointWorkspaceMembershipRepository(RepositoryBase):
+    def upsert(
+        self,
+        *,
+        endpoint_id,
+        workspace_id,
+        membership_id: str = "",
+        membership_role: str = "member",
+        is_primary: bool = False,
+        enabled: bool = True,
+        source: str = "core",
+        metadata: dict | None = None,
+    ) -> EndpointWorkspaceMembership:
+        row = self.get(endpoint_id=endpoint_id, workspace_id=workspace_id)
+        if row is None:
+            row = EndpointWorkspaceMembership(
+                membership_id=str(membership_id or f"ewm.{endpoint_id}.{workspace_id}").strip(),
+                endpoint_id=endpoint_id,
+                workspace_id=workspace_id,
+                membership_role=str(membership_role or "member").strip() or "member",
+                is_primary=bool(is_primary),
+                enabled=bool(enabled),
+                source=str(source or "core").strip() or "core",
+                meta=dict(metadata or {}),
+            )
+            self.session.add(row)
+        else:
+            row.membership_role = str(membership_role or row.membership_role or "member").strip() or "member"
+            row.enabled = bool(enabled)
+            row.source = str(source or row.source or "core").strip() or "core"
+            if metadata is not None:
+                merged = dict(row.meta or {})
+                merged.update(dict(metadata or {}))
+                row.meta = merged
+            if is_primary:
+                row.is_primary = True
+        if is_primary:
+            self._clear_other_primary(endpoint_id=endpoint_id, keep_workspace_id=workspace_id)
+        self.session.flush()
+        return row
+
+    def get(self, *, endpoint_id, workspace_id) -> EndpointWorkspaceMembership | None:
+        return (
+            self.session.query(EndpointWorkspaceMembership)
+            .filter_by(endpoint_id=endpoint_id, workspace_id=workspace_id)
+            .one_or_none()
+        )
+
+    def list_for_endpoint(self, *, endpoint_id, include_disabled: bool = False) -> list[EndpointWorkspaceMembership]:
+        query = self.session.query(EndpointWorkspaceMembership).filter_by(endpoint_id=endpoint_id)
+        if not include_disabled:
+            query = query.filter_by(enabled=True)
+        return list(query.order_by(EndpointWorkspaceMembership.is_primary.desc(), EndpointWorkspaceMembership.created_at.asc()).all())
+
+    def list_for_workspace(self, *, workspace_id, include_disabled: bool = False) -> list[EndpointWorkspaceMembership]:
+        query = self.session.query(EndpointWorkspaceMembership).filter_by(workspace_id=workspace_id)
+        if not include_disabled:
+            query = query.filter_by(enabled=True)
+        return list(query.order_by(EndpointWorkspaceMembership.created_at.asc()).all())
+
+    def set_primary(self, *, endpoint_id, workspace_id) -> EndpointWorkspaceMembership | None:
+        row = self.get(endpoint_id=endpoint_id, workspace_id=workspace_id)
+        if row is None:
+            return None
+        row.enabled = True
+        row.is_primary = True
+        self._clear_other_primary(endpoint_id=endpoint_id, keep_workspace_id=workspace_id)
+        self.session.flush()
+        return row
+
+    def disable(self, *, endpoint_id, workspace_id) -> bool:
+        row = self.get(endpoint_id=endpoint_id, workspace_id=workspace_id)
+        if row is None or not bool(row.enabled):
+            return False
+        was_primary = bool(row.is_primary)
+        row.enabled = False
+        row.is_primary = False
+        if was_primary:
+            self._promote_first_enabled(endpoint_id=endpoint_id)
+        self.session.flush()
+        return True
+
+    def _clear_other_primary(self, *, endpoint_id, keep_workspace_id) -> None:
+        for row in self.session.query(EndpointWorkspaceMembership).filter_by(endpoint_id=endpoint_id).all():
+            if row.workspace_id != keep_workspace_id:
+                row.is_primary = False
+
+    def _promote_first_enabled(self, *, endpoint_id) -> None:
+        rows = self.list_for_endpoint(endpoint_id=endpoint_id)
+        if rows and not any(bool(row.is_primary) for row in rows):
+            rows[0].is_primary = True
+
+
 class EndpointAddressRepository(RepositoryBase):
     def upsert(
         self,
@@ -377,6 +475,99 @@ class EndpointAddressRepository(RepositoryBase):
         row.capabilities = []
         self.session.flush()
         return True
+
+
+class EndpointAddressWorkspaceMembershipRepository(RepositoryBase):
+    def upsert(
+        self,
+        *,
+        address_id,
+        workspace_id,
+        membership_id: str = "",
+        membership_role: str = "member",
+        is_primary: bool = False,
+        enabled: bool = True,
+        source: str = "core",
+        metadata: dict | None = None,
+    ) -> EndpointAddressWorkspaceMembership:
+        row = self.get(address_id=address_id, workspace_id=workspace_id)
+        if row is None:
+            row = EndpointAddressWorkspaceMembership(
+                membership_id=str(membership_id or f"eawm.{address_id}.{workspace_id}").strip(),
+                address_id=address_id,
+                workspace_id=workspace_id,
+                membership_role=str(membership_role or "member").strip() or "member",
+                is_primary=bool(is_primary),
+                enabled=bool(enabled),
+                source=str(source or "core").strip() or "core",
+                meta=dict(metadata or {}),
+            )
+            self.session.add(row)
+        else:
+            row.membership_role = str(membership_role or row.membership_role or "member").strip() or "member"
+            row.enabled = bool(enabled)
+            row.source = str(source or row.source or "core").strip() or "core"
+            if metadata is not None:
+                merged = dict(row.meta or {})
+                merged.update(dict(metadata or {}))
+                row.meta = merged
+            if is_primary:
+                row.is_primary = True
+        if is_primary:
+            self._clear_other_primary(address_id=address_id, keep_workspace_id=workspace_id)
+        self.session.flush()
+        return row
+
+    def get(self, *, address_id, workspace_id) -> EndpointAddressWorkspaceMembership | None:
+        return (
+            self.session.query(EndpointAddressWorkspaceMembership)
+            .filter_by(address_id=address_id, workspace_id=workspace_id)
+            .one_or_none()
+        )
+
+    def list_for_address(self, *, address_id, include_disabled: bool = False) -> list[EndpointAddressWorkspaceMembership]:
+        query = self.session.query(EndpointAddressWorkspaceMembership).filter_by(address_id=address_id)
+        if not include_disabled:
+            query = query.filter_by(enabled=True)
+        return list(query.order_by(EndpointAddressWorkspaceMembership.is_primary.desc(), EndpointAddressWorkspaceMembership.created_at.asc()).all())
+
+    def list_for_workspace(self, *, workspace_id, include_disabled: bool = False) -> list[EndpointAddressWorkspaceMembership]:
+        query = self.session.query(EndpointAddressWorkspaceMembership).filter_by(workspace_id=workspace_id)
+        if not include_disabled:
+            query = query.filter_by(enabled=True)
+        return list(query.order_by(EndpointAddressWorkspaceMembership.created_at.asc()).all())
+
+    def set_primary(self, *, address_id, workspace_id) -> EndpointAddressWorkspaceMembership | None:
+        row = self.get(address_id=address_id, workspace_id=workspace_id)
+        if row is None:
+            return None
+        row.enabled = True
+        row.is_primary = True
+        self._clear_other_primary(address_id=address_id, keep_workspace_id=workspace_id)
+        self.session.flush()
+        return row
+
+    def disable(self, *, address_id, workspace_id) -> bool:
+        row = self.get(address_id=address_id, workspace_id=workspace_id)
+        if row is None or not bool(row.enabled):
+            return False
+        was_primary = bool(row.is_primary)
+        row.enabled = False
+        row.is_primary = False
+        if was_primary:
+            self._promote_first_enabled(address_id=address_id)
+        self.session.flush()
+        return True
+
+    def _clear_other_primary(self, *, address_id, keep_workspace_id) -> None:
+        for row in self.session.query(EndpointAddressWorkspaceMembership).filter_by(address_id=address_id).all():
+            if row.workspace_id != keep_workspace_id:
+                row.is_primary = False
+
+    def _promote_first_enabled(self, *, address_id) -> None:
+        rows = self.list_for_address(address_id=address_id)
+        if rows and not any(bool(row.is_primary) for row in rows):
+            rows[0].is_primary = True
 
 
 class EndpointThreadBindingRepository(RepositoryBase):

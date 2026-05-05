@@ -1,7 +1,7 @@
 const { contextBridge } = require('electron')
 
 const workspacePayload = {
-  baseUrl: 'http://127.0.0.1:38951',
+  baseUrl: process.env.MEETYOU_VISUAL_MOCK_BASE_URL || 'http://127.0.0.1:38981',
   threadId: 'thread_visual_check',
   connectionState: 'connected',
   desktopToolsAvailable: true,

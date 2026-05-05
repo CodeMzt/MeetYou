@@ -95,6 +95,8 @@ class DatabasePhase1Tests(unittest.TestCase):
                 "endpoints",
                 "endpoint_connections",
                 "endpoint_capabilities",
+                "endpoint_workspace_memberships",
+                "endpoint_address_workspace_memberships",
                 "runs",
                 "run_events",
                 "scheduled_jobs",

@@ -796,6 +796,9 @@ class OperatorWorkspaceCreateRequest(BaseModel):
 
 
 class OperatorWorkspaceUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    prompt_overlay: str | None = None
     base_mode: str | None = None
     default_execution_target: str | None = None
     tool_policy: str | None = None
@@ -870,6 +873,80 @@ class OperatorEndpointResponse(BaseModel):
     capability_count: int = 0
     labels: list[str] = Field(default_factory=list)
     last_seen_at: str = ""
+
+
+class OperatorEndpointMembershipRequest(BaseModel):
+    workspace_id: str
+    make_primary: bool = False
+
+
+class OperatorPrimaryWorkspaceRequest(BaseModel):
+    workspace_id: str
+
+
+class OperatorMembershipMutationResponse(BaseModel):
+    ok: bool = True
+    target_type: str
+    target_id: str
+    workspace_ids: list[str] = Field(default_factory=list)
+    primary_workspace_id: str = ""
+
+
+class OperatorTopologyMembershipResponse(BaseModel):
+    workspace_id: str
+    primary: bool = False
+    role: str = "member"
+    enabled: bool = True
+    source: str = "core"
+
+
+class OperatorTopologyWorkspaceResponse(BaseModel):
+    workspace_id: str
+    title: str
+    status: str
+    base_mode: str = "general"
+    description: str = ""
+    endpoint_count: int = 0
+    online_endpoint_count: int = 0
+
+
+class OperatorTopologyEndpointResponse(BaseModel):
+    endpoint_id: str
+    display_name: str
+    endpoint_type: str = ""
+    provider_type: str = ""
+    transport_type: str = ""
+    status: str = ""
+    connected: bool = False
+    connection_count: int = 0
+    workspace_ids: list[str] = Field(default_factory=list)
+    primary_workspace_id: str = ""
+    provider_declared_workspace_ids: list[str] = Field(default_factory=list)
+    capability_count: int = 0
+    executable_tools: list[str] = Field(default_factory=list)
+    labels: list[str] = Field(default_factory=list)
+    last_seen_at: str = ""
+    core_owned: bool = False
+    memberships: list[OperatorTopologyMembershipResponse] = Field(default_factory=list)
+
+
+class OperatorTopologyAddressResponse(BaseModel):
+    address_id: str
+    endpoint_id: str
+    display_name: str
+    provider_type: str = ""
+    address_type: str = ""
+    status: str = ""
+    workspace_ids: list[str] = Field(default_factory=list)
+    primary_workspace_id: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    memberships: list[OperatorTopologyMembershipResponse] = Field(default_factory=list)
+
+
+class OperatorWorkspaceTopologyResponse(BaseModel):
+    workspaces: list[OperatorTopologyWorkspaceResponse] = Field(default_factory=list)
+    endpoints: list[OperatorTopologyEndpointResponse] = Field(default_factory=list)
+    addresses: list[OperatorTopologyAddressResponse] = Field(default_factory=list)
 
 
 class OperatorScheduledJobCreateRequest(BaseModel):

@@ -58,6 +58,44 @@ Procedure 已删除。复杂或可复用 workflow 使用 SKILL：
 - `load_skill` 将 SKILL 内容作为运行时指导注入。
 - `create_skill` 只创建 SKILL，不创建 Procedure。
 
+## Workspace And Endpoint Management
+
+Workspace is a Core-owned management domain, not only a routing filter. `workspace_id` is a stable slug for config, threads, scheduler references, and external bindings. Rename operations update `title` and `description`; slug rename is intentionally not exposed in V4.
+
+Workspace deletion is archival. Archived workspaces are hidden from default operator lists and topology results, and can be restored. The `personal` workspace is the system fallback workspace and must not be archived.
+
+Endpoint workspace membership is persisted separately from `Endpoint.workspace_scope`:
+
+- `endpoint_workspace_memberships` is the source of truth for Endpoint-to-Workspace membership.
+- An Endpoint may belong to multiple workspaces and has one primary workspace.
+- `Endpoint.workspace_scope` remains a compatibility cache for existing routing and filtering paths.
+- Core-owned Endpoints such as `core.local` are read-only in membership management.
+
+EndpointAddress workspace membership is also persisted separately:
+
+- `endpoint_address_workspace_memberships` is the source of truth for provider-internal destinations.
+- Feishu chats, WeChat chats, webhooks, and similar provider destinations remain `EndpointAddress` records under their provider Endpoint.
+- Address membership can be added, removed, or given a primary workspace without promoting the address to an Endpoint.
+
+Provider-declared `workspace_ids` in `endpoint.hello` are seed data only. They are imported on first attachment when Core has no active membership yet. Later reconnects must not overwrite Core-managed membership; declared workspaces are retained in Endpoint metadata so the UI can show drift between provider declaration and Core authority.
+
+Operator management API:
+
+- `GET /operator/workspaces?include_archived=true`
+- `POST /operator/workspaces`
+- `PATCH /operator/workspaces/{workspace_id}`
+- `DELETE /operator/workspaces/{workspace_id}`
+- `POST /operator/workspaces/{workspace_id}/restore`
+- `GET /operator/workspace-topology`
+- `POST /operator/endpoints/{endpoint_id}/workspaces`
+- `DELETE /operator/endpoints/{endpoint_id}/workspaces/{workspace_id}`
+- `PATCH /operator/endpoints/{endpoint_id}/primary-workspace`
+- `POST /operator/addresses/{address_id}/workspaces`
+- `DELETE /operator/addresses/{address_id}/workspaces/{workspace_id}`
+- `PATCH /operator/addresses/{address_id}/primary-workspace`
+
+Desktop local bridge exposes matching `/desktop/*` proxies to these operator routes. It must not introduce `/client/*`.
+
 ## UI
 
 UI 只展示工作区策略、当前 Thread / Run / Operation 状态、可用 Endpoint 和 SKILL 信息。UI 不提供 Procedure 目录、固定 Procedure 或 Procedure 编辑入口。

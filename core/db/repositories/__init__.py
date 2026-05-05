@@ -7,11 +7,13 @@ from core.db.repositories.endpoint import (
     ActorDeliveryPreferenceRepository,
     DeliveryAttemptRepository,
     EndpointAddressRepository,
+    EndpointAddressWorkspaceMembershipRepository,
     EndpointCapabilityRepository,
     EndpointConnectionRepository,
     EndpointOutboxRepository,
     EndpointRepository,
     EndpointThreadBindingRepository,
+    EndpointWorkspaceMembershipRepository,
 )
 from core.db.repositories.memory_record import MemoryRecordRepository
 from core.db.repositories.message import MessageRepository
@@ -36,10 +38,12 @@ __all__ = [
     "DeliveryAttemptRepository",
     "EndpointCapabilityRepository",
     "EndpointAddressRepository",
+    "EndpointAddressWorkspaceMembershipRepository",
     "EndpointConnectionRepository",
     "EndpointOutboxRepository",
     "EndpointRepository",
     "EndpointThreadBindingRepository",
+    "EndpointWorkspaceMembershipRepository",
     "MemoryRecordRepository",
     "MessageRepository",
     "OperationRepository",

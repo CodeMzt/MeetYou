@@ -212,6 +212,7 @@ class WorkspaceService(ServiceBase):
         workspace_id: str,
         title: str | None = None,
         description: str | None = None,
+        status: str | None = None,
         base_mode: str | None = None,
         prompt_overlay: str | None = None,
         default_execution_target: str | None = None,
@@ -222,6 +223,7 @@ class WorkspaceService(ServiceBase):
                 workspace_id=workspace_id,
                 title=str(title or "").strip() if title is not None else None,
                 description=str(description or "").strip() if description is not None else None,
+                status=str(status or "").strip() if status is not None else None,
                 base_mode=to_public_assistant_mode(base_mode) if base_mode is not None else None,
                 prompt_overlay=str(prompt_overlay or "").strip() if prompt_overlay is not None else None,
                 default_execution_target=normalize_execution_target(default_execution_target)
@@ -229,6 +231,29 @@ class WorkspaceService(ServiceBase):
                 else None,
                 metadata=self.normalize_governance_metadata(metadata) if metadata is not None else None,
             )
+
+    def archive_workspace(self, *, workspace_id: str):
+        normalized = str(workspace_id or "").strip()
+        if normalized == "personal":
+            raise ValueError("personal workspace cannot be archived.")
+        with self.session_scope() as session:
+            repo = WorkspaceRepository(session)
+            workspace = repo.get_by_workspace_id(normalized)
+            if workspace is None:
+                return None
+            workspace.status = "archived"
+            session.flush()
+            return workspace
+
+    def restore_workspace(self, *, workspace_id: str):
+        with self.session_scope() as session:
+            repo = WorkspaceRepository(session)
+            workspace = repo.get_by_workspace_id(str(workspace_id or "").strip())
+            if workspace is None:
+                return None
+            workspace.status = "active"
+            session.flush()
+            return workspace
 
     def get_by_workspace_id(self, workspace_id: str):
         with self.session_scope() as session:
@@ -238,6 +263,6 @@ class WorkspaceService(ServiceBase):
         with self.session_scope() as session:
             return WorkspaceRepository(session).get_by_id(row_id)
 
-    def list_workspaces(self):
+    def list_workspaces(self, *, include_archived: bool = False):
         with self.session_scope() as session:
-            return WorkspaceRepository(session).list_all()
+            return WorkspaceRepository(session).list_all(include_archived=include_archived)

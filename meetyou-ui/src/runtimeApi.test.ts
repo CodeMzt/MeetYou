@@ -11,11 +11,18 @@ import {
   getDanxiProfile,
   resolveDanxiMessageTarget,
   getDanxiSessionStatus,
+  addEndpointWorkspace,
+  archiveOperatorWorkspace,
+  createOperatorWorkspace,
   listDanxiFloors,
   listDanxiPosts,
   listOperatorSourceProfiles,
+  listWorkspaceTopology,
   listRuntimeThreads,
   loginDanxiSession,
+  removeAddressWorkspace,
+  restoreOperatorWorkspace,
+  setAddressPrimaryWorkspace,
   updateDanxiReply,
   updateDanxiWebvpnCookie,
   updateOperatorWorkspaceGovernance,
@@ -246,6 +253,226 @@ describe('runtimeApi', () => {
           },
         }),
       }),
+    )
+  })
+
+  it('loads workspace topology and manages workspace lifecycle through desktop operator bridge', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workspaces: [
+              {
+                workspace_id: 'personal',
+                title: 'Personal',
+                status: 'active',
+                base_mode: 'general',
+                description: '',
+                endpoint_count: 1,
+                online_endpoint_count: 1,
+              },
+            ],
+            endpoints: [
+              {
+                endpoint_id: 'desktop.main.executor',
+                display_name: 'Desktop',
+                endpoint_type: 'desktop_executor',
+                provider_type: 'desktop',
+                transport_type: 'websocket',
+                status: 'online',
+                connected: true,
+                connection_count: 1,
+                workspace_ids: ['personal'],
+                primary_workspace_id: 'personal',
+                provider_declared_workspace_ids: ['personal'],
+                capability_count: 1,
+                executable_tools: ['shell.exec'],
+                labels: [],
+                last_seen_at: '2026-05-05T00:00:00Z',
+                core_owned: false,
+                memberships: [{ workspace_id: 'personal', primary: true, role: 'member', enabled: true, source: 'core' }],
+              },
+            ],
+            addresses: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workspace_id: 'study',
+            title: 'Study',
+            status: 'active',
+            base_mode: 'general',
+            description: '',
+            prompt_overlay: '',
+            default_execution_target: 'core.local',
+            tool_policy: 'allow_all',
+            allowed_tool_ids: [],
+            preferred_target_endpoint_ids: [],
+            preferred_endpoint_provider_types: [],
+            preferred_source_profiles: [],
+            tool_target_routing_policy: 'balanced',
+            memory_ranking_policy: 'workspace_first',
+            tool_routing_overrides: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workspace_id: 'study',
+            title: 'Study',
+            status: 'archived',
+            base_mode: 'general',
+            description: '',
+            prompt_overlay: '',
+            default_execution_target: 'core.local',
+            tool_policy: 'allow_all',
+            allowed_tool_ids: [],
+            preferred_target_endpoint_ids: [],
+            preferred_endpoint_provider_types: [],
+            preferred_source_profiles: [],
+            tool_target_routing_policy: 'balanced',
+            memory_ranking_policy: 'workspace_first',
+            tool_routing_overrides: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            workspace_id: 'study',
+            title: 'Study',
+            status: 'active',
+            base_mode: 'general',
+            description: '',
+            prompt_overlay: '',
+            default_execution_target: 'core.local',
+            tool_policy: 'allow_all',
+            allowed_tool_ids: [],
+            preferred_target_endpoint_ids: [],
+            preferred_endpoint_provider_types: [],
+            preferred_source_profiles: [],
+            tool_target_routing_policy: 'balanced',
+            memory_ranking_policy: 'workspace_first',
+            tool_routing_overrides: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const topology = await listWorkspaceTopology('http://127.0.0.1:8000', true)
+    const created = await createOperatorWorkspace('http://127.0.0.1:8000', {
+      workspace_id: 'study',
+      title: 'Study',
+    })
+    const archived = await archiveOperatorWorkspace('http://127.0.0.1:8000', 'study')
+    const restored = await restoreOperatorWorkspace('http://127.0.0.1:8000', 'study')
+
+    expect(topology.endpoints[0]?.primary_workspace_id).toBe('personal')
+    expect(created.workspace_id).toBe('study')
+    expect(archived.status).toBe('archived')
+    expect(restored.status).toBe('active')
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8000/desktop/workspace-topology?include_archived=true',
+      expect.anything(),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8000/desktop/workspaces',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ workspace_id: 'study', title: 'Study' }),
+      }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:8000/desktop/workspaces/study',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      4,
+      'http://127.0.0.1:8000/desktop/workspaces/study/restore',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('mutates endpoint and address workspace memberships through desktop operator bridge', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            target_type: 'endpoint',
+            target_id: 'desktop.main.executor',
+            workspace_ids: ['study', 'personal'],
+            primary_workspace_id: 'study',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            target_type: 'address',
+            target_id: 'addr.desktop.direct.self',
+            workspace_ids: ['study', 'personal'],
+            primary_workspace_id: 'study',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            target_type: 'address',
+            target_id: 'addr.desktop.direct.self',
+            workspace_ids: ['study'],
+            primary_workspace_id: 'study',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const endpoint = await addEndpointWorkspace('http://127.0.0.1:8000', 'desktop.main.executor', {
+      workspace_id: 'study',
+      make_primary: true,
+    })
+    const address = await setAddressPrimaryWorkspace('http://127.0.0.1:8000', 'addr.desktop.direct.self', 'study')
+    const removed = await removeAddressWorkspace('http://127.0.0.1:8000', 'addr.desktop.direct.self', 'personal')
+
+    expect(endpoint.primary_workspace_id).toBe('study')
+    expect(address.target_type).toBe('address')
+    expect(removed.workspace_ids).toEqual(['study'])
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8000/desktop/endpoints/desktop.main.executor/workspaces',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ workspace_id: 'study', make_primary: true }),
+      }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8000/desktop/addresses/addr.desktop.direct.self/primary-workspace',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ workspace_id: 'study' }),
+      }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:8000/desktop/addresses/addr.desktop.direct.self/workspaces/personal',
+      expect.objectContaining({ method: 'DELETE' }),
     )
   })
 

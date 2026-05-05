@@ -57,6 +57,24 @@ class EndpointCapability(TimestampMixin, Base):
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
 
+class EndpointWorkspaceMembership(TimestampMixin, Base):
+    __tablename__ = "endpoint_workspace_memberships"
+    __table_args__ = (
+        UniqueConstraint("membership_id", name="uq_ewm_membership_id"),
+        UniqueConstraint("endpoint_id", "workspace_id", name="uq_ewm_endpoint_workspace"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    membership_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    endpoint_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoints.id"), nullable=False)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    membership_role: Mapped[str] = mapped_column(String(32), nullable=False, default="member")
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="core")
+    meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
 class EndpointAddress(TimestampMixin, Base):
     __tablename__ = "endpoint_addresses"
     __table_args__ = (
@@ -76,6 +94,24 @@ class EndpointAddress(TimestampMixin, Base):
     capabilities: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     last_seen_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_verified_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+
+class EndpointAddressWorkspaceMembership(TimestampMixin, Base):
+    __tablename__ = "endpoint_address_workspace_memberships"
+    __table_args__ = (
+        UniqueConstraint("membership_id", name="uq_eawm_membership_id"),
+        UniqueConstraint("address_id", "workspace_id", name="uq_eawm_address_workspace"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    membership_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    address_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("endpoint_addresses.id"), nullable=False)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    membership_role: Mapped[str] = mapped_column(String(32), nullable=False, default="member")
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="core")
     meta: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
 

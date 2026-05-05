@@ -789,8 +789,8 @@ function createWorkspaceWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize
 
-  const windowWidth = 560
-  const windowHeight = 700
+  const windowWidth = 1180
+  const windowHeight = 760
 
   workspaceWin = new BrowserWindow({
     width: windowWidth,
@@ -801,7 +801,7 @@ function createWorkspaceWindow() {
     transparent: true,
     frame: false,
     resizable: true,
-    minWidth: 520,
+    minWidth: 900,
     minHeight: 620,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

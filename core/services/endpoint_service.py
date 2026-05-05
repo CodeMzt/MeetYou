@@ -7,11 +7,14 @@ from core.db.repositories import (
     ActorDeliveryPreferenceRepository,
     DeliveryAttemptRepository,
     EndpointAddressRepository,
+    EndpointAddressWorkspaceMembershipRepository,
     EndpointCapabilityRepository,
     EndpointConnectionRepository,
     EndpointOutboxRepository,
     EndpointRepository,
     EndpointThreadBindingRepository,
+    EndpointWorkspaceMembershipRepository,
+    WorkspaceRepository,
     ThreadRepository,
 )
 from core.services.base import ServiceBase
@@ -22,6 +25,18 @@ class EndpointThreadBindingError(ValueError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def _string_list(values) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
 
 
 class EndpointRegistryService(ServiceBase):
@@ -211,6 +226,170 @@ class EndpointCapabilityService(ServiceBase):
             return EndpointCapabilityRepository(session).list_enabled_for_tool(tool_key=tool_key)
 
 
+class EndpointWorkspaceMembershipService(ServiceBase):
+    @staticmethod
+    def _public_workspace_ids(session, rows) -> list[str]:
+        workspace_repo = WorkspaceRepository(session)
+        result: list[str] = []
+        for row in rows:
+            workspace = workspace_repo.get_by_id(getattr(row, "workspace_id", None))
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+            if workspace_id and workspace_id not in result:
+                result.append(workspace_id)
+        return result
+
+    @staticmethod
+    def _primary_workspace_id(session, rows) -> str:
+        workspace_repo = WorkspaceRepository(session)
+        primary = next((row for row in rows if bool(getattr(row, "is_primary", False))), rows[0] if rows else None)
+        workspace = workspace_repo.get_by_id(getattr(primary, "workspace_id", None)) if primary is not None else None
+        return str(getattr(workspace, "workspace_id", "") or "").strip()
+
+    @staticmethod
+    def _endpoint_is_core(endpoint) -> bool:
+        return str(getattr(endpoint, "provider_type", "") or "").strip().lower() == "core"
+
+    def _sync_endpoint_scope(self, session, *, endpoint) -> list[str]:
+        repo = EndpointWorkspaceMembershipRepository(session)
+        rows = repo.list_for_endpoint(endpoint_id=getattr(endpoint, "id", None))
+        workspace_ids = self._public_workspace_ids(session, rows)
+        endpoint.workspace_scope = list(workspace_ids)
+        meta = dict(getattr(endpoint, "meta", {}) or {})
+        meta["managed_workspace_ids"] = list(workspace_ids)
+        meta["primary_workspace_id"] = self._primary_workspace_id(session, rows)
+        endpoint.meta = meta
+        session.flush()
+        return workspace_ids
+
+    def seed_endpoint_memberships(
+        self,
+        *,
+        endpoint_row_id,
+        workspace_ids: list[str] | tuple[str, ...] | None,
+        source: str = "provider_declared",
+        fallback_workspace_id: str = "personal",
+    ) -> list[str]:
+        requested = _string_list(workspace_ids)
+        with self.session_scope() as session:
+            endpoint = EndpointRepository(session).get_by_id(endpoint_row_id)
+            if endpoint is None:
+                return []
+            repo = EndpointWorkspaceMembershipRepository(session)
+            active_rows = repo.list_for_endpoint(endpoint_id=endpoint.id)
+            if active_rows:
+                return self._sync_endpoint_scope(session, endpoint=endpoint)
+
+            workspace_repo = WorkspaceRepository(session)
+            workspaces = []
+            for workspace_id in requested:
+                workspace = workspace_repo.get_by_workspace_id(workspace_id)
+                if workspace is not None and str(getattr(workspace, "status", "") or "active") != "archived":
+                    workspaces.append(workspace)
+            if not workspaces and not self._endpoint_is_core(endpoint):
+                fallback = workspace_repo.get_by_workspace_id(fallback_workspace_id)
+                if fallback is not None and str(getattr(fallback, "status", "") or "active") != "archived":
+                    workspaces.append(fallback)
+
+            for index, workspace in enumerate(workspaces):
+                repo.upsert(
+                    endpoint_id=endpoint.id,
+                    workspace_id=workspace.id,
+                    is_primary=index == 0,
+                    source=source,
+                    metadata={"seeded_from_workspace_ids": requested},
+                )
+            return self._sync_endpoint_scope(session, endpoint=endpoint)
+
+    def list_for_endpoint(self, *, endpoint_row_id, include_disabled: bool = False):
+        with self.session_scope() as session:
+            return EndpointWorkspaceMembershipRepository(session).list_for_endpoint(
+                endpoint_id=endpoint_row_id,
+                include_disabled=include_disabled,
+            )
+
+    def add_workspace(
+        self,
+        *,
+        endpoint_id: str,
+        workspace_id: str,
+        make_primary: bool = False,
+        source: str = "core",
+    ) -> dict:
+        with self.session_scope() as session:
+            endpoint = EndpointRepository(session).get_by_endpoint_id(str(endpoint_id or "").strip())
+            if endpoint is None:
+                raise KeyError("endpoint_not_found")
+            if self._endpoint_is_core(endpoint):
+                raise ValueError("core_endpoint_membership_readonly")
+            workspace = WorkspaceRepository(session).get_by_workspace_id(str(workspace_id or "").strip())
+            if workspace is None or str(getattr(workspace, "status", "") or "active") == "archived":
+                raise KeyError("workspace_not_found")
+            repo = EndpointWorkspaceMembershipRepository(session)
+            rows = repo.list_for_endpoint(endpoint_id=endpoint.id)
+            repo.upsert(
+                endpoint_id=endpoint.id,
+                workspace_id=workspace.id,
+                is_primary=bool(make_primary or not rows),
+                source=source,
+            )
+            workspace_ids = self._sync_endpoint_scope(session, endpoint=endpoint)
+            return {
+                "endpoint_id": endpoint.endpoint_id,
+                "workspace_ids": workspace_ids,
+                "primary_workspace_id": self._primary_workspace_id(session, repo.list_for_endpoint(endpoint_id=endpoint.id)),
+            }
+
+    def remove_workspace(self, *, endpoint_id: str, workspace_id: str) -> dict:
+        with self.session_scope() as session:
+            endpoint = EndpointRepository(session).get_by_endpoint_id(str(endpoint_id or "").strip())
+            if endpoint is None:
+                raise KeyError("endpoint_not_found")
+            if self._endpoint_is_core(endpoint):
+                raise ValueError("core_endpoint_membership_readonly")
+            workspace = WorkspaceRepository(session).get_by_workspace_id(str(workspace_id or "").strip())
+            if workspace is None:
+                raise KeyError("workspace_not_found")
+            repo = EndpointWorkspaceMembershipRepository(session)
+            rows = repo.list_for_endpoint(endpoint_id=endpoint.id)
+            active_workspace_ids = {str(getattr(row, "workspace_id", "") or "") for row in rows}
+            if str(workspace.id) not in active_workspace_ids:
+                return {
+                    "endpoint_id": endpoint.endpoint_id,
+                    "workspace_ids": self._sync_endpoint_scope(session, endpoint=endpoint),
+                    "primary_workspace_id": self._primary_workspace_id(session, rows),
+                }
+            if len(rows) <= 1:
+                raise ValueError("endpoint_last_workspace_membership")
+            repo.disable(endpoint_id=endpoint.id, workspace_id=workspace.id)
+            next_rows = repo.list_for_endpoint(endpoint_id=endpoint.id)
+            workspace_ids = self._sync_endpoint_scope(session, endpoint=endpoint)
+            return {
+                "endpoint_id": endpoint.endpoint_id,
+                "workspace_ids": workspace_ids,
+                "primary_workspace_id": self._primary_workspace_id(session, next_rows),
+            }
+
+    def set_primary_workspace(self, *, endpoint_id: str, workspace_id: str) -> dict:
+        with self.session_scope() as session:
+            endpoint = EndpointRepository(session).get_by_endpoint_id(str(endpoint_id or "").strip())
+            if endpoint is None:
+                raise KeyError("endpoint_not_found")
+            if self._endpoint_is_core(endpoint):
+                raise ValueError("core_endpoint_membership_readonly")
+            workspace = WorkspaceRepository(session).get_by_workspace_id(str(workspace_id or "").strip())
+            if workspace is None or str(getattr(workspace, "status", "") or "active") == "archived":
+                raise KeyError("workspace_not_found")
+            repo = EndpointWorkspaceMembershipRepository(session)
+            repo.upsert(endpoint_id=endpoint.id, workspace_id=workspace.id, is_primary=True, source="core")
+            rows = repo.list_for_endpoint(endpoint_id=endpoint.id)
+            workspace_ids = self._sync_endpoint_scope(session, endpoint=endpoint)
+            return {
+                "endpoint_id": endpoint.endpoint_id,
+                "workspace_ids": workspace_ids,
+                "primary_workspace_id": self._primary_workspace_id(session, rows),
+            }
+
+
 class EndpointAddressService(ServiceBase):
     def upsert_address(
         self,
@@ -271,6 +450,160 @@ class EndpointAddressService(ServiceBase):
     def delete_address(self, *, address_id: str) -> bool:
         with self.session_scope() as session:
             return EndpointAddressRepository(session).delete(address_id=address_id)
+
+
+class EndpointAddressWorkspaceMembershipService(ServiceBase):
+    @staticmethod
+    def _public_workspace_ids(session, rows) -> list[str]:
+        workspace_repo = WorkspaceRepository(session)
+        result: list[str] = []
+        for row in rows:
+            workspace = workspace_repo.get_by_id(getattr(row, "workspace_id", None))
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+            if workspace_id and workspace_id not in result:
+                result.append(workspace_id)
+        return result
+
+    @staticmethod
+    def _primary_workspace_id(session, rows) -> str:
+        workspace_repo = WorkspaceRepository(session)
+        primary = next((row for row in rows if bool(getattr(row, "is_primary", False))), rows[0] if rows else None)
+        workspace = workspace_repo.get_by_id(getattr(primary, "workspace_id", None)) if primary is not None else None
+        return str(getattr(workspace, "workspace_id", "") or "").strip()
+
+    def _sync_address_scope(self, session, *, address) -> list[str]:
+        repo = EndpointAddressWorkspaceMembershipRepository(session)
+        rows = repo.list_for_address(address_id=getattr(address, "id", None))
+        workspace_ids = self._public_workspace_ids(session, rows)
+        address.workspace_scope = list(workspace_ids)
+        meta = dict(getattr(address, "meta", {}) or {})
+        meta["managed_workspace_ids"] = list(workspace_ids)
+        meta["primary_workspace_id"] = self._primary_workspace_id(session, rows)
+        address.meta = meta
+        session.flush()
+        return workspace_ids
+
+    def seed_address_memberships(
+        self,
+        *,
+        address_row_id,
+        workspace_ids: list[str] | tuple[str, ...] | None,
+        source: str = "provider_declared",
+    ) -> list[str]:
+        requested = _string_list(workspace_ids)
+        with self.session_scope() as session:
+            address = EndpointAddressRepository(session).get_by_id(address_row_id)
+            if address is None:
+                return []
+            repo = EndpointAddressWorkspaceMembershipRepository(session)
+            active_rows = repo.list_for_address(address_id=address.id)
+            if active_rows:
+                return self._sync_address_scope(session, address=address)
+            workspace_repo = WorkspaceRepository(session)
+            workspaces = []
+            for workspace_id in requested:
+                workspace = workspace_repo.get_by_workspace_id(workspace_id)
+                if workspace is not None and str(getattr(workspace, "status", "") or "active") != "archived":
+                    workspaces.append(workspace)
+            if not workspaces:
+                endpoint = EndpointRepository(session).get_by_id(getattr(address, "endpoint_id", None))
+                endpoint_scope = _string_list(getattr(endpoint, "workspace_scope", []) or [])
+                for workspace_id in endpoint_scope:
+                    workspace = workspace_repo.get_by_workspace_id(workspace_id)
+                    if workspace is not None and str(getattr(workspace, "status", "") or "active") != "archived":
+                        workspaces.append(workspace)
+            for index, workspace in enumerate(workspaces):
+                repo.upsert(
+                    address_id=address.id,
+                    workspace_id=workspace.id,
+                    is_primary=index == 0,
+                    source=source,
+                    metadata={"seeded_from_workspace_ids": requested},
+                )
+            return self._sync_address_scope(session, address=address)
+
+    def list_for_address(self, *, address_row_id, include_disabled: bool = False):
+        with self.session_scope() as session:
+            return EndpointAddressWorkspaceMembershipRepository(session).list_for_address(
+                address_id=address_row_id,
+                include_disabled=include_disabled,
+            )
+
+    def add_workspace(
+        self,
+        *,
+        address_id: str,
+        workspace_id: str,
+        make_primary: bool = False,
+        source: str = "core",
+    ) -> dict:
+        with self.session_scope() as session:
+            address = EndpointAddressRepository(session).get_by_address_id(str(address_id or "").strip())
+            if address is None:
+                raise KeyError("address_not_found")
+            workspace = WorkspaceRepository(session).get_by_workspace_id(str(workspace_id or "").strip())
+            if workspace is None or str(getattr(workspace, "status", "") or "active") == "archived":
+                raise KeyError("workspace_not_found")
+            repo = EndpointAddressWorkspaceMembershipRepository(session)
+            rows = repo.list_for_address(address_id=address.id)
+            repo.upsert(
+                address_id=address.id,
+                workspace_id=workspace.id,
+                is_primary=bool(make_primary or not rows),
+                source=source,
+            )
+            workspace_ids = self._sync_address_scope(session, address=address)
+            return {
+                "address_id": address.address_id,
+                "workspace_ids": workspace_ids,
+                "primary_workspace_id": self._primary_workspace_id(session, repo.list_for_address(address_id=address.id)),
+            }
+
+    def remove_workspace(self, *, address_id: str, workspace_id: str) -> dict:
+        with self.session_scope() as session:
+            address = EndpointAddressRepository(session).get_by_address_id(str(address_id or "").strip())
+            if address is None:
+                raise KeyError("address_not_found")
+            workspace = WorkspaceRepository(session).get_by_workspace_id(str(workspace_id or "").strip())
+            if workspace is None:
+                raise KeyError("workspace_not_found")
+            repo = EndpointAddressWorkspaceMembershipRepository(session)
+            rows = repo.list_for_address(address_id=address.id)
+            active_workspace_ids = {str(getattr(row, "workspace_id", "") or "") for row in rows}
+            if str(workspace.id) not in active_workspace_ids:
+                return {
+                    "address_id": address.address_id,
+                    "workspace_ids": self._sync_address_scope(session, address=address),
+                    "primary_workspace_id": self._primary_workspace_id(session, rows),
+                }
+            if len(rows) <= 1:
+                raise ValueError("address_last_workspace_membership")
+            repo.disable(address_id=address.id, workspace_id=workspace.id)
+            rows = repo.list_for_address(address_id=address.id)
+            workspace_ids = self._sync_address_scope(session, address=address)
+            return {
+                "address_id": address.address_id,
+                "workspace_ids": workspace_ids,
+                "primary_workspace_id": self._primary_workspace_id(session, rows),
+            }
+
+    def set_primary_workspace(self, *, address_id: str, workspace_id: str) -> dict:
+        with self.session_scope() as session:
+            address = EndpointAddressRepository(session).get_by_address_id(str(address_id or "").strip())
+            if address is None:
+                raise KeyError("address_not_found")
+            workspace = WorkspaceRepository(session).get_by_workspace_id(str(workspace_id or "").strip())
+            if workspace is None or str(getattr(workspace, "status", "") or "active") == "archived":
+                raise KeyError("workspace_not_found")
+            repo = EndpointAddressWorkspaceMembershipRepository(session)
+            repo.upsert(address_id=address.id, workspace_id=workspace.id, is_primary=True, source="core")
+            rows = repo.list_for_address(address_id=address.id)
+            workspace_ids = self._sync_address_scope(session, address=address)
+            return {
+                "address_id": address.address_id,
+                "workspace_ids": workspace_ids,
+                "primary_workspace_id": self._primary_workspace_id(session, rows),
+            }
 
 
 class EndpointThreadBindingService(ServiceBase):

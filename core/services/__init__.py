@@ -13,12 +13,14 @@ from core.services.endpoint_service import (
     ActorDeliveryPreferenceService,
     DeliveryAttemptService,
     EndpointAddressService,
+    EndpointAddressWorkspaceMembershipService,
     EndpointCapabilityService,
     EndpointConnectionService,
     EndpointOutboxService,
     EndpointRegistryService,
     EndpointThreadBindingError,
     EndpointThreadBindingService,
+    EndpointWorkspaceMembershipService,
 )
 from core.services.heartbeat_workflow import HeartbeatWorkflow
 from core.services.memory_state_service import MemoryStateService
@@ -45,6 +47,8 @@ class CoreServices:
     endpoint_connection: EndpointConnectionService
     endpoint_capability: EndpointCapabilityService
     endpoint_address: EndpointAddressService
+    endpoint_workspace_membership: EndpointWorkspaceMembershipService
+    endpoint_address_workspace_membership: EndpointAddressWorkspaceMembershipService
     endpoint_thread_binding: EndpointThreadBindingService
     actor_delivery_preference: ActorDeliveryPreferenceService
     endpoint_outbox: EndpointOutboxService
@@ -84,11 +88,13 @@ __all__ = [
     "DeliveryService",
     "EndpointCapabilityService",
     "EndpointAddressService",
+    "EndpointAddressWorkspaceMembershipService",
     "EndpointConnectionService",
     "EndpointOutboxService",
     "EndpointRegistryService",
     "EndpointThreadBindingError",
     "EndpointThreadBindingService",
+    "EndpointWorkspaceMembershipService",
     "HeartbeatWorkflow",
     "MemoryStateService",
     "MessageService",

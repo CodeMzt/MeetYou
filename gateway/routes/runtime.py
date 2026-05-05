@@ -8,6 +8,7 @@ from core.credential_transport import CredentialTransportError, decrypt_json_pay
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
 from core.services.endpoint_service import EndpointThreadBindingError
+from core.services.workspace_service import WorkspaceService
 from core.services.tool_router_service import ToolRouterError
 from gateway.models import (
     AckPayload,
@@ -114,23 +115,23 @@ def _runtime_target_for_source(source_kind: str, source_id: str, metadata: dict 
 
 
 def _workspace_response(workspace) -> RuntimeWorkspaceResponse:
-    meta = dict(getattr(workspace, "meta", {}) or {})
+    governance = WorkspaceService.get_governance_view(workspace)
     return RuntimeWorkspaceResponse(
         workspace_id=workspace.workspace_id,
         title=workspace.title,
         status=workspace.status,
         base_mode=workspace.base_mode,
-        description=str(meta.get("description") or ""),
+        description=str(governance.get("description") or ""),
         prompt_overlay=workspace.prompt_overlay,
         default_execution_target=workspace.default_execution_target,
-        tool_policy=str(meta.get("tool_policy") or "allow_all"),
-        allowed_tool_ids=list(meta.get("allowed_tool_ids") or []),
-        preferred_target_endpoint_ids=list(meta.get("preferred_target_endpoint_ids") or []),
-        preferred_endpoint_provider_types=list(meta.get("preferred_endpoint_provider_types") or []),
-        preferred_source_profiles=list(meta.get("preferred_source_profiles") or []),
-        tool_target_routing_policy=str(meta.get("tool_target_routing_policy") or "balanced"),
-        memory_ranking_policy=str(meta.get("memory_ranking_policy") or "workspace_first"),
-        tool_routing_overrides=dict(meta.get("tool_routing_overrides") or {}),
+        tool_policy=str(governance.get("tool_policy") or "allow_all"),
+        allowed_tool_ids=list(governance.get("allowed_tool_ids") or []),
+        preferred_target_endpoint_ids=list(governance.get("preferred_target_endpoint_ids") or []),
+        preferred_endpoint_provider_types=list(governance.get("preferred_endpoint_provider_types") or []),
+        preferred_source_profiles=list(governance.get("preferred_source_profiles") or []),
+        tool_target_routing_policy=str(governance.get("tool_target_routing_policy") or "balanced"),
+        memory_ranking_policy=str(governance.get("memory_ranking_policy") or "workspace_first"),
+        tool_routing_overrides=dict(governance.get("tool_routing_overrides") or {}),
     )
 
 

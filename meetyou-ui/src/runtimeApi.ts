@@ -21,6 +21,8 @@ import type {
   RuntimeThreadDeleteResult,
   RuntimeUsageSnapshot,
   RuntimeWorkspace,
+  WorkspaceMembershipMutationResult,
+  WorkspaceTopology,
 } from './types'
 
 export interface MemoryClearResult {
@@ -73,6 +75,15 @@ async function readJsonOrThrow<T>(response: Response, fallback: string): Promise
 export async function listRuntimeWorkspaces(baseUrl: string): Promise<RuntimeWorkspace[]> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/workspaces'))
   return readJsonOrThrow<RuntimeWorkspace[]>(response, '加载工作空间失败')
+}
+
+export async function listWorkspaceTopology(baseUrl: string, includeArchived = false): Promise<WorkspaceTopology> {
+  const url = new URL(buildDesktopUrl(baseUrl, '/workspace-topology'))
+  if (includeArchived) {
+    url.searchParams.set('include_archived', 'true')
+  }
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<WorkspaceTopology>(response, '加载工作区拓扑失败')
 }
 
 export async function loginDanxiSession(
@@ -325,6 +336,9 @@ export async function updateOperatorWorkspaceGovernance(
   baseUrl: string,
   workspaceId: string,
   payload: {
+    title?: string
+    description?: string
+    prompt_overlay?: string
     base_mode?: AssistantMode
     default_execution_target?: string
     tool_policy?: string
@@ -343,6 +357,122 @@ export async function updateOperatorWorkspaceGovernance(
     body: JSON.stringify(payload),
   })
   return readJsonOrThrow<RuntimeWorkspace>(response, '更新工作区治理失败')
+}
+
+export async function createOperatorWorkspace(
+  baseUrl: string,
+  payload: {
+    workspace_id: string
+    title?: string
+    description?: string
+    base_mode?: AssistantMode
+    prompt_overlay?: string
+    default_execution_target?: string
+  },
+): Promise<RuntimeWorkspace> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/workspaces'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeWorkspace>(response, '创建工作区失败')
+}
+
+export async function archiveOperatorWorkspace(baseUrl: string, workspaceId: string): Promise<RuntimeWorkspace> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}`), {
+    method: 'DELETE',
+  })
+  return readJsonOrThrow<RuntimeWorkspace>(response, '归档工作区失败')
+}
+
+export async function restoreOperatorWorkspace(baseUrl: string, workspaceId: string): Promise<RuntimeWorkspace> {
+  const response = await fetchWithAuth(
+    buildDesktopUrl(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/restore`),
+    {
+      method: 'POST',
+    },
+  )
+  return readJsonOrThrow<RuntimeWorkspace>(response, '恢复工作区失败')
+}
+
+export async function addEndpointWorkspace(
+  baseUrl: string,
+  endpointId: string,
+  payload: { workspace_id: string; make_primary?: boolean },
+): Promise<WorkspaceMembershipMutationResult> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/endpoints/${encodeURIComponent(endpointId)}/workspaces`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<WorkspaceMembershipMutationResult>(response, '添加 Endpoint 工作区归属失败')
+}
+
+export async function removeEndpointWorkspace(
+  baseUrl: string,
+  endpointId: string,
+  workspaceId: string,
+): Promise<WorkspaceMembershipMutationResult> {
+  const response = await fetchWithAuth(
+    buildDesktopUrl(baseUrl, `/endpoints/${encodeURIComponent(endpointId)}/workspaces/${encodeURIComponent(workspaceId)}`),
+    {
+      method: 'DELETE',
+    },
+  )
+  return readJsonOrThrow<WorkspaceMembershipMutationResult>(response, '移除 Endpoint 工作区归属失败')
+}
+
+export async function setEndpointPrimaryWorkspace(
+  baseUrl: string,
+  endpointId: string,
+  workspaceId: string,
+): Promise<WorkspaceMembershipMutationResult> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/endpoints/${encodeURIComponent(endpointId)}/primary-workspace`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_id: workspaceId }),
+  })
+  return readJsonOrThrow<WorkspaceMembershipMutationResult>(response, '设置 Endpoint 主工作区失败')
+}
+
+export async function addAddressWorkspace(
+  baseUrl: string,
+  addressId: string,
+  payload: { workspace_id: string; make_primary?: boolean },
+): Promise<WorkspaceMembershipMutationResult> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/addresses/${encodeURIComponent(addressId)}/workspaces`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<WorkspaceMembershipMutationResult>(response, '添加地址工作区归属失败')
+}
+
+export async function removeAddressWorkspace(
+  baseUrl: string,
+  addressId: string,
+  workspaceId: string,
+): Promise<WorkspaceMembershipMutationResult> {
+  const response = await fetchWithAuth(
+    buildDesktopUrl(baseUrl, `/addresses/${encodeURIComponent(addressId)}/workspaces/${encodeURIComponent(workspaceId)}`),
+    {
+      method: 'DELETE',
+    },
+  )
+  return readJsonOrThrow<WorkspaceMembershipMutationResult>(response, '移除地址工作区归属失败')
+}
+
+export async function setAddressPrimaryWorkspace(
+  baseUrl: string,
+  addressId: string,
+  workspaceId: string,
+): Promise<WorkspaceMembershipMutationResult> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/addresses/${encodeURIComponent(addressId)}/primary-workspace`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_id: workspaceId }),
+  })
+  return readJsonOrThrow<WorkspaceMembershipMutationResult>(response, '设置地址主工作区失败')
 }
 
 export async function listOperatorSourceProfiles(baseUrl: string): Promise<OperatorSourceProfile[]> {

@@ -19,6 +19,9 @@ from gateway.models import (
     MemoryRecordPatchRequest,
     MemorySnapshotResponse,
     OperatorEndpointResponse,
+    OperatorEndpointMembershipRequest,
+    OperatorMembershipMutationResponse,
+    OperatorPrimaryWorkspaceRequest,
     OperatorScheduledJobCreateRequest,
     OperatorScheduledJobDeleteResponse,
     OperatorScheduledJobResponse,
@@ -29,6 +32,11 @@ from gateway.models import (
     OperatorWorkspaceCreateRequest,
     OperatorWorkspaceUpdateRequest,
     OperatorWorkspaceResponse,
+    OperatorWorkspaceTopologyResponse,
+    OperatorTopologyAddressResponse,
+    OperatorTopologyEndpointResponse,
+    OperatorTopologyMembershipResponse,
+    OperatorTopologyWorkspaceResponse,
     UiProtocolSchemaEnvelopeResponse,
     UiProtocolSchemaResponse,
 )
@@ -54,6 +62,67 @@ def _workspace_response(workspace) -> OperatorWorkspaceResponse:
         memory_ranking_policy=governance["memory_ranking_policy"],
         tool_routing_overrides=governance["tool_routing_overrides"],
     )
+
+
+def _list_workspace_rows(workspace_service, *, include_archived: bool = False):
+    try:
+        return workspace_service.list_workspaces(include_archived=include_archived)
+    except TypeError:
+        return workspace_service.list_workspaces()
+
+
+def _membership_response(domain, membership) -> OperatorTopologyMembershipResponse | None:
+    workspace = domain.services.workspace.get_by_id(getattr(membership, "workspace_id", None))
+    workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+    if not workspace_id:
+        return None
+    return OperatorTopologyMembershipResponse(
+        workspace_id=workspace_id,
+        primary=bool(getattr(membership, "is_primary", False)),
+        role=str(getattr(membership, "membership_role", "") or "member"),
+        enabled=bool(getattr(membership, "enabled", True)),
+        source=str(getattr(membership, "source", "") or "core"),
+    )
+
+
+def _membership_payloads(domain, rows) -> list[OperatorTopologyMembershipResponse]:
+    payloads: list[OperatorTopologyMembershipResponse] = []
+    for row in rows or []:
+        payload = _membership_response(domain, row)
+        if payload is not None:
+            payloads.append(payload)
+    return payloads
+
+
+def _membership_workspace_ids(payloads: list[OperatorTopologyMembershipResponse]) -> list[str]:
+    return [item.workspace_id for item in payloads if item.enabled]
+
+
+def _membership_primary_workspace_id(payloads: list[OperatorTopologyMembershipResponse]) -> str:
+    primary = next((item for item in payloads if item.enabled and item.primary), None)
+    if primary is not None:
+        return primary.workspace_id
+    return next((item.workspace_id for item in payloads if item.enabled), "")
+
+
+def _endpoint_display_name(endpoint, connections: list[dict]) -> str:
+    meta = dict(getattr(endpoint, "meta", {}) or {})
+    provider = connections[0].get("provider") if connections and isinstance(connections[0].get("provider"), dict) else {}
+    meta_provider = meta.get("provider") if isinstance(meta.get("provider"), dict) else {}
+    return str(
+        provider.get("display_name")
+        or meta.get("display_name")
+        or meta_provider.get("display_name")
+        or getattr(endpoint, "endpoint_id", "")
+        or ""
+    )
+
+
+def _last_seen_at(endpoint, connections: list[dict]) -> str:
+    if connections:
+        return str(connections[-1].get("updated_at") or connections[-1].get("connected_at") or "")
+    updated_at = getattr(endpoint, "updated_at", None)
+    return updated_at.isoformat() if updated_at is not None else ""
 
 
 def _scheduled_job_response(domain, job) -> OperatorScheduledJobResponse:
@@ -386,11 +455,16 @@ def build_operator_router(gateway) -> APIRouter:
             endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
             connections = by_endpoint.get(endpoint_id, [])
             connected = bool(connections)
-            last_seen_at = ""
-            if connections:
-                last_seen_at = str(connections[-1].get("updated_at") or connections[-1].get("connected_at") or "")
-            elif getattr(endpoint, "updated_at", None) is not None:
-                last_seen_at = endpoint.updated_at.isoformat()
+            membership_service = getattr(domain.services, "endpoint_workspace_membership", None)
+            memberships = (
+                _membership_payloads(
+                    domain,
+                    membership_service.list_for_endpoint(endpoint_row_id=endpoint.id) if membership_service is not None else [],
+                )
+                if membership_service is not None
+                else []
+            )
+            workspace_ids = _membership_workspace_ids(memberships) or list(getattr(endpoint, "workspace_scope", []) or [])
             rows.append(
                 OperatorEndpointResponse(
                     endpoint_id=endpoint_id,
@@ -400,13 +474,127 @@ def build_operator_router(gateway) -> APIRouter:
                     status="online" if connected else "offline",
                     connected=connected,
                     connection_count=len(connections),
-                    workspace_ids=list(getattr(endpoint, "workspace_scope", []) or []),
+                    workspace_ids=workspace_ids,
                     capability_count=len(domain.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)),
                     labels=list(getattr(endpoint, "labels", []) or []),
-                    last_seen_at=last_seen_at,
+                    last_seen_at=_last_seen_at(endpoint, connections),
                 )
             )
         return rows
+
+    @router.get("/workspace-topology", response_model=OperatorWorkspaceTopologyResponse)
+    async def get_workspace_topology(request: Request, include_archived: bool = False):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        snapshots = await gateway.endpoint_ws_manager.snapshot()
+        by_endpoint: dict[str, list[dict]] = {}
+        for item in snapshots:
+            endpoint_id = str(item.get("endpoint_id") or "").strip()
+            if endpoint_id:
+                by_endpoint.setdefault(endpoint_id, []).append(dict(item))
+
+        workspace_rows = _list_workspace_rows(domain.services.workspace, include_archived=include_archived)
+        workspace_status = {str(getattr(row, "workspace_id", "") or ""): str(getattr(row, "status", "") or "") for row in workspace_rows}
+        workspace_counts = {str(getattr(row, "workspace_id", "") or ""): {"total": 0, "online": 0} for row in workspace_rows}
+
+        endpoint_payloads: list[OperatorTopologyEndpointResponse] = []
+        endpoint_membership_service = getattr(domain.services, "endpoint_workspace_membership", None)
+        for endpoint in domain.services.endpoint.list_all():
+            endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
+            connections = by_endpoint.get(endpoint_id, [])
+            memberships = _membership_payloads(
+                domain,
+                endpoint_membership_service.list_for_endpoint(endpoint_row_id=endpoint.id) if endpoint_membership_service is not None else [],
+            )
+            workspace_ids = _membership_workspace_ids(memberships) or list(getattr(endpoint, "workspace_scope", []) or [])
+            if not include_archived:
+                workspace_ids = [item for item in workspace_ids if workspace_status.get(item, "active") != "archived"]
+                memberships = [item for item in memberships if workspace_status.get(item.workspace_id, "active") != "archived"]
+            connected = bool(connections)
+            for workspace_id in workspace_ids:
+                if workspace_id not in workspace_counts:
+                    workspace_counts[workspace_id] = {"total": 0, "online": 0}
+                workspace_counts[workspace_id]["total"] += 1
+                if connected:
+                    workspace_counts[workspace_id]["online"] += 1
+            capabilities = [
+                capability
+                for capability in domain.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)
+                if getattr(capability, "enabled", True)
+            ]
+            meta = dict(getattr(endpoint, "meta", {}) or {})
+            endpoint_payloads.append(
+                OperatorTopologyEndpointResponse(
+                    endpoint_id=endpoint_id,
+                    display_name=_endpoint_display_name(endpoint, connections),
+                    endpoint_type=str(getattr(endpoint, "endpoint_type", "") or ""),
+                    provider_type=str(getattr(endpoint, "provider_type", "") or ""),
+                    transport_type=str(getattr(endpoint, "transport_type", "") or ""),
+                    status="online" if connected else "offline",
+                    connected=connected,
+                    connection_count=len(connections),
+                    workspace_ids=workspace_ids,
+                    primary_workspace_id=_membership_primary_workspace_id(memberships)
+                    or str(meta.get("primary_workspace_id") or ""),
+                    provider_declared_workspace_ids=[
+                        str(item or "").strip()
+                        for item in (meta.get("provider_declared_workspace_ids") or [])
+                        if str(item or "").strip()
+                    ],
+                    capability_count=len(capabilities),
+                    executable_tools=[str(getattr(capability, "tool_key", "") or "") for capability in capabilities],
+                    labels=list(getattr(endpoint, "labels", []) or []),
+                    last_seen_at=_last_seen_at(endpoint, connections),
+                    core_owned=str(getattr(endpoint, "provider_type", "") or "").strip().lower() == "core",
+                    memberships=memberships,
+                )
+            )
+
+        address_payloads: list[OperatorTopologyAddressResponse] = []
+        address_membership_service = getattr(domain.services, "endpoint_address_workspace_membership", None)
+        for address in domain.services.endpoint_address.list_addresses() if hasattr(domain.services.endpoint_address, "list_addresses") else []:
+            endpoint = domain.services.endpoint.get_by_id(getattr(address, "endpoint_id", None))
+            memberships = _membership_payloads(
+                domain,
+                address_membership_service.list_for_address(address_row_id=address.id) if address_membership_service is not None else [],
+            )
+            workspace_ids = _membership_workspace_ids(memberships) or list(getattr(address, "workspace_scope", []) or [])
+            if not include_archived:
+                workspace_ids = [item for item in workspace_ids if workspace_status.get(item, "active") != "archived"]
+                memberships = [item for item in memberships if workspace_status.get(item.workspace_id, "active") != "archived"]
+            address_payloads.append(
+                OperatorTopologyAddressResponse(
+                    address_id=str(getattr(address, "address_id", "") or ""),
+                    endpoint_id=str(getattr(endpoint, "endpoint_id", "") or ""),
+                    display_name=str(getattr(address, "display_name", "") or getattr(address, "external_ref", "") or ""),
+                    provider_type=str(getattr(address, "provider_type", "") or ""),
+                    address_type=str(getattr(address, "address_type", "") or ""),
+                    status=str(getattr(address, "status", "") or ""),
+                    workspace_ids=workspace_ids,
+                    primary_workspace_id=_membership_primary_workspace_id(memberships)
+                    or str((getattr(address, "meta", {}) or {}).get("primary_workspace_id") or ""),
+                    capabilities=list(getattr(address, "capabilities", []) or []),
+                    memberships=memberships,
+                )
+            )
+
+        workspaces = [
+            OperatorTopologyWorkspaceResponse(
+                workspace_id=str(getattr(workspace, "workspace_id", "") or ""),
+                title=str(getattr(workspace, "title", "") or ""),
+                status=str(getattr(workspace, "status", "") or ""),
+                base_mode=str(getattr(workspace, "base_mode", "") or "general"),
+                description=str(getattr(workspace, "description", "") or ""),
+                endpoint_count=workspace_counts.get(str(getattr(workspace, "workspace_id", "") or ""), {}).get("total", 0),
+                online_endpoint_count=workspace_counts.get(str(getattr(workspace, "workspace_id", "") or ""), {}).get("online", 0),
+            )
+            for workspace in workspace_rows
+        ]
+        return OperatorWorkspaceTopologyResponse(
+            workspaces=workspaces,
+            endpoints=endpoint_payloads,
+            addresses=address_payloads,
+        )
 
     @router.get("/scheduled-jobs", response_model=list[OperatorScheduledJobResponse])
     async def list_scheduled_jobs(request: Request):
@@ -507,10 +695,13 @@ def build_operator_router(gateway) -> APIRouter:
         return OperatorScheduledJobDeleteResponse(job_id=job_id, deleted=True)
 
     @router.get("/workspaces", response_model=list[OperatorWorkspaceResponse])
-    async def list_workspaces(request: Request):
+    async def list_workspaces(request: Request, include_archived: bool = False):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
-        return [_workspace_response(workspace) for workspace in domain.services.workspace.list_workspaces()]
+        return [
+            _workspace_response(workspace)
+            for workspace in _list_workspace_rows(domain.services.workspace, include_archived=include_archived)
+        ]
 
     @router.get("/source-profiles", response_model=list[OperatorSourceProfileResponse])
     async def list_source_profiles(request: Request):
@@ -611,10 +802,231 @@ def build_operator_router(gateway) -> APIRouter:
             metadata_changed = True
         updated = domain.services.workspace.update_workspace(
             workspace_id=workspace_id,
+            title=payload.title,
+            description=payload.description,
+            prompt_overlay=payload.prompt_overlay,
             base_mode=payload.base_mode,
             default_execution_target=payload.default_execution_target,
             metadata=metadata if metadata_changed else None,
         )
         return _workspace_response(updated or workspace)
+
+    @router.delete("/workspaces/{workspace_id}", response_model=OperatorWorkspaceResponse)
+    async def archive_workspace(workspace_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            workspace = domain.services.workspace.archive_workspace(workspace_id=workspace_id)
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code="workspace_archive_forbidden",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        if workspace is None:
+            gateway._raise_http_error(
+                status_code=404,
+                code="workspace_not_found",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=f"Unknown workspace: {workspace_id}",
+            )
+        return _workspace_response(workspace)
+
+    @router.post("/workspaces/{workspace_id}/restore", response_model=OperatorWorkspaceResponse)
+    async def restore_workspace(workspace_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        workspace = domain.services.workspace.restore_workspace(workspace_id=workspace_id)
+        if workspace is None:
+            gateway._raise_http_error(
+                status_code=404,
+                code="workspace_not_found",
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=f"Unknown workspace: {workspace_id}",
+            )
+        return _workspace_response(workspace)
+
+    @router.post("/endpoints/{endpoint_id}/workspaces", response_model=OperatorMembershipMutationResponse)
+    async def add_endpoint_workspace(endpoint_id: str, payload: OperatorEndpointMembershipRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            result = domain.services.endpoint_workspace_membership.add_workspace(
+                endpoint_id=endpoint_id,
+                workspace_id=payload.workspace_id,
+                make_primary=payload.make_primary,
+            )
+        except KeyError as exc:
+            gateway._raise_http_error(
+                status_code=404,
+                code=str(exc.args[0] if exc.args else "membership_target_not_found"),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="Endpoint or workspace was not found.",
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code=str(exc),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        return OperatorMembershipMutationResponse(
+            target_type="endpoint",
+            target_id=result["endpoint_id"],
+            workspace_ids=result["workspace_ids"],
+            primary_workspace_id=result["primary_workspace_id"],
+        )
+
+    @router.delete("/endpoints/{endpoint_id}/workspaces/{workspace_id}", response_model=OperatorMembershipMutationResponse)
+    async def remove_endpoint_workspace(endpoint_id: str, workspace_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            result = domain.services.endpoint_workspace_membership.remove_workspace(
+                endpoint_id=endpoint_id,
+                workspace_id=workspace_id,
+            )
+        except KeyError as exc:
+            gateway._raise_http_error(
+                status_code=404,
+                code=str(exc.args[0] if exc.args else "membership_target_not_found"),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="Endpoint or workspace was not found.",
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code=str(exc),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        return OperatorMembershipMutationResponse(
+            target_type="endpoint",
+            target_id=result["endpoint_id"],
+            workspace_ids=result["workspace_ids"],
+            primary_workspace_id=result["primary_workspace_id"],
+        )
+
+    @router.patch("/endpoints/{endpoint_id}/primary-workspace", response_model=OperatorMembershipMutationResponse)
+    async def set_endpoint_primary_workspace(endpoint_id: str, payload: OperatorPrimaryWorkspaceRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            result = domain.services.endpoint_workspace_membership.set_primary_workspace(
+                endpoint_id=endpoint_id,
+                workspace_id=payload.workspace_id,
+            )
+        except KeyError as exc:
+            gateway._raise_http_error(
+                status_code=404,
+                code=str(exc.args[0] if exc.args else "membership_target_not_found"),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="Endpoint or workspace was not found.",
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code=str(exc),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        return OperatorMembershipMutationResponse(
+            target_type="endpoint",
+            target_id=result["endpoint_id"],
+            workspace_ids=result["workspace_ids"],
+            primary_workspace_id=result["primary_workspace_id"],
+        )
+
+    @router.post("/addresses/{address_id}/workspaces", response_model=OperatorMembershipMutationResponse)
+    async def add_address_workspace(address_id: str, payload: OperatorEndpointMembershipRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            result = domain.services.endpoint_address_workspace_membership.add_workspace(
+                address_id=address_id,
+                workspace_id=payload.workspace_id,
+                make_primary=payload.make_primary,
+            )
+        except KeyError as exc:
+            gateway._raise_http_error(
+                status_code=404,
+                code=str(exc.args[0] if exc.args else "membership_target_not_found"),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="Address or workspace was not found.",
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code=str(exc),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        return OperatorMembershipMutationResponse(
+            target_type="address",
+            target_id=result["address_id"],
+            workspace_ids=result["workspace_ids"],
+            primary_workspace_id=result["primary_workspace_id"],
+        )
+
+    @router.delete("/addresses/{address_id}/workspaces/{workspace_id}", response_model=OperatorMembershipMutationResponse)
+    async def remove_address_workspace(address_id: str, workspace_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            result = domain.services.endpoint_address_workspace_membership.remove_workspace(
+                address_id=address_id,
+                workspace_id=workspace_id,
+            )
+        except KeyError as exc:
+            gateway._raise_http_error(
+                status_code=404,
+                code=str(exc.args[0] if exc.args else "membership_target_not_found"),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="Address or workspace was not found.",
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code=str(exc),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        return OperatorMembershipMutationResponse(
+            target_type="address",
+            target_id=result["address_id"],
+            workspace_ids=result["workspace_ids"],
+            primary_workspace_id=result["primary_workspace_id"],
+        )
+
+    @router.patch("/addresses/{address_id}/primary-workspace", response_model=OperatorMembershipMutationResponse)
+    async def set_address_primary_workspace(address_id: str, payload: OperatorPrimaryWorkspaceRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            result = domain.services.endpoint_address_workspace_membership.set_primary_workspace(
+                address_id=address_id,
+                workspace_id=payload.workspace_id,
+            )
+        except KeyError as exc:
+            gateway._raise_http_error(
+                status_code=404,
+                code=str(exc.args[0] if exc.args else "membership_target_not_found"),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message="Address or workspace was not found.",
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(
+                status_code=400,
+                code=str(exc),
+                category=RuntimeErrorCategory.VALIDATION.value,
+                message=str(exc),
+            )
+        return OperatorMembershipMutationResponse(
+            target_type="address",
+            target_id=result["address_id"],
+            workspace_ids=result["workspace_ids"],
+            primary_workspace_id=result["primary_workspace_id"],
+        )
 
     return router

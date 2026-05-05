@@ -43,6 +43,71 @@ export interface RuntimeWorkspace {
   tool_routing_overrides: Record<string, unknown>
 }
 
+export interface WorkspaceTopologyMembership {
+  workspace_id: string
+  primary: boolean
+  role: string
+  enabled: boolean
+  source: string
+}
+
+export interface WorkspaceTopologyWorkspace {
+  workspace_id: string
+  title: string
+  status: string
+  base_mode: AssistantMode | string
+  description: string
+  endpoint_count: number
+  online_endpoint_count: number
+}
+
+export interface WorkspaceTopologyEndpoint {
+  endpoint_id: string
+  display_name: string
+  endpoint_type: string
+  provider_type: string
+  transport_type: string
+  status: string
+  connected: boolean
+  connection_count: number
+  workspace_ids: string[]
+  primary_workspace_id: string
+  provider_declared_workspace_ids: string[]
+  capability_count: number
+  executable_tools: string[]
+  labels: string[]
+  last_seen_at: string
+  core_owned: boolean
+  memberships: WorkspaceTopologyMembership[]
+}
+
+export interface WorkspaceTopologyAddress {
+  address_id: string
+  endpoint_id: string
+  display_name: string
+  provider_type: string
+  address_type: string
+  status: string
+  workspace_ids: string[]
+  primary_workspace_id: string
+  capabilities: string[]
+  memberships: WorkspaceTopologyMembership[]
+}
+
+export interface WorkspaceTopology {
+  workspaces: WorkspaceTopologyWorkspace[]
+  endpoints: WorkspaceTopologyEndpoint[]
+  addresses: WorkspaceTopologyAddress[]
+}
+
+export interface WorkspaceMembershipMutationResult {
+  ok: boolean
+  target_type: 'endpoint' | 'address' | string
+  target_id: string
+  workspace_ids: string[]
+  primary_workspace_id: string
+}
+
 export interface RuntimeThread {
   thread_id: string
   home_workspace_id: string

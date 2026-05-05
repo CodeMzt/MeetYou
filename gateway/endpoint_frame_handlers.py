@@ -360,21 +360,37 @@ class EndpointHelloHandler(EndpointFrameHandler):
             endpoint_id = str(item.get("endpoint_id") or "").strip()
             if not endpoint_id:
                 continue
+            declared_workspace_ids = [
+                str(value or "").strip()
+                for value in (item.get("workspace_ids") or item.get("workspace_scope") or [])
+                if str(value or "").strip()
+            ]
+            existing_endpoint = context.domain.services.endpoint.get_by_endpoint_id(endpoint_id)
+            managed_workspace_scope = list(getattr(existing_endpoint, "workspace_scope", []) or []) if existing_endpoint is not None else []
             endpoint_supports_markdown = _bool_value(item.get("supports_markdown"), default=provider_supports_markdown)
             row = context.domain.services.endpoint.ensure_endpoint(
                 endpoint_id=endpoint_id,
                 endpoint_type=str(item.get("endpoint_type") or "endpoint"),
                 provider_type=str(provider.get("provider_type") or item.get("provider_type") or "external"),
                 transport_type=str(item.get("transport_type") or "websocket"),
-                workspace_scope=list(item.get("workspace_ids") or item.get("workspace_scope") or []),
+                workspace_scope=managed_workspace_scope or declared_workspace_ids,
                 status="online",
                 labels=list(item.get("roles") or item.get("labels") or []),
                 metadata={
                     "provider": provider,
                     "roles": list(item.get("roles") or []),
                     "supports_markdown": endpoint_supports_markdown,
+                    "provider_declared_workspace_ids": declared_workspace_ids,
                 },
             )
+            membership_service = getattr(context.domain.services, "endpoint_workspace_membership", None)
+            seeder = getattr(membership_service, "seed_endpoint_memberships", None)
+            if callable(seeder):
+                seeder(
+                    endpoint_row_id=row.id,
+                    workspace_ids=declared_workspace_ids or managed_workspace_scope,
+                    source="provider_declared",
+                )
             if primary is None:
                 primary = row
             created.append(endpoint_id)
@@ -468,13 +484,21 @@ class AddressHandler(EndpointFrameHandler):
                 external_ref=normalized["external_ref"],
                 address_id=normalized["address_id"],
                 display_name=normalized["display_name"],
-                workspace_scope=normalized["workspace_scope"],
+                workspace_scope=normalized["workspace_scope"] or list(getattr(endpoint, "workspace_scope", []) or []),
                 status=normalized["status"],
                 capabilities=normalized["capabilities"],
                 last_seen_at=utcnow(),
                 last_verified_at=utcnow() if normalized["status"] == "sendable" else None,
                 metadata=normalized["metadata"],
             )
+            membership_service = getattr(context.domain.services, "endpoint_address_workspace_membership", None)
+            seeder = getattr(membership_service, "seed_address_memberships", None)
+            if callable(seeder):
+                seeder(
+                    address_row_id=row.id,
+                    workspace_ids=normalized["workspace_scope"] or list(getattr(endpoint, "workspace_scope", []) or []),
+                    source="provider_declared",
+                )
             saved.append(_public_address(row))
         await context.send(
             "endpoint.addresses.ack",
