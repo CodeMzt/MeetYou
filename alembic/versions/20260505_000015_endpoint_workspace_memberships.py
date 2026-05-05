@@ -84,6 +84,28 @@ def upgrade() -> None:
     workspace_by_key = {row["workspace_id"]: row["id"] for row in workspace_rows}
     personal_workspace_id = workspace_by_key.get("personal")
     endpoint_workspace_ids: dict[uuid.UUID, list[uuid.UUID]] = {}
+    endpoint_membership_insert = sa.text(
+        """
+        INSERT INTO endpoint_workspace_memberships (
+            id, membership_id, endpoint_id, workspace_id, membership_role, is_primary, enabled, source, metadata, created_at, updated_at
+        )
+        VALUES (
+            :id, :membership_id, :endpoint_id, :workspace_id, 'member', :is_primary, true, 'migration',
+            :metadata, :created_at, :updated_at
+        )
+        """
+    ).bindparams(sa.bindparam("metadata", type_=sa.JSON()))
+    address_membership_insert = sa.text(
+        """
+        INSERT INTO endpoint_address_workspace_memberships (
+            id, membership_id, address_id, workspace_id, membership_role, is_primary, enabled, source, metadata, created_at, updated_at
+        )
+        VALUES (
+            :id, :membership_id, :address_id, :workspace_id, 'member', :is_primary, true, 'migration',
+            :metadata, :created_at, :updated_at
+        )
+        """
+    ).bindparams(sa.bindparam("metadata", type_=sa.JSON()))
 
     endpoint_rows = conn.execute(
         sa.text("SELECT id, endpoint_id, provider_type, workspace_scope FROM endpoints ORDER BY endpoint_id")
@@ -95,17 +117,7 @@ def upgrade() -> None:
         endpoint_workspace_ids[endpoint["id"]] = scope
         for index, workspace_id in enumerate(scope):
             conn.execute(
-                sa.text(
-                    """
-                    INSERT INTO endpoint_workspace_memberships (
-                        id, membership_id, endpoint_id, workspace_id, membership_role, is_primary, enabled, source, metadata, created_at, updated_at
-                    )
-                    VALUES (
-                        :id, :membership_id, :endpoint_id, :workspace_id, 'member', :is_primary, true, 'migration',
-                        :metadata, :created_at, :updated_at
-                    )
-                    """
-                ),
+                endpoint_membership_insert,
                 {
                     "id": uuid.uuid4(),
                     "membership_id": f"ewm.{uuid.uuid4().hex}",
@@ -127,17 +139,7 @@ def upgrade() -> None:
             scope = list(endpoint_workspace_ids.get(address["endpoint_id"], []))
         for index, workspace_id in enumerate(scope):
             conn.execute(
-                sa.text(
-                    """
-                    INSERT INTO endpoint_address_workspace_memberships (
-                        id, membership_id, address_id, workspace_id, membership_role, is_primary, enabled, source, metadata, created_at, updated_at
-                    )
-                    VALUES (
-                        :id, :membership_id, :address_id, :workspace_id, 'member', :is_primary, true, 'migration',
-                        :metadata, :created_at, :updated_at
-                    )
-                    """
-                ),
+                address_membership_insert,
                 {
                     "id": uuid.uuid4(),
                     "membership_id": f"eawm.{uuid.uuid4().hex}",
