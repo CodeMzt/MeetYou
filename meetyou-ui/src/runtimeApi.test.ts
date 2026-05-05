@@ -518,6 +518,30 @@ describe('runtimeApi', () => {
     )
   })
 
+  it('passes the force flag when deleting protected runtime threads', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          thread_id: 'thr_default_old',
+          deleted: true,
+          status: 'deleted',
+          reason: 'deleted',
+          default_thread: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const result = await deleteRuntimeThread('http://127.0.0.1:8000', 'thr_default_old', { force: true })
+
+    expect(result.default_thread).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/desktop/threads/thr_default_old?force=true',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+  })
+
   it('logs into Danxi session and patches WebVPN cookie through runtime API', async () => {
     const invoke = vi.fn(async (channel: string, payload?: { purpose?: string }) => {
       if (channel === 'get-gateway-access-token') {

@@ -268,7 +268,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     }
     const activeContext = endpointContext ?? (await initializeEndpointContext())
     const deletingDefaultThread = Boolean(defaultThreadId && normalizedThreadId === defaultThreadId)
-    const result = await deleteRuntimeThread(baseUrl, normalizedThreadId, { force: deletingDefaultThread })
+    const result = await deleteRuntimeThread(baseUrl, normalizedThreadId, { force: true })
     if (!result.deleted) {
       const message = runtimeThreadDeleteErrorMessage(result.reason)
       if (message) {
