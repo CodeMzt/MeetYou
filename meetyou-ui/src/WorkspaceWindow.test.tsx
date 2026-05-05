@@ -7,8 +7,9 @@ describe('WorkspaceWindow', () => {
     const markup = renderToStaticMarkup(<WorkspaceWindow />)
 
     expect(markup).toContain('工作区')
-    expect(markup).toContain('Endpoint Topology')
+    expect(markup).toContain('Workspace Terminal')
     expect(markup).toContain('搜索工作区或 Endpoint')
+    expect(markup).toContain('workspace-topology-pan-surface')
     expect(markup).toContain('Core')
     expect(markup).toContain('选择一个节点')
   })

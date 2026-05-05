@@ -406,28 +406,40 @@
   min-height: 0;
   flex: 1;
   overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, color-mix(in srgb, var(--border-subtle) 40%, transparent) 1px, transparent 1px),
-    linear-gradient(color-mix(in srgb, var(--border-subtle) 40%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border-subtle) 26%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--border-subtle) 26%, transparent) 1px, transparent 1px),
     color-mix(in srgb, var(--bg-app) 78%, var(--bg-card));
   background-size: 26px 26px;
+  cursor: grab;
+  scrollbar-color: color-mix(in srgb, var(--text-tertiary) 34%, transparent) transparent;
+  scrollbar-width: thin;
+  touch-action: none;
+}
+
+.boardScroll[data-panning='true'] {
+  cursor: grabbing;
 }
 
 .board {
   position: relative;
   min-width: 100%;
+  isolation: isolate;
 }
 
 .edgeLayer {
   position: absolute;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
   overflow: visible;
 }
 
-.coreEdge,
+.coreRail,
+.workspaceBus,
 .primaryEdge,
 .offlineEdge,
 .secondaryEdge,
@@ -436,29 +448,36 @@
   stroke-linecap: round;
 }
 
-.coreEdge {
-  stroke: color-mix(in srgb, #718096 34%, transparent);
-  stroke-width: 1.5;
+.coreRail {
+  stroke: color-mix(in srgb, var(--text-accent) 42%, transparent);
+  stroke-width: 2;
+}
+
+.workspaceBus {
+  stroke: color-mix(in srgb, #718096 36%, transparent);
+  stroke-width: 1.4;
+  stroke-dasharray: 2 7;
 }
 
 .primaryEdge {
-  stroke: color-mix(in srgb, #2f855a 58%, transparent);
+  stroke: color-mix(in srgb, #2f855a 72%, transparent);
   stroke-width: 2;
 }
 
 .offlineEdge {
-  stroke: color-mix(in srgb, #a0aec0 54%, transparent);
-  stroke-width: 1.6;
+  stroke: color-mix(in srgb, #a0aec0 58%, transparent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 5;
 }
 
 .secondaryEdge {
-  stroke: color-mix(in srgb, #4c6fff 38%, transparent);
-  stroke-width: 1.4;
-  stroke-dasharray: 5 6;
+  stroke: color-mix(in srgb, #4c6fff 60%, transparent);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 6;
 }
 
 .addressEdge {
-  stroke: color-mix(in srgb, #805ad5 38%, transparent);
+  stroke: color-mix(in srgb, #805ad5 44%, transparent);
   stroke-width: 1.2;
 }
 
@@ -471,7 +490,7 @@
 }
 
 .coreNode {
-  z-index: 3;
+  z-index: 4;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -479,29 +498,48 @@
   gap: 5px;
   border: 1px solid color-mix(in srgb, var(--text-accent) 34%, var(--border-subtle));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-card) 92%, var(--text-accent));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text-accent) 9%, var(--bg-card)), var(--bg-card));
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
-  box-shadow: 0 12px 28px color-mix(in srgb, var(--shadow-color) 78%, transparent);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--shadow-color) 72%, transparent);
 }
 
 .workspaceLane {
   z-index: 1;
+  border: 1px solid color-mix(in srgb, #718096 22%, var(--border-subtle));
+  border-left-color: color-mix(in srgb, var(--text-accent) 34%, var(--border-subtle));
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--text-accent) 8%, transparent), transparent 26%),
+    color-mix(in srgb, var(--bg-card) 70%, transparent);
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 4%, transparent);
+}
+
+.workspaceLaneButton {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  width: 128px;
+  min-height: 46px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, #718096 22%, var(--border-subtle));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-card) 72%, transparent);
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
 }
 
-.workspaceLane:hover,
+.workspaceLaneButton:hover,
+.workspaceLaneButton:focus-visible,
 .workspaceLane[data-selected='true'] {
   border-color: color-mix(in srgb, var(--text-accent) 42%, var(--border-subtle));
   background: color-mix(in srgb, var(--text-accent) 8%, var(--bg-card));
@@ -512,7 +550,7 @@
 }
 
 .laneTitle {
-  max-width: 138px;
+  max-width: 108px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -521,7 +559,7 @@
 }
 
 .laneMeta {
-  max-width: 190px;
+  max-width: 108px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -538,19 +576,42 @@
   padding: 8px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: var(--bg-card);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 96%, #ffffff), var(--bg-card));
   color: var(--text-primary);
-  box-shadow: 0 10px 22px color-mix(in srgb, var(--shadow-color) 70%, transparent);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--shadow-color) 62%, transparent);
   cursor: pointer;
 }
 
+.endpointNode:focus-visible,
 .endpointNode:hover,
 .endpointNode[data-selected='true'] {
   border-color: color-mix(in srgb, var(--text-accent) 42%, var(--border-subtle));
 }
 
+.endpointNode[data-selected='true'] {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--text-accent) 16%, transparent),
+    0 12px 26px color-mix(in srgb, var(--shadow-color) 68%, transparent);
+}
+
 .endpointNode[data-online='true'] {
   border-color: color-mix(in srgb, #2f855a 34%, var(--border-subtle));
+}
+
+.endpointNode[data-primary='false'] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, #4c6fff 42%, var(--border-subtle));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #4c6fff 8%, var(--bg-card)), var(--bg-card));
+}
+
+.endpointNode[data-primary='false'][data-online='true'] {
+  border-color: color-mix(in srgb, #4c6fff 54%, var(--border-subtle));
+}
+
+.endpointNode[data-primary='false'] .nodeIcon {
+  color: color-mix(in srgb, #4c6fff 88%, var(--text-accent));
 }
 
 .endpointNode[data-core='true'] {
@@ -564,20 +625,25 @@
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-  background: var(--bg-app);
+  background: color-mix(in srgb, var(--bg-app) 82%, #000000);
   color: var(--text-accent);
+}
+
+.endpointNode[data-online='true'] .nodeIcon {
+  color: color-mix(in srgb, #008c69 88%, var(--text-accent));
 }
 
 .nodeText {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   text-align: left;
 }
 
 .nodeText strong,
 .nodeText small,
+.workspaceBadgeLine span,
 .addressNode span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -594,6 +660,26 @@
   color: var(--text-tertiary);
 }
 
+.workspaceBadgeLine {
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+}
+
+.workspaceBadgeLine span {
+  max-width: 92px;
+  min-height: 16px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, #4c6fff 28%, var(--border-subtle));
+  border-radius: 999px;
+  background: color-mix(in srgb, #4c6fff 10%, var(--bg-app));
+  color: color-mix(in srgb, #8aa0ff 84%, var(--text-primary));
+  font-size: 9px;
+  line-height: 1;
+}
+
 .onlineIcon {
   color: #2f855a;
 }
@@ -607,15 +693,17 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 0 8px;
-  border: 1px solid color-mix(in srgb, #805ad5 22%, var(--border-subtle));
+  padding: 0 46px 0 8px;
+  border: 1px solid color-mix(in srgb, #805ad5 30%, var(--border-subtle));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-card) 88%, #805ad5);
+  background: color-mix(in srgb, var(--bg-card) 90%, #805ad5);
   color: var(--text-primary);
   font-size: 10px;
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--shadow-color) 42%, transparent);
   cursor: pointer;
 }
 
+.addressNode:focus-visible,
 .addressNode:hover,
 .addressNode[data-selected='true'] {
   border-color: color-mix(in srgb, #805ad5 54%, var(--border-subtle));
@@ -623,8 +711,8 @@
 
 .hiddenAddressBadge {
   z-index: 5;
-  min-width: 28px;
-  height: 22px;
+  min-width: 36px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

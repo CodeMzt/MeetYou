@@ -17,7 +17,7 @@ const sizes = [
 const states = [
   {
     name: 'overview',
-    visibleTexts: ['工作区', 'Endpoint Topology', 'Core', 'Desktop Main', '个人工作区'],
+    visibleTexts: ['工作区', 'Workspace Terminal', 'Core', 'Desktop Main', '个人工作区', '兼属'],
     script: 'window.scrollTo(0, 0)',
   },
   {
@@ -41,7 +41,7 @@ const topologyPayload = {
       status: 'active',
       base_mode: 'general',
       description: '本机默认运行边界',
-      endpoint_count: 4,
+      endpoint_count: 3,
       online_endpoint_count: 3,
     },
     {
@@ -85,25 +85,6 @@ const topologyPayload = {
         { workspace_id: 'personal', primary: true, role: 'member', enabled: true, source: 'core' },
         { workspace_id: 'study', primary: false, role: 'member', enabled: true, source: 'core' },
       ],
-    },
-    {
-      endpoint_id: 'core.local',
-      display_name: 'Core Local',
-      endpoint_type: 'core_local',
-      provider_type: 'core',
-      transport_type: 'inproc',
-      status: 'offline',
-      connected: false,
-      connection_count: 0,
-      workspace_ids: ['personal'],
-      primary_workspace_id: 'personal',
-      provider_declared_workspace_ids: [],
-      capability_count: 1,
-      executable_tools: ['core.workflow.scheduled_workflow'],
-      labels: ['core'],
-      last_seen_at: '',
-      core_owned: true,
-      memberships: [{ workspace_id: 'personal', primary: true, role: 'member', enabled: true, source: 'core' }],
     },
     {
       endpoint_id: 'feishu.cloud.provider',
@@ -350,7 +331,7 @@ async function waitForText(win, expectedText, timeoutMs = 15000) {
 async function collectLayoutReport(win, size, state) {
   return win.webContents.executeJavaScript(`
 (() => {
-  const requiredTexts = ['工作区', 'Endpoint Topology', 'Core', 'Desktop Main']
+  const requiredTexts = ['工作区', 'Workspace Terminal', 'Core', 'Desktop Main']
   const requiredVisibleTexts = ${JSON.stringify(state.visibleTexts)}
   const bodyText = document.body.innerText || ''
   const missingTexts = requiredTexts.filter((text) => !bodyText.includes(text))
@@ -440,7 +421,7 @@ async function runVisualCheck() {
   })
 
   await win.loadURL(visualUrl)
-  await waitForText(win, 'Endpoint Topology')
+  await waitForText(win, 'Workspace Terminal')
   await waitForText(win, 'Desktop Main')
   const reports = []
   for (const size of sizes) {

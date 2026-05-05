@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent, ReactNode } from 'react'
 import {
   Archive,
   ArchiveRestore,
@@ -75,8 +75,27 @@ type TopologyLayout = {
   height: number
   core: { x: number; y: number; width: number; height: number }
   lanes: Map<string, { x: number; y: number; width: number; height: number }>
-  endpoints: Map<string, { x: number; y: number; width: number; height: number }>
-  addresses: Map<string, { x: number; y: number; width: number; height: number }>
+  endpointMemberships: Array<{
+    key: string
+    workspace_id: string
+    endpoint_id: string
+    primary: boolean
+    hidden_address_count: number
+    x: number
+    y: number
+    width: number
+    height: number
+  }>
+  addresses: Array<{
+    key: string
+    workspace_id: string
+    address_id: string
+    endpoint_id: string
+    x: number
+    y: number
+    width: number
+    height: number
+  }>
 }
 
 const EMPTY_PAYLOAD: WorkspaceWindowPayload = {
@@ -96,20 +115,29 @@ const EMPTY_TOPOLOGY: WorkspaceTopology = {
   addresses: [],
 }
 
-const BOARD_WIDTH = 860
-const LANE_X = 150
-const LANE_WIDTH = 650
-const LANE_TOP = 82
-const LANE_GAP = 22
-const ENDPOINT_WIDTH = 146
-const ENDPOINT_HEIGHT = 54
+const BOARD_WIDTH = 840
+const CORE_X = 24
+const CORE_Y = 28
+const CORE_WIDTH = 88
+const CORE_HEIGHT = 52
+const CORE_RAIL_X = CORE_X + CORE_WIDTH / 2
+const LANE_X = 96
+const LANE_WIDTH = 720
+const LANE_TOP = 108
+const LANE_GAP = 18
+const LANE_BUS_Y_OFFSET = 34
+const LANE_CONTENT_TOP = 72
+const LANE_BOTTOM_PADDING = 18
+const ENDPOINT_STACK_X_OFFSET = 34
+const ENDPOINT_WIDTH = 360
+const ENDPOINT_HEIGHT = 68
 const ADDRESS_HEIGHT = 26
 const ADDRESS_GAP = 6
-const ENDPOINT_COLUMN_GAP = 12
-const ENDPOINT_ROW_GAP = 20
-const LANE_HEADER_HEIGHT = 44
-const LANE_BOTTOM_PADDING = 16
-const ENDPOINTS_PER_ROW = 3
+const ENDPOINT_COLUMN_GAP = 16
+const ENDPOINT_ROW_GAP = 24
+const ENDPOINTS_PER_ROW = 1
+const ADDRESS_VISIBLE_LIMIT = 1
+const EMPTY_LANE_HEIGHT = 96
 
 function normalizeSearch(value: string): string {
   return value.trim().toLowerCase()
@@ -141,77 +169,138 @@ function providerIcon(providerType: string) {
   return <Bot size={16} />
 }
 
+function endpointWorkspaceIds(endpoint: WorkspaceTopologyEndpoint): string[] {
+  return Array.from(new Set([endpoint.primary_workspace_id, ...endpoint.workspace_ids].filter(Boolean)))
+}
+
+function addressWorkspaceIds(address: WorkspaceTopologyAddress): string[] {
+  return Array.from(new Set([address.primary_workspace_id, ...address.workspace_ids].filter(Boolean)))
+}
+
+function endpointMembershipKey(workspaceId: string, endpointId: string): string {
+  return `${workspaceId}::${endpointId}`
+}
+
+function addressMembershipKey(workspaceId: string, addressId: string): string {
+  return `${workspaceId}::${addressId}`
+}
+
 function computeTopologyLayout(topology: WorkspaceTopology): TopologyLayout {
   const workspaces = topology.workspaces.length > 0
     ? topology.workspaces
     : [{ workspace_id: 'unassigned', title: 'Unassigned', status: 'active', base_mode: 'general', description: '', endpoint_count: 0, online_endpoint_count: 0 }]
+  const endpointById = new Map(topology.endpoints.map((endpoint) => [endpoint.endpoint_id, endpoint]))
   const addressesByEndpoint = new Map<string, WorkspaceTopologyAddress[]>()
   topology.addresses.forEach((address) => {
     const bucket = addressesByEndpoint.get(address.endpoint_id) || []
     bucket.push(address)
     addressesByEndpoint.set(address.endpoint_id, bucket)
   })
-  const endpointsByPrimary = new Map<string, WorkspaceTopologyEndpoint[]>()
+  const endpointIdsByWorkspace = new Map<string, Set<string>>()
+  const addEndpointToWorkspace = (workspaceId: string, endpointId: string) => {
+    if (!workspaceId || !endpointId) {
+      return
+    }
+    const bucket = endpointIdsByWorkspace.get(workspaceId) || new Set<string>()
+    bucket.add(endpointId)
+    endpointIdsByWorkspace.set(workspaceId, bucket)
+  }
   topology.endpoints.forEach((endpoint) => {
-    const workspaceId = endpoint.primary_workspace_id || endpoint.workspace_ids[0] || workspaces[0]?.workspace_id || 'unassigned'
-    const bucket = endpointsByPrimary.get(workspaceId) || []
-    bucket.push(endpoint)
-    endpointsByPrimary.set(workspaceId, bucket)
+    endpointWorkspaceIds(endpoint).forEach((workspaceId) => addEndpointToWorkspace(workspaceId, endpoint.endpoint_id))
   })
+  topology.addresses.forEach((address) => {
+    addressWorkspaceIds(address).forEach((workspaceId) => addEndpointToWorkspace(workspaceId, address.endpoint_id))
+  })
+  const endpointMembershipsForWorkspace = (workspaceId: string) => {
+    return Array.from(endpointIdsByWorkspace.get(workspaceId) || [])
+      .map((endpointId) => endpointById.get(endpointId))
+      .filter((endpoint): endpoint is WorkspaceTopologyEndpoint => Boolean(endpoint))
+      .sort((a, b) => {
+        const primaryDelta = Number(b.primary_workspace_id === workspaceId) - Number(a.primary_workspace_id === workspaceId)
+        if (primaryDelta !== 0) return primaryDelta
+        const connectedDelta = Number(b.connected) - Number(a.connected)
+        if (connectedDelta !== 0) return connectedDelta
+        return (a.display_name || a.endpoint_id).localeCompare(b.display_name || b.endpoint_id)
+      })
+  }
+  const addressesForEndpointWorkspace = (endpointId: string, workspaceId: string) => {
+    return (addressesByEndpoint.get(endpointId) || [])
+      .filter((address) => addressWorkspaceIds(address).includes(workspaceId))
+      .sort((a, b) => (a.display_name || a.address_id).localeCompare(b.display_name || b.address_id))
+  }
 
   const lanes = new Map<string, { x: number; y: number; width: number; height: number }>()
   const rowHeightsByWorkspace = new Map<string, number[]>()
   let cursorY = LANE_TOP
   workspaces.forEach((workspace) => {
-    const endpoints = (endpointsByPrimary.get(workspace.workspace_id) || []).slice().sort((a, b) => a.endpoint_id.localeCompare(b.endpoint_id))
+    const endpoints = endpointMembershipsForWorkspace(workspace.workspace_id)
     const rowCount = Math.max(1, Math.ceil(endpoints.length / ENDPOINTS_PER_ROW))
     const rowHeights = Array.from({ length: rowCount }, (_, rowIndex) => {
       const rowEndpoints = endpoints.slice(rowIndex * ENDPOINTS_PER_ROW, rowIndex * ENDPOINTS_PER_ROW + ENDPOINTS_PER_ROW)
-      const maxAddressCount = Math.max(0, ...rowEndpoints.map((endpoint) => Math.min(addressesByEndpoint.get(endpoint.endpoint_id)?.length || 0, 4)))
-      const addressStackHeight = maxAddressCount > 0 ? ADDRESS_GAP + maxAddressCount * (ADDRESS_HEIGHT + ADDRESS_GAP) : 0
-      return ENDPOINT_HEIGHT + addressStackHeight
+      const maxAddressStackHeight = Math.max(
+        0,
+        ...rowEndpoints.map((endpoint) => {
+          const addressCount = addressesForEndpointWorkspace(endpoint.endpoint_id, workspace.workspace_id).length
+          const visibleCount = Math.min(addressCount, ADDRESS_VISIBLE_LIMIT)
+          if (visibleCount === 0) {
+            return 0
+          }
+          return ADDRESS_GAP + visibleCount * (ADDRESS_HEIGHT + ADDRESS_GAP)
+        }),
+      )
+      return ENDPOINT_HEIGHT + maxAddressStackHeight
     })
     const rowsHeight = rowHeights.reduce((sum, rowHeight) => sum + rowHeight, 0)
-    const height = LANE_HEADER_HEIGHT + rowsHeight + Math.max(0, rowCount - 1) * ENDPOINT_ROW_GAP + LANE_BOTTOM_PADDING
+    const height = Math.max(
+      EMPTY_LANE_HEIGHT,
+      LANE_CONTENT_TOP + rowsHeight + Math.max(0, rowCount - 1) * ENDPOINT_ROW_GAP + LANE_BOTTOM_PADDING,
+    )
     rowHeightsByWorkspace.set(workspace.workspace_id, rowHeights)
     lanes.set(workspace.workspace_id, { x: LANE_X, y: cursorY, width: LANE_WIDTH, height })
     cursorY += height + LANE_GAP
   })
 
-  const endpointPositions = new Map<string, { x: number; y: number; width: number; height: number }>()
-  Array.from(endpointsByPrimary.entries()).forEach(([workspaceId, endpoints]) => {
+  const endpointMembershipPositions: TopologyLayout['endpointMemberships'] = []
+  workspaces.forEach((workspace) => {
+    const workspaceId = workspace.workspace_id
+    const endpoints = endpointMembershipsForWorkspace(workspaceId)
     const lane = lanes.get(workspaceId) || lanes.get(workspaces[0]?.workspace_id || 'unassigned')
     if (!lane) return
     endpoints
-      .slice()
-      .sort((a, b) => a.endpoint_id.localeCompare(b.endpoint_id))
       .forEach((endpoint, index) => {
         const col = index % ENDPOINTS_PER_ROW
         const row = Math.floor(index / ENDPOINTS_PER_ROW)
         const rowHeights = rowHeightsByWorkspace.get(workspaceId) || []
         const yOffset = rowHeights.slice(0, row).reduce((sum, rowHeight) => sum + rowHeight + ENDPOINT_ROW_GAP, 0)
-        endpointPositions.set(endpoint.endpoint_id, {
-          x: lane.x + 160 + col * (ENDPOINT_WIDTH + ENDPOINT_COLUMN_GAP),
-          y: lane.y + LANE_HEADER_HEIGHT + yOffset,
+        const addressCount = addressesForEndpointWorkspace(endpoint.endpoint_id, workspaceId).length
+        endpointMembershipPositions.push({
+          key: endpointMembershipKey(workspaceId, endpoint.endpoint_id),
+          workspace_id: workspaceId,
+          endpoint_id: endpoint.endpoint_id,
+          primary: endpoint.primary_workspace_id === workspaceId,
+          hidden_address_count: Math.max(0, addressCount - ADDRESS_VISIBLE_LIMIT),
+          x: lane.x + ENDPOINT_STACK_X_OFFSET + col * (ENDPOINT_WIDTH + ENDPOINT_COLUMN_GAP),
+          y: lane.y + LANE_CONTENT_TOP + yOffset,
           width: ENDPOINT_WIDTH,
           height: ENDPOINT_HEIGHT,
         })
       })
   })
 
-  const addressPositions = new Map<string, { x: number; y: number; width: number; height: number }>()
-  addressesByEndpoint.forEach((addresses, endpointId) => {
-    const endpoint = endpointPositions.get(endpointId)
-    if (!endpoint) return
+  const addressPositions: TopologyLayout['addresses'] = []
+  endpointMembershipPositions.forEach((endpointPosition) => {
+    const addresses = addressesForEndpointWorkspace(endpointPosition.endpoint_id, endpointPosition.workspace_id)
     addresses
-      .slice()
-      .sort((a, b) => a.address_id.localeCompare(b.address_id))
-      .slice(0, 4)
+      .slice(0, ADDRESS_VISIBLE_LIMIT)
       .forEach((address, index) => {
-        addressPositions.set(address.address_id, {
-          x: endpoint.x,
-          y: endpoint.y + endpoint.height + ADDRESS_GAP + index * (ADDRESS_HEIGHT + ADDRESS_GAP),
-          width: endpoint.width,
+        addressPositions.push({
+          key: addressMembershipKey(endpointPosition.workspace_id, address.address_id),
+          workspace_id: endpointPosition.workspace_id,
+          address_id: address.address_id,
+          endpoint_id: endpointPosition.endpoint_id,
+          x: endpointPosition.x,
+          y: endpointPosition.y + endpointPosition.height + ADDRESS_GAP + index * (ADDRESS_HEIGHT + ADDRESS_GAP),
+          width: endpointPosition.width,
           height: ADDRESS_HEIGHT,
         })
       })
@@ -221,9 +310,9 @@ function computeTopologyLayout(topology: WorkspaceTopology): TopologyLayout {
   return {
     width: BOARD_WIDTH,
     height,
-    core: { x: 36, y: Math.max(124, height / 2 - 30), width: 90, height: 60 },
+    core: { x: CORE_X, y: CORE_Y, width: CORE_WIDTH, height: CORE_HEIGHT },
     lanes,
-    endpoints: endpointPositions,
+    endpointMemberships: endpointMembershipPositions,
     addresses: addressPositions,
   }
 }
@@ -574,8 +663,8 @@ export default function WorkspaceWindow() {
           <main className={styles.topologyPane}>
             <div className={styles.topologyHeader}>
               <div>
-                <h1>Endpoint Topology</h1>
-                <p>Core 居中，工作区为稳定轨道，Provider 内部地址挂在所属 Endpoint 下。</p>
+                <h1>Workspace Terminal</h1>
+                <p>Core 总线连接工作区轨道，Provider 卡槽展示主归属，地址收纳在对应 Endpoint 下。</p>
               </div>
               <div className={styles.topologyStats}>
                 <span>{topology.workspaces.length} 工作区</span>
@@ -594,7 +683,6 @@ export default function WorkspaceWindow() {
                 addresses: topology.addresses.filter((address) => visibleEndpoints.some((endpoint) => endpoint.endpoint_id === address.endpoint_id)),
               }}
               workspaceMap={workspaceMap}
-              addressesByEndpoint={addressesByEndpoint}
               selection={selection}
               onSelect={setSelection}
             />
@@ -696,7 +784,6 @@ export default function WorkspaceWindow() {
 interface TopologyCanvasProps {
   topology: WorkspaceTopology
   workspaceMap: Map<string, WorkspaceTopologyWorkspace>
-  addressesByEndpoint: Map<string, WorkspaceTopologyAddress[]>
   selection: Selection | null
   onSelect: (selection: Selection) => void
 }
@@ -743,60 +830,111 @@ function ApprovalQueue({
   )
 }
 
-function TopologyCanvas({ topology, workspaceMap, addressesByEndpoint, selection, onSelect }: TopologyCanvasProps) {
+function TopologyCanvas({ topology, workspaceMap, selection, onSelect }: TopologyCanvasProps) {
   const layout = useMemo(() => computeTopologyLayout(topology), [topology])
+  const endpointMap = useMemo(() => new Map(topology.endpoints.map((endpoint) => [endpoint.endpoint_id, endpoint])), [topology.endpoints])
+  const addressMap = useMemo(() => new Map(topology.addresses.map((address) => [address.address_id, address])), [topology.addresses])
+  const endpointMembershipMap = useMemo(
+    () => new Map(layout.endpointMemberships.map((membership) => [membership.key, membership])),
+    [layout.endpointMemberships],
+  )
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const panStateRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    scrollLeft: number
+    scrollTop: number
+  } | null>(null)
+  const [panning, setPanning] = useState(false)
+
+  const handlePanStart = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return
+    }
+    const target = event.target instanceof Element ? event.target : null
+    if (target?.closest('button,input,textarea,select,a')) {
+      return
+    }
+    panStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: event.currentTarget.scrollLeft,
+      scrollTop: event.currentTarget.scrollTop,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setPanning(true)
+  }, [])
+
+  const handlePanMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const panState = panStateRef.current
+    const surface = scrollRef.current
+    if (!panState || panState.pointerId !== event.pointerId || !surface) {
+      return
+    }
+    surface.scrollLeft = panState.scrollLeft - (event.clientX - panState.startX)
+    surface.scrollTop = panState.scrollTop - (event.clientY - panState.startY)
+  }, [])
+
+  const finishPan = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const panState = panStateRef.current
+    if (!panState || panState.pointerId !== event.pointerId) {
+      return
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    panStateRef.current = null
+    setPanning(false)
+  }, [])
 
   return (
-    <div className={styles.boardScroll}>
+    <div
+      ref={scrollRef}
+      className={styles.boardScroll}
+      data-panning={panning}
+      data-testid="workspace-topology-pan-surface"
+      onPointerDown={handlePanStart}
+      onPointerMove={handlePanMove}
+      onPointerUp={finishPan}
+      onPointerCancel={finishPan}
+    >
       <div className={styles.board} style={{ width: layout.width, height: layout.height }}>
         <svg className={styles.edgeLayer} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
+          <path
+            className={styles.coreRail}
+            d={`M ${CORE_RAIL_X} ${layout.core.y + layout.core.height} L ${CORE_RAIL_X} ${layout.height - 32}`}
+          />
           {topology.workspaces.map((workspace) => {
             const lane = layout.lanes.get(workspace.workspace_id)
             if (!lane) return null
             return (
               <path
-                key={`core-${workspace.workspace_id}`}
-                className={styles.coreEdge}
-                d={`M ${layout.core.x + layout.core.width} ${layout.core.y + layout.core.height / 2} C ${layout.core.x + 120} ${layout.core.y + layout.core.height / 2}, ${lane.x - 44} ${lane.y + lane.height / 2}, ${lane.x} ${lane.y + lane.height / 2}`}
+                key={`bus-${workspace.workspace_id}`}
+                className={styles.workspaceBus}
+                d={`M ${CORE_RAIL_X} ${lane.y + LANE_BUS_Y_OFFSET} L ${lane.x + lane.width - 24} ${lane.y + LANE_BUS_Y_OFFSET}`}
               />
             )
           })}
-          {topology.endpoints.map((endpoint) => {
-            const endpointPosition = layout.endpoints.get(endpoint.endpoint_id)
-            const primaryLane = layout.lanes.get(endpoint.primary_workspace_id || endpoint.workspace_ids[0])
-            if (!endpointPosition || !primaryLane) return null
+          {layout.endpointMemberships.map((endpointPosition) => {
+            const endpoint = endpointMap.get(endpointPosition.endpoint_id)
+            const lane = layout.lanes.get(endpointPosition.workspace_id)
+            if (!endpoint || !lane) return null
             return (
               <path
-                key={`primary-${endpoint.endpoint_id}`}
-                className={endpoint.connected ? styles.primaryEdge : styles.offlineEdge}
-                d={`M ${primaryLane.x + 110} ${primaryLane.y + primaryLane.height / 2} C ${primaryLane.x + 162} ${primaryLane.y + primaryLane.height / 2}, ${endpointPosition.x - 36} ${endpointPosition.y + endpointPosition.height / 2}, ${endpointPosition.x} ${endpointPosition.y + endpointPosition.height / 2}`}
+                key={`membership-edge-${endpointPosition.key}`}
+                className={endpointPosition.primary ? (endpoint.connected ? styles.primaryEdge : styles.offlineEdge) : styles.secondaryEdge}
+                d={`M ${endpointPosition.x + endpointPosition.width / 2} ${lane.y + LANE_BUS_Y_OFFSET} L ${endpointPosition.x + endpointPosition.width / 2} ${endpointPosition.y}`}
               />
             )
           })}
-          {topology.endpoints.flatMap((endpoint) => {
-            const endpointPosition = layout.endpoints.get(endpoint.endpoint_id)
-            if (!endpointPosition) return []
-            return endpoint.workspace_ids
-              .filter((workspaceId) => workspaceId && workspaceId !== endpoint.primary_workspace_id)
-              .map((workspaceId) => {
-                const lane = layout.lanes.get(workspaceId)
-                if (!lane) return null
-                return (
-                  <path
-                    key={`secondary-${endpoint.endpoint_id}-${workspaceId}`}
-                    className={styles.secondaryEdge}
-                    d={`M ${endpointPosition.x + endpointPosition.width / 2} ${endpointPosition.y + endpointPosition.height} C ${endpointPosition.x + endpointPosition.width / 2} ${endpointPosition.y + endpointPosition.height + 42}, ${lane.x + lane.width - 64} ${lane.y + lane.height - 22}, ${lane.x + lane.width - 18} ${lane.y + lane.height - 22}`}
-                  />
-                )
-              })
-          })}
-          {topology.addresses.map((address) => {
-            const endpointPosition = layout.endpoints.get(address.endpoint_id)
-            const addressPosition = layout.addresses.get(address.address_id)
+          {layout.addresses.map((addressPosition) => {
+            const endpointPosition = endpointMembershipMap.get(endpointMembershipKey(addressPosition.workspace_id, addressPosition.endpoint_id))
             if (!endpointPosition || !addressPosition) return null
             return (
               <path
-                key={`address-${address.address_id}`}
+                key={`address-edge-${addressPosition.key}`}
                 className={styles.addressEdge}
                 d={`M ${endpointPosition.x + endpointPosition.width / 2} ${endpointPosition.y + endpointPosition.height} L ${addressPosition.x + addressPosition.width / 2} ${addressPosition.y}`}
               />
@@ -814,54 +952,75 @@ function TopologyCanvas({ topology, workspaceMap, addressesByEndpoint, selection
           if (!lane) return null
           const selected = selection?.kind === 'workspace' && selection.id === workspace.workspace_id
           return (
-            <button
+            <div
               key={workspace.workspace_id}
-              type="button"
               className={styles.workspaceLane}
               data-selected={selected}
               data-status={statusTone(workspace.status)}
               style={{ left: lane.x, top: lane.y, width: lane.width, height: lane.height }}
-              onClick={() => onSelect({ kind: 'workspace', id: workspace.workspace_id })}
             >
-              <span className={styles.laneTitle}>{workspace.title || workspace.workspace_id}</span>
-              <span className={styles.laneMeta}>{workspace.workspace_id} · {workspace.online_endpoint_count}/{workspace.endpoint_count} online</span>
-            </button>
+              <button
+                type="button"
+                className={styles.workspaceLaneButton}
+                onClick={() => onSelect({ kind: 'workspace', id: workspace.workspace_id })}
+              >
+                <span className={styles.laneTitle}>{workspace.title || workspace.workspace_id}</span>
+                <span className={styles.laneMeta}>{workspace.workspace_id} · {workspace.online_endpoint_count}/{workspace.endpoint_count} online</span>
+              </button>
+            </div>
           )
         })}
 
-        {topology.endpoints.map((endpoint) => {
-          const position = layout.endpoints.get(endpoint.endpoint_id)
-          if (!position) return null
+        {layout.endpointMemberships.map((position) => {
+          const endpoint = endpointMap.get(position.endpoint_id)
+          if (!endpoint) return null
           const selected = selection?.kind === 'endpoint' && selection.id === endpoint.endpoint_id
+          const primaryWorkspace = workspaceTitle(workspaceMap.get(endpoint.primary_workspace_id), endpoint.primary_workspace_id || 'unassigned')
+          const secondaryWorkspaceTitles = endpointWorkspaceIds(endpoint)
+            .filter((workspaceId) => workspaceId !== endpoint.primary_workspace_id)
+            .map((workspaceId) => workspaceTitle(workspaceMap.get(workspaceId), workspaceId))
+          const visibleWorkspaceTags = position.primary ? secondaryWorkspaceTitles : [`主 ${primaryWorkspace}`]
+          const membershipText = position.primary
+            ? `${endpoint.provider_type} · 主归属${secondaryWorkspaceTitles.length > 0 ? ' · 兼属' : ''}`
+            : `${endpoint.provider_type} · 兼属`
           return (
             <button
-              key={endpoint.endpoint_id}
+              key={position.key}
               type="button"
               className={styles.endpointNode}
               data-selected={selected}
               data-online={endpoint.connected}
               data-core={endpoint.core_owned}
+              data-primary={position.primary}
               style={{ left: position.x, top: position.y, width: position.width, height: position.height }}
               onClick={() => onSelect({ kind: 'endpoint', id: endpoint.endpoint_id })}
-              title={endpoint.endpoint_id}
+              title={`${endpoint.endpoint_id} · ${workspaceTitle(workspaceMap.get(position.workspace_id), position.workspace_id)}`}
             >
               <span className={styles.nodeIcon}>{providerIcon(endpoint.provider_type)}</span>
               <span className={styles.nodeText}>
                 <strong>{endpoint.display_name || endpoint.endpoint_id}</strong>
-                <small>{workspaceTitle(workspaceMap.get(endpoint.primary_workspace_id), endpoint.primary_workspace_id || 'unassigned')}</small>
+                <small title={membershipText}>{membershipText}</small>
+                {visibleWorkspaceTags.length > 0 ? (
+                  <span className={styles.workspaceBadgeLine}>
+                    {visibleWorkspaceTags.slice(0, 2).map((title) => (
+                      <span key={title}>{title}</span>
+                    ))}
+                    {visibleWorkspaceTags.length > 2 ? <span>+{visibleWorkspaceTags.length - 2}</span> : null}
+                  </span>
+                ) : null}
               </span>
               {endpoint.connected ? <Wifi size={13} className={styles.onlineIcon} /> : <WifiOff size={13} className={styles.offlineIcon} />}
             </button>
           )
         })}
 
-        {topology.addresses.map((address) => {
-          const position = layout.addresses.get(address.address_id)
-          if (!position) return null
+        {layout.addresses.map((position) => {
+          const address = addressMap.get(position.address_id)
+          if (!address) return null
           const selected = selection?.kind === 'address' && selection.id === address.address_id
           return (
             <button
-              key={address.address_id}
+              key={position.key}
               type="button"
               className={styles.addressNode}
               data-selected={selected}
@@ -875,20 +1034,18 @@ function TopologyCanvas({ topology, workspaceMap, addressesByEndpoint, selection
           )
         })}
 
-        {topology.endpoints.map((endpoint) => {
-          const hiddenAddressCount = Math.max(0, (addressesByEndpoint.get(endpoint.endpoint_id)?.length || 0) - 4)
-          const endpointPosition = layout.endpoints.get(endpoint.endpoint_id)
-          if (!endpointPosition || hiddenAddressCount <= 0) return null
+        {layout.endpointMemberships.map((endpointPosition) => {
+          if (endpointPosition.hidden_address_count <= 0) return null
           return (
             <span
-              key={`hidden-${endpoint.endpoint_id}`}
+              key={`hidden-${endpointPosition.key}`}
               className={styles.hiddenAddressBadge}
               style={{
-                left: endpointPosition.x + endpointPosition.width - 34,
-                top: endpointPosition.y + endpointPosition.height + ADDRESS_GAP + 4 * (ADDRESS_HEIGHT + ADDRESS_GAP),
+                left: endpointPosition.x + endpointPosition.width - 42,
+                top: endpointPosition.y + endpointPosition.height + ADDRESS_GAP + Math.max(0, ADDRESS_VISIBLE_LIMIT - 1) * (ADDRESS_HEIGHT + ADDRESS_GAP) + 1,
               }}
             >
-              +{hiddenAddressCount}
+              +{endpointPosition.hidden_address_count}
             </span>
           )
         })}
