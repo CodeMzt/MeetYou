@@ -12,6 +12,7 @@ interface DanxiPostListProps {
   visiblePosts: Record<string, unknown>[]
   selectedHoleId: number | null
   busy: boolean
+  hasMore?: boolean
   onSearch: () => void
   onClearSearch: () => void
   onSelectPost: (id: number) => void
@@ -26,6 +27,7 @@ export default function DanxiPostList({
   visiblePosts,
   selectedHoleId,
   busy,
+  hasMore = true,
   onSearch,
   onClearSearch,
   onSelectPost,
@@ -35,7 +37,7 @@ export default function DanxiPostList({
   const loadMoreRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    if (searchResult || busy || visiblePosts.length === 0) {
+    if (searchResult || busy || !hasMore || visiblePosts.length === 0) {
       return
     }
     if (typeof IntersectionObserver === 'undefined') {
@@ -60,7 +62,7 @@ export default function DanxiPostList({
     )
     observer.observe(target)
     return () => observer.disconnect()
-  }, [busy, onLoadMore, searchResult, visiblePosts.length])
+  }, [busy, hasMore, onLoadMore, searchResult, visiblePosts.length])
 
   return (
     <div className={styles.listPanel}>
@@ -131,7 +133,7 @@ export default function DanxiPostList({
           )
         })}
 
-        {!searchResult && visiblePosts.length > 0 && (
+        {!searchResult && hasMore && visiblePosts.length > 0 && (
           <div className={styles.loadingIndicator} ref={loadMoreRef}>
             {busy ? '加载中...' : '向下滚动加载更多'}
           </div>

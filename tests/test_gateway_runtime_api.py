@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -235,6 +236,33 @@ class GatewayRuntimeApiTests(unittest.TestCase):
         self.assertEqual(payload["health"]["status"], "ready")
         self.assertTrue(payload["health"]["ready"])
         self.assertEqual(payload["health"]["components"][0]["name"], "session_execution")
+
+    def test_danxi_posts_route_forwards_time_cursor_offset(self):
+        captured = {}
+
+        class _DanxiTools:
+            def danxi_list_posts(self, **kwargs):
+                captured.update(kwargs)
+                return {
+                    "scope": "homepage",
+                    "order": kwargs.get("order"),
+                    "offset": kwargs.get("offset"),
+                    "next_offset": "2026-05-06T23:58:59.930000Z",
+                    "count": 1,
+                    "items": [{"hole_id": 642291}],
+                }
+
+        with patch("gateway.routes.runtime.get_shared_danxi_tools", return_value=_DanxiTools()):
+            response = self.client.get(
+                "/runtime/danxi/posts?offset=2026-05-07T00%3A10%3A00Z&length=10&order=time_updated",
+                headers=self._auth_headers(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["offset"], "2026-05-07T00:10:00Z")
+        self.assertEqual(captured["order"], "time_updated")
+        payload = response.json()
+        self.assertEqual(payload["next_offset"], "2026-05-06T23:58:59.930000Z")
 
     def test_runtime_source_kind_uses_endpoint_provider_not_web_fallback(self):
         self.assertEqual(

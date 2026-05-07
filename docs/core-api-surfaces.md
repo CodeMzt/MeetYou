@@ -38,6 +38,8 @@ Runtime HTTP 涓昏璧勬簮锛?
 Danxi 璧勬簮涔熷湪 `/runtime/danxi/*` 涓嬨€傜櫥褰曞拰 WebVPN Cookie 鏇存柊鍙帴鍙楀姞瀵嗚浇鑽锋垨鏈嶅姟绔幆澧冨嚟鎹紝涓嶆帴鍙楁槑鏂囧瘑鐮併€丆ookie 鎴?token銆?
 
 `GET /runtime/danxi/posts/{hole_id}/floors` exposes paginated replies with `offset` as a zero-based reply cursor and returns `next_offset` for the next page.
+
+`GET /runtime/danxi/posts` treats "recent" as latest activity/latest reply (`order=time_updated`, Danxi's homepage default), not newest hole id or newest floor id. Use `order=time_created` for newly published posts. Post pagination uses an ISO8601 time cursor: pass `next_offset` / `next_start_time` from the previous response back as `offset` or `start_time`.
 ## Endpoint Protocol
 
 Endpoint Provider 鍙彁渚涚鐐瑰拰鑳藉姏锛屼笉鎷ユ湁浼氳瘽銆佽繍琛屻€佽蹇嗐€佽皟搴︺€佹姇閫掓垨鏉冮檺璇箟銆?

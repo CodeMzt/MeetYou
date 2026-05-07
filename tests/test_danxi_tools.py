@@ -225,6 +225,59 @@ class DanxiToolsTests(unittest.TestCase):
         self.assertEqual(params["offset"], "2026-04-15T10:00:00Z")
         self.assertNotIn("start_time", params)
 
+    def test_list_posts_uses_offset_alias_and_returns_next_cursor(self):
+        tools = DanxiTools()
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=False,
+            webvpn_cookie="",
+            http=_FakeSession([]),
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        with patch.object(
+            DanxiTools,
+            "_request_json",
+            return_value=[
+                {"hole_id": 301, "time_created": "2026-04-15T09:10:00+08:00", "time_updated": "2026-04-15T10:10:00+08:00"},
+                {"hole_id": 302, "time_created": "2026-04-15T09:05:00+08:00", "time_updated": "2026-04-15T10:05:00.93+08:00"},
+            ],
+        ) as request_json:
+            payload = tools.danxi_list_posts(offset="2026-04-15T10:30:00+08:00", length=2, order="recent")
+
+        request_json.assert_called_once()
+        params = request_json.call_args.kwargs["params"]
+        self.assertEqual(params["offset"], "2026-04-15T02:30:00Z")
+        self.assertEqual(params["order"], "time_updated")
+        self.assertEqual(payload["order"], "time_updated")
+        self.assertEqual(payload["cursor_field"], "time_updated")
+        self.assertEqual(payload["next_offset"], "2026-04-15T02:05:00.930000Z")
+        self.assertEqual(payload["next_start_time"], "2026-04-15T02:05:00.930000Z")
+        self.assertTrue(payload["has_more"])
+
+    def test_list_posts_rejects_numeric_page_offset(self):
+        tools = DanxiTools()
+        state = _DanxiSessionState(
+            session_key="default",
+            email="user@example.com",
+            password="secret",
+            use_webvpn=False,
+            webvpn_cookie="",
+            http=_FakeSession([]),
+            access_token="token-old",
+        )
+        tools._sessions["default"] = state
+        tools._active_session_key = "default"
+
+        with self.assertRaises(DanxiError) as error_context:
+            tools.danxi_list_posts(offset=10)
+
+        self.assertIn("time cursor", str(error_context.exception))
+
     def test_list_floors_translates_offset_to_floor_cursor(self):
         tools = DanxiTools()
         state = _DanxiSessionState(

@@ -748,6 +748,35 @@ describe('runtimeApi', () => {
     )
   })
 
+  it('passes Danxi post time cursors through runtime API', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          scope: 'homepage',
+          order: 'time_updated',
+          offset: '2026-05-07T00:10:00Z',
+          next_offset: '2026-05-07T00:01:00Z',
+          has_more: true,
+          count: 1,
+          items: [{ hole_id: 642291 }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const posts = await listDanxiPosts('http://127.0.0.1:8000', {
+      offset: '2026-05-07T00:10:00Z',
+      length: 10,
+      order: 'time_updated',
+    })
+
+    expect(posts.next_offset).toBe('2026-05-07T00:01:00Z')
+    const calledUrl = vi.mocked(globalThis.fetch).mock.calls[0]?.[0]
+    expect(String(calledUrl)).toContain('/desktop/danxi/posts?')
+    expect(String(calledUrl)).toContain('offset=2026-05-07T00%3A10%3A00Z')
+    expect(String(calledUrl)).toContain('order=time_updated')
+  })
+
   it('loads Danxi profile and supports reply/edit/delete/summary facades', async () => {
     globalThis.fetch = vi
       .fn()

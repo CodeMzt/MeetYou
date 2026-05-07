@@ -1054,11 +1054,10 @@ def build_runtime_router(gateway) -> APIRouter:
         division_id: int | None = None,
         start_time: str = "",
         length: int = 20,
-        offset: int = 0,
+        offset: str = "",
         tag: str = "",
-        order: str = "time_created",
+        order: str = "time_updated",
     ):
-        del offset
         gateway._require_http_auth(request)
         result = await _call_danxi(
             gateway,
@@ -1066,6 +1065,7 @@ def build_runtime_router(gateway) -> APIRouter:
             division_id=division_id,
             start_time=start_time,
             length=length,
+            offset=offset,
             tag=tag,
             order=order,
             session_key=session_key,

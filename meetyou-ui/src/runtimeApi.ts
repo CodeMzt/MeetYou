@@ -166,7 +166,7 @@ export async function listDanxiPosts(
     division_id?: number
     start_time?: string
     length?: number
-    offset?: number
+    offset?: string | number
     tag?: string
     order?: string
   } = {},

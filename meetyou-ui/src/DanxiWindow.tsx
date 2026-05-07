@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpenText,
 } from 'lucide-react'
@@ -26,7 +26,7 @@ import type {
   DanxiSummaryResponse,
   DanxiUserProfileResponse,
 } from './types'
-import { getMessageRelatedFloorId, getMessageRelatedHoleId } from './utils/danxiUtils'
+import { getMessageRelatedFloorId, getMessageRelatedHoleId, getPostId } from './utils/danxiUtils'
 import ConfirmModal from './components/common/ConfirmModal'
 import SubWindow from './components/layout/SubWindow'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
@@ -49,6 +49,7 @@ const EMPTY_PAYLOAD: DanxiWindowPayload = {
 }
 
 const DANXI_READ_LIMIT = 10
+export const DANXI_RECENT_ORDER = 'time_updated'
 
 export function resolveDanxiAuthAction(options: {
   sessionLoggedIn: boolean
@@ -72,6 +73,57 @@ function getMessageCursor(response: DanxiListResponse): string {
   }
   const cursor = lastItem.time_created || lastItem.created_at || lastItem.updated_at
   return typeof cursor === 'string' || typeof cursor === 'number' ? String(cursor) : ''
+}
+
+function stringifyCursor(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value)
+  }
+  return ''
+}
+
+export function getDanxiPostPageCursor(
+  response: DanxiListResponse,
+  order: string = DANXI_RECENT_ORDER,
+): string {
+  const explicitCursor = stringifyCursor(response.next_offset) || stringifyCursor(response.next_start_time)
+  if (explicitCursor) {
+    return explicitCursor
+  }
+  const lastItem = response.items[response.items.length - 1] as Record<string, unknown> | undefined
+  if (!lastItem) {
+    return ''
+  }
+  const primaryField = order === 'time_created' ? 'time_created' : 'time_updated'
+  return (
+    stringifyCursor(lastItem[primaryField]) ||
+    stringifyCursor(lastItem.time_created) ||
+    stringifyCursor(lastItem.time_updated) ||
+    stringifyCursor(lastItem.created_at) ||
+    stringifyCursor(lastItem.updated_at)
+  )
+}
+
+export function mergeDanxiPostPages(prev: DanxiListResponse, next: DanxiListResponse): DanxiListResponse {
+  const seen = new Set<string>()
+  const merged: Record<string, unknown>[] = []
+  const append = (item: Record<string, unknown>) => {
+    const holeId = getPostId(item)
+    const key = holeId === null ? `item:${merged.length}:${String(item.time_created || item.time_updated || '')}` : `hole:${holeId}`
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    merged.push(item)
+  }
+  prev.items.forEach((item) => append(item as Record<string, unknown>))
+  next.items.forEach((item) => append(item as Record<string, unknown>))
+  return {
+    ...prev,
+    ...next,
+    count: merged.length,
+    items: merged,
+  }
 }
 
 export default function DanxiWindow() {
@@ -98,6 +150,7 @@ export default function DanxiWindow() {
   const [summaryBusy, setSummaryBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [messageCursor, setMessageCursor] = useState('')
+  const postLoadMoreInFlightRef = useRef(false)
 
   const [editingDraft, setEditingDraft] = useState('')
   const [viewMode, setViewMode] = useState<'posts' | 'messages'>('posts')
@@ -125,7 +178,7 @@ export default function DanxiWindow() {
   const loadReadonlyData = useCallback(async (baseUrl: string) => {
     const [nextDivisions, nextPosts, nextMessages] = await Promise.all([
       listDanxiDivisions(baseUrl),
-      listDanxiPosts(baseUrl, { length: DANXI_READ_LIMIT, order: 'time_created' }),
+      listDanxiPosts(baseUrl, { length: DANXI_READ_LIMIT, order: DANXI_RECENT_ORDER }),
       listDanxiMessages(baseUrl, { unread_only: false }),
     ])
     const nextProfile = await getDanxiProfile(baseUrl).catch(() => null)
@@ -147,7 +200,7 @@ export default function DanxiWindow() {
     const nextPosts = await listDanxiPosts(payload.baseUrl, {
       division_id: selectedDivisionId ?? undefined,
       length: DANXI_READ_LIMIT,
-      order: 'time_created',
+      order: DANXI_RECENT_ORDER,
     })
     setPosts(nextPosts)
   }, [payload.baseUrl, searchQuery, searchResult, selectedDivisionId])
@@ -170,28 +223,29 @@ export default function DanxiWindow() {
   )
 
   const handleLoadMorePosts = useCallback(async () => {
-    if (searchResult) return // 暂不支持搜索结果的分页
+    if (searchResult || busy || postLoadMoreInFlightRef.current || posts.has_more === false) return // 暂不支持搜索结果的分页
+    const cursor = getDanxiPostPageCursor(posts, DANXI_RECENT_ORDER)
+    if (!cursor) {
+      return
+    }
     try {
+      postLoadMoreInFlightRef.current = true
       setBusy(true)
-      const lastPost = posts.items[posts.items.length - 1] as Record<string, unknown> | undefined
-      const lastTime = lastPost?.time_updated || lastPost?.time_created || ''
       const nextPosts = await listDanxiPosts(payload.baseUrl, {
         division_id: selectedDivisionId ?? undefined,
         length: DANXI_READ_LIMIT,
-        start_time: String(lastTime || ''),
-        order: 'time_created',
+        offset: cursor,
+        order: DANXI_RECENT_ORDER,
       })
-      setPosts((prev) => ({
-        ...nextPosts,
-        items: [...prev.items, ...nextPosts.items],
-      }))
+      setPosts((prev) => mergeDanxiPostPages(prev, nextPosts))
       setError(null)
     } catch (err) {
       setFailure(err instanceof Error ? err.message : '加载更多帖子失败')
     } finally {
+      postLoadMoreInFlightRef.current = false
       setBusy(false)
     }
-  }, [payload.baseUrl, posts.items, searchResult, selectedDivisionId, setFailure])
+  }, [busy, payload.baseUrl, posts, searchResult, selectedDivisionId, setFailure])
 
   const handleLoadMoreMessages = useCallback(async () => {
     if (!messageCursor) {
@@ -224,7 +278,7 @@ export default function DanxiWindow() {
       const nextPosts = await listDanxiPosts(payload.baseUrl, {
         division_id: selectedDivisionId ?? undefined,
         length: DANXI_READ_LIMIT,
-        order: 'time_created',
+        order: DANXI_RECENT_ORDER,
       })
       setPosts(nextPosts)
       setError(null)
@@ -378,7 +432,7 @@ export default function DanxiWindow() {
       const nextPosts = await listDanxiPosts(payload.baseUrl, {
         division_id: divisionId ?? undefined,
         length: DANXI_READ_LIMIT,
-        order: 'time_created',
+        order: DANXI_RECENT_ORDER,
       })
       setPosts(nextPosts)
       clearDetailState()
@@ -570,6 +624,7 @@ export default function DanxiWindow() {
                 visiblePosts={visiblePosts}
                 selectedHoleId={selectedHoleId}
                 busy={busy}
+                hasMore={posts.has_more !== false}
                 onSearch={() => void handleSearch()}
                 onClearSearch={() => void handleClearSearch()}
                 onSelectPost={(id) => void handleSelectPost(id)}

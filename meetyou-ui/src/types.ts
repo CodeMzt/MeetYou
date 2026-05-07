@@ -205,11 +205,15 @@ export interface DanxiListResponse<T = Record<string, unknown>> {
   items: T[]
   scope?: string
   hole_id?: number
-  offset?: number
+  offset?: number | string
   size?: number
-  next_offset?: number
+  start_time?: string
+  next_offset?: number | string
+  next_start_time?: string
   has_more?: boolean
   include_all?: boolean
+  order?: string
+  cursor_field?: string
 }
 
 export interface DanxiPostResponse {

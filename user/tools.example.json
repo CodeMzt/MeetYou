@@ -1345,7 +1345,7 @@
       "type": "function",
       "function": {
         "name": "danxi_list_posts",
-        "description": "Browse Danxi homepage posts or posts under a specific division.",
+        "description": "Browse Danxi homepage posts or posts under a specific division. Recent means latest activity/latest reply (order=time_updated); use order=time_created for newest published posts. Pagination uses an ISO8601 time cursor: pass next_offset or next_start_time from the previous response as offset/start_time.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -1353,6 +1353,9 @@
               "type": "integer"
             },
             "start_time": {
+              "type": "string"
+            },
+            "offset": {
               "type": "string"
             },
             "length": {

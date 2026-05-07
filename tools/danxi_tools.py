@@ -87,6 +87,11 @@ def _coerce_datetime(value: str | None) -> datetime | None:
     raw = str(value or "").strip()
     if not raw:
         return None
+    raw = re.sub(
+        r"\.(\d+)(?=(?:Z|[+-]\d{2}:\d{2})?$)",
+        lambda match: "." + (match.group(1) + "000000")[:6],
+        raw,
+    )
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
     parsed = datetime.fromisoformat(raw)
@@ -107,6 +112,69 @@ def _unix_seconds(value: str | None) -> int | None:
     if parsed is None:
         return None
     return int(parsed.timestamp())
+
+
+_POST_ORDER_ALIASES = {
+    "": "time_updated",
+    "recent": "time_updated",
+    "latest": "time_updated",
+    "latest_reply": "time_updated",
+    "reply": "time_updated",
+    "updated": "time_updated",
+    "time_updated": "time_updated",
+    "active": "time_updated",
+    "latest_created": "time_created",
+    "published": "time_created",
+    "created": "time_created",
+    "time_created": "time_created",
+}
+
+
+def _normalize_post_order(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _POST_ORDER_ALIASES:
+        raise DanxiError("Danxi post order must be time_updated/recent or time_created/published.")
+    return _POST_ORDER_ALIASES[normalized]
+
+
+def _post_cursor_field(order: str) -> str:
+    return "time_created" if order == "time_created" else "time_updated"
+
+
+def _coerce_post_time_cursor(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw or raw == "0":
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", raw):
+        number = float(raw)
+        if number <= 0:
+            return None
+        if number >= 10_000_000_000:
+            number = number / 1000
+        elif number < 1_000_000_000:
+            raise DanxiError("Danxi post offset is a time cursor, not a numeric page offset.")
+        return datetime.fromtimestamp(number, timezone.utc).isoformat().replace("+00:00", "Z")
+    try:
+        return _iso8601_utc(raw)
+    except ValueError as exc:
+        raise DanxiError("Danxi post offset/start_time must be an ISO8601 time cursor.") from exc
+
+
+def _extract_post_next_cursor(items: Any, order: str) -> str:
+    if not isinstance(items, list) or not items:
+        return ""
+    last_item = items[-1]
+    if not isinstance(last_item, dict):
+        return ""
+    primary_field = _post_cursor_field(order)
+    for field_name in (primary_field, "time_created", "time_updated", "created_at", "updated_at"):
+        try:
+            cursor = _coerce_post_time_cursor(last_item.get(field_name))
+        except DanxiError:
+            cursor = None
+        if cursor:
+            return cursor
+    return ""
 
 
 @dataclass
@@ -293,41 +361,52 @@ class DanxiTools:
         division_id: int | None = None,
         start_time: str = "",
         length: int = 20,
-        offset: int = 0,
+        offset: str | int = "",
         tag: str = "",
-        order: str = "time_created",
+        order: str = "time_updated",
         session_key: str = "",
     ) -> dict[str, Any]:
         state = self._get_session(session_key)
         normalized_length = max(1, min(int(length or 20), 10))
-        
-        # Determine the start time for fetching
-        # If start_time is not provided, use current time
-        # Note: API uses ISO8601 strings for time-based pagination
+        normalized_order = _normalize_post_order(order)
+        cursor_field = _post_cursor_field(normalized_order)
         current_time_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        time_to_fetch = _iso8601_utc(start_time) or current_time_iso
+        request_offset = _coerce_post_time_cursor(start_time) or _coerce_post_time_cursor(offset) or current_time_iso
 
         if division_id is None:
             params = {
-                "offset": time_to_fetch,
+                "offset": request_offset,
                 "size": normalized_length,
-                "order": order or "time_created",
+                "order": normalized_order,
             }
             data = self._request_json("GET", f"{self.API_BASE}/holes/_homepage", state=state, params=params)
             scope = "homepage"
         else:
             params = _compact_dict(
                 {
-                    "offset": time_to_fetch,
+                    "offset": request_offset,
                     "division_id": int(division_id),
                     "length": normalized_length,
                     "tag": str(tag or "").strip() or None,
-                    "order": order or "time_created",
+                    "order": normalized_order,
                 }
             )
             data = self._request_json("GET", f"{self.API_BASE}/holes", state=state, params=params)
             scope = f"division:{division_id}"
-        return {"scope": scope, "count": len(data) if isinstance(data, list) else 0, "items": data}
+        count = len(data) if isinstance(data, list) else 0
+        next_offset = _extract_post_next_cursor(data, normalized_order)
+        return {
+            "scope": scope,
+            "order": normalized_order,
+            "cursor_field": cursor_field,
+            "offset": request_offset,
+            "start_time": request_offset,
+            "next_offset": next_offset,
+            "next_start_time": next_offset,
+            "has_more": bool(count >= normalized_length),
+            "count": count,
+            "items": data,
+        }
 
     def danxi_get_post(self, hole_id: int, *, session_key: str = "") -> dict[str, Any]:
         state = self._get_session(session_key)
