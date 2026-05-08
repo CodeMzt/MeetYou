@@ -146,6 +146,15 @@ def build_runtime_platform_boundaries() -> RuntimePlatformBoundarySet:
                     "platform_layer/base.py::PlatformAdapter",
                 ),
             ),
+            RuntimePlatformDependencyBoundary(
+                name="core_host_shell_execution_exception",
+                owner="core/service_runtime",
+                reason="exec_core_cmd is an explicit Core-host shell exception. It is limited by the Core command whitelist policy and does not replace Endpoint Provider file, workspace, or local MCP execution.",
+                surfaces=(
+                    "tools/system_tools.py::exec_core_cmd",
+                    "tools/command_policy.py::CORE_DEFAULT_POLICY",
+                ),
+            ),
         ),
         delegated_to_endpoint_providers=(
             RuntimePlatformDependencyBoundary(

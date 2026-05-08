@@ -19,6 +19,8 @@
 - Final assistant reply must be an assistant Message persisted by MessageService.
 - Streaming must flow through RunEventLog plus Delivery fan-out.
 - Tool dispatch must flow through ToolRouter plus ExecutionTarget.
+- `exec_core_cmd` is the only explicit Core-host shell exception. It runs on the Core Service host through `core.local`, must stay behind the Core command whitelist policy, and must not be generalized into Core-owned local file, workspace, or local MCP execution.
+- `exec_sys_cmd` remains the Desktop/Endpoint-side shell tool and must continue to require an EndpointCapability such as `shell.exec`.
 - Permissions live on Actor / Workspace / RunPolicy. Execution ability lives on EndpointCapability.
 - V4 HTTP facade is `/runtime/*`; local Desktop `/desktop/*` may proxy to `/runtime/*`, `/operator/*`, or `/developer/*`, never to old `/client/*`.
 - Do not keep `/client/ws`, `source_client_id`, `target_client_id`, or `ClientToolDispatchService` compatibility paths.
@@ -53,7 +55,7 @@
 - UI entrypoints: `meetyou-ui/electron/main.ts` for Electron main process and `meetyou-ui/src/main.tsx` for renderer.
 - Frontend Core access path: `meetyou-ui/src/hooks/useMeetYou.ts` and `meetyou-ui/src/windowBridge.ts`.
 - Persistence and migrations: `core/db/*` and `alembic/versions/*`.
-- Do not move local file, Shell, local MCP lifecycle, or workspace-local execution back into Core. These capabilities must be exposed as endpoint execution capabilities and routed through ToolRouter / ExecutionTarget.
+- Do not move local file, general Shell, local MCP lifecycle, or workspace-local execution back into Core. The only Core shell exception is `exec_core_cmd`, fixed to the Core process working directory and constrained by the Core whitelist policy; all other local execution capabilities must be exposed as endpoint execution capabilities and routed through ToolRouter / ExecutionTarget.
 
 ## Protocol Rules
 
@@ -80,6 +82,7 @@
 - `user/config.json` is not optional; `ConfigManager` may fail startup when it is missing. Secrets belong in `.env`.
 - `user/` is local runtime state; Git should keep only `*.example.json` templates and `user/README.md`.
 - `user/core_mcp_servers.json` is for Core-side safe MCP only. `user/mcp_servers.json` is for Desktop Provider local MCP only.
+- `user/core_cmd_policy.json` is the optional Core-host command whitelist policy for `exec_core_cmd`; if missing or invalid, Core must use the built-in whitelist rather than falling back to allow-all.
 - Desktop Provider defaults to `user/desktop_client.json`; local capability boundaries are `read_roots`, `trusted_write_roots`, `cmd_policy_path`, `mcp_servers_path`, and local bridge settings.
 - Edge Provider defaults to `user/edge_client.json`; edge boundaries are `workspace_ids`, provider identity/type, `transport_profile`, and endpoint capabilities.
 - Core / providers should use `MEETYOU_CLIENT_ACCESS_TOKEN` or Gateway/Core access tokens unless a V4 rename is intentionally implemented across config, docs, and deployment. Do not reintroduce `MEETYOU_AGENT_*`.
@@ -109,7 +112,7 @@
 ## Allowed And Forbidden
 
 - Allowed: small fixes, local refactors, matching tests, and docs updates when interfaces, startup mode, config, or validation flow changes.
-- Forbidden: reintroducing `python main.py gateway`, treating `/ws` as a formal chat path, restoring formal `/agent/ws`, or moving local terminal capabilities into Core.
+- Forbidden: reintroducing `python main.py gateway`, treating `/ws` as a formal chat path, restoring formal `/agent/ws`, or moving local terminal capabilities into Core beyond the policy-bound `exec_core_cmd` Core-host exception.
 - Forbidden in V4 runtime code: `/client/ws`, `source_client_id`, `target_client_id`, Client-owned permissions, Client-owned executable capabilities, and `ClientToolDispatchService`.
 - Do not modify real runtime files unless explicitly required: `.env`, `user/*.json`, `user/*.db`, `logs/`, `.venv/`, `.git/`.
 - Do not modify lockfiles unless the task requires dependency changes. This repository normally only touches `meetyou-ui/package-lock.json`.

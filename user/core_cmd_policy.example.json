@@ -1,0 +1,25 @@
+{
+  "mode": "whitelist",
+  "whitelist": [
+    "dir",
+    "echo",
+    "hostname",
+    "whoami",
+    "date",
+    "time",
+    "ver",
+    "where",
+    "python --version",
+    "node --version",
+    "npm --version",
+    "git status",
+    "git log",
+    "git diff",
+    "git branch",
+    "curl",
+    "curl.exe",
+    "wget -qO-",
+    "wget.exe -qO-"
+  ],
+  "blacklist_patterns": []
+}

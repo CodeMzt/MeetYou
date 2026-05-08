@@ -39,6 +39,7 @@ _WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 
 _ORDER_REQUIRED_TOOLS = {
     "ask_human",
+    "exec_core_cmd",
     "switch_assistant_mode",
     "switch_workspace",
     "save_memory",
@@ -107,6 +108,7 @@ def _normalize_url_key(value: str) -> str:
 
 class ToolsManager:
     def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None, task_manager=None, config=None):
+        self._system_tools_module = system_tools_module
         self._mcp_manager = mcp_manager
         self._mode_manager = mode_manager
         self._memory_tools = MemoryTools(memory)
@@ -132,6 +134,7 @@ class ToolsManager:
         self._core_domain = None
 
         supported_funcs = {
+            "exec_core_cmd": getattr(system_tools_module, "exec_core_cmd", None),
             "exec_sys_cmd": system_tools_module.exec_sys_cmd,
             "ask_human": getattr(system_tools_module, "ask_human", None),
             "save_memory": memory.save_memory,
@@ -332,6 +335,7 @@ class ToolsManager:
             route_context,
             should_expose_mcp_tool=should_expose_mcp_tool,
         )
+        visible_tools = [tool for tool in visible_tools if self._is_tool_runtime_enabled(str(tool.get("function", {}).get("name") or ""))]
         if not route_context:
             return visible_tools
         filtered_tools: list[dict] = []
@@ -349,6 +353,13 @@ class ToolsManager:
         }
         filtered_tools.extend(self._contextual_endpoint_tool_schemas(route_context, existing_names=existing_names))
         return filtered_tools
+
+    def _is_tool_runtime_enabled(self, tool_name: str) -> bool:
+        normalized = str(tool_name or "").strip()
+        if normalized != "exec_core_cmd":
+            return True
+        checker = getattr(self._system_tools_module, "is_core_shell_exec_enabled", None)
+        return bool(checker()) if callable(checker) else True
 
     @staticmethod
     def _endpoint_action_risk(risk_level: str) -> str:
@@ -611,7 +622,7 @@ class ToolsManager:
 
         mutates_state = action_risk in {"local_write", "external_write", "destructive"}
         requires_order = normalized_tool_name in _ORDER_REQUIRED_TOOLS
-        if normalized_tool_name == "exec_sys_cmd":
+        if normalized_tool_name in {"exec_sys_cmd", "exec_core_cmd"}:
             requires_order = True
 
         resource_key = str(schema_metadata.get("resource_key") or "").strip()

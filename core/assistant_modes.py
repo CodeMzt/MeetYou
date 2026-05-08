@@ -152,6 +152,11 @@ _MODE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "sync notes",
         "todo",
         "task",
+        "command",
+        "shell",
+        "terminal",
+        "powershell",
+        "run command",
         "会议",
         "议程",
         "纪要",
@@ -166,6 +171,9 @@ _MODE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "同步笔记",
         "待办",
         "任务",
+        "命令",
+        "终端",
+        "运行命令",
     ),
 }
 
@@ -416,6 +424,7 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
     ASSISTANT_MODE_AUTOMATION: {
         "tools": [
+            "exec_core_cmd",
             "read_local_documents",
             "write_local_document",
             "compile_report",

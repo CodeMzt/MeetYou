@@ -8,6 +8,7 @@ _ACTION_RISK_RANK = {
 }
 
 _DEFAULT_TOOL_ACTION_RISKS: dict[str, str] = {
+    "exec_core_cmd": "destructive",
     "exec_sys_cmd": "destructive",
     "ask_human": "read",
     "get_current_system_time": "read",

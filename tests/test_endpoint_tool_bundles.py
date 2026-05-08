@@ -17,11 +17,12 @@ class EndpointToolBundleTests(unittest.TestCase):
         self.assertIn("summarize_text", bundle)
 
         self.assertNotIn("send_endpoint_message", bundle)
+        self.assertNotIn("exec_core_cmd", bundle)
         self.assertNotIn("exec_sys_cmd", bundle)
         self.assertEqual(len(bundle), len(set(bundle)))
 
     def test_external_endpoint_bundle_tracks_default_capability_catalog(self):
-        excluded = {"send_endpoint_message", "exec_sys_cmd"}
+        excluded = {"send_endpoint_message", "exec_core_cmd", "exec_sys_cmd"}
         expected_tools = set(get_default_assistant_capability_tools(include_basic=True)) - excluded
 
         self.assertTrue(expected_tools.issubset(set(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE)))

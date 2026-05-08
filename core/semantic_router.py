@@ -133,6 +133,19 @@ _OFFICE_INTENTS = (
     "草稿",
     "同步笔记",
 )
+_COMMAND_INTENTS = (
+    "command",
+    "shell",
+    "terminal",
+    "powershell",
+    "run command",
+    "run a command",
+    "execute command",
+    "execute a command",
+    "命令",
+    "终端",
+    "运行命令",
+)
 _STUDY_INTENTS = (
     "study plan",
     "learn",
@@ -363,6 +376,7 @@ _MODE_EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("meeting_coordination", "draft a meeting agenda, schedule sync, attendee note, and follow-up email"),
         ("workplace_coordination", "prepare minutes, calendar invites, action items, and message drafts"),
         ("notes_sync", "sync notes from a meeting and turn them into coordination updates"),
+        ("core_command", "run a whitelisted command in the Core terminal shell and return structured output"),
     ),
 }
 
@@ -624,6 +638,10 @@ class ExampleSemanticAdapter:
         if source_kind in {"feishu", "email", "im"}:
             scores[ASSISTANT_MODE_AUTOMATION] += 0.28
             reasons[ASSISTANT_MODE_AUTOMATION].append(f"source:{source_kind}")
+        command_matches = _contains_any(content.lower(), _COMMAND_INTENTS)
+        if command_matches:
+            scores[ASSISTANT_MODE_AUTOMATION] += min(0.72, 0.24 * len(command_matches))
+            reasons[ASSISTANT_MODE_AUTOMATION].extend(command_matches[:4])
         if request.sticky_current_mode and current_mode in ASSISTANT_MODES:
             scores[current_mode] += 0.08
             reasons[current_mode].append("sticky_context")
@@ -760,6 +778,7 @@ class KeywordFallbackAdapter:
         document_matches = _contains_any(lowered, _DOCUMENT_INTENTS)
         research_matches = _contains_any(lowered, _RESEARCH_INTENTS)
         office_matches = _contains_any(lowered, _OFFICE_INTENTS)
+        command_matches = _contains_any(lowered, _COMMAND_INTENTS)
         study_matches = _contains_any(lowered, _STUDY_INTENTS)
         light_web_matches = _contains_any(lowered, _LIGHT_WEB_INTENTS)
         task_matches = _contains_any(lowered, _TASK_MANAGEMENT_INTENTS)
@@ -773,6 +792,9 @@ class KeywordFallbackAdapter:
         if office_matches:
             scores[ASSISTANT_MODE_AUTOMATION] += _score(office_matches)
             reasons[ASSISTANT_MODE_AUTOMATION].extend(office_matches[:4])
+        if command_matches:
+            scores[ASSISTANT_MODE_AUTOMATION] += _score(command_matches, weight=2)
+            reasons[ASSISTANT_MODE_AUTOMATION].extend(command_matches[:4])
         if study_matches:
             scores[ASSISTANT_MODE_GENERAL] += _score(study_matches)
             reasons[ASSISTANT_MODE_GENERAL].extend(study_matches[:4])

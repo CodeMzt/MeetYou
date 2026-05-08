@@ -72,6 +72,14 @@ def _ensure_utc_datetime(value):
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
+
+def _positive_int_config(value, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return int(default)
+    return max(1, parsed)
+
 _CONTEXT_POOL_TOOL_SKIPLIST = {
     "search_memory",
     "recall_memory",
@@ -151,6 +159,10 @@ _MODE_IMMEDIATE_KEYS = {
 }
 _RESTART_REQUIRED_KEYS = {
     "client_access_token",
+    "core_cmd_policy_path",
+    "core_command_output_max_chars",
+    "core_command_timeout_seconds",
+    "core_shell_exec_enabled",
     "cmd_policy_path",
     "database_url",
     "enable_feishu_bot",
@@ -210,6 +222,16 @@ class App:
             self.event_bus,
             self.config.get("cmd_policy_path") or "user/cmd_policy.json",
             allow_local_fallback=False,
+            core_shell_exec_enabled=self.config.get_bool("core_shell_exec_enabled", True),
+            core_cmd_policy_path=self.config.get("core_cmd_policy_path") or "user/core_cmd_policy.json",
+            core_command_timeout_seconds=_positive_int_config(
+                self.config.get("core_command_timeout_seconds"),
+                120,
+            ),
+            core_command_output_max_chars=_positive_int_config(
+                self.config.get("core_command_output_max_chars"),
+                20000,
+            ),
         )
 
         self.context_manager = ContextManager(self.memory, self.main_adapter, self.event_bus)

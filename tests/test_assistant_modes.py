@@ -227,6 +227,32 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertEqual(study_route.current_mode, "general")
         self.assertEqual(study_route.source_profile, "study_materials")
 
+    def test_routes_command_requests_to_automation_with_core_shell_tool(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        route = manager.route(
+            {
+                "content": "Run command hostname on the terminal.",
+                "metadata": {},
+            },
+            session_metadata={},
+            source=SimpleNamespace(kind="desktop", id="desktop-user"),
+        )
+
+        self.assertEqual(route.current_mode, "automation")
+        self.assertIn("exec_core_cmd", route.tool_bundle)
+
+    def test_exec_core_cmd_is_only_in_automation_mode_bundle(self):
+        manager = AssistantModeManager(_FakeConfig())
+
+        automation_bundle = manager.get_tool_bundle("automation")
+        general_bundle = manager.get_tool_bundle("general")
+        danxi_bundle = manager.get_tool_bundle("danxi")
+
+        self.assertIn("exec_core_cmd", automation_bundle["tools"])
+        self.assertNotIn("exec_core_cmd", general_bundle["tools"])
+        self.assertNotIn("exec_core_cmd", danxi_bundle["tools"])
+
     def test_task_recognition_skill_extends_study_mode_tools(self):
         manager = AssistantModeManager(_FakeConfig())
 
@@ -381,6 +407,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                 "research_topic",
                 "inspect_page",
                 "track_source_updates",
+                "exec_core_cmd",
                 "exec_sys_cmd",
                 "analyze_workspace",
                 "read_local_documents",
@@ -699,6 +726,7 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "research_topic",
                     "inspect_page",
                     "track_source_updates",
+                    "exec_core_cmd",
                     "exec_sys_cmd",
                     "analyze_workspace",
                     "read_local_documents",

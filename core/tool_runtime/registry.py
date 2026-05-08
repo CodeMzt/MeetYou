@@ -7,6 +7,38 @@ from typing import Any
 logger = logging.getLogger("meetyou.tools_manager")
 
 _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "exec_core_cmd": {
+        "type": "function",
+        "function": {
+            "name": "exec_core_cmd",
+            "description": (
+                "Execute a command on the Core Service host, not on the user's Desktop Endpoint. "
+                "Use only when the command intentionally belongs on the Core host. The command is "
+                "limited by the Core command whitelist policy; curl/wget-style network reads are "
+                "allowed only without pipes, redirection, local file reads, or download-to-file flags."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "string", "description": "The command to execute on the Core host."},
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Optional timeout in seconds, capped by Core configuration.",
+                        "default": 120,
+                    },
+                },
+                "required": ["cmd"],
+            },
+            "metadata": {
+                "action_risk": "destructive",
+                "safe_parallel": False,
+                "requires_order": True,
+                "parallel_group": "core_shell",
+                "resource_key": "core.local:shell",
+                "max_concurrency": 1,
+            },
+        },
+    },
     "research_topic": {
         "type": "function",
         "function": {

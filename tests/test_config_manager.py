@@ -18,6 +18,10 @@ class ConfigManagerTests(unittest.TestCase):
             "MEETYOU_EMBEDDING_API_KEY": os.environ.get("MEETYOU_EMBEDDING_API_KEY"),
             "MEETYOU_DATABASE_URL": os.environ.get("MEETYOU_DATABASE_URL"),
             "MEETYOU_CORE_BASE_URL": os.environ.get("MEETYOU_CORE_BASE_URL"),
+            "MEETYOU_CORE_SHELL_EXEC_ENABLED": os.environ.get("MEETYOU_CORE_SHELL_EXEC_ENABLED"),
+            "MEETYOU_CORE_CMD_POLICY_PATH": os.environ.get("MEETYOU_CORE_CMD_POLICY_PATH"),
+            "MEETYOU_CORE_COMMAND_TIMEOUT_SECONDS": os.environ.get("MEETYOU_CORE_COMMAND_TIMEOUT_SECONDS"),
+            "MEETYOU_CORE_COMMAND_OUTPUT_MAX_CHARS": os.environ.get("MEETYOU_CORE_COMMAND_OUTPUT_MAX_CHARS"),
             "MEETYOU_FEISHU_ENABLE": os.environ.get("MEETYOU_FEISHU_ENABLE"),
             "MEETYOU_FEISHU_APP_ID": os.environ.get("MEETYOU_FEISHU_APP_ID"),
             "MEETYOU_FEISHU_APP_SECRET": os.environ.get("MEETYOU_FEISHU_APP_SECRET"),
@@ -375,6 +379,52 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(config.get("core_base_url"), "https://core.example.test")
         self.assertIn("core_base_url", snapshot)
         self.assertEqual(snapshot["core_base_url"]["env_key"], "MEETYOU_CORE_BASE_URL")
+
+    def test_core_command_settings_are_manageable_typed_and_env_overridable(self):
+        os.environ["MEETYOU_CORE_SHELL_EXEC_ENABLED"] = "false"
+        os.environ["MEETYOU_CORE_CMD_POLICY_PATH"] = "user/override_core_cmd_policy.json"
+        os.environ["MEETYOU_CORE_COMMAND_TIMEOUT_SECONDS"] = "9"
+        os.environ["MEETYOU_CORE_COMMAND_OUTPUT_MAX_CHARS"] = "9000"
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        snapshot = config.snapshot()
+
+        self.assertFalse(config.get_bool("core_shell_exec_enabled"))
+        self.assertEqual(config.get("core_cmd_policy_path"), "user/override_core_cmd_policy.json")
+        self.assertEqual(config.get("core_command_timeout_seconds"), "9")
+        self.assertEqual(config.get("core_command_output_max_chars"), "9000")
+        self.assertEqual(snapshot["core_shell_exec_enabled"]["env_key"], "MEETYOU_CORE_SHELL_EXEC_ENABLED")
+        self.assertEqual(snapshot["core_cmd_policy_path"]["env_key"], "MEETYOU_CORE_CMD_POLICY_PATH")
+
+        os.environ.pop("MEETYOU_CORE_SHELL_EXEC_ENABLED", None)
+        os.environ.pop("MEETYOU_CORE_CMD_POLICY_PATH", None)
+        os.environ.pop("MEETYOU_CORE_COMMAND_TIMEOUT_SECONDS", None)
+        os.environ.pop("MEETYOU_CORE_COMMAND_OUTPUT_MAX_CHARS", None)
+        applied, warnings = config.apply_updates(
+            {
+                "core_shell_exec_enabled": "true",
+                "core_cmd_policy_path": "user/core_cmd_policy.json",
+                "core_command_timeout_seconds": "120",
+                "core_command_output_max_chars": 20000,
+            }
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            set(applied),
+            {
+                "core_shell_exec_enabled",
+                "core_cmd_policy_path",
+                "core_command_timeout_seconds",
+                "core_command_output_max_chars",
+            },
+        )
+        self.assertIs(config.get("core_shell_exec_enabled"), True)
+        self.assertEqual(config.get("core_command_timeout_seconds"), 120)
+        self.assertEqual(config.get("core_command_output_max_chars"), 20000)
 
     def test_apply_updates_rejects_invalid_values_without_polluting_files(self):
         config = ConfigManager(

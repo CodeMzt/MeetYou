@@ -23,6 +23,7 @@ class ToolsManagerExposureTests(unittest.TestCase):
         context_manager = SimpleNamespace(update_context=None)
         mcp_manager = SimpleNamespace(tool_map={})
         system_tools = SimpleNamespace(
+            exec_core_cmd=lambda **kwargs: kwargs,
             exec_sys_cmd=lambda **kwargs: kwargs,
             get_current_system_time=lambda: {"now": "2026-04-29T00:00:00Z"},
             get_sys_vitals=None,
@@ -44,7 +45,44 @@ class ToolsManagerExposureTests(unittest.TestCase):
         self.assertIn("list_delivery_targets", router.handlers)
         self.assertIn("get_current_system_time", router.handlers)
         self.assertIn("manage_threads", router.handlers)
+        self.assertIn("exec_core_cmd", router.handlers)
         self.assertNotIn("exec_sys_cmd", router.handlers)
+
+    def test_disabled_core_shell_tool_is_hidden(self):
+        memory = SimpleNamespace(
+            save_memory=None,
+            recall_memory=None,
+            recall_memory_structured=None,
+        )
+        context_manager = SimpleNamespace(update_context=None)
+        mcp_manager = SimpleNamespace(tool_map={})
+        system_tools = SimpleNamespace(
+            exec_core_cmd=lambda **kwargs: kwargs,
+            exec_sys_cmd=None,
+            get_current_system_time=None,
+            get_sys_vitals=None,
+            is_core_shell_exec_enabled=lambda: False,
+        )
+        manager = ToolsManager(memory, context_manager, mcp_manager, system_tools)
+        manager.tools_schema_dict = {
+            "common_tools": [
+                {"type": "function", "function": {"name": "exec_core_cmd", "description": "core shell"}}
+            ],
+            "chain_tools": [],
+            "memory_tools": [],
+            "background_tools": [],
+            "web_tools": [],
+            "mcp_tools": [],
+        }
+
+        visible_names = {
+            tool["function"]["name"]
+            for tool in manager.get_all_tools(
+                route_context={"tool_bundle": ["exec_core_cmd"], "mcp_servers": []}
+            )
+        }
+
+        self.assertNotIn("exec_core_cmd", visible_names)
 
     def test_tools_example_schema_does_not_repeat_tool_names(self):
         with open(

@@ -10,9 +10,16 @@ import datetime
 import json
 import logging
 import re
+from pathlib import Path
 
 from core.io_protocol import EventTarget, TargetKind
 from core.runtime_context import get_event_context
+from tools.command_policy import (
+    CORE_DEFAULT_POLICY,
+    DEFAULT_BLACKLIST_PATTERNS,
+    assess_command_safety as assess_shared_command_safety,
+    load_policy_file,
+)
 
 logger = logging.getLogger("meetyou.system_tools")
 
@@ -29,24 +36,13 @@ _progress_notice_emitter = None
 _core_restart_handler = None
 _tool_router = None
 _allow_local_fallback = True
+_core_shell_exec_enabled = True
+_core_cmd_policy = dict(CORE_DEFAULT_POLICY)
+_core_cmd_policy_path = "user/core_cmd_policy.json"
+_core_command_timeout_seconds = 120
+_core_command_output_max_chars = 20000
 
-_DEFAULT_BLACKLIST_PATTERNS = [
-    r"(^|[;&|])\s*(rm|del|erase|rd|rmdir|Remove-Item)\b",
-    r"(^|[;&|])\s*(shutdown|reboot|halt|poweroff|restart-computer|stop-computer)\b",
-    r"\b(format|diskpart|mkfs(?:\.\w+)?|fdisk|parted|dd\s+if=|cipher\s+/w|sdelete)\b",
-    r"(^|[;&|])\s*(reg(?:\.exe)?\s+(add|delete|import|load|unload)|regedit)\b",
-    r"\b(bcdedit|bootrec|wevtutil\s+cl|vssadmin|wbadmin)\b",
-    r"(^|[;&|])\s*(powershell(?:\.exe)?|pwsh)\b.*-(enc|encodedcommand|e)\b",
-    r"\b(Invoke-Expression|iex|Set-ExecutionPolicy|Start-Process)\b",
-    r"\b(curl|wget|Invoke-WebRequest|iwr)\b.*(\||&&|;).*\b(sh|bash|zsh|powershell|pwsh|cmd)(?:\.exe)?\b",
-    r"(^|[;&|])\s*(net\s+(user|localgroup)|sc(?:\.exe)?\s+(config|create|delete|stop|start)|schtasks|crontab)\b",
-    r"(^|[;&|])\s*(systemctl\s+(stop|disable|mask|reboot|poweroff)|service\s+\S+\s+(stop|restart))\b",
-    r"(^|[;&|])\s*(taskkill|Stop-Process|pkill|killall|kill\s+-9)\b",
-    r"\b(chmod\s+777|chown|takeown|icacls|attrib\s+[+-][rhs])\b",
-    r"\b(netsh\b.*\badvfirewall\b|iptables|ufw|route\s+(add|delete|change))\b",
-    r"\bgit\s+(reset\s+--hard|clean\s+-fdx|checkout\s+--)\b",
-    r"\b(docker\s+(rm|rmi|system\s+prune|volume\s+rm)|kubectl\s+delete)\b",
-]
+_DEFAULT_BLACKLIST_PATTERNS = list(DEFAULT_BLACKLIST_PATTERNS)
 
 
 def init_system_tools(
@@ -54,6 +50,10 @@ def init_system_tools(
     event_bus,
     cmd_policy_path: str = "user/cmd_policy.json",
     allow_local_fallback: bool = True,
+    core_shell_exec_enabled: bool = True,
+    core_cmd_policy_path: str = "user/core_cmd_policy.json",
+    core_command_timeout_seconds: int = 120,
+    core_command_output_max_chars: int = 20000,
 ):
     """
     初始化系统工具模块。
@@ -64,9 +64,16 @@ def init_system_tools(
         cmd_policy_path: 命令安全策略文件路径
     """
     global _platform_adapter, _cmd_policy, _event_bus, _allow_local_fallback
+    global _core_shell_exec_enabled, _core_cmd_policy, _core_cmd_policy_path
+    global _core_command_timeout_seconds, _core_command_output_max_chars
     _platform_adapter = platform_adapter
     _event_bus = event_bus
     _allow_local_fallback = bool(allow_local_fallback)
+    _core_shell_exec_enabled = bool(core_shell_exec_enabled)
+    _core_cmd_policy_path = str(core_cmd_policy_path or "user/core_cmd_policy.json")
+    _core_cmd_policy = load_policy_file(_core_cmd_policy_path, default_policy=CORE_DEFAULT_POLICY)
+    _core_command_timeout_seconds = max(1, int(core_command_timeout_seconds or 120))
+    _core_command_output_max_chars = max(1000, int(core_command_output_max_chars or 20000))
 
     try:
         with open(cmd_policy_path, "r", encoding="utf-8") as f:
@@ -191,6 +198,115 @@ def _decode_local_shell_output(raw_bytes: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return raw_bytes.decode("utf-8", errors="replace")
+
+
+def is_core_shell_exec_enabled() -> bool:
+    return bool(_core_shell_exec_enabled)
+
+
+def assess_core_command_safety(cmd: str) -> dict[str, str]:
+    if not _core_shell_exec_enabled:
+        return {
+            "status": "blocked",
+            "reason": "Core shell execution is disabled by configuration.",
+        }
+    status, reason = assess_shared_command_safety(
+        cmd,
+        policy=_core_cmd_policy,
+        blacklist_match_status="blocked",
+        enforce_hard_guards=True,
+    )
+    return {
+        "status": status,
+        "reason": reason,
+    }
+
+
+def _truncate_command_output(text: str, limit: int) -> tuple[str, bool]:
+    if len(text) <= limit:
+        return text, False
+    return text[:limit], True
+
+
+def _raise_core_command_error(code: str, message: str, *, details: dict | None = None, retryable: bool = False):
+    error = RuntimeError(message)
+    error.tool_error_code = code
+    error.tool_error_message = message
+    error.tool_error_details = dict(details or {})
+    error.tool_error_retryable = bool(retryable)
+    raise error
+
+
+async def exec_core_cmd(cmd: str, timeout_seconds: int | None = None) -> dict:
+    command = str(cmd or "").strip()
+    if not command:
+        _raise_core_command_error("core_command_required", "cmd is required")
+
+    assessment = assess_core_command_safety(command)
+    if str(assessment.get("status") or "").lower() != "safe":
+        _raise_core_command_error(
+            "core_command_blocked",
+            "Core command was blocked by policy.",
+            details={
+                "command": command,
+                "policy_status": assessment.get("status", ""),
+                "policy_reason": assessment.get("reason", ""),
+                "policy_path": _core_cmd_policy_path,
+            },
+        )
+
+    try:
+        timeout = int(timeout_seconds or _core_command_timeout_seconds or 120)
+    except (TypeError, ValueError):
+        timeout = _core_command_timeout_seconds
+    timeout = max(1, min(timeout, _core_command_timeout_seconds))
+    cwd = Path.cwd()
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(cwd),
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        _raise_core_command_error(
+            "core_command_timeout",
+            f"Core command timed out after {timeout} seconds.",
+            details={
+                "command": command,
+                "cwd": str(cwd),
+                "timeout_seconds": timeout,
+            },
+            retryable=True,
+        )
+
+    stdout_text, stdout_truncated = _truncate_command_output(
+        _decode_local_shell_output(stdout).strip(),
+        _core_command_output_max_chars,
+    )
+    stderr_text, stderr_truncated = _truncate_command_output(
+        _decode_local_shell_output(stderr).strip(),
+        _core_command_output_max_chars,
+    )
+    payload = {
+        "summary": f"Core command exited {process.returncode}: {command}",
+        "command": command,
+        "cwd": str(cwd),
+        "stdout": stdout_text,
+        "stderr": stderr_text,
+        "returncode": process.returncode,
+        "truncated": bool(stdout_truncated or stderr_truncated),
+    }
+    if process.returncode != 0:
+        _raise_core_command_error(
+            "core_command_failed",
+            f"Core command failed with exit code {process.returncode}.",
+            details=payload,
+        )
+    return payload
 
 
 async def exec_sys_cmd(cmd: str, session_id: str = "", source=None, confirmed: bool = False) -> str:

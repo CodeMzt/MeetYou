@@ -40,7 +40,7 @@ MeetYou 选择把这些责任拆开：
 - 运行带持久化 Thread / Message / Run 状态的 Core assistant service。
 - 通过 RunEventLog 和 Delivery fan-out 实现流式输出。
 - 使用 V4 `/endpoint/ws` 协议连接 Desktop 和 Edge Endpoint Provider。
-- 将本地文件、Shell、workspace、MCP 能力通过 endpoint execution target 路由，而不是塞回 Core。
+- 将本地文件、workspace、通用 Shell、local MCP 能力通过 endpoint execution target 路由，而不是塞回 Core。唯一窄例外是 `exec_core_cmd`，它只在 Core Service 主机上按 Core 命令白名单执行。
 - 向 EndpointAddress 投递回复、notice、run event 和 operation update。
 - 支持 Scheduled Workflow、Scheduled Delivery 和不可删除的 `system.heartbeat` 系统任务。
 - 维护 Memory / Context pool，用于助手上下文和检索增强。
@@ -267,12 +267,15 @@ Copy-Item .env.example .env
 Copy-Item user\config.example.json user\config.json
 Copy-Item user\desktop_client.example.json user\desktop_client.json
 Copy-Item user\edge_client.example.json user\edge_client.json
+Copy-Item user\core_cmd_policy.example.json user\core_cmd_policy.json
 ```
 
 重要规则：
 
 - 真实密钥只放进 `.env` 或本地 `user/*.json`，这些文件不会被 Git 跟踪。
 - `user/config.json` 是正常启动所需配置。
+- Core 主机命令执行由 `core_shell_exec_enabled`、`core_cmd_policy_path`、`core_command_timeout_seconds` 和 `core_command_output_max_chars` 控制。`user/core_cmd_policy.json` 缺失或无效时回退到内置白名单，不回退到 allow-all。
+- `exec_core_cmd` 只代表 Core 主机命令；`exec_sys_cmd` 仍代表 Desktop/Endpoint shell。
 - PostgreSQL 是正式持久化层；服务启动会通过 `bootstrap_core_domain()` 执行 Alembic migration。
 - Provider 访问使用 `MEETYOU_CLIENT_ACCESS_TOKEN` 或 Gateway/Core access token。
 
@@ -359,6 +362,7 @@ scripts\manual-acceptance.cmd check
 
 - [V4 design](./docs/v4/meetyou-v4-design.md)
 - [V4 scheduled workflows](./docs/v4/meetyou-v4-scheduled-workflows.md)
+- [V4 Core command exception](./docs/v4/core-command-exception.md)
 - [Endpoint provider template](./docs/v4/endpoint-provider-template.md)
 - [Core API surfaces](./docs/core-api-surfaces.md)
 - [Storage and binary transfer](./docs/storage-and-binary-transfer.md)

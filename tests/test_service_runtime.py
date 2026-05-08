@@ -136,6 +136,7 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertIn("runtime_host_detection", retained)
         self.assertIn("runtime_host_observability", retained)
         self.assertIn("runtime_host_proprioception", retained)
+        self.assertIn("core_host_shell_execution_exception", retained)
         self.assertIn("terminal_shell_execution", delegated)
         self.assertIn("terminal_file_and_workspace_io", delegated)
         self.assertIn("terminal_local_mcp_runtime", delegated)
@@ -146,6 +147,10 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertIn(
             "sensors/proprioceptor.py::Proprioceptor.run",
             retained["runtime_host_proprioception"]["surfaces"],
+        )
+        self.assertIn(
+            "tools/system_tools.py::exec_core_cmd",
+            retained["core_host_shell_execution_exception"]["surfaces"],
         )
 
     def test_service_runtime_exposes_ready_health_after_setup(self):

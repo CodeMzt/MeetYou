@@ -10,6 +10,7 @@ Common templates:
 - `core_mcp_servers.example.json` -> `core_mcp_servers.json`
 - `mcp_servers.example.json` -> `mcp_servers.json`
 - `cmd_policy.example.json` -> `cmd_policy.json`
+- `core_cmd_policy.example.json` -> `core_cmd_policy.json`
 - `source_catalog.example.json` -> `source_catalog.json`
 - `memory_graph.example.json` -> `memory_graph.json`
 - `feishu_chat_ids.example.json` -> `feishu_chat_ids.json`
@@ -41,6 +42,16 @@ Initialization helpers:
 - `local_bridge_host` / `local_bridge_port`: local desktop backend bind address, default `127.0.0.1:38951`.
 
 Local acceptance can temporarily set `MEETYOU_FEISHU_ENABLE=false` and `MEETYOU_MEETWECHAT_ENABLE=false` to keep external endpoints disabled without editing `user/config.json`.
+
+Core command execution fields:
+
+- `core_shell_exec_enabled`: exposes `exec_core_cmd` when true. Direct calls are still rejected when false.
+- `core_cmd_policy_path`: Core-host command whitelist policy path, default `user/core_cmd_policy.json`.
+- `core_command_timeout_seconds`: maximum Core command runtime.
+- `core_command_output_max_chars`: maximum captured stdout/stderr characters per stream.
+- Environment overrides: `MEETYOU_CORE_SHELL_EXEC_ENABLED`, `MEETYOU_CORE_CMD_POLICY_PATH`, `MEETYOU_CORE_COMMAND_TIMEOUT_SECONDS`, and `MEETYOU_CORE_COMMAND_OUTPUT_MAX_CHARS`.
+- Missing or invalid `core_cmd_policy.json` uses the built-in Core whitelist. It never falls back to Desktop `cmd_policy.json` or allow-all.
+- `exec_core_cmd` runs on the Core Service host only. Desktop/Endpoint shell execution remains `exec_sys_cmd` plus the provider `cmd_policy_path`.
 
 `edge_client.json` common fields:
 
@@ -79,5 +90,6 @@ Recommended minimum first-run files:
 - `config.json`
 - `tools.json`
 - `cmd_policy.json`
+- `core_cmd_policy.json`
 - `source_catalog.json`
 - `memory_graph.json`

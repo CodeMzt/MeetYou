@@ -138,6 +138,14 @@ class GatewayConfigApiTests(unittest.TestCase):
         self.assertEqual(trusted_write_roots["control"], "directory_list")
         self.assertTrue(trusted_write_roots["help_text"])
         self.assertTrue(trusted_write_roots["examples"])
+        core_shell_enabled = next(
+            field for field in payload["ui_schema"]["config_fields"] if field["key"] == "core_shell_exec_enabled"
+        )
+        self.assertEqual(core_shell_enabled["input"], "boolean")
+        core_cmd_policy = next(
+            field for field in payload["ui_schema"]["config_fields"] if field["key"] == "core_cmd_policy_path"
+        )
+        self.assertEqual(core_cmd_policy["input"], "text")
         web_search_quality = next(
             field for field in payload["ui_schema"]["config_fields"] if field["key"] == "web_search_quality"
         )

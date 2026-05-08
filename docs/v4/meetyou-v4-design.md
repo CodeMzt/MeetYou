@@ -18,7 +18,8 @@
 10. Streaming 必须走 RunEventLog + Delivery fan-out。
 11. Tool 调度必须走 ToolRouter + ExecutionTarget。
 12. 权限挂在 Actor / Workspace / RunPolicy；执行能力挂在 EndpointCapability。
-13. 不保留 `/client/ws`、`source_client_id`、`target_client_id`、`ClientToolDispatchService` 兼容路径。
+13. `exec_core_cmd` 是显式 Core-host shell 例外，只能在 Core Service 主机执行，受 Core 白名单策略约束；`exec_sys_cmd` 仍代表 Endpoint shell。
+14. 不保留 `/client/ws`、`source_client_id`、`target_client_id`、`ClientToolDispatchService` 兼容路径。
 
 ---
 
@@ -32,10 +33,11 @@ V4 采用以下架构原则：
 4. **Scheduler 是系统级调度时钟。** Heartbeat 不再是独立系统，而是 Scheduler 中一条不可删除、可启停、可改间隔的系统预设 Job。
 5. **Client keepalive 和 system heartbeat 是两件事。** `endpoint.heartbeat` 只表示连接保活；`system.heartbeat` 表示 Core 自主定时任务。
 6. **Tool 调度基于 ExecutionTarget。** 所有工具调用先解析为 `core.local` / `desktop.home.executor` / `edge.xxx.executor` / `external.feishu` 等执行目标，再由对应 executor 执行。
-7. **Delivery 负责所有 Core -> Endpoint 的消息、事件、通知投递。** 它不负责生成回复；回复由 Run 产生，MessageService 持久化，DeliveryService 投递。
-8. **`short_reply` 不再作为 directed tool。** 它被替换为 `assistant.progress_notice` 运行时事件，不进入 ToolRouter，不生成 Operation，不代表最终回复。
-9. **开发期直接大换血。** 不保留 `/client/ws`、`source_client_id`、`target_client_id`、`ClientToolDispatchService` 等 V3 兼容路径。
-10. **测试必须从本地基础测试推进到真实远程 Core、真实 Desktop、真实通知渠道。** 单元测试通过不是终点。
+7. **Core-host shell 是显式例外。** `exec_core_cmd` 只在 Core Service 主机执行，固定 Core 进程工作目录并受 Core 白名单策略约束；本地文件、Workspace I/O、general shell 和 local MCP 仍走 Endpoint。
+8. **Delivery 负责所有 Core -> Endpoint 的消息、事件、通知投递。** 它不负责生成回复；回复由 Run 产生，MessageService 持久化，DeliveryService 投递。
+9. **`short_reply` 不再作为 directed tool。** 它被替换为 `assistant.progress_notice` 运行时事件，不进入 ToolRouter，不生成 Operation，不代表最终回复。
+10. **开发期直接大换血。** 不保留 `/client/ws`、`source_client_id`、`target_client_id`、`ClientToolDispatchService` 等 V3 兼容路径。
+11. **测试必须从本地基础测试推进到真实远程 Core、真实 Desktop、真实通知渠道。** 单元测试通过不是终点。
 
 ---
 

@@ -507,6 +507,126 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(read_result.error.code, "local_endpoint_required")
             self.assertEqual(read_result.error.details["tool_key"], "file.read")
 
+    async def test_exec_core_cmd_runs_allowed_command_on_core_host(self):
+        manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
+        real_system_tools.init_system_tools(
+            None,
+            None,
+            "missing.json",
+            allow_local_fallback=False,
+            core_shell_exec_enabled=True,
+            core_cmd_policy_path="missing-core-policy.json",
+            core_command_timeout_seconds=10,
+            core_command_output_max_chars=20000,
+        )
+        self.addCleanup(real_system_tools.set_tool_router, None)
+        self.addCleanup(real_system_tools.set_local_fallback_enabled, True)
+
+        result = await manager.call_tool(
+            "exec_core_cmd",
+            {"cmd": "echo hello"},
+            route_context={"tool_bundle": ["exec_core_cmd"], "mcp_servers": [], "current_mode": "automation"},
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.content.data["command"], "echo hello")
+        self.assertEqual(result.content.data["returncode"], 0)
+        self.assertIn("hello", result.content.data["stdout"].lower())
+        self.assertEqual(result.content.data["cwd"], str(Path.cwd()))
+
+    async def test_exec_core_cmd_rejects_non_whitelisted_command(self):
+        manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
+        real_system_tools.init_system_tools(
+            None,
+            None,
+            "missing.json",
+            allow_local_fallback=False,
+            core_shell_exec_enabled=True,
+            core_cmd_policy_path="missing-core-policy.json",
+        )
+        self.addCleanup(real_system_tools.set_local_fallback_enabled, True)
+
+        result = await manager.call_tool(
+            "exec_core_cmd",
+            {"cmd": f'"{sys.executable}" -c "print(123)"'},
+            route_context={"tool_bundle": ["exec_core_cmd"], "mcp_servers": [], "current_mode": "automation"},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error.code, "core_command_blocked")
+        self.assertEqual(result.error.details["policy_status"], "blocked")
+
+    async def test_exec_core_cmd_times_out_and_kills_process(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            python_prefix = f'"{sys.executable}" -c'
+            policy_path = Path(tmp_dir) / "core-policy.json"
+            policy_path.write_text(
+                json.dumps({"mode": "whitelist", "whitelist": [python_prefix], "blacklist_patterns": []}),
+                encoding="utf-8",
+            )
+            manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
+            real_system_tools.init_system_tools(
+                None,
+                None,
+                "missing.json",
+                allow_local_fallback=False,
+                core_shell_exec_enabled=True,
+                core_cmd_policy_path=str(policy_path),
+                core_command_timeout_seconds=1,
+            )
+            self.addCleanup(real_system_tools.set_local_fallback_enabled, True)
+
+            command = f'{python_prefix} "__import__(\'time\').sleep(2)"'
+            result = await manager.call_tool(
+                "exec_core_cmd",
+                {"cmd": command, "timeout_seconds": 1},
+                route_context={"tool_bundle": ["exec_core_cmd"], "mcp_servers": [], "current_mode": "automation"},
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error.code, "core_command_timeout")
+        self.assertEqual(result.error.details["timeout_seconds"], 1)
+        self.assertTrue(result.error.retryable)
+
+    async def test_exec_core_cmd_hidden_and_blocked_when_disabled(self):
+        manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
+        tools_path = Path(__file__).resolve().parent.parent / "user" / "tools.example.json"
+        real_system_tools.init_system_tools(
+            None,
+            None,
+            "missing.json",
+            allow_local_fallback=False,
+            core_shell_exec_enabled=False,
+            core_cmd_policy_path="missing-core-policy.json",
+        )
+        self.addCleanup(
+            real_system_tools.init_system_tools,
+            None,
+            None,
+            "missing.json",
+            True,
+            True,
+            "missing-core-policy.json",
+        )
+        await manager.init_tools(str(tools_path), {})
+
+        visible_names = {
+            tool["function"]["name"]
+            for tool in manager.get_all_tools(
+                route_context={"tool_bundle": ["exec_core_cmd"], "mcp_servers": [], "current_mode": "automation"}
+            )
+        }
+        blocked = await manager.call_tool(
+            "exec_core_cmd",
+            {"cmd": "echo hello"},
+            route_context={"tool_bundle": ["exec_core_cmd"], "mcp_servers": [], "current_mode": "automation"},
+        )
+
+        self.assertNotIn("exec_core_cmd", visible_names)
+        self.assertFalse(blocked.ok)
+        self.assertEqual(blocked.error.code, "core_command_blocked")
+        self.assertIn("disabled", blocked.error.details["policy_reason"].lower())
+
     async def test_brain_route_call_normalizes_structured_result(self):
         brain = Brain(
             adapter=None,

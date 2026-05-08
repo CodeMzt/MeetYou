@@ -63,6 +63,7 @@ _ENV_ASSIGNMENT_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=
 _BOOLEAN_TRUE_VALUES = {"1", "true", "yes", "on"}
 _BOOLEAN_FALSE_VALUES = {"0", "false", "no", "off"}
 _BOOLEAN_KEYS = {
+    "core_shell_exec_enabled",
     "enable_feishu_bot",
     "enable_meetwechat_client",
     "memory_background_episode_save",
@@ -71,6 +72,8 @@ _BOOLEAN_KEYS = {
     "heartbeat_idle_context_compaction_enabled",
 }
 _INTEGER_KEYS = {
+    "core_command_output_max_chars",
+    "core_command_timeout_seconds",
     "gateway_port",
     "heartbeat_interval",
     "heartbeat_idle_poke_after_seconds",
@@ -95,6 +98,8 @@ _INTEGER_KEYS = {
     "memory_auto_search_timeout_ms",
 }
 _POSITIVE_INTEGER_KEYS = {
+    "core_command_output_max_chars",
+    "core_command_timeout_seconds",
     "heartbeat_interval",
     "heartbeat_idle_poke_after_seconds",
     "heartbeat_idle_poke_cooldown_seconds",
@@ -149,6 +154,10 @@ _ENV_KEY_MAP = {
     "tavily_api_key": "TAVILY_API_KEY",
 }
 _ENV_OVERRIDE_KEY_MAP = {
+    "core_cmd_policy_path": "MEETYOU_CORE_CMD_POLICY_PATH",
+    "core_command_output_max_chars": "MEETYOU_CORE_COMMAND_OUTPUT_MAX_CHARS",
+    "core_command_timeout_seconds": "MEETYOU_CORE_COMMAND_TIMEOUT_SECONDS",
+    "core_shell_exec_enabled": "MEETYOU_CORE_SHELL_EXEC_ENABLED",
     "core_base_url": "MEETYOU_CORE_BASE_URL",
     "enable_feishu_bot": "MEETYOU_FEISHU_ENABLE",
     "enable_meetwechat_client": "MEETYOU_MEETWECHAT_ENABLE",

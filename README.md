@@ -40,7 +40,7 @@ MeetYou separates those responsibilities:
 - Run a Core assistant service with persistent Thread / Message / Run state.
 - Stream assistant output through RunEventLog and delivery fan-out.
 - Connect Desktop and Edge endpoint providers through the V4 `/endpoint/ws` protocol.
-- Route local file, shell, workspace, and MCP capabilities through endpoint execution targets rather than embedding them in Core.
+- Route local file, workspace, general shell, and local MCP capabilities through endpoint execution targets rather than embedding them in Core. The narrow exception is `exec_core_cmd`, which runs only on the Core Service host under a Core command whitelist.
 - Deliver replies, notices, run events, and operation updates to endpoint addresses.
 - Support scheduled workflows, scheduled delivery, and the non-deletable `system.heartbeat` job.
 - Maintain memory and context pools for assistant grounding.
@@ -267,12 +267,15 @@ Copy-Item .env.example .env
 Copy-Item user\config.example.json user\config.json
 Copy-Item user\desktop_client.example.json user\desktop_client.json
 Copy-Item user\edge_client.example.json user\edge_client.json
+Copy-Item user\core_cmd_policy.example.json user\core_cmd_policy.json
 ```
 
 Important rules:
 
 - Real secrets belong in `.env` or local `user/*.json` files that are ignored by Git.
 - `user/config.json` is required for normal startup.
+- Core-host command execution is controlled by `core_shell_exec_enabled`, `core_cmd_policy_path`, `core_command_timeout_seconds`, and `core_command_output_max_chars`. Missing or invalid `user/core_cmd_policy.json` falls back to the built-in whitelist, not allow-all.
+- `exec_core_cmd` is Core-host only; `exec_sys_cmd` remains the Desktop/Endpoint shell tool.
 - PostgreSQL is the formal persistence layer; service startup runs Alembic migrations through `bootstrap_core_domain()`.
 - Use `MEETYOU_CLIENT_ACCESS_TOKEN` or Gateway/Core access tokens for provider access.
 
@@ -359,6 +362,7 @@ Frontend acceptance should include a real browser or Electron visual check when 
 
 - [V4 design](./docs/v4/meetyou-v4-design.md)
 - [V4 scheduled workflows](./docs/v4/meetyou-v4-scheduled-workflows.md)
+- [V4 Core command exception](./docs/v4/core-command-exception.md)
 - [Endpoint provider template](./docs/v4/endpoint-provider-template.md)
 - [Core API surfaces](./docs/core-api-surfaces.md)
 - [Storage and binary transfer](./docs/storage-and-binary-transfer.md)

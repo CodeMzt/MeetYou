@@ -3,6 +3,37 @@
     {
       "type": "function",
       "function": {
+        "name": "exec_core_cmd",
+        "description": "Execute a whitelisted command on the Core Service host, not on the user's Desktop Endpoint. curl/wget-style network reads are allowed only without pipes, redirection, local file reads, or download-to-file flags.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cmd": {
+              "type": "string",
+              "description": "The command to execute on the Core host."
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "description": "Optional timeout in seconds, capped by Core configuration."
+            }
+          },
+          "required": [
+            "cmd"
+          ]
+        },
+        "metadata": {
+          "action_risk": "destructive",
+          "safe_parallel": false,
+          "requires_order": true,
+          "parallel_group": "core_shell",
+          "resource_key": "core.local:shell",
+          "max_concurrency": 1
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "exec_sys_cmd",
         "description": "Execute a shell command on the user's local machine through a Desktop Provider endpoint tool. Dangerous commands may be blocked by the local provider policy.",
         "parameters": {
