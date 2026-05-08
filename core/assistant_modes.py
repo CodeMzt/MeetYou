@@ -424,7 +424,6 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
     },
     ASSISTANT_MODE_AUTOMATION: {
         "tools": [
-            "exec_core_cmd",
             "read_local_documents",
             "write_local_document",
             "compile_report",
@@ -464,6 +463,7 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
 
 _DEFAULT_BASIC_MODE_TOOLS = [
     "ask_human",
+    "exec_core_cmd",
     "get_current_system_time",
     "list_skills",
     "load_skill",

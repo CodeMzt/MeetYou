@@ -5,10 +5,9 @@ from typing import Any
 from core.assistant_modes import get_default_assistant_capability_tools
 
 
-ENDPOINT_ALWAYS_AVAILABLE_TOOLS = ("emit_progress_notice",)
+ENDPOINT_ALWAYS_AVAILABLE_TOOLS = ("emit_progress_notice", "exec_core_cmd")
 
 _EXTERNAL_ENDPOINT_DENIED_TOOLS = {
-    "exec_core_cmd",
     "exec_sys_cmd",
     "send_endpoint_message",
 }

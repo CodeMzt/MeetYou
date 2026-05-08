@@ -242,7 +242,7 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertEqual(route.current_mode, "automation")
         self.assertIn("exec_core_cmd", route.tool_bundle)
 
-    def test_exec_core_cmd_is_only_in_automation_mode_bundle(self):
+    def test_exec_core_cmd_is_in_default_mode_bundles(self):
         manager = AssistantModeManager(_FakeConfig())
 
         automation_bundle = manager.get_tool_bundle("automation")
@@ -250,8 +250,8 @@ class AssistantModeManagerTests(unittest.TestCase):
         danxi_bundle = manager.get_tool_bundle("danxi")
 
         self.assertIn("exec_core_cmd", automation_bundle["tools"])
-        self.assertNotIn("exec_core_cmd", general_bundle["tools"])
-        self.assertNotIn("exec_core_cmd", danxi_bundle["tools"])
+        self.assertIn("exec_core_cmd", general_bundle["tools"])
+        self.assertIn("exec_core_cmd", danxi_bundle["tools"])
 
     def test_task_recognition_skill_extends_study_mode_tools(self):
         manager = AssistantModeManager(_FakeConfig())

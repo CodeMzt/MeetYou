@@ -19,7 +19,7 @@
 - Final assistant reply must be an assistant Message persisted by MessageService.
 - Streaming must flow through RunEventLog plus Delivery fan-out.
 - Tool dispatch must flow through ToolRouter plus ExecutionTarget.
-- `exec_core_cmd` is the only explicit Core-host shell exception. It runs on the Core Service host through `core.local`, must stay behind the Core command whitelist policy, and must not be generalized into Core-owned local file, workspace, or local MCP execution.
+- `exec_core_cmd` is the only explicit Core-host shell exception. It runs on the Core Service host through `core.local`, is exposed as a default/basic assistant tool when enabled, must stay behind the Core command whitelist policy, and must not be generalized into Core-owned local file, workspace, or local MCP execution.
 - `exec_sys_cmd` remains the Desktop/Endpoint-side shell tool and must continue to require an EndpointCapability such as `shell.exec`.
 - Permissions live on Actor / Workspace / RunPolicy. Execution ability lives on EndpointCapability.
 - V4 HTTP facade is `/runtime/*`; local Desktop `/desktop/*` may proxy to `/runtime/*`, `/operator/*`, or `/developer/*`, never to old `/client/*`.

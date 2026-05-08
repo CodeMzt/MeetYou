@@ -138,6 +138,8 @@ class FakeToolsManager:
             "danxi_list_posts": self._build_tool_schema("danxi_list_posts"),
             "danxi_search_posts": self._build_tool_schema("danxi_search_posts"),
             "danxi_set_webvpn_cookie": self._build_tool_schema("danxi_set_webvpn_cookie"),
+            "exec_core_cmd": self._build_tool_schema("exec_core_cmd"),
+            "emit_progress_notice": self._build_tool_schema("emit_progress_notice"),
             "research_topic": self._build_tool_schema("research_topic"),
             "inspect_page": self._build_tool_schema("inspect_page"),
             "track_source_updates": self._build_tool_schema("track_source_updates"),
@@ -2206,10 +2208,12 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
             tool_names = adapter.stream_calls[0]["tool_names"]
             self.assertIn("research_topic", tool_names)
             self.assertIn("inspect_page", tool_names)
+            self.assertIn("exec_core_cmd", tool_names)
+            self.assertIn("emit_progress_notice", tool_names)
             self.assertNotIn("automation_tool", tool_names)
             self.assertEqual(
                 session.metadata["current_route"]["tool_bundle"],
-                ["research_topic", "inspect_page"],
+                ["research_topic", "inspect_page", "emit_progress_notice", "exec_core_cmd"],
             )
             self.assertEqual(session.metadata["current_route"]["mcp_servers"], [])
             self.assertEqual(session.metadata["current_route"]["endpoint_tool_scope"], "basic")

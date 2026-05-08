@@ -15,17 +15,27 @@ class EndpointToolBundleTests(unittest.TestCase):
         self.assertIn("manage_tasks", bundle)
         self.assertIn("track_source_updates", bundle)
         self.assertIn("summarize_text", bundle)
+        self.assertIn("exec_core_cmd", bundle)
 
         self.assertNotIn("send_endpoint_message", bundle)
-        self.assertNotIn("exec_core_cmd", bundle)
         self.assertNotIn("exec_sys_cmd", bundle)
         self.assertEqual(len(bundle), len(set(bundle)))
 
     def test_external_endpoint_bundle_tracks_default_capability_catalog(self):
-        excluded = {"send_endpoint_message", "exec_core_cmd", "exec_sys_cmd"}
+        excluded = {"send_endpoint_message", "exec_sys_cmd"}
         expected_tools = set(get_default_assistant_capability_tools(include_basic=True)) - excluded
 
         self.assertTrue(expected_tools.issubset(set(EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE)))
+
+    def test_endpoint_always_available_tools_include_core_command(self):
+        from core.endpoint_tool_bundles import ensure_endpoint_always_available_tools
+
+        metadata = ensure_endpoint_always_available_tools(
+            {"allowed_tool_bundle": ["research_topic"]}
+        )
+
+        self.assertIn("exec_core_cmd", metadata["allowed_tool_bundle"])
+        self.assertIn("emit_progress_notice", metadata["allowed_tool_bundle"])
 
 
 if __name__ == "__main__":

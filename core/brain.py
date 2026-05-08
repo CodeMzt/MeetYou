@@ -32,6 +32,7 @@ from core.assistant_modes import (
 )
 from core.brain_session import BrainSession
 from core.background_agent import normalize_background_max_rounds
+from core.endpoint_tool_bundles import ENDPOINT_ALWAYS_AVAILABLE_TOOLS
 from core.public_contract import to_internal_assistant_mode
 from core.runtime_context import bind_event_context, get_event_context, reset_event_context
 from core.model_capabilities import ModelContextBudgetResolver
@@ -1233,6 +1234,10 @@ class Brain:
                     continue
                 seen_tools.add(tool_name)
                 clean_tools.append(tool_name)
+            for tool_name in ENDPOINT_ALWAYS_AVAILABLE_TOOLS:
+                if tool_name not in seen_tools:
+                    seen_tools.add(tool_name)
+                    clean_tools.append(tool_name)
             route_dict["tool_bundle"] = clean_tools
             allowed_mcp_servers = metadata.get("allowed_mcp_servers")
             route_dict["mcp_servers"] = [

@@ -45,7 +45,7 @@ Local acceptance can temporarily set `MEETYOU_FEISHU_ENABLE=false` and `MEETYOU_
 
 Core command execution fields:
 
-- `core_shell_exec_enabled`: exposes `exec_core_cmd` when true. Direct calls are still rejected when false.
+- `core_shell_exec_enabled`: exposes `exec_core_cmd` as a default/basic assistant tool when true. Direct calls are still rejected when false.
 - `core_cmd_policy_path`: Core-host command whitelist policy path, default `user/core_cmd_policy.json`.
 - `core_command_timeout_seconds`: maximum Core command runtime.
 - `core_command_output_max_chars`: maximum captured stdout/stderr characters per stream.

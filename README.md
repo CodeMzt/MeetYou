@@ -275,7 +275,7 @@ Important rules:
 - Real secrets belong in `.env` or local `user/*.json` files that are ignored by Git.
 - `user/config.json` is required for normal startup.
 - Core-host command execution is controlled by `core_shell_exec_enabled`, `core_cmd_policy_path`, `core_command_timeout_seconds`, and `core_command_output_max_chars`. Missing or invalid `user/core_cmd_policy.json` falls back to the built-in whitelist, not allow-all.
-- `exec_core_cmd` is Core-host only; `exec_sys_cmd` remains the Desktop/Endpoint shell tool.
+- `exec_core_cmd` is Core-host only and is exposed as a default/basic assistant tool when enabled; `exec_sys_cmd` remains the Desktop/Endpoint shell tool.
 - PostgreSQL is the formal persistence layer; service startup runs Alembic migrations through `bootstrap_core_domain()`.
 - Use `MEETYOU_CLIENT_ACCESS_TOKEN` or Gateway/Core access tokens for provider access.
 

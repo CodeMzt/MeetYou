@@ -42,5 +42,5 @@ The shared hard guard always runs before whitelist matching. It rejects shell co
 
 - `exec_core_cmd` is registered as a Core-owned tool on `core.local`.
 - It is marked `destructive`, not parallel-safe, and order-required.
-- It belongs to the `automation` assistant mode tool bundle only.
+- It is a default/basic assistant tool, so it is visible across assistant modes and endpoint basic bundles when enabled.
 - It is hidden when `core_shell_exec_enabled=false`; direct calls are rejected by policy as well.

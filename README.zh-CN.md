@@ -275,7 +275,7 @@ Copy-Item user\core_cmd_policy.example.json user\core_cmd_policy.json
 - 真实密钥只放进 `.env` 或本地 `user/*.json`，这些文件不会被 Git 跟踪。
 - `user/config.json` 是正常启动所需配置。
 - Core 主机命令执行由 `core_shell_exec_enabled`、`core_cmd_policy_path`、`core_command_timeout_seconds` 和 `core_command_output_max_chars` 控制。`user/core_cmd_policy.json` 缺失或无效时回退到内置白名单，不回退到 allow-all。
-- `exec_core_cmd` 只代表 Core 主机命令；`exec_sys_cmd` 仍代表 Desktop/Endpoint shell。
+- `exec_core_cmd` 只代表 Core 主机命令，开启后作为默认/basic assistant 工具暴露；`exec_sys_cmd` 仍代表 Desktop/Endpoint shell。
 - PostgreSQL 是正式持久化层；服务启动会通过 `bootstrap_core_domain()` 执行 Alembic migration。
 - Provider 访问使用 `MEETYOU_CLIENT_ACCESS_TOKEN` 或 Gateway/Core access token。
 
