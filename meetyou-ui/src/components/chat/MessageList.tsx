@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { User, Bot, FolderPlus, MoreHorizontal, PencilLine, X } from 'lucide-react'
-import { ChatTurn, HumanInputRequestPayload, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel } from '../../types'
+import { User, Bot, FolderPlus, GitFork, MoreHorizontal, PencilLine, RotateCcw, X } from 'lucide-react'
+import { ChatTurn, HumanInputRequestPayload, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel, RuntimeConversationCheckpoint } from '../../types'
 import TurnBody from './TurnBody'
 import ActionCard from './ActionCard'
 import styles from './MessageList.module.css'
@@ -18,11 +18,14 @@ interface MessageListProps {
   approvalDisplay: ApprovalDisplayModel | null
   pendingHumanInput: HumanInputRequestPayload | null
   activeProjectId?: string
+  checkpoints?: RuntimeConversationCheckpoint[]
   sendConfirmResponse: (requestId: string, accepted: boolean, approvalId?: string) => void
   sendHumanInputResponse: (requestId: string, val: string, option?: string) => void
   sendControlCommand?: (action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback', params?: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string }) => void
   onSaveMessageAsProjectSource?: (message: ChatTurn) => Promise<unknown>
   onEditRetryMessage?: (message: ChatTurn, content: string) => Promise<unknown>
+  onRestoreCheckpoint?: (checkpointId: string) => Promise<unknown>
+  onCheckoutCheckpoint?: (checkpointId: string) => Promise<unknown>
 }
 
 export default function MessageList({
@@ -35,11 +38,14 @@ export default function MessageList({
   approvalDisplay,
   pendingHumanInput,
   activeProjectId = '',
+  checkpoints = [],
   sendConfirmResponse,
   sendHumanInputResponse,
   sendControlCommand,
   onSaveMessageAsProjectSource,
   onEditRetryMessage,
+  onRestoreCheckpoint,
+  onCheckoutCheckpoint,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -54,6 +60,10 @@ export default function MessageList({
   const lastAssistantMessageId = useMemo(
     () => [...messages].reverse().find((message) => message.role === 'assistant')?.id,
     [messages],
+  )
+  const checkpointByMessageId = useMemo(
+    () => new Map(checkpoints.map((checkpoint) => [checkpoint.message_id, checkpoint])),
+    [checkpoints],
   )
   const isStreaming = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
 
@@ -131,8 +141,12 @@ export default function MessageList({
   const updateMenuPosition = (button: HTMLButtonElement, message: ChatTurn) => {
     const rect = button.getBoundingClientRect()
     const gutter = 8
-    const width = 160
-    const itemCount = (onSaveMessageAsProjectSource ? 1 : 0) + (message.role === 'user' && onEditRetryMessage ? 1 : 0)
+    const width = 176
+    const checkpoint = checkpointByMessageId.get(message.id)
+    const itemCount = (onSaveMessageAsProjectSource ? 1 : 0)
+      + (message.role === 'user' && onEditRetryMessage ? 1 : 0)
+      + (checkpoint && onRestoreCheckpoint ? 1 : 0)
+      + (checkpoint && onCheckoutCheckpoint ? 1 : 0)
     const estimatedHeight = 14 + itemCount * 34
     const belowTop = rect.bottom + 6
     const top = belowTop + estimatedHeight <= window.innerHeight - gutter
@@ -168,10 +182,29 @@ export default function MessageList({
     setActionError('')
   }
 
+  const runCheckpointAction = async (message: ChatTurn, action: 'restore' | 'checkout') => {
+    const checkpoint = checkpointByMessageId.get(message.id)
+    const handler = action === 'restore' ? onRestoreCheckpoint : onCheckoutCheckpoint
+    if (!checkpoint || !handler || busyMessageId) {
+      return
+    }
+    setBusyMessageId(message.id)
+    setActionError('')
+    try {
+      await handler(checkpoint.checkpoint_id)
+      setOpenMenuMessageId('')
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : action === 'restore' ? '恢复到此处失败' : '从此处签出失败')
+    } finally {
+      setBusyMessageId('')
+    }
+  }
+
   const renderMessageActionMenu = (message: ChatTurn) => {
     if (openMenuMessageId !== message.id || typeof document === 'undefined') {
       return null
     }
+    const checkpoint = checkpointByMessageId.get(message.id)
     return createPortal(
       <div className={styles.messageActionMenu} role="menu" style={menuStyle} ref={menuRef}>
         {onSaveMessageAsProjectSource ? (
@@ -179,6 +212,7 @@ export default function MessageList({
             type="button"
             role="menuitem"
             className={styles.messageActionItem}
+            data-message-action="save-source"
             disabled={!activeProjectId || Boolean(busyMessageId)}
             onClick={() => void handleSaveSource(message)}
           >
@@ -191,11 +225,38 @@ export default function MessageList({
             type="button"
             role="menuitem"
             className={styles.messageActionItem}
+            data-message-action="edit-retry"
             disabled={Boolean(busyMessageId)}
             onClick={() => openEditRetry(message)}
           >
             <PencilLine size={14} aria-hidden="true" />
             <span>编辑并重试</span>
+          </button>
+        ) : null}
+        {checkpoint && onRestoreCheckpoint ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={styles.messageActionItem}
+            data-message-action="restore-checkpoint"
+            disabled={Boolean(busyMessageId)}
+            onClick={() => void runCheckpointAction(message, 'restore')}
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+            <span>恢复到此处</span>
+          </button>
+        ) : null}
+        {checkpoint && onCheckoutCheckpoint ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={styles.messageActionItem}
+            data-message-action="checkout-checkpoint"
+            disabled={Boolean(busyMessageId)}
+            onClick={() => void runCheckpointAction(message, 'checkout')}
+          >
+            <GitFork size={14} aria-hidden="true" />
+            <span>从此处签出</span>
           </button>
         ) : null}
       </div>,
@@ -246,7 +307,7 @@ export default function MessageList({
           {actionError ? <div className={styles.actionError}>{actionError}</div> : null}
           <div className={styles.editFooter}>
             <button type="button" className={styles.secondaryButton} onClick={() => setEditingMessage(null)} disabled={Boolean(busyMessageId)}>取消</button>
-            <button type="button" className={styles.primaryButton} onClick={submitEditRetry} disabled={Boolean(busyMessageId) || !editDraft.trim()}>重试</button>
+            <button type="button" className={styles.primaryButton} data-edit-retry-submit="true" onClick={submitEditRetry} disabled={Boolean(busyMessageId) || !editDraft.trim()}>重试</button>
           </div>
         </div>
       </div>,
@@ -302,7 +363,7 @@ export default function MessageList({
               )}
               <div className={styles.message}>
                 <div className={styles.messageInner}>
-                  {isPersistedMessage(message) && (onSaveMessageAsProjectSource || (message.role === 'user' && onEditRetryMessage)) ? (
+                  {isPersistedMessage(message) && (onSaveMessageAsProjectSource || (message.role === 'user' && onEditRetryMessage) || ((onRestoreCheckpoint || onCheckoutCheckpoint) && checkpointByMessageId.has(message.id))) ? (
                     <div className={styles.messageActions}>
                       <button
                         type="button"
@@ -311,6 +372,7 @@ export default function MessageList({
                         aria-label="消息操作"
                         aria-haspopup="menu"
                         aria-expanded={openMenuMessageId === message.id}
+                        data-message-action-trigger={message.id}
                         onClick={(event) => {
                           setActionError('')
                           if (openMenuMessageId === message.id) {

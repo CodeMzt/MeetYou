@@ -244,8 +244,11 @@ export default function App() {
             sendHumanInputResponse={sendHumanInputResponse}
             sendControlCommand={sendControlCommand}
             activeProjectId={activeProjectId}
+            checkpoints={checkpoints}
             onSaveMessageAsProjectSource={saveMessageAsProjectSource}
             onEditRetryMessage={editRetryMessage}
+            onRestoreCheckpoint={restoreCheckpoint}
+            onCheckoutCheckpoint={checkoutCheckpoint}
           />
         </div>
       </div>

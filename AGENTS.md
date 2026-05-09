@@ -17,6 +17,7 @@
 - Historical edit retry creates a new message revision and branch. Do not overwrite the original message content.
 - V5 visible thread history must be projected by Core from `Thread.current_leaf_message_id` through `Message.parent_message_id`. Frontend branch/checkpoint controls must reload Core history after restore/checkout instead of hiding messages locally.
 - V5 branch UI should derive active branch/path/sibling variants from Core branch records (`metadata.is_active`, `parent_branch_id`). Do not create separate frontend-only retry tree state.
+- V5 message-level restore/checkout must target the Core automatic checkpoint whose `message_id` matches the message. Do not implement message-level restore by local UI filtering.
 - V5 desktop UI text should be Chinese by default. The 400x620 Electron top control dock must stay on one row; do not add controls that force the dock to wrap and steal chat vertical space.
 
 ## V4 Architecture Rules

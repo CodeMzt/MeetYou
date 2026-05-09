@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import MessageList from './MessageList'
 import type { ComponentProps } from 'react'
-import type { ChatTurn } from '../../types'
+import type { ChatTurn, RuntimeConversationCheckpoint } from '../../types'
 
 function turn(id: string, role: ChatTurn['role'], content: string, temporary = false): ChatTurn {
   return {
@@ -16,6 +16,22 @@ function turn(id: string, role: ChatTurn['role'], content: string, temporary = f
     isStreaming: false,
     createdAt: 1760000000000,
     temporary,
+  }
+}
+
+function checkpoint(messageId: string): RuntimeConversationCheckpoint {
+  return {
+    checkpoint_id: `chk_${messageId}`,
+    thread_id: 'thr_1',
+    branch_id: 'br_1',
+    message_id: messageId,
+    checkpoint_type: 'auto',
+    title: 'Auto checkpoint',
+    state: {},
+    status: 'active',
+    metadata: {},
+    created_at: '2026-05-09T00:00:00Z',
+    updated_at: '2026-05-09T00:00:00Z',
   }
 }
 
@@ -43,6 +59,17 @@ describe('MessageList', () => {
       activeProjectId: 'prj_1',
       onSaveMessageAsProjectSource: vi.fn(),
       onEditRetryMessage: vi.fn(),
+    })
+
+    const actionTriggers = markup.match(/aria-label="消息操作"/g) || []
+    expect(actionTriggers).toHaveLength(1)
+  })
+
+  it('shows message actions for persisted messages with checkpoint handlers', () => {
+    const markup = renderMessageList({
+      checkpoints: [checkpoint('msg_saved')],
+      onRestoreCheckpoint: vi.fn(),
+      onCheckoutCheckpoint: vi.fn(),
     })
 
     const actionTriggers = markup.match(/aria-label="消息操作"/g) || []
