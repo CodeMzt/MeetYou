@@ -356,6 +356,7 @@ class MemoryRecordMutationResponse(BaseModel):
 class RuntimeThreadCreateRequest(BaseModel):
     home_workspace_id: str = ""
     workspace_id: str = ""
+    project_id: str = ""
     title: str = ""
     mode: str = "general"
 
@@ -385,9 +386,17 @@ class RuntimeThreadResponse(BaseModel):
     thread_id: str
     home_workspace_id: str
     workspace_id: str = ""
+    project_id: str = ""
     title: str = ""
     status: str = "active"
     summary: str = ""
+
+
+class RuntimeThreadPatchRequest(BaseModel):
+    project_id: str | None = None
+    title: str | None = None
+    status: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class RuntimeThreadDeleteResponse(BaseModel):

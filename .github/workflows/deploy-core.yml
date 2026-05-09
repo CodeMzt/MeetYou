@@ -3,9 +3,15 @@ name: Deploy MeetYou Core
 on:
   workflow_run:
     workflows: ["CI"]
-    branches: [main]
+    branches: [main, v5]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to deploy to the Core host"
+        required: false
+        default: "main"
+        type: string
 
 jobs:
   deploy:
@@ -15,17 +21,28 @@ jobs:
     steps:
       - name: SSH deploy
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          MEETYOU_DEPLOY_BRANCH: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.branch || 'main' }}
+          MEETYOU_REPO_SLUG: ${{ github.repository }}
         with:
           host: ${{ secrets.CORE_HOST }}
           username: ${{ secrets.CORE_USER }}
           key: ${{ secrets.CORE_SSH_KEY }}
+          envs: MEETYOU_DEPLOY_BRANCH,MEETYOU_REPO_SLUG
           script: |
             set -e
 
             MEETYOU_ENV_BAK_REPO=""
             MEETYOU_ENV_BAK_BACKUP=""
             MEETYOU_REPO=""
+            MEETYOU_DEPLOY_BRANCH="${MEETYOU_DEPLOY_BRANCH:-main}"
             MEETYOU_REPO_SLUG="${MEETYOU_REPO_SLUG:-${{ github.repository }}}"
+
+            if printf '%s' "${MEETYOU_DEPLOY_BRANCH}" | grep -q '^-' || ! git check-ref-format --branch "${MEETYOU_DEPLOY_BRANCH}" >/dev/null 2>&1; then
+              echo "Invalid deploy branch: ${MEETYOU_DEPLOY_BRANCH}"
+              exit 1
+            fi
+            echo "Deploy branch: ${MEETYOU_DEPLOY_BRANCH}"
 
             restore_env_bak() {
               if [ -n "${MEETYOU_ENV_BAK_REPO}" ] && [ -n "${MEETYOU_ENV_BAK_BACKUP}" ] && [ -f "${MEETYOU_ENV_BAK_BACKUP}" ]; then
@@ -79,9 +96,9 @@ jobs:
                   echo "Preserving remote tracked local changes before deploy"
                   git -C "${repo}" stash push -m "meetyou-deploy-preserve-$(date -u +%Y%m%dT%H%M%SZ)"
                 fi
-                git -C "${repo}" fetch origin main
-                git -C "${repo}" checkout main
-                git -C "${repo}" reset --hard origin/main
+                git -C "${repo}" fetch origin "${MEETYOU_DEPLOY_BRANCH}"
+                git -C "${repo}" checkout -B "${MEETYOU_DEPLOY_BRANCH}" "origin/${MEETYOU_DEPLOY_BRANCH}"
+                git -C "${repo}" reset --hard "origin/${MEETYOU_DEPLOY_BRANCH}"
                 break
               fi
             done

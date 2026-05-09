@@ -6,6 +6,7 @@ from uuid import uuid4
 from typing import Any
 
 from core.artifacts import LocalArtifactStore
+from core.db.base import utcnow
 from core.db.models import Message
 from core.db.repositories import (
     ArtifactRepository,
@@ -30,6 +31,8 @@ def _public_id(prefix: str) -> str:
 
 
 _CITATION_RE = re.compile(r"(?<!!)\[(\d+)\]")
+_RESEARCH_TERMINAL_STATUSES = {"cancelled", "completed", "failed"}
+_RESEARCH_ALLOWED_STATUSES = {"planned", "approved", "running", *_RESEARCH_TERMINAL_STATUSES}
 
 
 class ResearchTaskCitationError(ValueError):
@@ -39,6 +42,12 @@ class ResearchTaskCitationError(ValueError):
         self.evidence_source_ids = evidence_source_ids
         missing = ", ".join(missing_source_ids)
         super().__init__(f"research report cites source ids not present in evidence_ledger: {missing}")
+
+
+class ResearchTaskStateError(ValueError):
+    def __init__(self, *, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
 
 
 def _evidence_source_ids(evidence_ledger: list[dict[str, Any]] | None) -> list[str]:
@@ -522,6 +531,115 @@ class ResearchTaskService(ServiceBase):
                 metadata=metadata,
             )
 
+    @staticmethod
+    def _normalized_transition_fields(
+        *,
+        current_status: str,
+        action: str,
+        fields: dict[str, Any],
+        existing_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_action = str(action or "").strip().lower()
+        normalized_status = str(current_status or "planned").strip().lower() or "planned"
+        next_fields = dict(fields or {})
+        requested_status = next_fields.get("status")
+
+        if "plan" in next_fields and normalized_status in {"running", *_RESEARCH_TERMINAL_STATUSES}:
+            raise ResearchTaskStateError(
+                code="research_plan_locked",
+                message="Research plan can only be edited before the task starts.",
+            )
+
+        if normalized_action:
+            if normalized_action == "approve":
+                if normalized_status != "planned":
+                    raise ResearchTaskStateError(
+                        code="research_transition_invalid",
+                        message=f"Cannot approve research task from status {normalized_status}.",
+                    )
+                requested_status = "approved"
+            elif normalized_action == "start":
+                if normalized_status not in {"planned", "approved"}:
+                    raise ResearchTaskStateError(
+                        code="research_transition_invalid",
+                        message=f"Cannot start research task from status {normalized_status}.",
+                    )
+                requested_status = "running"
+            elif normalized_action == "cancel":
+                if normalized_status in _RESEARCH_TERMINAL_STATUSES:
+                    raise ResearchTaskStateError(
+                        code="research_transition_invalid",
+                        message=f"Cannot cancel research task from status {normalized_status}.",
+                    )
+                requested_status = "cancelled"
+            elif normalized_action == "complete":
+                if normalized_status in _RESEARCH_TERMINAL_STATUSES:
+                    raise ResearchTaskStateError(
+                        code="research_transition_invalid",
+                        message=f"Cannot complete research task from status {normalized_status}.",
+                    )
+                requested_status = "completed"
+            elif normalized_action == "fail":
+                if normalized_status in _RESEARCH_TERMINAL_STATUSES:
+                    raise ResearchTaskStateError(
+                        code="research_transition_invalid",
+                        message=f"Cannot fail research task from status {normalized_status}.",
+                    )
+                requested_status = "failed"
+            else:
+                raise ResearchTaskStateError(
+                    code="research_action_invalid",
+                    message=f"Unsupported research task action: {normalized_action}",
+                )
+
+        if requested_status is not None:
+            target_status = str(requested_status or "").strip().lower()
+            if target_status not in _RESEARCH_ALLOWED_STATUSES:
+                raise ResearchTaskStateError(
+                    code="research_status_invalid",
+                    message=f"Unsupported research task status: {target_status}",
+                )
+            if not normalized_action and normalized_status in _RESEARCH_TERMINAL_STATUSES and target_status != normalized_status:
+                raise ResearchTaskStateError(
+                    code="research_transition_invalid",
+                    message=f"Cannot move research task from terminal status {normalized_status} to {target_status}.",
+                )
+            next_fields["status"] = target_status
+
+        if normalized_action or requested_status is not None:
+            target_status = str(next_fields.get("status") or normalized_status).strip().lower()
+            metadata = dict(existing_metadata or {})
+            metadata.update(dict(next_fields.get("metadata") or {}))
+            events = list(metadata.get("events") or [])
+            events.append(
+                {
+                    "action": normalized_action or "status",
+                    "from_status": normalized_status,
+                    "to_status": target_status,
+                    "at": utcnow().isoformat(),
+                }
+            )
+            metadata["events"] = events
+            next_fields["metadata"] = metadata
+
+        return next_fields
+
+    @classmethod
+    def normalize_update_fields(
+        cls,
+        *,
+        current_status: str,
+        action: str = "",
+        fields: dict[str, Any] | None = None,
+        existing_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return cls._normalized_transition_fields(
+            current_status=current_status,
+            action=action,
+            fields=dict(fields or {}),
+            existing_metadata=existing_metadata,
+        )
+
     def get_by_research_task_id(self, research_task_id: str):
         with self.session_scope() as session:
             return ResearchTaskRepository(session).get_by_research_task_id(research_task_id)
@@ -533,3 +651,17 @@ class ResearchTaskService(ServiceBase):
     def update_task(self, *, research_task_id: str, fields: dict[str, Any]):
         with self.session_scope() as session:
             return ResearchTaskRepository(session).update(research_task_id=research_task_id, fields=fields)
+
+    def transition_task(self, *, research_task_id: str, action: str = "", fields: dict[str, Any] | None = None):
+        with self.session_scope() as session:
+            repo = ResearchTaskRepository(session)
+            row = repo.get_by_research_task_id(research_task_id)
+            if row is None:
+                return None
+            next_fields = self._normalized_transition_fields(
+                current_status=str(getattr(row, "status", "") or "planned"),
+                action=action,
+                fields=dict(fields or {}),
+                existing_metadata=dict(getattr(row, "meta", {}) or {}),
+            )
+            return repo.update(research_task_id=research_task_id, fields=next_fields)

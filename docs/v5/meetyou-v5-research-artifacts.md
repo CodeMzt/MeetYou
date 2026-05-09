@@ -6,7 +6,7 @@ Deep research is represented by `ResearchTask`.
 
 1. Intake: store topic, optional project/thread, source policy, and output format.
 2. Plan: create an editable plan with explicit gather/synthesize/artifact steps.
-3. Approval/start: user or automation starts the task; status moves from `planned` to `running`.
+3. Approval/start: user or automation approves the editable plan, then starts the task. Status transitions are explicit: `planned -> approved -> running`; `planned -> running` remains allowed for single-step automation.
 4. Gather: use read-only web, academic, project-source, file-search, or MCP search/fetch tools.
 5. Synthesize: produce claims that map to evidence records.
 6. Artifact: validate report citations against the evidence ledger, then save a Markdown report through `ArtifactStore`; PDF/DOCX export can be added as derived artifacts.
@@ -24,6 +24,16 @@ Allowed verification statuses:
 - `derived`: source is a derived artifact, not primary evidence.
 
 Final research claims should cite only `read` or `project_source` evidence unless the report explicitly labels the gap. The current guard validates numeric inline citations such as `[1]` and `[2]`; every cited id must exist in `evidence_ledger[].source_id`, or the API/tool request fails with `research_report_citation_invalid` before any report artifact is written.
+
+## Task State Guard
+
+Research tasks use a small durable state machine:
+
+- Mutable planning: `planned`, `approved`.
+- Active execution: `running`.
+- Terminal states: `cancelled`, `completed`, `failed`.
+
+Plan edits are accepted only before start. `approve`, `start`, `cancel`, `complete`, and `fail` actions append transition events into task metadata. Report submission without an explicit action is treated as `complete`; report submission with any other action is rejected by the tool/API guard.
 
 ## ArtifactStore
 

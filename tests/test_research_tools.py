@@ -49,6 +49,21 @@ class ResearchToolsTests(unittest.IsolatedAsyncioTestCase):
         created = await self.tools.create_research_task(topic="V5 evidence ledger")
         research_task_id = created["research_task_id"]
 
+        started = await self.tools.manage_research_tasks(
+            action="start",
+            research_task_id=research_task_id,
+        )
+        self.assertTrue(started["ok"])
+        self.assertEqual(started["status"], "running")
+
+        locked_plan = await self.tools.manage_research_tasks(
+            action="update",
+            research_task_id=research_task_id,
+            plan={"schema": "locked-after-start"},
+        )
+        self.assertFalse(locked_plan["ok"])
+        self.assertEqual(locked_plan["code"], "research_plan_locked")
+
         invalid = await self.tools.manage_research_tasks(
             action="complete",
             research_task_id=research_task_id,

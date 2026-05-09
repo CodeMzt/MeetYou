@@ -46,6 +46,23 @@ class ThreadRepository(RepositoryBase):
         self.session.flush()
         return thread
 
+    def update_fields(self, *, thread_row_id, fields: dict) -> Thread | None:
+        thread = self.get_by_id(thread_row_id)
+        if thread is None:
+            return None
+        if "title" in fields and fields["title"] is not None:
+            thread.title = str(fields["title"] or "").strip()
+        if "status" in fields and fields["status"] is not None:
+            thread.status = str(fields["status"] or "").strip() or "active"
+        if "project_id" in fields:
+            thread.project_id = fields["project_id"]
+        if "metadata" in fields and isinstance(fields["metadata"], dict):
+            merged = dict(thread.meta or {})
+            merged.update(dict(fields["metadata"] or {}))
+            thread.meta = merged
+        self.session.flush()
+        return thread
+
     def update_summary(self, *, thread_row_id, summary: str, metadata: dict | None = None) -> Thread | None:
         thread = self.get_by_id(thread_row_id)
         if thread is None:
@@ -58,11 +75,13 @@ class ThreadRepository(RepositoryBase):
         self.session.flush()
         return thread
 
-    def list_for_principal(self, *, principal_id, workspace_id=None, limit: int = 50) -> list[Thread]:
+    def list_for_principal(self, *, principal_id, workspace_id=None, project_id=None, limit: int = 50) -> list[Thread]:
         query = self.session.query(Thread).filter_by(principal_id=principal_id)
         query = query.filter(Thread.status != "deleted")
         if workspace_id is not None:
             query = query.filter_by(home_workspace_id=workspace_id)
+        if project_id is not None:
+            query = query.filter_by(project_id=project_id)
         limit = max(1, min(int(limit or 50), 200))
         return list(query.order_by(Thread.updated_at.desc(), Thread.created_at.desc()).limit(limit).all())
 

@@ -39,6 +39,14 @@ V5 intentionally does not treat Project as Workspace. Workspace remains the gove
 
 ## Public Interfaces
 
-V5 adds `/runtime/projects`, `/runtime/research-tasks`, `/runtime/artifacts/*`, thread branch/checkpoint endpoints, and message edit retry endpoints. Desktop `/desktop/*` may proxy these routes to `/runtime/*`.
+V5 adds `/runtime/projects`, `/runtime/projects/{project_id}/threads`, `/runtime/research-tasks`, `/runtime/artifacts/*`, thread branch/checkpoint endpoints, and message edit retry endpoints. Thread create/list/patch routes understand optional `project_id` so a thread can be created inside a project, moved into a project, or detached without changing Workspace governance.
+
+## Delivery And Verification Workflow
+
+V5 development uses `v5` as the integration branch until the full V5 target is ready for final merge to `main`.
+
+Each phase must produce a concrete phase plan, make scoped changes, run local tests, commit, push `v5`, wait for GitHub Actions CI, wait for the Core deploy workflow to deploy `v5`, then run real runtime/API validation against the deployed Core. Frontend changes additionally require a real browser or Electron screenshot acceptance run.
+
+The Core deploy workflow is branch-aware. CI success on `main` deploys `main`; CI success on `v5` deploys `v5`. Manual deployment dispatch accepts an explicit branch input, validates it as a Git branch name, fetches that branch on the Core host, and resets the remote working tree to `origin/<branch>` before invoking the host deploy script.
 
 First-stage implementation provides durable API/data skeleton and local ArtifactStore. Full background research execution and full project/branch UI are follow-up work.

@@ -60,11 +60,19 @@ class ThreadService(ServiceBase):
                 metadata=metadata,
             )
 
-    def list_threads(self, *, principal_id, workspace_id=None, limit: int = 50):
+    def update_thread(self, *, thread_row_id, fields: dict):
+        with self.session_scope() as session:
+            return ThreadRepository(session).update_fields(
+                thread_row_id=thread_row_id,
+                fields=fields,
+            )
+
+    def list_threads(self, *, principal_id, workspace_id=None, project_id=None, limit: int = 50):
         with self.session_scope() as session:
             return ThreadRepository(session).list_for_principal(
                 principal_id=principal_id,
                 workspace_id=workspace_id,
+                project_id=project_id,
                 limit=limit,
             )
 

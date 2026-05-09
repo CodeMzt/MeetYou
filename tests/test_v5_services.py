@@ -19,6 +19,7 @@ from core.services.v5_service import (
     ProjectService,
     ResearchTaskCitationError,
     ResearchTaskService,
+    ResearchTaskStateError,
 )
 
 
@@ -92,6 +93,38 @@ class V5ServiceTests(unittest.TestCase):
         self.assertEqual(source.source_message_id, message.id)
         self.assertEqual(source.meta["source_message_id"], message.message_id)
         self.assertEqual([row.source_id for row in sources], [source.source_id])
+
+    def test_threads_can_attach_to_and_leave_projects(self) -> None:
+        project = self.project_service.create_project(
+            principal_id=self.principal_id,
+            workspace_id=self.workspace_id,
+            title="Project Threads",
+        )
+        thread = self.thread_service.create_thread(
+            principal_id=self.principal_id,
+            workspace_id=self.workspace_id,
+            project_id=project.id,
+            title="Project conversation",
+        )
+
+        project_threads = self.thread_service.list_threads(
+            principal_id=self.principal_id,
+            project_id=project.id,
+        )
+        self.assertEqual([row.thread_id for row in project_threads], [thread.thread_id])
+
+        updated = self.thread_service.update_thread(
+            thread_row_id=thread.id,
+            fields={"project_id": None, "title": "Detached conversation"},
+        )
+        detached_project_threads = self.thread_service.list_threads(
+            principal_id=self.principal_id,
+            project_id=project.id,
+        )
+
+        self.assertIsNone(updated.project_id)
+        self.assertEqual(updated.title, "Detached conversation")
+        self.assertEqual(detached_project_threads, [])
 
     def test_local_artifact_store_persists_checksum_and_resolves_inside_root(self) -> None:
         artifact = self.artifact_service.create_text_artifact(
@@ -167,10 +200,10 @@ class V5ServiceTests(unittest.TestCase):
             source_policy={"source_adapters": ["arxiv", "openalex"]},
             output_format="markdown",
         )
-        updated = self.research_service.update_task(
+        updated = self.research_service.transition_task(
             research_task_id=task.research_task_id,
+            action="start",
             fields={
-                "status": "running",
                 "evidence_ledger": [{"source_id": 1, "url": "https://example.test/paper"}],
             },
         )
@@ -181,6 +214,48 @@ class V5ServiceTests(unittest.TestCase):
         self.assertEqual([step["id"] for step in task.plan["steps"]], ["intake", "gather", "synthesize", "artifact"])
         self.assertEqual(updated.status, "running")
         self.assertEqual(updated.evidence_ledger[0]["source_id"], 1)
+        self.assertEqual(updated.meta["events"][0]["action"], "start")
+
+        with self.assertRaises(ResearchTaskStateError) as raised:
+            self.research_service.transition_task(
+                research_task_id=task.research_task_id,
+                fields={"plan": {"schema": "locked"}},
+            )
+        self.assertEqual(raised.exception.code, "research_plan_locked")
+
+    def test_research_task_state_transitions_are_validated(self) -> None:
+        task = self.research_service.create_task(
+            principal_id=self.principal_id,
+            topic="deep research lifecycle",
+        )
+        approved = self.research_service.transition_task(
+            research_task_id=task.research_task_id,
+            action="approve",
+            fields={"plan": {"schema": "meetyou.research.plan.v1", "steps": []}},
+        )
+        running = self.research_service.transition_task(
+            research_task_id=task.research_task_id,
+            action="start",
+            fields={},
+        )
+        cancelled = self.research_service.transition_task(
+            research_task_id=task.research_task_id,
+            action="cancel",
+            fields={},
+        )
+
+        self.assertEqual(approved.status, "approved")
+        self.assertEqual(running.status, "running")
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertEqual([event["action"] for event in cancelled.meta["events"]], ["approve", "start", "cancel"])
+
+        with self.assertRaises(ResearchTaskStateError) as raised:
+            self.research_service.transition_task(
+                research_task_id=task.research_task_id,
+                action="start",
+                fields={},
+            )
+        self.assertEqual(raised.exception.code, "research_transition_invalid")
 
     def test_research_report_citations_must_exist_in_evidence_ledger(self) -> None:
         validation = self.research_service.validate_report_citations(

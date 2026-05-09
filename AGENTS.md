@@ -54,6 +54,8 @@
 
 - `main` is the publish branch. A finished task must be committed, pushed, and merged back to `main`; do not leave completed work only on a feature branch or as local uncommitted changes.
 - If work starts on `main`, commit directly to `main` only when the change is already verified and ready to publish. If work starts on another branch, merge it back to `main` after verification and push `main`.
+- During V5 expansion, `v5` is the active integration branch. Each V5 phase must follow: detailed phase plan -> scoped changes -> local verification -> commit -> push `v5` -> wait for GitHub Actions CI -> wait for Core deployment of `v5` -> real runtime/API validation -> update V5 docs -> continue the next phase.
+- V5 branch deployment is allowed through `.github/workflows/deploy-core.yml`; CI success on `v5` may deploy `v5`, and manual dispatch must explicitly name the branch to deploy.
 - Keep public documentation focused on reusable project design, API surfaces, setup, and acceptance guidance. Ignore or remove development plans, old migration notes, historical architecture drafts, and local reports unless the user explicitly asks to publish them.
 - This Windows environment rejects `rg`. Use PowerShell file scanning (`Get-ChildItem`, `Select-String`), `git ls-files`, or targeted language/tooling commands for repository searches.
 - Publish prep must remove or ignore local-only outputs such as caches, logs, build folders, Electron release artifacts, packaged runtime templates, and screenshot/test artifacts. Do not commit local secrets or runtime state.
@@ -168,6 +170,7 @@
 - Frontend changes: run `npm run typecheck`, then `npm run test`; add real functional tests for substantive UI behavior.
 - Frontend acceptance must include a real browser or Electron run plus screenshot verification. Save screenshots under an ignored local artifact directory and report the exact path in the completion note. Typecheck/unit tests alone are not enough for frontend acceptance.
 - Cross-surface changes: verify backend first, then frontend; for API/protocol/service main-chain work, add runtime/gateway focused tests or `scripts\manual-acceptance.cmd check`.
+- V5 phase validation must include remote verification after local verification: push `v5`, wait for `CI` on `v5`, wait for `Deploy MeetYou Core` on `v5`, then run real Core/runtime checks against the deployed branch before starting the next V5 phase.
 - V4 baseline test ladder must not stop at unit tests:
   - Run Python tests, frontend typecheck/build/test, migration tests, endpoint protocol tests, scheduler tests, tool router tests, and delivery tests as applicable.
   - Start local Core + Desktop + UI for real tests: Thread, Streaming, `assistant.progress_notice`, ToolRouter, Scheduler, `system.heartbeat`, and disconnect/reconnect.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.services.v5_service import ResearchTaskCitationError
+from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 from tools.academic_sources import AcademicSourceRegistry
 
 
@@ -104,8 +104,7 @@ class ResearchTools:
         if task is None:
             return {"ok": False, "code": "research_task_not_found", "message": f"Unknown research task: {research_task_id}"}
         fields: dict[str, Any] = {}
-        if normalized_action in {"start", "cancel", "complete"}:
-            fields["status"] = {"start": "running", "cancel": "cancelled", "complete": "completed"}[normalized_action]
+        transition_action = "" if normalized_action in {"list", "update"} else normalized_action
         if status:
             fields["status"] = status
         if plan is not None:
@@ -116,6 +115,23 @@ class ResearchTools:
             fields["summary"] = summary
         artifact_payload: dict[str, Any] = {}
         if report_markdown:
+            if not transition_action:
+                transition_action = "complete"
+            if transition_action != "complete":
+                return {
+                    "ok": False,
+                    "code": "research_action_invalid",
+                    "message": "report_markdown can only be submitted with action=complete or without an action.",
+                }
+            try:
+                domain.services.research_task.normalize_update_fields(
+                    current_status=str(getattr(task, "status", "") or "planned"),
+                    action=transition_action,
+                    fields=fields,
+                    existing_metadata=dict(getattr(task, "meta", {}) or {}),
+                )
+            except ResearchTaskStateError as exc:
+                return {"ok": False, "code": exc.code, "message": str(exc)}
             validation_ledger = evidence_ledger if evidence_ledger is not None else list(task.evidence_ledger or [])
             try:
                 citation_validation = domain.services.research_task.validate_report_citations(
@@ -147,7 +163,6 @@ class ResearchTools:
                 "artifact_id": artifact.artifact_id,
                 "citation_validation": citation_validation,
             }
-            fields.setdefault("status", "completed")
             artifact_payload = {
                 "artifact_id": artifact.artifact_id,
                 "download_url": f"/runtime/artifacts/{artifact.artifact_id}/download",
@@ -155,7 +170,14 @@ class ResearchTools:
                 "checksum": artifact.checksum,
                 "citation_validation": citation_validation,
             }
-        task = domain.services.research_task.update_task(research_task_id=research_task_id, fields=fields) or task
+        try:
+            task = domain.services.research_task.transition_task(
+                research_task_id=research_task_id,
+                action=transition_action,
+                fields=fields,
+            ) or task
+        except ResearchTaskStateError as exc:
+            return {"ok": False, "code": exc.code, "message": str(exc)}
         return {
             "ok": True,
             "research_task_id": task.research_task_id,

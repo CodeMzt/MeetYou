@@ -9,7 +9,7 @@ from core.credential_transport import CredentialTransportError, decrypt_json_pay
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
 from core.services.endpoint_service import EndpointThreadBindingError
-from core.services.v5_service import ResearchTaskCitationError
+from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 from core.services.workspace_service import WorkspaceService
 from core.services.tool_router_service import ToolRouterError
 from gateway.models import (
@@ -48,6 +48,7 @@ from gateway.models import (
     RuntimeSessionResponse,
     RuntimeThreadCreateRequest,
     RuntimeThreadDeleteResponse,
+    RuntimeThreadPatchRequest,
     RuntimeThreadResponse,
     RuntimeWorkspaceResponse,
     ContextPoolQueryResponse,
@@ -153,11 +154,22 @@ def _workspace_response(workspace) -> RuntimeWorkspaceResponse:
     )
 
 
-def _thread_response(thread, workspace_id: str) -> RuntimeThreadResponse:
+def _project_public_id(domain, project_row_id) -> str:
+    if not project_row_id:
+        return ""
+    try:
+        project = domain.services.project.get_by_id(project_row_id)
+    except Exception:
+        project = None
+    return str(getattr(project, "project_id", "") or "") if project is not None else ""
+
+
+def _thread_response(thread, workspace_id: str, project_id: str = "") -> RuntimeThreadResponse:
     return RuntimeThreadResponse(
         thread_id=thread.thread_id,
         home_workspace_id=workspace_id,
         workspace_id=workspace_id,
+        project_id=project_id,
         title=thread.title,
         status=thread.status,
         summary=thread.summary,
@@ -661,6 +673,16 @@ def build_runtime_router(gateway) -> APIRouter:
         )
         return _project_response(project, str(getattr(workspace, "workspace_id", "") or ""))
 
+    @router.get("/projects/{project_id}", response_model=RuntimeProjectResponse)
+    async def get_project(project_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        project = domain.services.project.get_by_project_id(project_id)
+        if project is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
+        workspace = domain.services.workspace.get_by_id(getattr(project, "workspace_id", None)) if getattr(project, "workspace_id", None) else None
+        return _project_response(project, str(getattr(workspace, "workspace_id", "") or ""))
+
     @router.patch("/projects/{project_id}", response_model=RuntimeProjectResponse)
     async def update_project(project_id: str, payload: RuntimeProjectUpdateRequest, request: Request):
         gateway._require_http_auth(request)
@@ -727,6 +749,28 @@ def build_runtime_router(gateway) -> APIRouter:
         if source is None:
             gateway._raise_http_error(status_code=404, code="project_or_message_not_found", message="Unknown project or message.")
         return _project_source_response(source, project_id=project_id)
+
+    @router.get("/projects/{project_id}/threads", response_model=list[RuntimeThreadResponse])
+    async def list_project_threads(project_id: str, request: Request, limit: int = 50):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        project = domain.services.project.get_by_project_id(project_id)
+        if project is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
+        rows = domain.services.thread.list_threads(
+            principal_id=domain.principal.id,
+            project_id=project.id,
+            limit=limit,
+        )
+        workspace_cache: dict[Any, str] = {}
+        responses: list[RuntimeThreadResponse] = []
+        for thread in rows:
+            row_workspace_id = getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None)
+            if row_workspace_id not in workspace_cache:
+                row_workspace = domain.services.workspace.get_by_id(row_workspace_id)
+                workspace_cache[row_workspace_id] = str(getattr(row_workspace, "workspace_id", "") or "")
+            responses.append(_thread_response(thread, workspace_cache[row_workspace_id], project_id=project.project_id))
+        return responses
 
     @router.get("/projects/{project_id}/artifacts", response_model=list[RuntimeArtifactResponse])
     async def list_project_artifacts(project_id: str, request: Request, include_archived: bool = False, limit: int = 100):
@@ -809,13 +853,22 @@ def build_runtime_router(gateway) -> APIRouter:
         domain = gateway._require_core_domain()
         fields = payload.model_dump(exclude_unset=True)
         action = str(fields.pop("action", "") or "").strip().lower()
-        if action in {"start", "cancel", "complete"}:
-            fields["status"] = {"start": "running", "cancel": "cancelled", "complete": "completed"}[action]
         report_markdown = fields.pop("report_markdown", None)
         report_filename = str(fields.pop("report_filename", "") or "").strip()
         task = domain.services.research_task.get_by_research_task_id(research_task_id)
         if task is None:
             gateway._raise_http_error(status_code=404, code="research_task_not_found", message=f"Unknown research task: {research_task_id}")
+        if report_markdown is not None and not action:
+            action = "complete"
+        try:
+            domain.services.research_task.normalize_update_fields(
+                current_status=str(getattr(task, "status", "") or "planned"),
+                action=action,
+                fields=fields,
+                existing_metadata=dict(getattr(task, "meta", {}) or {}),
+            )
+        except ResearchTaskStateError as exc:
+            gateway._raise_http_error(status_code=400, code=exc.code, message=str(exc))
         if report_markdown is not None:
             evidence_ledger = fields.get("evidence_ledger")
             if not isinstance(evidence_ledger, list):
@@ -852,29 +905,43 @@ def build_runtime_router(gateway) -> APIRouter:
                 "artifact_id": artifact.artifact_id,
                 "citation_validation": citation_validation,
             }
-            fields.setdefault("status", "completed")
-        task = domain.services.research_task.update_task(research_task_id=research_task_id, fields=fields) or task
+        try:
+            task = domain.services.research_task.transition_task(
+                research_task_id=research_task_id,
+                action=action,
+                fields=fields,
+            ) or task
+        except ResearchTaskStateError as exc:
+            gateway._raise_http_error(status_code=400, code=exc.code, message=str(exc))
         return _research_task_response(domain, task)
 
     @router.get("/threads", response_model=list[RuntimeThreadResponse])
-    async def list_threads(request: Request, workspace_id: str = "", limit: int = 50, cursor: str = ""):
+    async def list_threads(request: Request, workspace_id: str = "", project_id: str = "", limit: int = 50, cursor: str = ""):
         del cursor
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         workspace = _find_workspace(domain, workspace_id) if str(workspace_id or "").strip() else None
+        project = domain.services.project.get_by_project_id(project_id) if str(project_id or "").strip() else None
+        if project_id and project is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
         rows = domain.services.thread.list_threads(
             principal_id=domain.principal.id,
             workspace_id=getattr(workspace, "id", None),
+            project_id=getattr(project, "id", None),
             limit=limit,
         )
         workspace_cache: dict[Any, str] = {}
+        project_cache: dict[Any, str] = {}
         responses: list[RuntimeThreadResponse] = []
         for thread in rows:
             row_workspace_id = getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None)
             if row_workspace_id not in workspace_cache:
                 row_workspace = domain.services.workspace.get_by_id(row_workspace_id)
                 workspace_cache[row_workspace_id] = str(getattr(row_workspace, "workspace_id", "") or "")
-            responses.append(_thread_response(thread, workspace_cache[row_workspace_id]))
+            row_project_id = getattr(thread, "project_id", None)
+            if row_project_id not in project_cache:
+                project_cache[row_project_id] = _project_public_id(domain, row_project_id)
+            responses.append(_thread_response(thread, workspace_cache[row_workspace_id], project_id=project_cache[row_project_id]))
         return responses
 
     @router.post("/threads/default", response_model=RuntimeThreadResponse)
@@ -888,19 +955,23 @@ def build_runtime_router(gateway) -> APIRouter:
             default_key=payload.default_key,
             title=payload.title,
         )
-        return _thread_response(thread, workspace.workspace_id)
+        return _thread_response(thread, workspace.workspace_id, project_id=_project_public_id(domain, getattr(thread, "project_id", None)))
 
     @router.post("/threads", response_model=RuntimeThreadResponse)
     async def create_thread(payload: RuntimeThreadCreateRequest, request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         workspace = _find_workspace(domain, payload.resolved_home_workspace_id)
+        project = domain.services.project.get_by_project_id(payload.project_id) if str(payload.project_id or "").strip() else None
+        if payload.project_id and project is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {payload.project_id}")
         thread = domain.services.thread.create_thread(
             principal_id=domain.principal.id,
             workspace_id=workspace.id,
+            project_id=getattr(project, "id", None),
             title=payload.title,
         )
-        return _thread_response(thread, workspace.workspace_id)
+        return _thread_response(thread, workspace.workspace_id, project_id=str(getattr(project, "project_id", "") or ""))
 
     @router.get("/threads/{thread_id}", response_model=RuntimeThreadResponse)
     async def get_thread(thread_id: str, request: Request):
@@ -908,7 +979,33 @@ def build_runtime_router(gateway) -> APIRouter:
         domain = gateway._require_core_domain()
         thread = _require_thread(gateway, domain, thread_id)
         workspace = domain.services.workspace.get_by_id(getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None))
-        return _thread_response(thread, getattr(workspace, "workspace_id", ""))
+        return _thread_response(
+            thread,
+            getattr(workspace, "workspace_id", ""),
+            project_id=_project_public_id(domain, getattr(thread, "project_id", None)),
+        )
+
+    @router.patch("/threads/{thread_id}", response_model=RuntimeThreadResponse)
+    async def patch_thread(thread_id: str, payload: RuntimeThreadPatchRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        thread = _require_thread(gateway, domain, thread_id)
+        fields = payload.model_dump(exclude_unset=True)
+        public_project_id = _project_public_id(domain, getattr(thread, "project_id", None))
+        if "project_id" in fields:
+            requested_project_id = str(fields.pop("project_id") or "").strip()
+            if requested_project_id:
+                project = domain.services.project.get_by_project_id(requested_project_id)
+                if project is None:
+                    gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {requested_project_id}")
+                fields["project_id"] = project.id
+                public_project_id = project.project_id
+            else:
+                fields["project_id"] = None
+                public_project_id = ""
+        updated = domain.services.thread.update_thread(thread_row_id=thread.id, fields=fields) or thread
+        workspace = domain.services.workspace.get_by_id(getattr(updated, "home_workspace_id", None) or getattr(updated, "workspace_id", None))
+        return _thread_response(updated, getattr(workspace, "workspace_id", ""), project_id=public_project_id)
 
     @router.delete("/threads/{thread_id}", response_model=RuntimeThreadDeleteResponse)
     async def delete_thread(thread_id: str, request: Request, force: bool = False):
@@ -1030,7 +1127,7 @@ def build_runtime_router(gateway) -> APIRouter:
             display_name=payload.display_name,
         )
         return RuntimeEndpointSessionResolveResponse(
-            thread=_thread_response(thread, workspace.workspace_id),
+            thread=_thread_response(thread, workspace.workspace_id, project_id=_project_public_id(domain, getattr(thread, "project_id", None))),
             session=_session_response(session, thread=thread, workspace=workspace, endpoint=endpoint),
             binding=_binding_response(binding, endpoint=endpoint, thread=thread, workspace=workspace, address=address),
         )

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, v5]
   pull_request:
 
 jobs:
@@ -57,11 +57,11 @@ jobs:
             tests.test_scheduler_v4 \
             tests.test_db_bootstrap \
             tests.test_gateway_config_api
-      - name: Run full backend discovery on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Run full backend discovery on deploy branches
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v5')
         run: python -m unittest discover -s tests -p "test_*.py"
       - name: Validate V4 acceptance runner imports
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v5')
         run: python -m py_compile scripts/v4_real_acceptance.py
       - name: Install frontend dependencies
         working-directory: meetyou-ui
@@ -72,7 +72,7 @@ jobs:
       - name: Frontend tests
         working-directory: meetyou-ui
         run: npm run test
-      - name: Frontend build on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Frontend build on deploy branches
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v5')
         working-directory: meetyou-ui
         run: npm run build:ui

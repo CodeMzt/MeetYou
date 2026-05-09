@@ -93,6 +93,35 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(source_response.status_code, 200)
         self.assertEqual(source_response.json()["content"], "Evidence note")
 
+        thread_response = self.client.post(
+            "/runtime/threads",
+            json={
+                "workspace_id": "personal",
+                "project_id": project_id,
+                "title": "Project thread",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_response.status_code, 200)
+        self.assertEqual(thread_response.json()["project_id"], project_id)
+        thread_id = thread_response.json()["thread_id"]
+
+        project_threads_response = self.client.get(
+            f"/runtime/projects/{project_id}/threads",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(project_threads_response.status_code, 200)
+        self.assertEqual(project_threads_response.json()[0]["thread_id"], thread_id)
+
+        detach_thread_response = self.client.patch(
+            f"/runtime/threads/{thread_id}",
+            json={"project_id": "", "title": "Detached thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(detach_thread_response.status_code, 200)
+        self.assertEqual(detach_thread_response.json()["project_id"], "")
+        self.assertEqual(detach_thread_response.json()["title"], "Detached thread")
+
         project = self.services.project.get_by_project_id(project_id)
         artifact = self.services.artifact.create_text_artifact(
             principal_id=self.principal.id,
@@ -127,6 +156,30 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(research_response.json()["status"], "planned")
         self.assertEqual(research_response.json()["plan"]["source_adapters"], ["arxiv"])
         research_task_id = research_response.json()["research_task_id"]
+
+        approve_response = self.client.patch(
+            f"/runtime/research-tasks/{research_task_id}",
+            json={"action": "approve", "plan": {"schema": "meetyou.research.plan.v1", "steps": []}},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(approve_response.status_code, 200)
+        self.assertEqual(approve_response.json()["status"], "approved")
+
+        start_response = self.client.patch(
+            f"/runtime/research-tasks/{research_task_id}",
+            json={"action": "start"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(start_response.status_code, 200)
+        self.assertEqual(start_response.json()["status"], "running")
+
+        locked_plan_response = self.client.patch(
+            f"/runtime/research-tasks/{research_task_id}",
+            json={"plan": {"schema": "should-not-edit-after-start"}},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(locked_plan_response.status_code, 400)
+        self.assertEqual(locked_plan_response.json()["error"]["code"], "research_plan_locked")
 
         invalid_report_response = self.client.patch(
             f"/runtime/research-tasks/{research_task_id}",
