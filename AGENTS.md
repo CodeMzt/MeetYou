@@ -21,6 +21,7 @@
 - Project artifact UI must list/download Core Artifact records through artifact APIs. Do not infer the project artifact list only from visible ResearchTask state.
 - Evidence-ledger citations must refer to recorded sources. Do not invent citations or cite unread sources as verified.
 - Starting a V5 ResearchTask may trigger the Core read-only research runner. If no readable evidence is gathered, fail the task instead of producing an uncited report.
+- V5 ResearchTask cancellation is cooperative but durable: once a task is `cancelled`, the runner must stop at the next stage/source boundary, record cancelled progress, and avoid creating report artifacts or delivery messages.
 - Conversation checkpoint restore and checkout are non-destructive. Do not delete old messages when switching branch/checkpoint.
 - Core must create automatic conversation checkpoints when persisted messages advance a thread leaf. Checkout should not depend on users manually creating checkpoints.
 - Historical edit retry creates a new message revision and branch. Do not overwrite the original message content.

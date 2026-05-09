@@ -124,6 +124,36 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Readable V5 web source", Path(report_path).read_text(encoding="utf-8"))
 
+    def test_runner_stops_when_cancelled_during_gather(self) -> None:
+        def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
+            del timeout
+            self.assertEqual(url, "https://example.test/slow")
+            self.services.research_task.transition_task(research_task_id=task.research_task_id, action="cancel")
+            return {
+                "url": url,
+                "title": "Cancelled source",
+                "content_type": "text/plain",
+                "content": "Readable evidence returned after cancellation.",
+            }
+
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="cancel during gather",
+            source_policy={"source_adapters": ["web"], "web_urls": ["https://example.test/slow"], "limit": 1},
+        )
+        result = ResearchExecutionService(self.services, web_fetcher=fake_web_fetch).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["status"], "cancelled")
+        cancelled = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertEqual(cancelled.evidence_ledger, [])
+        self.assertIsNone(cancelled.artifact_id)
+        self.assertEqual(cancelled.meta["progress"]["stage"], "gather")
+        self.assertEqual(cancelled.meta["progress"]["status"], "cancelled")
+        self.assertEqual(cancelled.meta["progress"]["message"], "研究任务已取消。")
+
     def test_runner_delivers_completed_report_message_to_bound_thread(self) -> None:
         def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
             del timeout

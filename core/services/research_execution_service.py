@@ -243,6 +243,8 @@ class ResearchExecutionService:
                 task = self.services.research_task.transition_task(research_task_id=research_task_id, action="start") or task
             except ResearchTaskStateError as exc:
                 return {"ok": False, "code": exc.code, "message": str(exc)}
+        if self._is_cancelled(research_task_id):
+            return self._cancelled_result(research_task_id, stage="gather")
 
         policy = dict(getattr(task, "source_policy", {}) or {})
         if policy.get("read_only") is False:
@@ -267,7 +269,14 @@ class ResearchExecutionService:
             message="正在收集研究证据。",
             metadata={"max_sources": max_sources},
         )
-        evidence, gather_errors = self._gather_evidence(task, policy=policy, max_sources=max_sources)
+        evidence, gather_errors = self._gather_evidence(
+            task,
+            research_task_id=research_task_id,
+            policy=policy,
+            max_sources=max_sources,
+        )
+        if self._is_cancelled(research_task_id):
+            return self._cancelled_result(research_task_id, stage="gather")
         if not evidence:
             self._record_progress(
                 research_task_id,
@@ -290,7 +299,7 @@ class ResearchExecutionService:
         if refreshed is None:
             return {"ok": False, "code": "research_task_not_found", "message": f"Unknown research task: {research_task_id}"}
         if str(getattr(refreshed, "status", "") or "").strip().lower() == "cancelled":
-            return {"ok": True, "skipped": True, "reason": "cancelled", "status": "cancelled"}
+            return self._cancelled_result(research_task_id, stage="gather")
 
         self._record_progress(
             research_task_id,
@@ -299,6 +308,8 @@ class ResearchExecutionService:
             message=f"已收集 {len(evidence)} 条可读证据。",
             metadata={"evidence_count": len(evidence), "gather_error_count": len(gather_errors)},
         )
+        if self._is_cancelled(research_task_id):
+            return self._cancelled_result(research_task_id, stage="synthesize")
         self._record_progress(
             research_task_id,
             stage="synthesize",
@@ -328,6 +339,8 @@ class ResearchExecutionService:
                 },
             )
 
+        if self._is_cancelled(research_task_id):
+            return self._cancelled_result(research_task_id, stage="artifact")
         self._record_progress(
             research_task_id,
             stage="artifact",
@@ -433,6 +446,20 @@ class ResearchExecutionService:
             attach(thread_row_id=thread_row_id, message_row_id=getattr(message, "id", None))
         return message
 
+    def _is_cancelled(self, research_task_id: str) -> bool:
+        task = self.services.research_task.get_by_research_task_id(research_task_id)
+        return str(getattr(task, "status", "") or "").strip().lower() == "cancelled"
+
+    def _cancelled_result(self, research_task_id: str, *, stage: str) -> dict[str, Any]:
+        self._record_progress(
+            research_task_id,
+            stage=stage,
+            status="cancelled",
+            message="研究任务已取消。",
+            metadata={"cancelled_at": _now_iso()},
+        )
+        return {"ok": True, "skipped": True, "reason": "cancelled", "status": "cancelled"}
+
     def _record_progress(
         self,
         research_task_id: str,
@@ -463,7 +490,7 @@ class ResearchExecutionService:
         )
         return event
 
-    def _gather_evidence(self, task, *, policy: dict[str, Any], max_sources: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    def _gather_evidence(self, task, *, research_task_id: str, policy: dict[str, Any], max_sources: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         adapters = policy.get("source_adapters")
         if adapters is None:
             adapters = ["arxiv", "openalex", "crossref", "semantic_scholar"]
@@ -486,12 +513,15 @@ class ResearchExecutionService:
         if web_requested:
             web_evidence, web_errors = self._gather_web_evidence(
                 task,
+                research_task_id=research_task_id,
                 policy=policy,
                 max_sources=max_sources,
                 source_id_start=1,
             )
             evidence.extend(web_evidence)
             gather_errors.extend(web_errors)
+        if self._is_cancelled(research_task_id):
+            return evidence[:max_sources], gather_errors
         academic_evidence, adapter_errors = AcademicSourceRegistry.fetch_evidence(
             getattr(task, "topic", ""),
             adapters=academic_adapters,
@@ -504,6 +534,8 @@ class ResearchExecutionService:
         gather_errors.extend(adapter_errors)
         evidence = evidence[:max_sources]
 
+        if self._is_cancelled(research_task_id):
+            return evidence[:max_sources], gather_errors
         if policy.get("include_project_sources"):
             evidence.extend(self._project_source_evidence(task, source_id_start=len(evidence) + 1, limit=max_sources - len(evidence)))
         return evidence[:max_sources], gather_errors
@@ -512,6 +544,7 @@ class ResearchExecutionService:
         self,
         task,
         *,
+        research_task_id: str,
         policy: dict[str, Any],
         max_sources: int,
         source_id_start: int,
@@ -522,6 +555,8 @@ class ResearchExecutionService:
         seed_urls = _web_seed_urls(policy)
         seed_keys = {_normalize_seed_key(item) for item in seed_urls}
         seed_keys.discard("")
+        if self._is_cancelled(research_task_id):
+            return evidence, errors
         if seed_urls and web_limit > 0:
             web_evidence, web_errors = WebSourceRegistry.fetch_evidence(
                 seed_urls,
@@ -533,6 +568,8 @@ class ResearchExecutionService:
             evidence.extend(web_evidence)
             errors.extend(web_errors)
 
+        if self._is_cancelled(research_task_id):
+            return evidence, errors
         remaining = max(0, web_limit - len(evidence))
         queries = _web_search_queries(task, policy)
         if not queries:
@@ -559,6 +596,8 @@ class ResearchExecutionService:
 
         discovered_seed_entries: list[dict[str, str]] = []
         for query in queries:
+            if self._is_cancelled(research_task_id):
+                return evidence, errors
             if remaining <= 0:
                 break
             try:
@@ -615,6 +654,8 @@ class ResearchExecutionService:
                 seed_keys.add(key)
                 discovered_seed_entries.append(entry)
 
+        if self._is_cancelled(research_task_id):
+            return evidence, errors
         if remaining > 0 and discovered_seed_entries:
             fetched_evidence, fetched_errors = WebSourceRegistry.fetch_evidence(
                 discovered_seed_entries,
