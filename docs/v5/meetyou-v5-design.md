@@ -43,6 +43,12 @@ V5 adds `/runtime/projects`, `/runtime/projects/{project_id}/threads`, `/runtime
 
 Assistant-facing project operations use `manage_projects` and `manage_project_sources`. These tools expose project CRUD, project thread membership, project source listing/viewing, note creation, and message snapshot saving through Core-owned services. They do not grant endpoint-local file access; imported files must come through separate approved read/file tools and then be saved as project sources or artifacts.
 
+## Frontend Project Scope
+
+The desktop main window exposes Project as a lightweight scope selector next to the thread selector. Selecting a project filters the thread list to that project. Creating a thread while a project is active sends `project_id` through the runtime thread create API. Selecting an empty project creates and selects the first project thread before switching context, so the message view never shows an unrelated thread under an active project.
+
+The main Electron window is a constrained floating surface (`400x620` by default, `340x460` minimum). Project/Thread UI must be validated at the real main-window size, not only in wide browser viewports. At the default width the project trigger may collapse to an icon while preserving the full project title in the button tooltip.
+
 ## Delivery And Verification Workflow
 
 V5 development uses `v5` as the integration branch until the full V5 target is ready for final merge to `main`.

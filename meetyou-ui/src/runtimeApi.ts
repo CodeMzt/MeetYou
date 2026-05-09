@@ -15,6 +15,7 @@ import type {
   RuntimeMessage,
   RuntimeMessageCreatePayload,
   RuntimeOperation,
+  RuntimeProject,
   OperatorSourceProfile,
   RuntimeSession,
   RuntimeThread,
@@ -482,7 +483,7 @@ export async function listOperatorSourceProfiles(baseUrl: string): Promise<Opera
 
 export async function createRuntimeThread(
   baseUrl: string,
-  payload: Pick<RuntimeThread, 'title'> & { home_workspace_id?: string; workspace_id?: string; mode?: string },
+  payload: Pick<RuntimeThread, 'title'> & { home_workspace_id?: string; workspace_id?: string; project_id?: string; mode?: string },
 ): Promise<RuntimeThread> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/threads'), {
     method: 'POST',
@@ -506,7 +507,7 @@ export async function ensureDefaultRuntimeThread(
 
 export async function listRuntimeThreads(
   baseUrl: string,
-  payload: { workspace_id?: string; limit?: number; cursor?: string } = {},
+  payload: { workspace_id?: string; project_id?: string; limit?: number; cursor?: string } = {},
 ): Promise<RuntimeThread[]> {
   const url = new URL(buildDesktopUrl(baseUrl, '/threads'))
   Object.entries(payload).forEach(([key, value]) => {
@@ -516,6 +517,39 @@ export async function listRuntimeThreads(
   })
   const response = await fetchWithAuth(url.toString())
   return readJsonOrThrow<RuntimeThread[]>(response, '加载会话线程列表失败')
+}
+
+export async function listRuntimeProjects(
+  baseUrl: string,
+  payload: { workspace_id?: string; include_archived?: boolean; limit?: number } = {},
+): Promise<RuntimeProject[]> {
+  const url = new URL(buildDesktopUrl(baseUrl, '/projects'))
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  })
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<RuntimeProject[]>(response, '加载项目列表失败')
+}
+
+export async function createRuntimeProject(
+  baseUrl: string,
+  payload: {
+    workspace_id?: string
+    title: string
+    description?: string
+    instructions?: string
+    memory_scope?: Record<string, unknown>
+    metadata?: Record<string, unknown>
+  },
+): Promise<RuntimeProject> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/projects'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeProject>(response, '创建项目失败')
 }
 
 export async function deleteRuntimeThread(

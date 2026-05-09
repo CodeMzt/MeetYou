@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   clearDesktopMemory,
+  createRuntimeProject,
+  createRuntimeThread,
   createDanxiReply,
   deleteRuntimeThread,
   deleteDesktopMemoryRecord,
@@ -18,6 +20,7 @@ import {
   listDanxiPosts,
   listOperatorSourceProfiles,
   listWorkspaceTopology,
+  listRuntimeProjects,
   listRuntimeThreads,
   loginDanxiSession,
   removeAddressWorkspace,
@@ -492,6 +495,109 @@ describe('runtimeApi', () => {
     await expect(
       listRuntimeThreads('http://127.0.0.1:8000', { workspace_id: 'personal' }),
     ).rejects.toThrow('加载会话线程列表失败（HTTP 404）')
+  })
+
+  it('passes project ids through thread and project runtime APIs', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            thread_id: 'thr_project',
+            home_workspace_id: 'personal',
+            workspace_id: 'personal',
+            project_id: 'prj_1',
+            title: 'Project Chat',
+            status: 'active',
+            summary: '',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              project_id: 'prj_1',
+              workspace_id: 'personal',
+              title: 'Research Project',
+              description: '',
+              instructions: '',
+              status: 'active',
+              memory_scope: {},
+              metadata: {},
+              created_at: '2026-05-09T00:00:00Z',
+              updated_at: '2026-05-09T00:00:00Z',
+            },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            project_id: 'prj_2',
+            workspace_id: 'personal',
+            title: 'New Project',
+            description: '',
+            instructions: '',
+            status: 'active',
+            memory_scope: {},
+            metadata: {},
+            created_at: '2026-05-09T00:00:00Z',
+            updated_at: '2026-05-09T00:00:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const thread = await createRuntimeThread('http://127.0.0.1:8000', {
+      workspace_id: 'personal',
+      title: 'Project Chat',
+      mode: 'research',
+      project_id: 'prj_1',
+    })
+    const projects = await listRuntimeProjects('http://127.0.0.1:8000', {
+      workspace_id: 'personal',
+      limit: 200,
+    })
+    const project = await createRuntimeProject('http://127.0.0.1:8000', {
+      workspace_id: 'personal',
+      title: 'New Project',
+    })
+
+    expect(thread.project_id).toBe('prj_1')
+    expect(projects[0]?.project_id).toBe('prj_1')
+    expect(project.project_id).toBe('prj_2')
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8000/desktop/threads',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          workspace_id: 'personal',
+          title: 'Project Chat',
+          mode: 'research',
+          project_id: 'prj_1',
+        }),
+      }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8000/desktop/projects?workspace_id=personal&limit=200',
+      expect.anything(),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:8000/desktop/projects',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          workspace_id: 'personal',
+          title: 'New Project',
+        }),
+      }),
+    )
   })
 
   it('deletes runtime threads through desktop runtime API', async () => {

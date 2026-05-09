@@ -1,0 +1,176 @@
+.projectPicker {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  z-index: var(--z-island);
+  pointer-events: auto;
+}
+
+.trigger {
+  height: 36px;
+  max-width: 210px;
+  min-width: 120px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  background: var(--bg-island);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-island);
+  backdrop-filter: var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.trigger:hover,
+.trigger.open {
+  background: var(--bg-card);
+  border-color: var(--border-focus);
+}
+
+.trigger svg {
+  flex: 0 0 auto;
+}
+
+.triggerTitle {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.chevron {
+  transition: transform 0.18s ease;
+}
+
+.open .chevron {
+  transform: rotate(180deg);
+}
+
+.menu {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-app) 86%, transparent);
+  box-shadow: var(--shadow-island);
+  backdrop-filter: var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+}
+
+.createForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 6px;
+}
+
+.createInput {
+  height: 30px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.createInput:focus {
+  border-color: var(--border-focus);
+}
+
+.iconButton {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-accent);
+  border-radius: 7px;
+  background: var(--bg-accent);
+  color: var(--text-accent);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+.iconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.menuItem {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover,
+.menuItem.active {
+  background: var(--bg-accent);
+}
+
+.itemText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.itemTitle,
+.itemDetail {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.itemTitle {
+  font-size: 13px;
+}
+
+.itemDetail {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.checkIcon {
+  color: var(--text-accent);
+}
+
+@media (max-width: 420px) {
+  .trigger {
+    min-width: 40px;
+    width: 40px;
+    padding: 0;
+  }
+
+  .triggerTitle,
+  .chevron {
+    display: none;
+  }
+}

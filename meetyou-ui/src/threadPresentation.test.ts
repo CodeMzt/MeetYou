@@ -8,6 +8,7 @@ function thread(thread_id: string, title: string): RuntimeThread {
     title,
     home_workspace_id: 'personal',
     workspace_id: 'personal',
+    project_id: '',
     status: 'active',
     summary: '',
   }

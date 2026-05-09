@@ -1,16 +1,18 @@
 import { useCallback, useRef, useState, useReducer } from 'react'
 import {
+  createRuntimeProject,
   createRuntimeThread,
   createRuntimeSession,
   deleteRuntimeThread,
   ensureDefaultRuntimeThread,
   listAvailableEndpoints,
+  listRuntimeProjects,
   listRuntimeThreads,
   listRuntimeWorkspaces,
 } from '../../runtimeApi'
 import { createInitialTransportState, reduceTransportState } from '../../transportState'
 import { createSystemTurn } from '../../chatState'
-import type { AvailableEndpoint, RuntimeSession, RuntimeThread, RuntimeWorkspace, RuntimeErrorPayload } from '../../types'
+import type { AvailableEndpoint, RuntimeProject, RuntimeSession, RuntimeThread, RuntimeWorkspace, RuntimeErrorPayload } from '../../types'
 
 export const DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS = 10000
 const RUNTIME_THREAD_LIST_LIMIT = 200
@@ -45,6 +47,10 @@ export async function resolveDesktopToolEndpointId(
 
 function chooseWorkspace(workspaces: RuntimeWorkspace[]): RuntimeWorkspace | null {
   return workspaces.find((item) => item.workspace_id === 'personal') ?? workspaces[0] ?? null
+}
+
+function threadBelongsToProject(thread: RuntimeThread, projectId: string): boolean {
+  return !projectId || String(thread.project_id || '') === projectId
 }
 
 function buildTransportError(error: Error): RuntimeErrorPayload {
@@ -84,6 +90,8 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
   const [endpointContext, setEndpointContext] = useState<EndpointContext | null>(null)
   const [desktopToolEndpointId, setDesktopToolEndpointId] = useState('')
   const [runtimeThreads, setRuntimeThreads] = useState<RuntimeThread[]>([])
+  const [runtimeProjects, setRuntimeProjects] = useState<RuntimeProject[]>([])
+  const [activeProjectId, setActiveProjectId] = useState('')
   const [defaultThreadId, setDefaultThreadId] = useState('')
   const endpointInitPromiseRef = useRef<Promise<EndpointContext> | null>(null)
 
@@ -97,6 +105,21 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     })
     setRuntimeThreads(threads)
     return threads
+  }, [baseUrl])
+
+  const loadRuntimeProjects = useCallback(async (workspaceId: string) => {
+    const projects = await listRuntimeProjects(baseUrl, {
+      workspace_id: workspaceId,
+      limit: 200,
+    })
+    setRuntimeProjects(projects)
+    setActiveProjectId((currentProjectId) => {
+      if (!currentProjectId || projects.some((project) => project.project_id === currentProjectId)) {
+        return currentProjectId
+      }
+      return ''
+    })
+    return projects
   }, [baseUrl])
 
   const refreshDesktopToolEndpoint = useCallback(async (contextOverride?: EndpointContext | null) => {
@@ -194,6 +217,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
       if (!workspace) {
         throw new Error('没有可用工作空间')
       }
+      await loadRuntimeProjects(workspace.workspace_id)
       const thread = await ensureDefaultRuntimeThread(baseUrl, {
         workspace_id: workspace.workspace_id,
         default_key: 'frontend.default',
@@ -221,7 +245,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
         endpointInitPromiseRef.current = null
       }
     }
-  }, [baseUrl, createContextForThread, endpointContext, loadRuntimeThreads, onError])
+  }, [baseUrl, createContextForThread, endpointContext, loadRuntimeProjects, loadRuntimeThreads, onError])
 
   const selectRuntimeThread = useCallback(async (threadId: string) => {
     const normalizedThreadId = String(threadId || '').trim()
@@ -245,22 +269,85 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     return await createContextForThread(workspace, thread)
   }, [baseUrl, createContextForThread, endpointContext, loadRuntimeThreads])
 
-  const createAndSelectRuntimeThread = useCallback(async (title?: string) => {
+  const selectRuntimeProject = useCallback(async (projectId: string) => {
+    const normalizedProjectId = String(projectId || '').trim()
+    if (normalizedProjectId === activeProjectId && endpointContext) {
+      return endpointContext
+    }
+    setActiveProjectId(normalizedProjectId)
+    const activeContext = endpointContext ?? (await initializeEndpointContext())
+    if (!activeContext) {
+      return null
+    }
+    const threads = await loadRuntimeThreads(activeContext.workspace.workspace_id)
+    const currentThread = threads.find((item) => item.thread_id === activeContext.threadId)
+    if (currentThread && threadBelongsToProject(currentThread, normalizedProjectId)) {
+      return activeContext
+    }
+    let fallback = normalizedProjectId
+      ? threads.find((item) => threadBelongsToProject(item, normalizedProjectId)) ?? null
+      : threads.find((item) => item.thread_id === defaultThreadId) ?? threads[0] ?? null
+    if (!fallback && normalizedProjectId) {
+      const createdThread = await createRuntimeThread(baseUrl, {
+        workspace_id: activeContext.workspace.workspace_id,
+        title: '新会话',
+        mode: activeContext.workspace.base_mode,
+        project_id: normalizedProjectId,
+      })
+      fallback = createdThread
+      setRuntimeThreads((currentThreads) => (
+        currentThreads.some((item) => item.thread_id === createdThread.thread_id)
+          ? currentThreads
+          : [createdThread, ...currentThreads]
+      ))
+    }
+    if (!fallback) {
+      return null
+    }
+    return await createContextForThread(activeContext.workspace, fallback)
+  }, [activeProjectId, baseUrl, createContextForThread, defaultThreadId, endpointContext, initializeEndpointContext, loadRuntimeThreads])
+
+  const createRuntimeProjectAndRemember = useCallback(async (title: string) => {
+    const normalizedTitle = String(title || '').trim()
+    if (!normalizedTitle) {
+      return null
+    }
     const workspaces = await listRuntimeWorkspaces(baseUrl)
     const activeWorkspace = endpointContext?.workspace ?? chooseWorkspace(workspaces)
     if (!activeWorkspace) {
       throw new Error('没有可用工作空间')
     }
+    const project = await createRuntimeProject(baseUrl, {
+      workspace_id: activeWorkspace.workspace_id,
+      title: normalizedTitle,
+    })
+    setRuntimeProjects((currentProjects) => (
+      currentProjects.some((item) => item.project_id === project.project_id)
+        ? currentProjects
+        : [project, ...currentProjects]
+    ))
+    return project
+  }, [baseUrl, endpointContext?.workspace])
+
+  const createAndSelectRuntimeThread = useCallback(async (title?: string, projectIdOverride?: string) => {
+    const workspaces = await listRuntimeWorkspaces(baseUrl)
+    const activeWorkspace = endpointContext?.workspace ?? chooseWorkspace(workspaces)
+    if (!activeWorkspace) {
+      throw new Error('没有可用工作空间')
+    }
+    const projectId = String(projectIdOverride ?? activeProjectId ?? '').trim()
     const thread = await createRuntimeThread(baseUrl, {
       workspace_id: activeWorkspace.workspace_id,
       title: String(title || '').trim() || '新会话',
       mode: activeWorkspace.base_mode,
+      project_id: projectId || undefined,
     })
+    setActiveProjectId(projectId)
     const threads = await loadRuntimeThreads(activeWorkspace.workspace_id)
     setRuntimeThreads(threads.some((item) => item.thread_id === thread.thread_id) ? threads : [thread, ...threads])
     const workspace = workspaces.find((item) => item.workspace_id === (thread.workspace_id || thread.home_workspace_id)) ?? activeWorkspace
     return await createContextForThread(workspace, thread)
-  }, [baseUrl, createContextForThread, endpointContext, loadRuntimeThreads])
+  }, [activeProjectId, baseUrl, createContextForThread, endpointContext, loadRuntimeThreads])
 
   const deleteRuntimeThreadAndSelect = useCallback(async (threadIdOrIds: string | string[]) => {
     const normalizedThreadIds = Array.from(new Set(
@@ -289,21 +376,31 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     if (!normalizedThreadIds.includes(activeContext.threadId)) {
       return null
     }
+    const projectThreads = threads.filter((item) => threadBelongsToProject(item, activeProjectId))
     let fallback = deletingDefaultThread
-      ? threads[0] ?? null
-      : threads.find((item) => item.thread_id === defaultThreadId) ?? threads[0] ?? null
+      ? projectThreads[0] ?? threads[0] ?? null
+      : projectThreads.find((item) => item.thread_id === defaultThreadId) ?? projectThreads[0] ?? threads[0] ?? null
     if (!fallback) {
-      fallback = await ensureDefaultRuntimeThread(baseUrl, {
-        workspace_id: activeContext.workspace.workspace_id,
-        default_key: 'frontend.default',
-        title: '桌面聊天',
-        mode: activeContext.workspace.base_mode,
-      })
-      setDefaultThreadId(fallback.thread_id)
+      if (activeProjectId) {
+        fallback = await createRuntimeThread(baseUrl, {
+          workspace_id: activeContext.workspace.workspace_id,
+          title: '新会话',
+          mode: activeContext.workspace.base_mode,
+          project_id: activeProjectId,
+        })
+      } else {
+        fallback = await ensureDefaultRuntimeThread(baseUrl, {
+          workspace_id: activeContext.workspace.workspace_id,
+          default_key: 'frontend.default',
+          title: '桌面聊天',
+          mode: activeContext.workspace.base_mode,
+        })
+        setDefaultThreadId(fallback.thread_id)
+      }
       setRuntimeThreads([fallback])
     }
     return await createContextForThread(activeContext.workspace, fallback)
-  }, [baseUrl, createContextForThread, defaultThreadId, endpointContext, initializeEndpointContext, loadRuntimeThreads])
+  }, [activeProjectId, baseUrl, createContextForThread, defaultThreadId, endpointContext, initializeEndpointContext, loadRuntimeThreads])
 
   const refreshRuntimeThreads = useCallback(async (workspaceIdOverride?: string) => {
     const workspaceId = String(workspaceIdOverride || endpointContext?.workspace.workspace_id || '').trim()
@@ -321,10 +418,14 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     sessionId,
     endpointId,
     runtimeThreads,
+    runtimeProjects,
+    activeProjectId,
     defaultThreadId,
     initializeEndpointContext,
     selectRuntimeThread,
+    selectRuntimeProject,
     createAndSelectRuntimeThread,
+    createRuntimeProjectAndRemember,
     deleteRuntimeThreadAndSelect,
     refreshRuntimeThreads,
     refreshDesktopToolEndpoint,

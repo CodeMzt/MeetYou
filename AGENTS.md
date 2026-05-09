@@ -168,7 +168,7 @@
 
 - Backend changes: run the smallest related `unittest` module first; run full discovery for cross-directory or cross-system changes.
 - Frontend changes: run `npm run typecheck`, then `npm run test`; add real functional tests for substantive UI behavior.
-- Frontend acceptance must include a real browser or Electron run plus screenshot verification. Save screenshots under an ignored local artifact directory and report the exact path in the completion note. Typecheck/unit tests alone are not enough for frontend acceptance.
+- Frontend acceptance must include a real browser or Electron run plus screenshot verification. Use the real target window size from `meetyou-ui/electron/main.ts` for the surface under test; wide desktop browser checks may be added but do not replace real-size validation. Save screenshots under an ignored local artifact directory and report the exact path in the completion note. Typecheck/unit tests alone are not enough for frontend acceptance.
 - Cross-surface changes: verify backend first, then frontend; for API/protocol/service main-chain work, add runtime/gateway focused tests or `scripts\manual-acceptance.cmd check`.
 - V5 phase validation must include remote verification after local verification: push `v5`, wait for `CI` on `v5`, wait for `Deploy MeetYou Core` on `v5`, then run real Core/runtime checks against the deployed branch before starting the next V5 phase.
 - V4 baseline test ladder must not stop at unit tests:

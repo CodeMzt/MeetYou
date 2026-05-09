@@ -5,6 +5,7 @@ import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
+import ProjectPicker from './components/project/ProjectPicker'
 import ThreadPicker from './components/thread/ThreadPicker'
 import { AssistantMode, ThinkingOverride } from './types'
 import { getVisibleRuntimeThreadItems } from './threadPresentation'
@@ -30,14 +31,18 @@ export default function App() {
     archivedTurnCount,
     statusFeedback,
     threads,
+    projects,
+    activeProjectId,
     threadId,
     defaultThreadId,
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
     createThread,
+    createProject,
     deleteThread,
     refreshWorkspace,
+    selectProject,
     selectThread,
   } = useMeetYou(baseUrl)
 
@@ -46,9 +51,15 @@ export default function App() {
   const [thinkingOverride, setThinkingOverride] = useState<ThinkingOverride>('default')
   const [preferredMode, setPreferredMode] = useState<AssistantMode>('general')
   const [danxiStatusText, setDanxiStatusText] = useState('未连接')
+  const projectThreads = useMemo(
+    () => activeProjectId
+      ? threads.filter((thread) => String(thread.project_id || '') === activeProjectId)
+      : threads,
+    [activeProjectId, threads],
+  )
   const visibleThreads = useMemo(
-    () => getVisibleRuntimeThreadItems(threads, threadId, defaultThreadId),
-    [defaultThreadId, threadId, threads],
+    () => getVisibleRuntimeThreadItems(projectThreads, threadId, defaultThreadId),
+    [defaultThreadId, projectThreads, threadId],
   )
 
   const togglePin = () => {
@@ -140,11 +151,17 @@ export default function App() {
           />
 
           <div className={styles.threadPickerSlot}>
+            <ProjectPicker
+              projects={projects}
+              activeProjectId={activeProjectId}
+              onSelectProject={(nextProjectId) => selectProject(nextProjectId)}
+              onCreateProject={(title) => createProject(title)}
+            />
             <ThreadPicker
               items={visibleThreads}
               activeThreadId={threadId}
               onSelectThread={(nextThreadId) => void selectThread(nextThreadId)}
-              onCreateThread={(title) => createThread(title)}
+              onCreateThread={(title) => createThread(title, activeProjectId)}
               onDeleteThread={(nextThreadId) => deleteThread(nextThreadId)}
             />
           </div>

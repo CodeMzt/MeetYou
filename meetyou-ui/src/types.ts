@@ -112,9 +112,23 @@ export interface RuntimeThread {
   thread_id: string
   home_workspace_id: string
   workspace_id: string
+  project_id: string
   title: string
   status: string
   summary: string
+}
+
+export interface RuntimeProject {
+  project_id: string
+  workspace_id: string
+  title: string
+  description: string
+  instructions: string
+  status: string
+  memory_scope: Record<string, unknown>
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
 }
 
 export interface RuntimeThreadDeleteResult {

@@ -10,6 +10,7 @@ function item(thread_id: string, title: string, rawTitle = title): RuntimeThread
       title: rawTitle,
       home_workspace_id: 'personal',
       workspace_id: 'personal',
+      project_id: '',
       status: 'active',
       summary: '',
     },
@@ -35,6 +36,21 @@ describe('ThreadPicker', () => {
     expect(markup).toContain('桌面聊天')
     expect(markup).toContain('aria-haspopup="listbox"')
     expect(markup).not.toContain('MeetWeChat Provider')
+  })
+
+  it('keeps a create entry visible for an empty project thread list', () => {
+    const markup = renderToStaticMarkup(
+      <ThreadPicker
+        items={[]}
+        activeThreadId=""
+        onSelectThread={vi.fn()}
+        onCreateThread={vi.fn()}
+        onDeleteThread={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('New Thread')
+    expect(markup).toContain('aria-haspopup="listbox"')
   })
 
   it('groups legacy Desktop Chat cleanup targets and deletes the active one last', () => {

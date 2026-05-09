@@ -132,10 +132,6 @@ export default function ThreadPicker({
     }
   }, [open])
 
-  if (!activeItem) {
-    return null
-  }
-
   const handleSelect = (threadId: string) => {
     setOpen(false)
     if (threadId !== activeThreadId) {
@@ -204,12 +200,12 @@ export default function ThreadPicker({
         ref={triggerRef}
         className={`${styles.trigger} ${open ? styles.open : ''}`}
         onClick={() => setOpen((current) => !current)}
-        title={activeItem.tooltip}
+        title={activeItem?.tooltip || 'New Thread'}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         <MessageSquare size={14} aria-hidden="true" />
-        <span className={styles.triggerTitle}>{activeItem.title}</span>
+        <span className={styles.triggerTitle}>{activeItem?.title || 'New Thread'}</span>
         <ChevronDown size={14} className={styles.chevron} aria-hidden="true" />
       </button>
 
