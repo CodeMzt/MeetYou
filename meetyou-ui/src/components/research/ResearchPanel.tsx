@@ -65,6 +65,45 @@ function getEvidenceItems(task: RuntimeResearchTask): Array<{ id: string; title:
     .filter((item): item is { id: string; title: string; source: string; url: string } => Boolean(item))
 }
 
+function stageLabel(stage: string): string {
+  const normalized = String(stage || '').toLowerCase()
+  if (normalized === 'gather') return '收集证据'
+  if (normalized === 'synthesize') return '综合报告'
+  if (normalized === 'artifact') return '保存产物'
+  if (normalized === 'completed') return '完成'
+  return stage || '进度'
+}
+
+function getResearchProgress(task: RuntimeResearchTask): { stage: string; status: string; message: string; at: string; errorCount: number } | null {
+  const metadata = (task.metadata || {}) as Record<string, unknown>
+  const rawProgress = metadata.progress
+  const progress = rawProgress && typeof rawProgress === 'object' ? rawProgress as Record<string, unknown> : {}
+  const gatherErrors = Array.isArray(metadata.gather_errors) ? metadata.gather_errors : []
+  const errorCountRaw = progress.gather_error_count ?? gatherErrors.length
+  const errorCount = Number.isFinite(Number(errorCountRaw)) ? Math.max(0, Number(errorCountRaw)) : 0
+  if (!Object.keys(progress).length && !errorCount) {
+    return null
+  }
+  return {
+    stage: String(progress.stage || ''),
+    status: String(progress.status || task.status || ''),
+    message: String(progress.message || ''),
+    at: String(progress.at || task.updated_at || ''),
+    errorCount,
+  }
+}
+
+function formatProgressTime(value: string): string {
+  if (!value) {
+    return ''
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value.slice(0, 16)
+  }
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
     return '0 B'
@@ -108,6 +147,7 @@ export default function ResearchPanel({
   )
   const planSteps = selectedTask ? getPlanSteps(selectedTask) : []
   const evidenceItems = selectedTask ? getEvidenceItems(selectedTask) : []
+  const researchProgress = selectedTask ? getResearchProgress(selectedTask) : null
   const editablePlan = selectedTask?.status === 'planned'
 
   useEffect(() => {
@@ -213,8 +253,20 @@ export default function ResearchPanel({
           <div className={styles.progressRow} data-research-progress="true">
             <span>来源 {evidenceItems.length}</span>
             <span>格式 {selectedTask.output_format || 'markdown'}</span>
+            {researchProgress?.errorCount ? <span data-research-progress-errors="true">错误 {researchProgress.errorCount}</span> : null}
             {selectedTask.artifact ? <span>{formatBytes(selectedTask.artifact.byte_size)}</span> : null}
           </div>
+
+          {researchProgress ? (
+            <div className={styles.stageProgress} data-research-progress-stage="true">
+              <div>
+                <span>{stageLabel(researchProgress.stage)}</span>
+                <small>{statusLabel(researchProgress.status)}</small>
+              </div>
+              {researchProgress.message ? <p data-research-progress-message="true">{researchProgress.message}</p> : null}
+              {researchProgress.at ? <small>更新 {formatProgressTime(researchProgress.at)}</small> : null}
+            </div>
+          ) : null}
 
           {selectedTask.summary ? (
             <div className={styles.summary} data-research-summary="true">{selectedTask.summary}</div>

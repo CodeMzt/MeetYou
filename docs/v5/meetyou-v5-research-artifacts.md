@@ -19,6 +19,7 @@ The first executable runner is deliberately conservative:
 - The runner gathers from implemented academic adapters, direct read-only web seed URLs, and, when requested, ProjectSource snapshots. It does not mutate sources or send private data to write channels.
 - Unsupported adapters are recorded in `metadata.gather_errors`; they do not become citations.
 - `web` is implemented first as direct page gathering from `source_policy.web_urls`, `seed_urls`, or `source_urls`. If a task requests `web` without seed URLs, the runner records `WebSeedUrlsRequired` and continues with other configured sources.
+- The runner persists lightweight progress into `ResearchTask.metadata.progress` and keeps recent `metadata.progress_events`. Current stages are `gather`, `synthesize`, `artifact`, and `completed`; this is pollable task state, not a replacement for future streaming progress.
 - If no readable evidence is gathered, the task transitions to `failed` and no report artifact is created.
 - If evidence is gathered, the runner builds a Markdown report, validates bracket citations against `evidence_ledger`, creates a `research_report` Artifact, and completes the task.
 
@@ -63,10 +64,10 @@ The desktop UI exposes `research` as a composer mode and shows a compact Researc
 - inspect generated plan steps;
 - edit and save the plan while status is `planned`;
 - approve, start, cancel, and refresh task state;
-- inspect durable progress context from the selected task, including evidence count, output format, summary, the first evidence ledger entries, and completed artifact filename/size;
+- inspect durable progress context from the selected task, including current runner stage, stage message, evidence count, gather error count, output format, summary, the first evidence ledger entries, and completed artifact filename/size;
 - download a completed report artifact through the authenticated `/desktop/artifacts/{artifact_id}/download` proxy.
 
-This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, PDF/DOCX derivation, and tool-backed web-search discovery remain later V5 stages.
+This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; stage progress must be derived from `ResearchTask.metadata.progress`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, PDF/DOCX derivation, and tool-backed web-search discovery remain later V5 stages.
 
 ## Project Artifacts UI
 

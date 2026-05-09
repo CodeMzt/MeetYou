@@ -72,6 +72,9 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(completed.status, "completed")
         self.assertEqual(completed.evidence_ledger[0]["source_id"], "1")
         self.assertEqual(completed.evidence_ledger[0]["adapter"], "openalex")
+        self.assertEqual(completed.meta["progress"]["stage"], "completed")
+        self.assertEqual(completed.meta["progress"]["status"], "completed")
+        self.assertGreaterEqual(len(completed.meta["progress_events"]), 4)
         artifact = self.services.artifact.get_by_id(completed.artifact_id)
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Durable conversation branches", Path(report_path).read_text(encoding="utf-8"))
@@ -113,6 +116,9 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertIn("durable research reports", completed.evidence_ledger[0]["snippet"])
         self.assertNotIn("ignorePrompt", completed.evidence_ledger[0]["snippet"])
         self.assertEqual(completed.meta["gather_errors"], [])
+        self.assertEqual(completed.meta["progress"]["stage"], "completed")
+        self.assertEqual(completed.meta["progress"]["artifact_id"], result["artifact_id"])
+        self.assertEqual([event["stage"] for event in completed.meta["progress_events"]], ["gather", "gather", "synthesize", "artifact", "completed"])
         artifact = self.services.artifact.get_by_id(completed.artifact_id)
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Readable V5 web source", Path(report_path).read_text(encoding="utf-8"))
@@ -131,6 +137,8 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(failed.meta["runner_error"], "no_evidence")
         self.assertEqual(failed.meta["gather_errors"][0]["adapter"], "web")
         self.assertEqual(failed.meta["gather_errors"][0]["error_type"], "WebSeedUrlsRequired")
+        self.assertEqual(failed.meta["progress"]["stage"], "gather")
+        self.assertEqual(failed.meta["progress"]["status"], "failed")
 
     def test_runner_uses_project_sources_without_external_fetch(self) -> None:
         project = self.services.project.create_project(

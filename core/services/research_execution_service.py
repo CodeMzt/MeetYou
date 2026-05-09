@@ -92,6 +92,13 @@ class ResearchExecutionService:
 
         policy = dict(getattr(task, "source_policy", {}) or {})
         if policy.get("read_only") is False:
+            self._record_progress(
+                research_task_id,
+                stage="gather",
+                status="failed",
+                message="研究来源策略不是只读模式。",
+                metadata={"runner_error": "read_only_policy_required"},
+            )
             return self._fail_task(
                 research_task_id,
                 summary="Research source policy is not read-only.",
@@ -99,8 +106,22 @@ class ResearchExecutionService:
             )
 
         max_sources = _source_limit(policy)
+        self._record_progress(
+            research_task_id,
+            stage="gather",
+            status="running",
+            message="正在收集研究证据。",
+            metadata={"max_sources": max_sources},
+        )
         evidence, gather_errors = self._gather_evidence(task, policy=policy, max_sources=max_sources)
         if not evidence:
+            self._record_progress(
+                research_task_id,
+                stage="gather",
+                status="failed",
+                message="未收集到可读证据。",
+                metadata={"gather_error_count": len(gather_errors)},
+            )
             return self._fail_task(
                 research_task_id,
                 summary="Research execution did not gather any readable evidence.",
@@ -117,10 +138,31 @@ class ResearchExecutionService:
         if str(getattr(refreshed, "status", "") or "").strip().lower() == "cancelled":
             return {"ok": True, "skipped": True, "reason": "cancelled", "status": "cancelled"}
 
+        self._record_progress(
+            research_task_id,
+            stage="gather",
+            status="completed",
+            message=f"已收集 {len(evidence)} 条可读证据。",
+            metadata={"evidence_count": len(evidence), "gather_error_count": len(gather_errors)},
+        )
+        self._record_progress(
+            research_task_id,
+            stage="synthesize",
+            status="running",
+            message="正在综合研究报告。",
+            metadata={"evidence_count": len(evidence)},
+        )
         report_markdown = self._build_report(refreshed, evidence=evidence, gather_errors=gather_errors)
         try:
             citation_validation = self.services.research_task.validate_report_citations(report_markdown, evidence)
         except ResearchTaskCitationError as exc:
+            self._record_progress(
+                research_task_id,
+                stage="synthesize",
+                status="failed",
+                message="报告引用校验失败。",
+                metadata={"missing_source_ids": exc.missing_source_ids},
+            )
             return self._fail_task(
                 research_task_id,
                 summary="Research report citation validation failed.",
@@ -132,6 +174,13 @@ class ResearchExecutionService:
                 },
             )
 
+        self._record_progress(
+            research_task_id,
+            stage="artifact",
+            status="running",
+            message="正在保存研究报告产物。",
+            metadata={"citation_count": len(citation_validation.get("citation_ids") or [])},
+        )
         artifact = self.services.artifact.create_text_artifact(
             principal_id=getattr(refreshed, "principal_id", None),
             project_id=getattr(refreshed, "project_id", None),
@@ -162,6 +211,13 @@ class ResearchExecutionService:
                 },
             },
         )
+        self._record_progress(
+            research_task_id,
+            stage="completed",
+            status="completed",
+            message="研究报告已完成并保存为产物。",
+            metadata={"artifact_id": artifact.artifact_id, "evidence_count": len(evidence)},
+        )
         return {
             "ok": True,
             "research_task_id": research_task_id,
@@ -170,6 +226,36 @@ class ResearchExecutionService:
             "evidence_count": len(evidence),
             "gather_error_count": len(gather_errors),
         }
+
+    def _record_progress(
+        self,
+        research_task_id: str,
+        *,
+        stage: str,
+        status: str,
+        message: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        task = self.services.research_task.get_by_research_task_id(research_task_id)
+        if task is None:
+            return {}
+        current_metadata = dict(getattr(task, "meta", {}) or {})
+        event = {
+            "stage": str(stage or "").strip(),
+            "status": str(status or "").strip(),
+            "message": str(message or "").strip(),
+            "at": _now_iso(),
+            **dict(metadata or {}),
+        }
+        events = [item for item in list(current_metadata.get("progress_events") or []) if isinstance(item, dict)]
+        events.append(event)
+        current_metadata["progress"] = event
+        current_metadata["progress_events"] = events[-30:]
+        self.services.research_task.update_task(
+            research_task_id=research_task_id,
+            fields={"metadata": current_metadata},
+        )
+        return event
 
     def _gather_evidence(self, task, *, policy: dict[str, Any], max_sources: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         adapters = policy.get("source_adapters")

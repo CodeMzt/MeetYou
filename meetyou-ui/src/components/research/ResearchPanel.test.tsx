@@ -42,7 +42,16 @@ const task: RuntimeResearchTask = {
     created_at: '2026-05-09T00:00:00Z',
     updated_at: '2026-05-09T00:00:00Z',
   },
-  metadata: {},
+  metadata: {
+    progress: {
+      stage: 'gather',
+      status: 'running',
+      message: '正在收集研究证据。',
+      at: '2026-05-09T00:00:00Z',
+      gather_error_count: 1,
+    },
+    gather_errors: [{ adapter: 'web', error_type: 'WebSeedUrlsRequired' }],
+  },
   created_at: '2026-05-09T00:00:00Z',
   updated_at: '2026-05-09T00:00:00Z',
 }
@@ -68,5 +77,8 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('data-research-download="true"')
     expect(markup).toContain('data-research-evidence-list="true"')
     expect(markup).toContain('Conversation versions should be durable.')
+    expect(markup).toContain('data-research-progress-stage="true"')
+    expect(markup).toContain('正在收集研究证据。')
+    expect(markup).toContain('data-research-progress-errors="true"')
   })
 })
