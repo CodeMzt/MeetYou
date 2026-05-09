@@ -302,6 +302,8 @@ class ResearchTaskRepository(RepositoryBase):
             row.evidence_ledger = list(fields["evidence_ledger"])
         if "artifact_id" in fields:
             row.artifact_id = fields["artifact_id"]
+        if "run_id" in fields:
+            row.run_id = fields["run_id"]
         if "metadata" in fields and isinstance(fields["metadata"], dict):
             merged = dict(row.meta or {})
             merged.update(dict(fields["metadata"] or {}))

@@ -172,6 +172,17 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         )
         self.assertEqual(start_response.status_code, 200)
         self.assertEqual(start_response.json()["status"], "running")
+        self.assertTrue(start_response.json()["run_id"])
+
+        start_events_response = self.client.get(
+            f"/runtime/research-tasks/{research_task_id}/events",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(start_events_response.status_code, 200)
+        self.assertEqual(len(start_events_response.json()), 1)
+        self.assertEqual(start_events_response.json()[0]["type"], "research.started")
+        self.assertEqual(start_events_response.json()[0]["run_id"], start_response.json()["run_id"])
+        self.assertEqual(start_events_response.json()[0]["payload"]["research_task_id"], research_task_id)
 
         locked_plan_response = self.client.patch(
             f"/runtime/research-tasks/{research_task_id}",
@@ -213,6 +224,15 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         ])
         self.assertEqual([row["metadata"]["derived_format"] for row in derived_artifacts], ["pdf", "docx"])
         self.assertEqual(len(report_response.json()["metadata"]["derived_artifacts"]), 2)
+
+        completed_events_response = self.client.get(
+            f"/runtime/research-tasks/{research_task_id}/events",
+            params={"after_seq": 1},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(completed_events_response.status_code, 200)
+        self.assertEqual([event["type"] for event in completed_events_response.json()], ["research.completed"])
+        self.assertEqual(completed_events_response.json()[0]["payload"]["status"], "succeeded")
 
         report_download_response = self.client.get(
             report_response.json()["artifact"]["download_url"],

@@ -929,6 +929,7 @@ class RuntimeResearchTaskResponse(BaseModel):
     research_task_id: str
     project_id: str = ""
     thread_id: str = ""
+    run_id: str = ""
     artifact_id: str = ""
     topic: str
     status: str = "planned"
@@ -942,6 +943,18 @@ class RuntimeResearchTaskResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""
+
+
+class RuntimeResearchTaskEventResponse(BaseModel):
+    event_id: str
+    research_task_id: str
+    run_id: str = ""
+    thread_id: str = ""
+    seq: int = 0
+    type: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    durable: bool = True
+    created_at: str = ""
 
 
 class OperatorWorkspaceCreateRequest(BaseModel):

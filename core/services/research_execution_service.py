@@ -373,6 +373,7 @@ class ResearchExecutionService:
             principal_id=getattr(refreshed, "principal_id", None),
             project_id=getattr(refreshed, "project_id", None),
             thread_id=getattr(refreshed, "thread_id", None),
+            created_by_run_id=getattr(refreshed, "run_id", None),
             text=report_markdown,
             filename=f"{research_task_id}.md",
             artifact_type="research_report",
@@ -453,6 +454,16 @@ class ResearchExecutionService:
                 "derived_artifact_count": len(derived_artifacts),
             },
         )
+        self._mark_run_status(
+            research_task_id,
+            status="succeeded",
+            output={
+                "research_task_id": research_task_id,
+                "artifact_id": artifact.artifact_id,
+                "derived_artifact_count": len(derived_artifacts),
+                "evidence_count": len(evidence),
+            },
+        )
         return {
             "ok": True,
             "research_task_id": research_task_id,
@@ -523,6 +534,11 @@ class ResearchExecutionService:
             message="研究任务已取消。",
             metadata={"cancelled_at": _now_iso()},
         )
+        self._mark_run_status(
+            research_task_id,
+            status="cancelled",
+            output={"research_task_id": research_task_id, "cancelled_stage": stage},
+        )
         return {"ok": True, "skipped": True, "reason": "cancelled", "status": "cancelled"}
 
     def _record_progress(
@@ -553,7 +569,59 @@ class ResearchExecutionService:
             research_task_id=research_task_id,
             fields={"metadata": current_metadata},
         )
+        self._append_run_event(
+            task,
+            event_type="research.progress",
+            payload={
+                "research_task_id": research_task_id,
+                **event,
+            },
+        )
         return event
+
+    def _append_run_event(self, task, *, event_type: str, payload: dict[str, Any], durable: bool = True) -> None:
+        run_row_id = getattr(task, "run_id", None)
+        if run_row_id is None:
+            return
+        try:
+            self.services.run_event.append_event(
+                run_id=run_row_id,
+                thread_id=getattr(task, "thread_id", None),
+                type=event_type,
+                payload=dict(payload or {}),
+                durable=durable,
+            )
+        except Exception:
+            return
+
+    def _mark_run_status(self, research_task_id: str, *, status: str, output: dict[str, Any] | None = None) -> None:
+        task = self.services.research_task.get_by_research_task_id(research_task_id)
+        run_row_id = getattr(task, "run_id", None)
+        if task is None or run_row_id is None:
+            return
+        event_type = {
+            "succeeded": "research.completed",
+            "failed": "research.failed",
+            "cancelled": "research.cancelled",
+        }.get(str(status or "").strip().lower())
+        if event_type:
+            self._append_run_event(
+                task,
+                event_type=event_type,
+                payload={
+                    "research_task_id": research_task_id,
+                    "status": status,
+                    **dict(output or {}),
+                },
+            )
+        try:
+            self.services.run.update_status(
+                run_row_id=run_row_id,
+                status=status,
+                output=dict(output or {}),
+            )
+        except Exception:
+            return
 
     def _gather_evidence(self, task, *, research_task_id: str, policy: dict[str, Any], max_sources: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         adapters = policy.get("source_adapters")
@@ -825,6 +893,15 @@ class ResearchExecutionService:
                     "failed_at": _now_iso(),
                     **dict(metadata or {}),
                 },
+            },
+        )
+        self._mark_run_status(
+            research_task_id,
+            status="failed",
+            output={
+                "research_task_id": research_task_id,
+                "summary": summary,
+                **dict(metadata or {}),
             },
         )
         return {

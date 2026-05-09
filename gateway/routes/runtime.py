@@ -69,6 +69,7 @@ from gateway.models import (
     RuntimeProjectSourceResponse,
     RuntimeProjectUpdateRequest,
     RuntimeResearchTaskCreateRequest,
+    RuntimeResearchTaskEventResponse,
     RuntimeResearchTaskPatchRequest,
     RuntimeResearchTaskResponse,
     RuntimeThreadBranchResponse,
@@ -314,6 +315,7 @@ def _checkpoint_response(domain, checkpoint) -> RuntimeConversationCheckpointRes
 def _research_task_response(domain, task) -> RuntimeResearchTaskResponse:
     project = domain.services.project.get_by_id(getattr(task, "project_id", None)) if getattr(task, "project_id", None) else None
     thread = domain.services.thread.get_by_id(getattr(task, "thread_id", None)) if getattr(task, "thread_id", None) else None
+    run = domain.services.run.get_by_id(getattr(task, "run_id", None)) if getattr(task, "run_id", None) else None
     artifact_response = None
     if getattr(task, "artifact_id", None):
         artifact = domain.services.artifact.get_by_id(getattr(task, "artifact_id", None))
@@ -334,6 +336,7 @@ def _research_task_response(domain, task) -> RuntimeResearchTaskResponse:
         research_task_id=str(getattr(task, "research_task_id", "") or ""),
         project_id=str(getattr(project, "project_id", "") or ""),
         thread_id=str(getattr(thread, "thread_id", "") or ""),
+        run_id=str(getattr(run, "run_id", "") or ""),
         artifact_id=str(getattr(artifact_response, "artifact_id", "") or ""),
         topic=str(getattr(task, "topic", "") or ""),
         status=str(getattr(task, "status", "") or "planned"),
@@ -347,6 +350,22 @@ def _research_task_response(domain, task) -> RuntimeResearchTaskResponse:
         metadata=metadata,
         created_at=_iso(task, "created_at"),
         updated_at=_iso(task, "updated_at"),
+    )
+
+
+def _research_task_event_response(domain, task, event) -> RuntimeResearchTaskEventResponse:
+    run = domain.services.run.get_by_id(getattr(task, "run_id", None)) if getattr(task, "run_id", None) else None
+    thread = domain.services.thread.get_by_id(getattr(event, "thread_id", None)) if getattr(event, "thread_id", None) else None
+    return RuntimeResearchTaskEventResponse(
+        event_id=str(getattr(event, "event_id", "") or ""),
+        research_task_id=str(getattr(task, "research_task_id", "") or ""),
+        run_id=str(getattr(run, "run_id", "") or ""),
+        thread_id=str(getattr(thread, "thread_id", "") or ""),
+        seq=int(getattr(event, "seq", 0) or 0),
+        type=str(getattr(event, "type", "") or ""),
+        payload=dict(getattr(event, "payload", {}) or {}),
+        durable=bool(getattr(event, "durable", True)),
+        created_at=_iso(event, "created_at"),
     )
 
 
@@ -915,6 +934,101 @@ def build_runtime_router(gateway) -> APIRouter:
 
         return call_web_searcher
 
+    def _research_task_workspace(domain, task):
+        thread = domain.services.thread.get_by_id(getattr(task, "thread_id", None)) if getattr(task, "thread_id", None) else None
+        if thread is not None:
+            workspace = domain.services.workspace.get_by_id(
+                getattr(thread, "home_workspace_id", None) or getattr(thread, "workspace_id", None)
+            )
+            if workspace is not None:
+                return workspace
+        project = domain.services.project.get_by_id(getattr(task, "project_id", None)) if getattr(task, "project_id", None) else None
+        if project is not None and getattr(project, "workspace_id", None):
+            workspace = domain.services.workspace.get_by_id(getattr(project, "workspace_id", None))
+            if workspace is not None:
+                return workspace
+        return _find_workspace(domain, "personal")
+
+    def _ensure_research_task_run(domain, task):
+        if getattr(task, "run_id", None):
+            run = domain.services.run.get_by_id(getattr(task, "run_id", None))
+            if run is not None:
+                return task
+        workspace = _research_task_workspace(domain, task)
+        actor_row_id = _request_actor_row_id(domain)
+        project = domain.services.project.get_by_id(getattr(task, "project_id", None)) if getattr(task, "project_id", None) else None
+        thread = domain.services.thread.get_by_id(getattr(task, "thread_id", None)) if getattr(task, "thread_id", None) else None
+        run = domain.services.run.create_run(
+            workspace_id=workspace.id,
+            thread_id=getattr(task, "thread_id", None),
+            trigger_type="research_task",
+            origin_actor_id=actor_row_id,
+            status="running",
+            input={
+                "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+                "topic": str(getattr(task, "topic", "") or ""),
+                "source_policy": dict(getattr(task, "source_policy", {}) or {}),
+                "output_format": str(getattr(task, "output_format", "") or "markdown"),
+            },
+            metadata={
+                "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+                "project_id": str(getattr(project, "project_id", "") or ""),
+                "thread_id": str(getattr(thread, "thread_id", "") or ""),
+                "runner": "core.research_execution.v1",
+            },
+        )
+        domain.services.run_event.append_event(
+            run_id=run.id,
+            thread_id=getattr(task, "thread_id", None),
+            type="research.started",
+            payload={
+                "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+                "status": "running",
+                "topic": str(getattr(task, "topic", "") or ""),
+                "project_id": str(getattr(project, "project_id", "") or ""),
+                "thread_id": str(getattr(thread, "thread_id", "") or ""),
+            },
+            durable=True,
+        )
+        return domain.services.research_task.update_task(
+            research_task_id=str(getattr(task, "research_task_id", "") or ""),
+            fields={
+                "run_id": run.id,
+                "metadata": {
+                    "run_id": run.run_id,
+                    "run_event_stream": "runtime.run_events.v1",
+                },
+            },
+        ) or task
+
+    def _finish_research_task_run(domain, task, *, status: str, output: dict[str, Any] | None = None) -> None:
+        run_row_id = getattr(task, "run_id", None)
+        if run_row_id is None:
+            return
+        event_type = {
+            "succeeded": "research.completed",
+            "failed": "research.failed",
+            "cancelled": "research.cancelled",
+        }.get(str(status or "").strip().lower())
+        payload = {
+            "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+            "status": status,
+            **dict(output or {}),
+        }
+        if event_type:
+            domain.services.run_event.append_event(
+                run_id=run_row_id,
+                thread_id=getattr(task, "thread_id", None),
+                type=event_type,
+                payload=payload,
+                durable=True,
+            )
+        domain.services.run.update_status(
+            run_row_id=run_row_id,
+            status=status,
+            output=payload,
+        )
+
     async def _run_research_task_background(domain, research_task_id: str) -> None:
         try:
             loop = asyncio.get_running_loop()
@@ -991,6 +1105,27 @@ def build_runtime_router(gateway) -> APIRouter:
             gateway._raise_http_error(status_code=404, code="research_task_not_found", message=f"Unknown research task: {research_task_id}")
         return _research_task_response(domain, task)
 
+    @router.get("/research-tasks/{research_task_id}/events", response_model=list[RuntimeResearchTaskEventResponse])
+    async def list_research_task_events(
+        research_task_id: str,
+        request: Request,
+        after_seq: int = 0,
+        durable_only: bool = False,
+    ):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        task = domain.services.research_task.get_by_research_task_id(research_task_id)
+        if task is None:
+            gateway._raise_http_error(status_code=404, code="research_task_not_found", message=f"Unknown research task: {research_task_id}")
+        if not getattr(task, "run_id", None):
+            return []
+        events = domain.services.run_event.list_for_run_after(
+            run_id=getattr(task, "run_id", None),
+            after_seq=after_seq,
+            durable_only=durable_only,
+        )
+        return [_research_task_event_response(domain, task, event) for event in events]
+
     @router.patch("/research-tasks/{research_task_id}", response_model=RuntimeResearchTaskResponse)
     async def patch_research_task(research_task_id: str, payload: RuntimeResearchTaskPatchRequest, request: Request, background_tasks: BackgroundTasks):
         gateway._require_http_auth(request)
@@ -1037,6 +1172,7 @@ def build_runtime_router(gateway) -> APIRouter:
                 principal_id=domain.principal.id,
                 project_id=getattr(task, "project_id", None),
                 thread_id=getattr(task, "thread_id", None),
+                created_by_run_id=getattr(task, "run_id", None),
                 text=str(report_markdown or ""),
                 filename=report_filename or f"{research_task_id}.md",
                 artifact_type="research_report",
@@ -1075,6 +1211,26 @@ def build_runtime_router(gateway) -> APIRouter:
             ) or task
         except ResearchTaskStateError as exc:
             gateway._raise_http_error(status_code=400, code=exc.code, message=str(exc))
+        if action == "start":
+            try:
+                task = _ensure_research_task_run(domain, task)
+            except KeyError as exc:
+                gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"Unknown workspace: {exc.args[0] if exc.args else ''}")
+        elif action in {"complete", "fail", "cancel"}:
+            terminal_run_status = {
+                "complete": "succeeded",
+                "fail": "failed",
+                "cancel": "cancelled",
+            }[action]
+            _finish_research_task_run(
+                domain,
+                task,
+                status=terminal_run_status,
+                output={
+                    "summary": str(getattr(task, "summary", "") or ""),
+                    "artifact_id": str(getattr(_research_task_response(domain, task), "artifact_id", "") or ""),
+                },
+            )
         if action == "start" and _research_task_auto_execute(task):
             background_tasks.add_task(_run_research_task_background, domain, research_task_id)
         return _research_task_response(domain, task)

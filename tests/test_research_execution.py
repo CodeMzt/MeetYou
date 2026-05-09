@@ -131,6 +131,55 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Readable V5 web source", Path(report_path).read_text(encoding="utf-8"))
 
+    def test_runner_writes_research_progress_run_events(self) -> None:
+        def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
+            del timeout
+            return {
+                "url": url,
+                "title": "Run event source",
+                "content_type": "text/plain",
+                "content": "Readable evidence for durable research progress events.",
+            }
+
+        actor = self.services.actor.ensure_actor(
+            actor_id="user:self",
+            actor_type="user",
+            owner_user_id="self",
+            display_name="Self",
+            permission_profile_id="profile.default_user",
+        )
+        run = self.services.run.create_run(
+            workspace_id=self.workspace.id,
+            trigger_type="research_task",
+            origin_actor_id=actor.id,
+            status="running",
+            input={"test": "research progress"},
+        )
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="progress events",
+            source_policy={"source_adapters": ["web"], "web_urls": ["https://example.test/progress"], "limit": 1},
+            metadata={"run_id": run.run_id},
+        )
+        self.services.research_task.update_task(
+            research_task_id=task.research_task_id,
+            fields={"run_id": run.id},
+        )
+
+        result = ResearchExecutionService(self.services, web_fetcher=fake_web_fetch).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        events = self.services.run_event.list_for_run_after(run_id=run.id)
+        event_types = [event.type for event in events]
+        self.assertEqual(event_types[:5], ["research.progress", "research.progress", "research.progress", "research.progress", "research.progress"])
+        self.assertEqual(event_types[-1], "research.completed")
+        self.assertEqual(events[0].payload["research_task_id"], task.research_task_id)
+        self.assertEqual(events[0].payload["stage"], "gather")
+        self.assertEqual(events[-1].payload["status"], "succeeded")
+        completed_run = self.services.run.get_by_id(run.id)
+        self.assertEqual(completed_run.status, "succeeded")
+        self.assertEqual(completed_run.output["artifact_id"], result["artifact_id"])
+
     def test_runner_creates_requested_pdf_and_docx_report_artifacts(self) -> None:
         def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
             del timeout
