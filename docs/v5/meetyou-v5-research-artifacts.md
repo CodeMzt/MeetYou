@@ -16,8 +16,9 @@ The first executable runner is deliberately conservative:
 
 - `PATCH /runtime/research-tasks/{id}` with `action=start` transitions the task to `running`; unless `source_policy.auto_execute=false`, Runtime schedules the Core read-only runner.
 - `manage_research_tasks(action="run")` executes the same runner from assistant tools.
-- The runner gathers from implemented academic adapters and, when requested, ProjectSource snapshots. It does not mutate sources or send private data to write channels.
+- The runner gathers from implemented academic adapters, direct read-only web seed URLs, and, when requested, ProjectSource snapshots. It does not mutate sources or send private data to write channels.
 - Unsupported adapters are recorded in `metadata.gather_errors`; they do not become citations.
+- `web` is implemented first as direct page gathering from `source_policy.web_urls`, `seed_urls`, or `source_urls`. If a task requests `web` without seed URLs, the runner records `WebSeedUrlsRequired` and continues with other configured sources.
 - If no readable evidence is gathered, the task transitions to `failed` and no report artifact is created.
 - If evidence is gathered, the runner builds a Markdown report, validates bracket citations against `evidence_ledger`, creates a `research_report` Artifact, and completes the task.
 
@@ -65,7 +66,7 @@ The desktop UI exposes `research` as a composer mode and shows a compact Researc
 - inspect durable progress context from the selected task, including evidence count, output format, summary, the first evidence ledger entries, and completed artifact filename/size;
 - download a completed report artifact through the authenticated `/desktop/artifacts/{artifact_id}/download` proxy.
 
-This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, PDF/DOCX derivation, and web-search integration remain later V5 stages.
+This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, PDF/DOCX derivation, and tool-backed web-search discovery remain later V5 stages.
 
 ## Project Artifacts UI
 
@@ -79,6 +80,12 @@ Message snapshots saved from the desktop message menu are persisted through Core
 
 The desktop top control dock includes a Project Sources popover for the active project. It calls the Core source list API through the desktop proxy, shows the current active-source count, allows manual refresh, and previews source title, type, status, saved timestamp, content, and selected metadata. Saving a message snapshot triggers a source refresh so research users can immediately confirm material that will be available to project-scoped research tasks.
 
+## Web Sources
+
+The first Core `web` adapter is read-only direct page gathering. Research tasks may provide `source_policy.web_urls`, `source_policy.seed_urls`, or `source_policy.source_urls`; each valid HTTP(S) URL is fetched, stripped of scripts/styles/svg/noscript blocks, summarized into a bounded snippet, and recorded as `source_type=web_page` with `verification_status=fetched`.
+
+This is intentionally not yet a general web-search discovery engine. Tasks that request `web` without seed URLs get a `WebSeedUrlsRequired` gather error. A later V5 slice should connect the existing governed `search_web` / `read_web_page` tool chain or an equivalent provider-backed search-fetch path so research tasks can discover URLs before direct reading.
+
 ## Academic Sources
 
 Academic source adapters are read-only adapters for:
@@ -88,4 +95,4 @@ Academic source adapters are read-only adapters for:
 - Crossref
 - Semantic Scholar
 
-The current Core implementation can produce normalized query URLs, fetch adapter results, parse provider payloads into evidence entries, and run under a test-injectable fetcher so CI does not depend on external networks. The `web` adapter remains a planned integration point for the existing web-search capability; until it lands, `web` is recorded as an unsupported adapter during runner execution instead of being cited.
+The current Core implementation can produce normalized query URLs, fetch adapter results, parse provider payloads into evidence entries, and run under a test-injectable fetcher so CI does not depend on external networks.

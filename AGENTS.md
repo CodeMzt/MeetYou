@@ -10,6 +10,7 @@
 - Deep research must use read-only evidence gathering unless the user explicitly asks for a separate write action.
 - Research reports must persist as Artifacts; final assistant messages should summarize and link to artifacts instead of embedding large report files.
 - Research panel source/progress UI must display Core `ResearchTask` evidence, summary, and artifact metadata. Do not fabricate source lists from frontend-only plan state.
+- The first Core `web` research adapter reads direct seed URLs from `source_policy.web_urls` / `seed_urls` / `source_urls`. Do not claim general web-search discovery is implemented until a governed search-fetch path is wired into ResearchTask execution.
 - Project artifact UI must list/download Core Artifact records through artifact APIs. Do not infer the project artifact list only from visible ResearchTask state.
 - Evidence-ledger citations must refer to recorded sources. Do not invent citations or cite unread sources as verified.
 - Starting a V5 ResearchTask may trigger the Core read-only research runner. If no readable evidence is gathered, fail the task instead of producing an uncited report.

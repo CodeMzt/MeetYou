@@ -77,6 +77,61 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertIn("Durable conversation branches", Path(report_path).read_text(encoding="utf-8"))
         self.assertIn("[1]", Path(report_path).read_text(encoding="utf-8"))
 
+    def test_runner_gathers_direct_web_evidence_and_creates_artifact(self) -> None:
+        def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
+            del timeout
+            self.assertEqual(url, "https://example.test/research")
+            return {
+                "url": url,
+                "content_type": "text/html; charset=utf-8",
+                "content": """
+                <html>
+                  <head><title>Readable V5 web source</title><script>ignorePrompt()</script></head>
+                  <body><main>Web evidence about durable research reports and citation ledgers.</main></body>
+                </html>
+                """,
+            }
+
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="web evidence",
+            source_policy={
+                "source_adapters": ["web"],
+                "web_urls": ["https://example.test/research"],
+                "limit": 1,
+            },
+        )
+        result = ResearchExecutionService(self.services, web_fetcher=fake_web_fetch).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.evidence_ledger[0]["source_type"], "web_page")
+        self.assertEqual(completed.evidence_ledger[0]["adapter"], "web")
+        self.assertEqual(completed.evidence_ledger[0]["verification_status"], "fetched")
+        self.assertEqual(completed.evidence_ledger[0]["title"], "Readable V5 web source")
+        self.assertIn("durable research reports", completed.evidence_ledger[0]["snippet"])
+        self.assertNotIn("ignorePrompt", completed.evidence_ledger[0]["snippet"])
+        self.assertEqual(completed.meta["gather_errors"], [])
+        artifact = self.services.artifact.get_by_id(completed.artifact_id)
+        report_path = self.services.artifact.resolve_local_path(artifact)
+        self.assertIn("Readable V5 web source", Path(report_path).read_text(encoding="utf-8"))
+
+    def test_runner_reports_web_adapter_missing_seed_urls(self) -> None:
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="web without urls",
+            source_policy={"source_adapters": ["web"]},
+        )
+        result = ResearchExecutionService(self.services).run_task(task.research_task_id)
+
+        self.assertFalse(result["ok"])
+        failed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.meta["runner_error"], "no_evidence")
+        self.assertEqual(failed.meta["gather_errors"][0]["adapter"], "web")
+        self.assertEqual(failed.meta["gather_errors"][0]["error_type"], "WebSeedUrlsRequired")
+
     def test_runner_uses_project_sources_without_external_fetch(self) -> None:
         project = self.services.project.create_project(
             principal_id=self.principal.id,

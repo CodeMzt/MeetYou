@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.research.academic_sources import AcademicSourceRegistry, FetchAcademicSource
+from core.research.web_sources import FetchWebSource, WebSourceRegistry
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 
 
@@ -35,6 +36,25 @@ def _academic_limit(policy: dict[str, Any]) -> int:
         return 3
 
 
+def _web_limit(policy: dict[str, Any]) -> int:
+    raw = policy.get("web_limit", policy.get("limit", 3))
+    try:
+        return max(1, min(int(raw or 3), 8))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _web_seed_urls(policy: dict[str, Any]) -> list[Any]:
+    values: list[Any] = []
+    for key in ("web_urls", "seed_urls", "source_urls"):
+        raw = policy.get(key)
+        if isinstance(raw, (list, tuple)):
+            values.extend(raw)
+        elif isinstance(raw, (str, bytes, dict)):
+            values.append(raw)
+    return values
+
+
 class ResearchExecutionService:
     """Minimal read-only V5 research runner.
 
@@ -43,9 +63,17 @@ class ResearchExecutionService:
     to external write channels or mutate project sources.
     """
 
-    def __init__(self, services, *, fetcher: FetchAcademicSource | None = None, fetch_timeout: float = 8.0) -> None:
+    def __init__(
+        self,
+        services,
+        *,
+        fetcher: FetchAcademicSource | None = None,
+        web_fetcher: FetchWebSource | None = None,
+        fetch_timeout: float = 8.0,
+    ) -> None:
         self.services = services
         self.fetcher = fetcher
+        self.web_fetcher = web_fetcher
         self.fetch_timeout = float(fetch_timeout or 8.0)
 
     def run_task(self, research_task_id: str) -> dict[str, Any]:
@@ -150,6 +178,7 @@ class ResearchExecutionService:
         if isinstance(adapters, str):
             adapters = [adapters]
         normalized_adapters = [AcademicSourceRegistry.normalize_adapter(item) for item in adapters]
+        web_requested = WebSourceRegistry.SUPPORTED_ADAPTER in normalized_adapters
         academic_adapters = [item for item in normalized_adapters if item in AcademicSourceRegistry.SUPPORTED_ADAPTERS]
         gather_errors = [
             {
@@ -158,16 +187,39 @@ class ResearchExecutionService:
                 "error_type": "UnsupportedAdapter",
             }
             for item in normalized_adapters
-            if item and item not in AcademicSourceRegistry.SUPPORTED_ADAPTERS
+            if item and item not in AcademicSourceRegistry.SUPPORTED_ADAPTERS and item != WebSourceRegistry.SUPPORTED_ADAPTER
         ]
-        evidence, adapter_errors = AcademicSourceRegistry.fetch_evidence(
+
+        evidence: list[dict[str, Any]] = []
+        if web_requested:
+            seed_urls = _web_seed_urls(policy)
+            if seed_urls:
+                web_evidence, web_errors = WebSourceRegistry.fetch_evidence(
+                    seed_urls,
+                    limit=min(_web_limit(policy), max_sources),
+                    fetcher=self.web_fetcher,
+                    timeout=self.fetch_timeout,
+                    source_id_start=1,
+                )
+                evidence.extend(web_evidence)
+                gather_errors.extend(web_errors)
+            else:
+                gather_errors.append(
+                    {
+                        "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
+                        "message": "web adapter requires source_policy.web_urls, seed_urls, or source_urls for read-only direct page gathering",
+                        "error_type": "WebSeedUrlsRequired",
+                    }
+                )
+        academic_evidence, adapter_errors = AcademicSourceRegistry.fetch_evidence(
             getattr(task, "topic", ""),
             adapters=academic_adapters,
             limit=_academic_limit(policy),
             fetcher=self.fetcher,
             timeout=self.fetch_timeout,
-            source_id_start=1,
+            source_id_start=len(evidence) + 1,
         )
+        evidence.extend(academic_evidence)
         gather_errors.extend(adapter_errors)
         evidence = evidence[:max_sources]
 
