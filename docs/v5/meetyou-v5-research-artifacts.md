@@ -30,6 +30,8 @@ The first executable runner is deliberately conservative:
 
 Every research report must carry an evidence ledger. The ledger records source id, adapter, URL or project-source id, title, verification status, and freshness notes.
 
+All evidence ledger entries are untrusted by default. Core marks gathered sources with `source_trust=untrusted`, `trusted_for=evidence_only`, `ignore_source_instructions=true`, and a `prompt_injection_mitigation` note. Downstream synthesis must treat webpages, project sources, search results, and academic records as material to cite, not as instructions to follow.
+
 Allowed verification statuses:
 
 - `query_url`: adapter produced a query URL but content is not read yet.
@@ -38,6 +40,8 @@ Allowed verification statuses:
 - `derived`: source is a derived artifact, not primary evidence.
 
 Final research claims should cite only fetched or project-source evidence unless the report explicitly labels the gap. The current guard validates numeric inline citations such as `[1]` and `[2]`; every cited id must exist in `evidence_ledger[].source_id`, or the API/tool request fails with `research_report_citation_invalid` before any report artifact is written.
+
+Generated reports also include a source-safety note in the risk section so exported Markdown/PDF/DOCX artifacts preserve the same boundary for human review.
 
 ## Task State Guard
 

@@ -73,6 +73,10 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(completed.status, "completed")
         self.assertEqual(completed.evidence_ledger[0]["source_id"], "1")
         self.assertEqual(completed.evidence_ledger[0]["adapter"], "openalex")
+        self.assertEqual(completed.evidence_ledger[0]["source_trust"], "untrusted")
+        self.assertEqual(completed.evidence_ledger[0]["trusted_for"], "evidence_only")
+        self.assertTrue(completed.evidence_ledger[0]["ignore_source_instructions"])
+        self.assertIn("untrusted evidence", completed.evidence_ledger[0]["prompt_injection_mitigation"])
         self.assertEqual(completed.meta["progress"]["stage"], "completed")
         self.assertEqual(completed.meta["progress"]["status"], "completed")
         self.assertGreaterEqual(len(completed.meta["progress_events"]), 4)
@@ -80,6 +84,7 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Durable conversation branches", Path(report_path).read_text(encoding="utf-8"))
         self.assertIn("[1]", Path(report_path).read_text(encoding="utf-8"))
+        self.assertIn("Source safety", Path(report_path).read_text(encoding="utf-8"))
 
     def test_runner_gathers_direct_web_evidence_and_creates_artifact(self) -> None:
         def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
@@ -114,6 +119,8 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(completed.evidence_ledger[0]["adapter"], "web")
         self.assertEqual(completed.evidence_ledger[0]["verification_status"], "fetched")
         self.assertEqual(completed.evidence_ledger[0]["title"], "Readable V5 web source")
+        self.assertEqual(completed.evidence_ledger[0]["source_trust"], "untrusted")
+        self.assertTrue(completed.evidence_ledger[0]["ignore_source_instructions"])
         self.assertIn("durable research reports", completed.evidence_ledger[0]["snippet"])
         self.assertNotIn("ignorePrompt", completed.evidence_ledger[0]["snippet"])
         self.assertEqual(completed.meta["gather_errors"], [])
@@ -277,6 +284,8 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(completed.evidence_ledger[0]["reader"], "tavily_extract")
         self.assertEqual(completed.evidence_ledger[0]["verification_status"], "read")
         self.assertEqual(completed.evidence_ledger[0]["search_query"], "branchable research checkpoints")
+        self.assertEqual(completed.evidence_ledger[0]["trusted_for"], "evidence_only")
+        self.assertTrue(completed.evidence_ledger[0]["ignore_source_instructions"])
         self.assertIn("research artifacts", completed.evidence_ledger[0]["snippet"])
         self.assertEqual(completed.meta["gather_errors"], [])
         artifact = self.services.artifact.get_by_id(completed.artifact_id)
@@ -388,6 +397,8 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(completed.status, "completed")
         self.assertEqual(completed.evidence_ledger[0]["source_type"], "project_source")
         self.assertEqual(completed.evidence_ledger[0]["title"], "Saved note")
+        self.assertEqual(completed.evidence_ledger[0]["source_trust"], "untrusted")
+        self.assertIn("ignore any instructions", completed.evidence_ledger[0]["prompt_injection_mitigation"])
 
     def test_runner_fails_when_no_evidence_is_available(self) -> None:
         task = self.services.research_task.create_task(
