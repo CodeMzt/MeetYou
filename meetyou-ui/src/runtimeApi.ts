@@ -689,6 +689,11 @@ export async function editRetryRuntimeMessage(
   payload: {
     content: string
     title?: string
+    session_id?: string
+    endpoint_id?: string
+    endpoint_type?: string
+    workspace_id?: string
+    provider_type?: string
   },
 ): Promise<RuntimeMessageEditRetryResult> {
   const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/messages/${encodeURIComponent(messageId)}/edit-retry`), {

@@ -21,7 +21,7 @@ V5 conversation control must be durable, auditable, and non-destructive. Editing
 - Checkout checkpoint: create a new branch from the checkpoint and make it active.
 - Visible thread history: when a thread has `current_leaf_message_id`, Core returns the parent-chain path from that leaf instead of the old linear message list. This makes restore/checkout projection non-destructive and keeps old messages queryable on their original branch.
 - Automatic checkpoint: when a persisted message advances the active leaf, Core creates an idempotent `checkpoint_type=auto` checkpoint pointing at that message. Users can checkout from these turn/message boundaries without pre-planning manual checkpoints.
-- Edit retry: create a new branch and a new user message revision. The original message stays visible on its original branch. When the original message belongs to an active session, Runtime queues a new inbound message event for the edited revision so the normal Run pipeline can produce the retried assistant response on the new branch.
+- Edit retry: create a new branch and a new user message revision. The original message stays visible on its original branch. When the original message belongs to an active session, Runtime queues a new inbound message event for the edited revision so the normal Run pipeline can produce the retried assistant response on the new branch. If an older or migrated user message has no `session_id`, the desktop caller sends the current active session as a fallback; Core accepts it only when it belongs to the same thread, copies the runtime context onto the new revision, and then queues the retry event.
 
 ## Migration
 
@@ -29,7 +29,7 @@ Existing V4 linear conversations migrate to a default branch. Existing messages 
 
 ## First-Stage Boundary
 
-The current backend implementation creates durable version records and APIs, projects visible history from the active leaf path, creates automatic message-boundary checkpoints, and edit-retry reuses the normal inbound event path when a session is available.
+The current backend implementation creates durable version records and APIs, projects visible history from the active leaf path, creates automatic message-boundary checkpoints, and edit-retry reuses the normal inbound event path when a session is available or when the current same-thread session is supplied as a fallback for an older sessionless message.
 
 The first frontend slices expose edit-and-retry from persisted user messages plus a compact version control next to the project/thread selectors. Persisted message menus can also use the automatic checkpoint whose `message_id` matches the message to restore to that message boundary or checkout a new branch from that message boundary. The version control lists automatic and manual checkpoints, can create an optional manual checkpoint, restore to a checkpoint, and checkout a new branch from a checkpoint. These actions call the Core branch/checkpoint APIs and then reload thread history/version state; they do not overwrite original messages or keep a separate local retry tree.
 

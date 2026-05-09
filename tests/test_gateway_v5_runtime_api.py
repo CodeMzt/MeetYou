@@ -409,6 +409,126 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertTrue(event.metadata["edit_retry"])
         self.assertEqual(event.metadata["branch_id"], edit_retry_response.json()["branch"]["branch_id"])
 
+    def test_edit_retry_uses_current_thread_session_as_fallback(self) -> None:
+        thread_response = self.client.post(
+            "/runtime/threads",
+            json={"workspace_id": "personal", "title": "Edit retry fallback thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_response.status_code, 200)
+        thread_id = thread_response.json()["thread_id"]
+
+        session_response = self.client.post(
+            "/runtime/sessions",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(session_response.status_code, 200)
+        session_id = session_response.json()["session_id"]
+
+        message_response = self.client.post(
+            "/runtime/messages",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+                "role": "user",
+                "content": "legacy prompt without session",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(message_response.status_code, 200)
+        self.assertEqual(message_response.json()["session_id"], "")
+        message_id = message_response.json()["message_id"]
+        while not self.gateway._event_bus.inbound_queue.empty():
+            self.gateway._event_bus.inbound_queue.get_nowait()
+
+        edit_retry_response = self.client.post(
+            f"/runtime/messages/{message_id}/edit-retry",
+            json={
+                "content": "fallback session edited prompt",
+                "title": "Fallback edited branch",
+                "session_id": session_id,
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+                "workspace_id": "personal",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(edit_retry_response.status_code, 200)
+        self.assertEqual(edit_retry_response.json()["replay_status"], "queued")
+        self.assertEqual(edit_retry_response.json()["message"]["session_id"], session_id)
+
+        event = self.gateway._event_bus.inbound_queue.get_nowait()
+        self.assertEqual(event.session_id, session_id)
+        self.assertEqual(event.content, "fallback session edited prompt")
+        self.assertEqual(event.metadata["message_id"], edit_retry_response.json()["message"]["message_id"])
+        self.assertEqual(event.metadata["endpoint_id"], "ui.endpoint")
+        self.assertEqual(event.metadata["endpoint_type"], "electron")
+        self.assertTrue(event.metadata["edit_retry"])
+
+    def test_edit_retry_rejects_fallback_session_from_another_thread(self) -> None:
+        first_thread_response = self.client.post(
+            "/runtime/threads",
+            json={"workspace_id": "personal", "title": "Edit retry first thread"},
+            headers=self._auth_headers(),
+        )
+        second_thread_response = self.client.post(
+            "/runtime/threads",
+            json={"workspace_id": "personal", "title": "Edit retry second thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(first_thread_response.status_code, 200)
+        self.assertEqual(second_thread_response.status_code, 200)
+        first_thread_id = first_thread_response.json()["thread_id"]
+        second_thread_id = second_thread_response.json()["thread_id"]
+
+        session_response = self.client.post(
+            "/runtime/sessions",
+            json={
+                "thread_id": second_thread_id,
+                "workspace_id": "personal",
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(session_response.status_code, 200)
+
+        message_response = self.client.post(
+            "/runtime/messages",
+            json={
+                "thread_id": first_thread_id,
+                "workspace_id": "personal",
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+                "role": "user",
+                "content": "legacy prompt on first thread",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(message_response.status_code, 200)
+
+        edit_retry_response = self.client.post(
+            f"/runtime/messages/{message_response.json()['message_id']}/edit-retry",
+            json={
+                "content": "bad fallback",
+                "session_id": session_response.json()["session_id"],
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+                "workspace_id": "personal",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(edit_retry_response.status_code, 400)
+        self.assertEqual(edit_retry_response.json()["error"]["code"], "session_thread_mismatch")
+
 
 if __name__ == "__main__":
     unittest.main()

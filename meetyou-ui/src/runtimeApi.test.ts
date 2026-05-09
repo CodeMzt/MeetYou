@@ -735,6 +735,10 @@ describe('runtimeApi', () => {
     const retry = await editRetryRuntimeMessage('http://127.0.0.1:8000', 'msg_1', {
       content: 'edited hello',
       title: 'Retry branch',
+      session_id: 'sess_1',
+      endpoint_id: 'desktop-app',
+      endpoint_type: 'electron',
+      workspace_id: 'personal',
     })
 
     expect(source.source_type).toBe('message_snapshot')
@@ -758,7 +762,14 @@ describe('runtimeApi', () => {
       'http://127.0.0.1:8000/desktop/messages/msg_1/edit-retry',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ content: 'edited hello', title: 'Retry branch' }),
+        body: JSON.stringify({
+          content: 'edited hello',
+          title: 'Retry branch',
+          session_id: 'sess_1',
+          endpoint_id: 'desktop-app',
+          endpoint_type: 'electron',
+          workspace_id: 'personal',
+        }),
       }),
     )
   })

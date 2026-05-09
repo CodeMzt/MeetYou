@@ -1454,18 +1454,55 @@ def build_runtime_router(gateway) -> APIRouter:
     async def edit_retry_message(message_id: str, payload: RuntimeMessageEditRetryRequest, request: Request):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
+        original_message = domain.services.message.get_by_message_id(message_id)
+        if original_message is None or str(getattr(original_message, "role", "") or "") != "user":
+            gateway._raise_http_error(status_code=404, code="message_not_found_or_not_user", message=f"Unknown user message: {message_id}")
+        original_thread = domain.services.thread.get_by_id(getattr(original_message, "thread_id", None))
+        if original_thread is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"Unknown thread for message: {message_id}")
+        fallback_session = None
+        if not getattr(original_message, "session_id", None) and payload.session_id:
+            fallback_session = domain.services.session.get_by_session_id(payload.session_id)
+            if fallback_session is None:
+                gateway._raise_http_error(status_code=404, code="session_not_found", message=f"Unknown session: {payload.session_id}")
+            if getattr(fallback_session, "thread_id", None) != getattr(original_thread, "id", None):
+                gateway._raise_http_error(
+                    status_code=400,
+                    code="session_thread_mismatch",
+                    message="The fallback session does not belong to the edited message thread.",
+                )
+        try:
+            fallback_workspace = _find_workspace(domain, payload.workspace_id) if payload.workspace_id else None
+        except KeyError:
+            gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"Unknown workspace: {payload.workspace_id}")
+        fallback_endpoint = _find_endpoint(domain, payload.endpoint_id)
+        fallback_metadata = {
+            "session_id": str(getattr(fallback_session, "session_id", "") or ""),
+            "endpoint_id": str(getattr(fallback_endpoint, "endpoint_id", "") or payload.endpoint_id or ""),
+            "endpoint_type": str(getattr(fallback_endpoint, "endpoint_type", "") or payload.endpoint_type or ""),
+            "provider_type": str(getattr(fallback_endpoint, "provider_type", "") or payload.provider_type or ""),
+            "workspace_id": str(getattr(fallback_workspace, "workspace_id", "") or payload.workspace_id or ""),
+        }
         result = domain.services.conversation_version.edit_retry(
             message_id=message_id,
             new_content=payload.content,
             title=payload.title,
+            fallback_session_row_id=getattr(fallback_session, "id", None),
+            fallback_origin_endpoint_row_id=getattr(fallback_endpoint, "id", None),
+            fallback_active_workspace_row_id=getattr(fallback_workspace, "id", None),
+            metadata=fallback_metadata,
         )
         if result is None:
             gateway._raise_http_error(status_code=404, code="message_not_found_or_not_user", message=f"Unknown user message: {message_id}")
         branch = result["branch"]
         message = result["message"]
         thread = domain.services.thread.get_by_id(getattr(message, "thread_id", None))
-        workspace = domain.services.workspace.get_by_id(getattr(message, "active_workspace_id", None) or getattr(thread, "home_workspace_id", None))
-        session = domain.services.session.get_by_id(getattr(message, "session_id", None)) if getattr(message, "session_id", None) else None
+        session = domain.services.session.get_by_id(getattr(message, "session_id", None)) if getattr(message, "session_id", None) else fallback_session
+        workspace = domain.services.workspace.get_by_id(
+            getattr(message, "active_workspace_id", None)
+            or getattr(session, "active_workspace_id", None)
+            or getattr(thread, "home_workspace_id", None)
+        )
         replay_status = str(result.get("replay_status") or "branch_created")
         if await _queue_edit_retry_runtime_event(
             gateway,

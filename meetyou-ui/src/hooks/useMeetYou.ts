@@ -427,6 +427,10 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     const result = await editRetryRuntimeMessage(baseUrl, messageId, {
       content: nextContent,
       title: `编辑重试 ${messageId.slice(-8)}`,
+      session_id: sessionId,
+      endpoint_id: endpointId,
+      endpoint_type: 'electron',
+      workspace_id: endpointContext?.workspace.workspace_id || '',
     })
     const targetThreadId = result.message.thread_id || endpointContext?.threadId || ''
     if (targetThreadId) {
@@ -441,7 +445,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       createdAt: Date.now(),
     })
     return result
-  }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
+  }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, endpointId, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState, sessionId])
 
   const createCheckpoint = useCallback(async (title?: string) => {
     const threadId = String(endpointContext?.threadId || '').trim()

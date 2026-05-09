@@ -891,6 +891,11 @@ class RuntimeCheckpointCheckoutRequest(BaseModel):
 class RuntimeMessageEditRetryRequest(BaseModel):
     content: str
     title: str = ""
+    session_id: str = ""
+    endpoint_id: str = ""
+    endpoint_type: str = "electron"
+    workspace_id: str = ""
+    provider_type: str = ""
 
 
 class RuntimeMessageEditRetryResponse(BaseModel):

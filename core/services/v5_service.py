@@ -15,6 +15,7 @@ from core.db.repositories import (
     ProjectRepository,
     ProjectSourceRepository,
     ResearchTaskRepository,
+    SessionRepository,
     ThreadBranchRepository,
     ThreadRepository,
 )
@@ -511,7 +512,17 @@ class ConversationVersionService(ServiceBase):
             )
             return branch
 
-    def edit_retry(self, *, message_id: str, new_content: str, title: str = "") -> dict[str, Any] | None:
+    def edit_retry(
+        self,
+        *,
+        message_id: str,
+        new_content: str,
+        title: str = "",
+        fallback_session_row_id=None,
+        fallback_origin_endpoint_row_id=None,
+        fallback_active_workspace_row_id=None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         with self.session_scope() as session:
             message = MessageRepository(session).get_by_message_id(message_id)
             if message is None or str(getattr(message, "role", "") or "") != "user":
@@ -519,6 +530,27 @@ class ConversationVersionService(ServiceBase):
             thread = ThreadRepository(session).get_by_id(message.thread_id)
             if thread is None:
                 return None
+            fallback_session = None
+            if fallback_session_row_id is not None:
+                fallback_session = SessionRepository(session).get_by_id(fallback_session_row_id)
+                if fallback_session is not None and getattr(fallback_session, "thread_id", None) != thread.id:
+                    fallback_session = None
+            resolved_session_id = message.session_id or getattr(fallback_session, "id", None)
+            resolved_workspace_id = (
+                message.active_workspace_id
+                or getattr(fallback_session, "active_workspace_id", None)
+                or fallback_active_workspace_row_id
+            )
+            resolved_endpoint_id = (
+                message.origin_endpoint_id
+                or getattr(fallback_session, "origin_endpoint_id", None)
+                or fallback_origin_endpoint_row_id
+            )
+            fallback_metadata = {
+                key: value
+                for key, value in dict(metadata or {}).items()
+                if str(value or "").strip()
+            }
             self._ensure_default_branch_in_session(session, thread)
             branch = ThreadBranchRepository(session).create(
                 branch_id=_public_id("br"),
@@ -536,18 +568,19 @@ class ConversationVersionService(ServiceBase):
             edited = MessageRepository(session).create(
                 message_id=_public_id("msg"),
                 thread_id=thread.id,
-                session_id=message.session_id,
+                session_id=resolved_session_id,
                 run_id=None,
-                active_workspace_id=message.active_workspace_id,
+                active_workspace_id=resolved_workspace_id,
                 role=message.role,
                 channel=message.channel,
                 content=str(new_content or ""),
                 content_type=message.content_type,
                 status="completed",
                 created_by_actor_id=message.created_by_actor_id,
-                origin_endpoint_id=message.origin_endpoint_id,
+                origin_endpoint_id=resolved_endpoint_id,
                 meta={
                     **dict(message.meta or {}),
+                    **fallback_metadata,
                     "edit_retry": True,
                     "revision_of_message_id": message.message_id,
                 },

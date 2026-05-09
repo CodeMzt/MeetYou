@@ -28,6 +28,7 @@
 - Conversation checkpoint restore and checkout are non-destructive. Do not delete old messages when switching branch/checkpoint.
 - Core must create automatic conversation checkpoints when persisted messages advance a thread leaf. Checkout should not depend on users manually creating checkpoints.
 - Historical edit retry creates a new message revision and branch. Do not overwrite the original message content.
+- Historical edit retry may use the current active Runtime session as a same-thread fallback when the original user message lacks `session_id`; reject fallback sessions from other threads instead of queueing a replay into the wrong thread.
 - V5 visible thread history must be projected by Core from `Thread.current_leaf_message_id` through `Message.parent_message_id`. Frontend branch/checkpoint controls must reload Core history after restore/checkout instead of hiding messages locally.
 - V5 branch UI should derive active branch/path/sibling variants from Core branch records (`metadata.is_active`, `parent_branch_id`). Do not create separate frontend-only retry tree state.
 - V5 message-level restore/checkout must target the Core automatic checkpoint whose `message_id` matches the message. Do not implement message-level restore by local UI filtering.
