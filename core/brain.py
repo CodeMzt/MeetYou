@@ -1224,6 +1224,26 @@ class Brain:
             route_dict["endpoint"] = endpoint_context
         if workspace_id:
             route_dict["workspace_id"] = workspace_id
+        project_id = str(metadata.get("project_id") or "").strip()
+        project_title = str(metadata.get("project_title") or "").strip()
+        project_description = str(metadata.get("project_description") or "").strip()
+        project_instructions = str(metadata.get("project_instructions") or "").strip()
+        raw_project_sources = metadata.get("project_sources")
+        project_sources = [
+            dict(item)
+            for item in raw_project_sources
+            if isinstance(item, dict)
+        ] if isinstance(raw_project_sources, list) else []
+        if any([project_id, project_title, project_description, project_instructions, project_sources]):
+            route_dict["project"] = {
+                "project_id": project_id,
+                "title": project_title,
+                "description": project_description,
+                "instructions": project_instructions,
+                "sources": project_sources,
+            }
+            if project_id:
+                route_dict["project_id"] = project_id
         allowed_tool_bundle = metadata.get("allowed_tool_bundle")
         if isinstance(allowed_tool_bundle, list):
             clean_tools = []

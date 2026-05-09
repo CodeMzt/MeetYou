@@ -94,6 +94,9 @@ _CONTEXT_POOL_TOOL_SKIPLIST = {
     "restart_core",
 }
 
+_PROJECT_CONTEXT_SOURCE_LIMIT = 5
+_PROJECT_CONTEXT_SOURCE_CONTENT_LIMIT = 1200
+
 
 @dataclass(slots=True)
 class SessionExecutionRequest:
@@ -2478,6 +2481,90 @@ class App:
         )
         return payload
 
+    @staticmethod
+    def _project_context_text(value: Any, *, limit: int = _PROJECT_CONTEXT_SOURCE_CONTENT_LIMIT) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        normalized_limit = max(80, int(limit or _PROJECT_CONTEXT_SOURCE_CONTENT_LIMIT))
+        if len(text) <= normalized_limit:
+            return text
+        return text[:normalized_limit].rstrip() + "\n[truncated]"
+
+    def _build_project_context_metadata(self, thread_id: str) -> dict[str, Any]:
+        normalized_thread_id = str(thread_id or "").strip()
+        if not normalized_thread_id:
+            return {}
+        domain = getattr(self, "core_domain", None)
+        services = getattr(domain, "services", None)
+        thread_service = getattr(services, "thread", None)
+        project_service = getattr(services, "project", None)
+        if thread_service is None or project_service is None:
+            return {}
+        try:
+            thread = thread_service.get_by_thread_id(normalized_thread_id)
+        except Exception:
+            logger.warning("Failed to load thread for project context", exc_info=True)
+            return {}
+        project_row_id = getattr(thread, "project_id", None)
+        if thread is None or project_row_id is None:
+            return {}
+        try:
+            project = project_service.get_by_id(project_row_id)
+        except Exception:
+            logger.warning("Failed to load project for context", exc_info=True)
+            return {}
+        if project is None or str(getattr(project, "status", "") or "active") == "archived":
+            return {}
+        project_public_id = str(getattr(project, "project_id", "") or "").strip()
+        if not project_public_id:
+            return {}
+        source_payloads: list[dict[str, Any]] = []
+        try:
+            sources = project_service.list_sources(
+                project_id=project_public_id,
+                limit=_PROJECT_CONTEXT_SOURCE_LIMIT,
+            ) or []
+        except Exception:
+            logger.warning("Failed to load project sources for context", exc_info=True)
+            sources = []
+        for source in sources[:_PROJECT_CONTEXT_SOURCE_LIMIT]:
+            content = self._project_context_text(getattr(source, "content", ""))
+            title = str(getattr(source, "title", "") or "").strip()
+            if not title and not content:
+                continue
+            source_payloads.append(
+                {
+                    "source_id": str(getattr(source, "source_id", "") or "").strip(),
+                    "source_type": str(getattr(source, "source_type", "") or "").strip(),
+                    "title": title,
+                    "content_type": str(getattr(source, "content_type", "") or "").strip(),
+                    "content": content,
+                    "updated_at": str(getattr(source, "updated_at", "") or ""),
+                }
+            )
+        return {
+            "project_id": project_public_id,
+            "project_title": str(getattr(project, "title", "") or "").strip(),
+            "project_description": self._project_context_text(getattr(project, "description", ""), limit=800),
+            "project_instructions": self._project_context_text(getattr(project, "instructions", ""), limit=1600),
+            "project_sources": source_payloads,
+            "project_context_loaded": True,
+        }
+
+    def _enrich_input_info_with_project_context(self, input_info: dict[str, Any]) -> None:
+        if not isinstance(input_info, dict):
+            return
+        metadata = dict(input_info.get("metadata") or {})
+        if bool(metadata.get("project_context_loaded")):
+            return
+        thread_id = str(metadata.get("thread_id") or "").strip()
+        project_context = self._build_project_context_metadata(thread_id)
+        if not project_context:
+            return
+        metadata.update(project_context)
+        input_info["metadata"] = metadata
+
     def _resolve_session_execution_request(self, event: InboundEvent) -> SessionExecutionRequest | None:
         effective_session_id = event.session_id
         is_endpoint_connection_reply = False
@@ -2584,6 +2671,7 @@ class App:
         stream_id = ""
         turn_id = uuid4().hex
         answer_chunks: list[str] = []
+        self._enrich_input_info_with_project_context(request.input_info)
         metadata = dict(request.input_info.get("metadata") or {})
         source = request.event.source
         source_metadata = getattr(source, "metadata", {}) if source is not None else {}

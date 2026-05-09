@@ -454,6 +454,74 @@ class AppSessionExecutionTests(unittest.IsolatedAsyncioTestCase):
         app._session_execution_runtime = SessionActorRuntime(app._process_session_execution)
         return app
 
+    def test_enriches_input_info_with_project_context_from_thread(self):
+        app = App.__new__(App)
+        project = type(
+            "Project",
+            (),
+            {
+                "project_id": "prj_1",
+                "title": "论文项目",
+                "description": "跟踪研究材料",
+                "instructions": "优先使用项目源。",
+                "status": "active",
+            },
+        )()
+        source = type(
+            "ProjectSource",
+            (),
+            {
+                "source_id": "src_1",
+                "source_type": "note",
+                "title": "研究笔记",
+                "content_type": "text",
+                "content": "项目源正文",
+                "updated_at": datetime(2026, 5, 9, tzinfo=timezone.utc),
+            },
+        )()
+        app.core_domain = type(
+            "Domain",
+            (),
+            {
+                "services": type(
+                    "Services",
+                    (),
+                    {
+                        "thread": type(
+                            "ThreadService",
+                            (),
+                            {
+                                "get_by_thread_id": staticmethod(
+                                    lambda thread_id: type("Thread", (), {"project_id": "row-project-1"})()
+                                )
+                            },
+                        )(),
+                        "project": type(
+                            "ProjectService",
+                            (),
+                            {
+                                "get_by_id": staticmethod(lambda row_id: project),
+                                "list_sources": staticmethod(lambda project_id, limit=5: [source]),
+                            },
+                        )(),
+                    },
+                )()
+            },
+        )()
+        input_info = {
+            "role": "user",
+            "content": "请按项目要求回答",
+            "metadata": {"thread_id": "thr_1"},
+        }
+
+        app._enrich_input_info_with_project_context(input_info)
+
+        metadata = input_info["metadata"]
+        self.assertEqual(metadata["project_id"], "prj_1")
+        self.assertEqual(metadata["project_instructions"], "优先使用项目源。")
+        self.assertEqual(metadata["project_sources"][0]["source_id"], "src_1")
+        self.assertEqual(metadata["project_sources"][0]["content"], "项目源正文")
+
     async def test_brain_processor_runs_sessions_in_parallel_and_binds_context(self):
         app = App.__new__(App)
         app.event_bus = EventBus()

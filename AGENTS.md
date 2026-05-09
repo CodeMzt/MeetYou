@@ -10,6 +10,7 @@
 - Deep research must use read-only evidence gathering unless the user explicitly asks for a separate write action.
 - Research reports must persist as Artifacts; final assistant messages should summarize and link to artifacts instead of embedding large report files.
 - Project settings UI must edit Core Project title/description/instructions through project APIs. Do not store project instructions in frontend-only state or Workspace governance fields.
+- Project context injection is Core-owned. Ordinary turns in project threads should receive bounded Project title/description/instructions/source snapshots from Core; clients must not assemble hidden project prompts themselves.
 - Research panel source/progress UI must display Core `ResearchTask` evidence, summary, and artifact metadata. Do not fabricate source lists from frontend-only plan state.
 - Research runner stage UI must read `ResearchTask.metadata.progress` / `progress_events`. Do not model research stage progress as frontend-only state.
 - The first Core `web` research adapter reads direct seed URLs from `source_policy.web_urls` / `seed_urls` / `source_urls`. Do not claim general web-search discovery is implemented until a governed search-fetch path is wired into ResearchTask execution.

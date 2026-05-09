@@ -1641,6 +1641,61 @@ class BrainRuntimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await brain.close_brain()
 
+    async def test_project_metadata_is_added_to_route_context(self):
+        adapter = QueuedStreamAdapter(
+            rounds=[
+                [
+                    StreamEvent(type="text", text="project policy applied"),
+                    StreamEvent(
+                        type="usage",
+                        usage={
+                            "prompt_tokens": 4,
+                            "completion_tokens": 2,
+                            "reasoning_tokens": 0,
+                            "total_tokens": 6,
+                        },
+                    ),
+                ]
+            ]
+        )
+        brain = Brain(
+            adapter,
+            FakeToolsManager(),
+            FakeContextManager(),
+            event_bus=None,
+            exception_router=None,
+            mode_manager=_FakeModeManager(),
+        )
+        await brain.init_brain("system prompt")
+
+        try:
+            async for _ in brain.input_brain(
+                "session-project-route-context",
+                {
+                    "role": "user",
+                    "content": "Use project context.",
+                    "metadata": {
+                        "project_id": "prj_1",
+                        "project_title": "论文项目",
+                        "project_description": "跟踪研究材料",
+                        "project_instructions": "优先使用项目源。",
+                        "project_sources": [{"source_id": "src_1", "title": "研究笔记", "content": "项目源正文"}],
+                    },
+                },
+                "key",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.4",
+            ):
+                pass
+
+            session = brain.get_or_create_session("session-project-route-context")
+            project = session.metadata["current_route"]["project"]
+            self.assertEqual(project["project_id"], "prj_1")
+            self.assertEqual(project["instructions"], "优先使用项目源。")
+            self.assertEqual(project["sources"][0]["source_id"], "src_1")
+        finally:
+            await brain.close_brain()
+
     async def test_workspace_source_profile_preference_does_not_override_specific_research_profile(self):
         adapter = QueuedStreamAdapter(
             rounds=[
