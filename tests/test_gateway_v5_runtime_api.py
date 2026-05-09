@@ -271,6 +271,61 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(edit_retry_response.json()["message"]["content"], "edited prompt")
         self.assertEqual(edit_retry_response.json()["replay_status"], "branch_created")
 
+    def test_edit_retry_queues_runtime_event_when_message_has_session(self) -> None:
+        thread_response = self.client.post(
+            "/runtime/threads",
+            json={"workspace_id": "personal", "title": "Edit retry queue thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_response.status_code, 200)
+        thread_id = thread_response.json()["thread_id"]
+
+        session_response = self.client.post(
+            "/runtime/sessions",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(session_response.status_code, 200)
+        session_id = session_response.json()["session_id"]
+
+        message_response = self.client.post(
+            "/runtime/messages",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "session_id": session_id,
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+                "role": "user",
+                "content": "original queued prompt",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(message_response.status_code, 200)
+        message_id = message_response.json()["message_id"]
+        while not self.gateway._event_bus.inbound_queue.empty():
+            self.gateway._event_bus.inbound_queue.get_nowait()
+
+        edit_retry_response = self.client.post(
+            f"/runtime/messages/{message_id}/edit-retry",
+            json={"content": "edited queued prompt", "title": "Queued edited branch"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(edit_retry_response.status_code, 200)
+        self.assertEqual(edit_retry_response.json()["replay_status"], "queued")
+
+        event = self.gateway._event_bus.inbound_queue.get_nowait()
+        self.assertEqual(event.session_id, session_id)
+        self.assertEqual(event.content, "edited queued prompt")
+        self.assertEqual(event.metadata["message_id"], edit_retry_response.json()["message"]["message_id"])
+        self.assertTrue(event.metadata["edit_retry"])
+        self.assertEqual(event.metadata["branch_id"], edit_retry_response.json()["branch"]["branch_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

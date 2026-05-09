@@ -363,6 +363,68 @@ def _record_context_pool_runtime_user_message(
         return
 
 
+async def _queue_edit_retry_runtime_event(
+    gateway,
+    domain,
+    *,
+    message,
+    thread,
+    session,
+    workspace,
+    branch,
+) -> bool:
+    if not getattr(session, "session_id", ""):
+        return False
+    metadata = dict(getattr(message, "meta", {}) or {})
+    endpoint = None
+    if getattr(message, "origin_endpoint_id", None):
+        endpoint = domain.services.endpoint.get_by_id(getattr(message, "origin_endpoint_id", None))
+    source_id = str(
+        getattr(endpoint, "endpoint_id", "")
+        or metadata.get("endpoint_id")
+        or "ui.endpoint"
+    )
+    endpoint_type = str(getattr(endpoint, "endpoint_type", "") or metadata.get("endpoint_type") or "web")
+    provider_type = str(getattr(endpoint, "provider_type", "") or metadata.get("provider_type") or "")
+    source_kind = _resolve_runtime_source_kind(
+        endpoint_id=source_id,
+        endpoint_type=endpoint_type,
+        metadata={**metadata, "provider_type": provider_type},
+    )
+    event = InboundEvent(
+        session_id=str(getattr(session, "session_id", "") or ""),
+        type=EventType.MESSAGE.value,
+        role=str(getattr(message, "role", "") or "user"),
+        content=str(getattr(message, "content", "") or ""),
+        source=make_source(
+            source_kind,
+            source_id,
+            **{
+                **metadata,
+                "endpoint_id": source_id,
+                "endpoint_type": endpoint_type,
+                "provider_type": provider_type,
+                "branch_id": str(getattr(branch, "branch_id", "") or ""),
+            },
+        ),
+        target=EventTarget(kind=TargetKind.CURRENT_SESSION.value),
+        metadata={
+            "thread_id": str(getattr(thread, "thread_id", "") or ""),
+            "workspace_id": str(getattr(workspace, "workspace_id", "") or ""),
+            "message_id": str(getattr(message, "message_id", "") or ""),
+            "endpoint_id": source_id,
+            "endpoint_type": endpoint_type,
+            "provider_type": provider_type,
+            "source_kind": source_kind,
+            "branch_id": str(getattr(branch, "branch_id", "") or ""),
+            "edit_retry": True,
+            **metadata,
+        },
+    )
+    await gateway._event_bus.inbound_queue.put(event)
+    return True
+
+
 def _operation_response(operation, *, thread_id: str = "", workspace_id: str = "") -> RuntimeOperationResponse:
     meta = dict(getattr(operation, "meta", {}) or {})
     execution_target = str(getattr(operation, "execution_target", "") or "").strip()
@@ -1301,6 +1363,17 @@ def build_runtime_router(gateway) -> APIRouter:
         thread = domain.services.thread.get_by_id(getattr(message, "thread_id", None))
         workspace = domain.services.workspace.get_by_id(getattr(message, "active_workspace_id", None) or getattr(thread, "home_workspace_id", None))
         session = domain.services.session.get_by_id(getattr(message, "session_id", None)) if getattr(message, "session_id", None) else None
+        replay_status = str(result.get("replay_status") or "branch_created")
+        if await _queue_edit_retry_runtime_event(
+            gateway,
+            domain,
+            message=message,
+            thread=thread,
+            session=session,
+            workspace=workspace,
+            branch=branch,
+        ):
+            replay_status = "queued"
         return RuntimeMessageEditRetryResponse(
             branch=_branch_response(domain, branch),
             message=_message_response(
@@ -1309,7 +1382,7 @@ def build_runtime_router(gateway) -> APIRouter:
                 workspace_id=str(getattr(workspace, "workspace_id", "") or ""),
                 session_id=str(getattr(session, "session_id", "") or ""),
             ),
-            replay_status=str(result.get("replay_status") or "branch_created"),
+            replay_status=replay_status,
         )
 
     @router.post("/operations", response_model=RuntimeOperationResponse)
