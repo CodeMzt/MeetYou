@@ -126,6 +126,40 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(research_response.status_code, 200)
         self.assertEqual(research_response.json()["status"], "planned")
         self.assertEqual(research_response.json()["plan"]["source_adapters"], ["arxiv"])
+        research_task_id = research_response.json()["research_task_id"]
+
+        invalid_report_response = self.client.patch(
+            f"/runtime/research-tasks/{research_task_id}",
+            json={
+                "report_markdown": "This report cites a missing source [9].",
+                "evidence_ledger": [{"source_id": 1, "url": "https://example.test/source-1"}],
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(invalid_report_response.status_code, 400)
+        self.assertEqual(invalid_report_response.json()["error"]["code"], "research_report_citation_invalid")
+
+        report_response = self.client.patch(
+            f"/runtime/research-tasks/{research_task_id}",
+            json={
+                "summary": "Report complete.",
+                "report_markdown": "# Research Report\n\nA supported claim [1].",
+                "report_filename": "conversation-versioning.md",
+                "evidence_ledger": [{"source_id": 1, "url": "https://example.test/source-1"}],
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(report_response.status_code, 200)
+        self.assertEqual(report_response.json()["status"], "completed")
+        self.assertTrue(report_response.json()["artifact_id"])
+        self.assertEqual(report_response.json()["artifact"]["metadata"]["citation_validation"]["citation_ids"], ["1"])
+
+        report_download_response = self.client.get(
+            report_response.json()["artifact"]["download_url"],
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(report_download_response.status_code, 200)
+        self.assertIn("A supported claim [1].", report_download_response.text)
 
         thread = self.services.thread.create_thread(
             principal_id=self.principal.id,

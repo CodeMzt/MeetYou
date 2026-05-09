@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from uuid import uuid4
 from typing import Any
 
@@ -26,6 +27,30 @@ def _sha256_text(value: str) -> str:
 
 def _public_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
+
+
+_CITATION_RE = re.compile(r"(?<!!)\[(\d+)\]")
+
+
+class ResearchTaskCitationError(ValueError):
+    def __init__(self, *, missing_source_ids: list[str], citation_ids: list[str], evidence_source_ids: list[str]) -> None:
+        self.missing_source_ids = missing_source_ids
+        self.citation_ids = citation_ids
+        self.evidence_source_ids = evidence_source_ids
+        missing = ", ".join(missing_source_ids)
+        super().__init__(f"research report cites source ids not present in evidence_ledger: {missing}")
+
+
+def _evidence_source_ids(evidence_ledger: list[dict[str, Any]] | None) -> list[str]:
+    ids: list[str] = []
+    for entry in evidence_ledger or []:
+        if not isinstance(entry, dict):
+            continue
+        value = entry.get("source_id", entry.get("id", entry.get("evidence_id", "")))
+        normalized = str(value or "").strip()
+        if normalized and normalized not in ids:
+            ids.append(normalized)
+    return ids
 
 
 class ProjectService(ServiceBase):
@@ -437,6 +462,23 @@ class ConversationVersionService(ServiceBase):
 
 
 class ResearchTaskService(ServiceBase):
+    @staticmethod
+    def validate_report_citations(report_markdown: str, evidence_ledger: list[dict[str, Any]] | None) -> dict[str, Any]:
+        citation_ids = sorted({match.group(1) for match in _CITATION_RE.finditer(str(report_markdown or ""))}, key=int)
+        evidence_source_ids = _evidence_source_ids(evidence_ledger)
+        missing_source_ids = [source_id for source_id in citation_ids if source_id not in evidence_source_ids]
+        if missing_source_ids:
+            raise ResearchTaskCitationError(
+                missing_source_ids=missing_source_ids,
+                citation_ids=citation_ids,
+                evidence_source_ids=evidence_source_ids,
+            )
+        return {
+            "citation_ids": citation_ids,
+            "evidence_source_ids": evidence_source_ids,
+            "missing_source_ids": [],
+        }
+
     @staticmethod
     def build_default_plan(topic: str, source_policy: dict | None = None) -> dict[str, Any]:
         policy = dict(source_policy or {})

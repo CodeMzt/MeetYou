@@ -9,6 +9,7 @@ from core.credential_transport import CredentialTransportError, decrypt_json_pay
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
 from core.services.endpoint_service import EndpointThreadBindingError
+from core.services.v5_service import ResearchTaskCitationError
 from core.services.workspace_service import WorkspaceService
 from core.services.tool_router_service import ToolRouterError
 from gateway.models import (
@@ -816,6 +817,25 @@ def build_runtime_router(gateway) -> APIRouter:
         if task is None:
             gateway._raise_http_error(status_code=404, code="research_task_not_found", message=f"Unknown research task: {research_task_id}")
         if report_markdown is not None:
+            evidence_ledger = fields.get("evidence_ledger")
+            if not isinstance(evidence_ledger, list):
+                evidence_ledger = list(getattr(task, "evidence_ledger", []) or [])
+            try:
+                citation_validation = domain.services.research_task.validate_report_citations(
+                    str(report_markdown or ""),
+                    evidence_ledger,
+                )
+            except ResearchTaskCitationError as exc:
+                gateway._raise_http_error(
+                    status_code=400,
+                    code="research_report_citation_invalid",
+                    message=str(exc),
+                    details={
+                        "missing_source_ids": exc.missing_source_ids,
+                        "citation_ids": exc.citation_ids,
+                        "evidence_source_ids": exc.evidence_source_ids,
+                    },
+                )
             artifact = domain.services.artifact.create_text_artifact(
                 principal_id=domain.principal.id,
                 project_id=getattr(task, "project_id", None),
@@ -823,11 +843,15 @@ def build_runtime_router(gateway) -> APIRouter:
                 text=str(report_markdown or ""),
                 filename=report_filename or f"{research_task_id}.md",
                 artifact_type="research_report",
-                metadata={"research_task_id": research_task_id},
+                metadata={"research_task_id": research_task_id, "citation_validation": citation_validation},
             )
             fields["artifact_id"] = artifact.id
             fields.setdefault("metadata", {})
-            fields["metadata"] = {**dict(fields.get("metadata") or {}), "artifact_id": artifact.artifact_id}
+            fields["metadata"] = {
+                **dict(fields.get("metadata") or {}),
+                "artifact_id": artifact.artifact_id,
+                "citation_validation": citation_validation,
+            }
             fields.setdefault("status", "completed")
         task = domain.services.research_task.update_task(research_task_id=research_task_id, fields=fields) or task
         return _research_task_response(domain, task)

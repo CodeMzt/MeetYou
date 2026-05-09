@@ -9,7 +9,7 @@ Deep research is represented by `ResearchTask`.
 3. Approval/start: user or automation starts the task; status moves from `planned` to `running`.
 4. Gather: use read-only web, academic, project-source, file-search, or MCP search/fetch tools.
 5. Synthesize: produce claims that map to evidence records.
-6. Artifact: save a Markdown report through `ArtifactStore`; PDF/DOCX export can be added as derived artifacts.
+6. Artifact: validate report citations against the evidence ledger, then save a Markdown report through `ArtifactStore`; PDF/DOCX export can be added as derived artifacts.
 7. Deliver: assistant final message contains a short summary and artifact link, not the full large report body.
 
 ## Evidence Ledger
@@ -23,7 +23,7 @@ Allowed verification statuses:
 - `project_source`: source came from durable project source material.
 - `derived`: source is a derived artifact, not primary evidence.
 
-Final research claims should cite only `read` or `project_source` evidence unless the report explicitly labels the gap.
+Final research claims should cite only `read` or `project_source` evidence unless the report explicitly labels the gap. The current guard validates numeric inline citations such as `[1]` and `[2]`; every cited id must exist in `evidence_ledger[].source_id`, or the API/tool request fails with `research_report_citation_invalid` before any report artifact is written.
 
 ## ArtifactStore
 

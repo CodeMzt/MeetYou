@@ -13,7 +13,13 @@ from core.db.base import Base
 from core.db.models import Message, Principal, Thread, Workspace
 from core.services.message_service import MessageService
 from core.services.thread_service import ThreadService
-from core.services.v5_service import ArtifactService, ConversationVersionService, ProjectService, ResearchTaskService
+from core.services.v5_service import (
+    ArtifactService,
+    ConversationVersionService,
+    ProjectService,
+    ResearchTaskCitationError,
+    ResearchTaskService,
+)
 
 
 class V5ServiceTests(unittest.TestCase):
@@ -175,6 +181,22 @@ class V5ServiceTests(unittest.TestCase):
         self.assertEqual([step["id"] for step in task.plan["steps"]], ["intake", "gather", "synthesize", "artifact"])
         self.assertEqual(updated.status, "running")
         self.assertEqual(updated.evidence_ledger[0]["source_id"], 1)
+
+    def test_research_report_citations_must_exist_in_evidence_ledger(self) -> None:
+        validation = self.research_service.validate_report_citations(
+            "Finding one [1] and finding two [2].",
+            [{"source_id": 1}, {"source_id": "2"}],
+        )
+
+        self.assertEqual(validation["citation_ids"], ["1", "2"])
+        self.assertEqual(validation["missing_source_ids"], [])
+
+        with self.assertRaises(ResearchTaskCitationError) as raised:
+            self.research_service.validate_report_citations(
+                "This cites an unread source [3].",
+                [{"source_id": 1}, {"source_id": 2}],
+            )
+        self.assertEqual(raised.exception.missing_source_ids, ["3"])
 
 
 if __name__ == "__main__":
