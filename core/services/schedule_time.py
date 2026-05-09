@@ -31,6 +31,34 @@ def _parse_time_of_day(value: str) -> time:
     return time(hour=max(0, min(hour, 23)), minute=max(0, min(minute, 59)))
 
 
+def _time_of_day_value(config: dict | None) -> str | None:
+    payload = dict(config or {})
+    for key in ("time_of_day", "at", "time", "daily_time", "run_time"):
+        value = payload.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    if "hour" in payload or "minute" in payload:
+        return f"{payload.get('hour', 0)}:{payload.get('minute', 0)}"
+    return None
+
+
+def canonical_time_of_day(value: str | int | None = None, *, default: str = "08:00") -> str:
+    parsed = _parse_time_of_day(str(value if value not in (None, "") else default))
+    return f"{parsed.hour:02d}:{parsed.minute:02d}"
+
+
+def normalize_daily_trigger_config(
+    trigger_config: dict | None,
+    *,
+    fallback_config: dict | None = None,
+    default_time_of_day: str = "08:00",
+) -> dict:
+    value = _time_of_day_value(trigger_config)
+    if value is None:
+        value = _time_of_day_value(fallback_config)
+    return {"type": "daily", "time_of_day": canonical_time_of_day(value, default=default_time_of_day)}
+
+
 def _parse_iso_datetime(value: str, *, tz) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -125,7 +153,7 @@ def compute_next_fire_at(
 
     if kind == "daily":
         local_now = now.astimezone(tz)
-        target_time = _parse_time_of_day(str(config.get("time_of_day") or config.get("at") or "08:00"))
+        target_time = _parse_time_of_day(_time_of_day_value(config) or "08:00")
         candidate = local_now.replace(
             hour=target_time.hour,
             minute=target_time.minute,

@@ -5,7 +5,20 @@ from uuid import uuid4
 from core.db.repositories import ScheduledJobRepository, ScheduledJobRunRepository
 from core.db.base import utcnow
 from core.services.base import ServiceBase
-from core.services.schedule_time import compute_next_fire_at
+from core.services.schedule_time import compute_next_fire_at, normalize_daily_trigger_config
+
+
+def _normalize_trigger_config(
+    *,
+    trigger_type: str,
+    trigger_config: dict | None,
+    fallback_config: dict | None = None,
+) -> dict:
+    config = dict(trigger_config or {})
+    kind = str(trigger_type or config.get("type") or "").strip().lower()
+    if kind == "daily":
+        return normalize_daily_trigger_config(config, fallback_config=fallback_config)
+    return config
 
 
 class SchedulerService(ServiceBase):
@@ -29,9 +42,14 @@ class SchedulerService(ServiceBase):
         misfire_policy: dict | None = None,
         metadata: dict | None = None,
     ):
-        next_fire_at = compute_next_fire_at(
-            trigger_type=trigger_type,
+        normalized_trigger_type = str(trigger_type or "interval").strip() or "interval"
+        normalized_trigger_config = _normalize_trigger_config(
+            trigger_type=normalized_trigger_type,
             trigger_config=trigger_config,
+        )
+        next_fire_at = compute_next_fire_at(
+            trigger_type=normalized_trigger_type,
+            trigger_config=normalized_trigger_config,
             timezone_name=timezone,
             after=utcnow(),
         )
@@ -57,8 +75,8 @@ class SchedulerService(ServiceBase):
                     "misfire_policy",
                     "metadata",
                 ],
-                trigger_type=trigger_type,
-                trigger_config=trigger_config,
+                trigger_type=normalized_trigger_type,
+                trigger_config=normalized_trigger_config,
                 timezone=timezone,
                 action_ref=action_ref,
                 run_template=run_template,
@@ -140,6 +158,16 @@ class SchedulerService(ServiceBase):
         should_recompute = any(key in updates for key in {"trigger_type", "trigger_config", "timezone"})
         with self.session_scope() as session:
             repo = ScheduledJobRepository(session)
+            row = repo.get_by_job_id(job_id)
+            if row is None:
+                return None
+            if "trigger_type" in updates or "trigger_config" in updates:
+                next_trigger_type = str(updates.get("trigger_type") or row.trigger_type or "").strip()
+                updates["trigger_config"] = _normalize_trigger_config(
+                    trigger_type=next_trigger_type,
+                    trigger_config=updates.get("trigger_config") if "trigger_config" in updates else row.trigger_config,
+                    fallback_config=dict(row.trigger_config or {}),
+                )
             row = repo.update(job_id=job_id, **updates)
             if row is not None and should_recompute:
                 row.next_fire_at = compute_next_fire_at(

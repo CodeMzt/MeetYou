@@ -19,6 +19,30 @@ class ScheduleTimeV4Tests(unittest.TestCase):
 
         self.assertEqual(next_fire, datetime(2026, 4, 30, 0, 0, tzinfo=timezone.utc))
 
+    def test_daily_schedule_accepts_common_time_aliases(self):
+        now = datetime(2026, 4, 29, 22, 0, tzinfo=timezone.utc)  # 06:00 Asia/Shanghai
+
+        next_fire = compute_next_fire_at(
+            trigger_type="daily",
+            trigger_config={"type": "daily", "time": "7:00"},
+            timezone_name="Asia/Shanghai",
+            after=now,
+        )
+
+        self.assertEqual(next_fire, datetime(2026, 4, 29, 23, 0, tzinfo=timezone.utc))
+
+    def test_daily_schedule_accepts_hour_minute_aliases(self):
+        now = datetime(2026, 4, 29, 22, 0, tzinfo=timezone.utc)  # 06:00 Asia/Shanghai
+
+        next_fire = compute_next_fire_at(
+            trigger_type="daily",
+            trigger_config={"type": "daily", "hour": 7, "minute": 15},
+            timezone_name="Asia/Shanghai",
+            after=now,
+        )
+
+        self.assertEqual(next_fire, datetime(2026, 4, 29, 23, 15, tzinfo=timezone.utc))
+
     def test_cron_schedule_finds_next_matching_minute(self):
         now = datetime(2026, 4, 29, 3, 1, tzinfo=timezone.utc)
 

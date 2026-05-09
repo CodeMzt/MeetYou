@@ -4,6 +4,7 @@ import inspect
 from datetime import datetime, timezone
 from typing import Any
 
+from core.services.schedule_time import normalize_daily_trigger_config
 from core.services.heartbeat_workflow import HeartbeatWorkflow
 
 
@@ -70,15 +71,17 @@ def _is_system_heartbeat_definition(*, job_id: str = "", kind: str = "", action_
     )
 
 
-def _normalize_schedule(schedule: dict[str, Any] | None, *, timezone_name: str = "") -> tuple[str, dict[str, Any], str]:
+def _normalize_schedule(
+    schedule: dict[str, Any] | None,
+    *,
+    timezone_name: str = "",
+    fallback_config: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], str]:
     payload = dict(schedule or {})
     schedule_type = str(payload.get("type") or payload.get("schedule") or "daily").strip().lower() or "daily"
     tz = str(payload.get("timezone") or timezone_name or "Asia/Shanghai").strip() or "Asia/Shanghai"
     if schedule_type == "daily":
-        return "daily", {
-            "type": "daily",
-            "time_of_day": str(payload.get("time_of_day") or payload.get("at") or "08:00").strip() or "08:00",
-        }, tz
+        return "daily", normalize_daily_trigger_config(payload, fallback_config=fallback_config), tz
     if schedule_type == "interval":
         interval_seconds = _positive_int(payload.get("interval_seconds"))
         if interval_seconds is None:
@@ -109,6 +112,10 @@ def _string_list(value: Any) -> list[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _non_empty_dict(value: Any) -> bool:
+    return isinstance(value, dict) and bool(value)
 
 
 def _is_scheduled_delivery_job(job) -> bool:
@@ -172,12 +179,22 @@ class SchedulerTools:
             raise ValueError(f"Unknown workspace: {normalized}")
         return workspace
 
-    def _trigger_config(self, trigger_config: dict[str, Any] | None, interval_seconds: Any) -> dict[str, Any]:
+    def _trigger_config(
+        self,
+        trigger_config: dict[str, Any] | None,
+        interval_seconds: Any,
+        *,
+        trigger_type: str = "",
+        fallback_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         config = dict(trigger_config or {})
         interval = _positive_int(interval_seconds)
         if interval is not None:
             config["type"] = "interval"
             config["interval_seconds"] = interval
+        kind = str(trigger_type or config.get("type") or (fallback_config or {}).get("type") or "").strip().lower()
+        if kind == "daily":
+            return normalize_daily_trigger_config(config, fallback_config=fallback_config)
         return config
 
     def _job_or_raise(self, job_id: str):
@@ -430,7 +447,11 @@ class SchedulerTools:
                 singleton_key=singleton_key,
                 enabled=True if enabled is None else bool(enabled),
                 trigger_type=str(trigger_type or "interval").strip() or "interval",
-                trigger_config=self._trigger_config(trigger_config, interval_seconds),
+                trigger_config=self._trigger_config(
+                    trigger_config,
+                    interval_seconds,
+                    trigger_type=str(trigger_type or "interval").strip() or "interval",
+                ),
                 timezone=str(timezone or "UTC").strip() or "UTC",
                 action_ref=str(action_ref or "core.workflow.assistant_turn").strip(),
                 run_template=dict(run_template or {}),
@@ -452,7 +473,12 @@ class SchedulerTools:
             if enabled is not None:
                 updates["enabled"] = bool(enabled)
             if trigger_config is not None or interval_seconds is not None:
-                updates["trigger_config"] = self._trigger_config(trigger_config, interval_seconds)
+                updates["trigger_config"] = self._trigger_config(
+                    trigger_config,
+                    interval_seconds,
+                    trigger_type=str(getattr(existing, "trigger_type", "") or ""),
+                    fallback_config=dict(getattr(existing, "trigger_config", {}) or {}),
+                )
             if timezone not in (None, ""):
                 updates["timezone"] = str(timezone or "").strip()
             if action_ref != "":
@@ -701,7 +727,11 @@ class SchedulerTools:
             if enabled is not None:
                 updates["enabled"] = bool(enabled)
             if schedule is not None:
-                trigger_type, trigger_config, tz = _normalize_schedule(schedule, timezone_name=timezone or getattr(job, "timezone", "UTC"))
+                trigger_type, trigger_config, tz = _normalize_schedule(
+                    schedule,
+                    timezone_name=timezone or getattr(job, "timezone", "UTC"),
+                    fallback_config=dict(getattr(job, "trigger_config", {}) or {}),
+                )
                 updates["trigger_type"] = trigger_type
                 updates["trigger_config"] = trigger_config
                 updates["timezone"] = tz
@@ -710,7 +740,7 @@ class SchedulerTools:
             if instruction:
                 template["prompt"] = str(instruction or "").strip()
                 template["instruction"] = str(instruction or "").strip()
-            if tool_policy is not None:
+            if _non_empty_dict(tool_policy):
                 normalized_policy = self._workflow_tool_policy(tool_policy)
                 template.update(
                     {
@@ -724,7 +754,7 @@ class SchedulerTools:
                         "max_rounds_explicit": normalized_policy["max_rounds_explicit"],
                     }
                 )
-            if output_policy is not None:
+            if _non_empty_dict(output_policy):
                 output = dict(output_policy or {})
                 output_settings = _normalize_workflow_output_policy(output)
                 raw_targets = output.get("delivery_targets")
@@ -795,7 +825,11 @@ class SchedulerTools:
             if enabled is not None:
                 updates["enabled"] = bool(enabled)
             if schedule is not None:
-                trigger_type, trigger_config, tz = _normalize_schedule(schedule, timezone_name=timezone or getattr(job, "timezone", "UTC"))
+                trigger_type, trigger_config, tz = _normalize_schedule(
+                    schedule,
+                    timezone_name=timezone or getattr(job, "timezone", "UTC"),
+                    fallback_config=dict(getattr(job, "trigger_config", {}) or {}),
+                )
                 updates["trigger_type"] = trigger_type
                 updates["trigger_config"] = trigger_config
                 updates["timezone"] = tz
@@ -805,7 +839,7 @@ class SchedulerTools:
                 template["prompt"] = str(instruction or "").strip()
                 template["instruction"] = str(instruction or "").strip()
                 updates["run_template"] = template
-            if target is not None:
+            if _non_empty_dict(target):
                 address, binding_error = self._resolve_delivery_target(target)
                 if address is None:
                     return {"ok": False, **dict(binding_error or {})}
@@ -818,8 +852,10 @@ class SchedulerTools:
                     "offline_policy": str((delivery_policy or {}).get("offline_policy") or "store_and_retry"),
                 }]
                 updates["delivery_policy"] = policy
-            elif delivery_policy is not None:
-                updates["delivery_policy"] = dict(delivery_policy or {})
+            elif _non_empty_dict(delivery_policy):
+                policy = dict(getattr(job, "delivery_policy", {}) or {})
+                policy.update(dict(delivery_policy or {}))
+                updates["delivery_policy"] = policy
             if not updates:
                 raise ValueError("update requires at least one mutable field.")
             row = domain.services.scheduler.update_job(job_id=job.job_id, **updates)

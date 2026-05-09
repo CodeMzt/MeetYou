@@ -96,6 +96,10 @@ Preferred tools:
 - `manage_scheduled_deliveries`: filtered maintenance for delivery-flavored scheduled workflows.
 - `manage_scheduled_jobs`: low-level Scheduler/system.heartbeat maintenance only.
 
+Update tools treat omitted policy objects and empty `{}` policy objects as "leave unchanged". A schedule-only update must not clear `delivery_policy.targets`, `run_template.output_policy.delivery_targets`, or an existing tool bundle. To replace a delivery destination, pass an explicit non-empty `target` / `delivery_targets` payload.
+
+Daily schedules are stored canonically as `trigger_config={"type":"daily","time_of_day":"HH:MM"}`. Tool and operator updates may accept common aliases such as `time` or `hour`/`minute`, but a shape-only daily update (`{"type":"daily"}`) must preserve the existing daily time instead of falling back to a silent default.
+
 Default rule:
 
 - "每天早上提醒我整理日报" uses `create_scheduled_workflow`.

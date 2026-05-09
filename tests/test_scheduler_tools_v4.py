@@ -310,6 +310,66 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(event_service.events), 0)
         self.assertEqual(len(job_run_service.created), 0)
 
+    async def test_manage_scheduled_jobs_daily_update_preserves_time_when_shape_only(self):
+        tools, scheduler, *_ = self._tools()
+        scheduler.create_job(
+            job_id="daily.job",
+            kind="scheduled_workflow",
+            name="Daily job",
+            workspace_id=None,
+            singleton_key=None,
+            enabled=True,
+            trigger_type="daily",
+            trigger_config={"type": "daily", "time_of_day": "08:00"},
+            timezone="Asia/Shanghai",
+            action_ref="core.workflow.scheduled_workflow",
+            run_template={},
+            execution_policy={},
+            delivery_policy={},
+            concurrency_policy={},
+            misfire_policy={},
+            metadata={},
+        )
+
+        payload = await tools.manage_scheduled_jobs(
+            action="update",
+            job_id="daily.job",
+            trigger_config={"type": "daily"},
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(scheduler.jobs["daily.job"].trigger_config, {"type": "daily", "time_of_day": "08:00"})
+
+    async def test_manage_scheduled_jobs_daily_update_accepts_hour_minute_alias(self):
+        tools, scheduler, *_ = self._tools()
+        scheduler.create_job(
+            job_id="daily.job",
+            kind="scheduled_workflow",
+            name="Daily job",
+            workspace_id=None,
+            singleton_key=None,
+            enabled=True,
+            trigger_type="daily",
+            trigger_config={"type": "daily", "time_of_day": "08:00"},
+            timezone="Asia/Shanghai",
+            action_ref="core.workflow.scheduled_workflow",
+            run_template={},
+            execution_policy={},
+            delivery_policy={},
+            concurrency_policy={},
+            misfire_policy={},
+            metadata={},
+        )
+
+        payload = await tools.manage_scheduled_jobs(
+            action="update",
+            job_id="daily.job",
+            trigger_config={"type": "daily", "hour": 7, "minute": 0},
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(scheduler.jobs["daily.job"].trigger_config, {"type": "daily", "time_of_day": "07:00"})
+
     async def test_create_scheduled_delivery_requires_me_binding(self):
         tools, *_ = self._tools()
 
@@ -412,6 +472,93 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
         workflows = await tools.manage_scheduled_workflows(action="list")
         self.assertEqual(deliveries["count"], 1)
         self.assertEqual(workflows["count"], 1)
+
+    async def test_scheduled_delivery_schedule_update_accepts_time_alias(self):
+        tools, scheduler, *_ = self._tools()
+        payload = await tools.create_scheduled_delivery(
+            name="Morning greeting",
+            schedule={"type": "daily", "time_of_day": "08:00", "timezone": "Asia/Shanghai"},
+            target={"address_id": "addr.feishu.direct.chat-1"},
+            instruction="Say good morning.",
+        )
+        job_id = payload["job"]["job_id"]
+
+        updated = await tools.manage_scheduled_deliveries(
+            action="update",
+            job_id=job_id,
+            schedule={"type": "daily", "time": "7:00", "timezone": "Asia/Shanghai"},
+        )
+
+        self.assertTrue(updated["ok"])
+        self.assertEqual(scheduler.jobs[job_id].trigger_config, {"type": "daily", "time_of_day": "07:00"})
+
+    async def test_scheduled_delivery_schedule_update_preserves_existing_time_when_missing(self):
+        tools, scheduler, *_ = self._tools()
+        payload = await tools.create_scheduled_delivery(
+            name="Morning greeting",
+            schedule={"type": "daily", "time_of_day": "06:30", "timezone": "Asia/Shanghai"},
+            target={"address_id": "addr.feishu.direct.chat-1"},
+            instruction="Say good morning.",
+        )
+        job_id = payload["job"]["job_id"]
+
+        updated = await tools.manage_scheduled_deliveries(
+            action="update",
+            job_id=job_id,
+            schedule={"type": "daily", "timezone": "Asia/Shanghai"},
+        )
+
+        self.assertTrue(updated["ok"])
+        self.assertEqual(scheduler.jobs[job_id].trigger_config, {"type": "daily", "time_of_day": "06:30"})
+
+    async def test_scheduled_delivery_schedule_update_preserves_target_with_empty_defaults(self):
+        tools, scheduler, *_ = self._tools()
+        payload = await tools.create_scheduled_delivery(
+            name="Morning greeting",
+            schedule={"type": "daily", "time_of_day": "08:00", "timezone": "Asia/Shanghai"},
+            target={"address_id": "addr.feishu.direct.chat-1"},
+            instruction="Say good morning.",
+        )
+        job_id = payload["job"]["job_id"]
+
+        updated = await tools.manage_scheduled_deliveries(
+            action="update",
+            job_id=job_id,
+            schedule={"type": "daily", "time_of_day": "07:00", "timezone": "Asia/Shanghai"},
+            target={},
+            delivery_policy={},
+        )
+
+        self.assertTrue(updated["ok"])
+        job = scheduler.jobs[job_id]
+        self.assertEqual(job.trigger_config["time_of_day"], "07:00")
+        self.assertEqual(job.delivery_policy["targets"][0]["address_id"], "addr.feishu.direct.chat-1")
+        self.assertEqual(job.run_template["tool_bundle"], ["get_current_system_time", "emit_progress_notice"])
+
+    async def test_scheduled_workflow_schedule_update_preserves_output_with_empty_defaults(self):
+        tools, scheduler, *_ = self._tools()
+        payload = await tools.create_scheduled_delivery(
+            name="Morning greeting",
+            schedule={"type": "daily", "time_of_day": "08:00", "timezone": "Asia/Shanghai"},
+            target={"address_id": "addr.feishu.direct.chat-1"},
+            instruction="Say good morning.",
+        )
+        job_id = payload["job"]["job_id"]
+
+        updated = await tools.manage_scheduled_workflows(
+            action="update",
+            job_id=job_id,
+            schedule={"type": "daily", "time_of_day": "07:00", "timezone": "Asia/Shanghai"},
+            tool_policy={},
+            output_policy={},
+        )
+
+        self.assertTrue(updated["ok"])
+        job = scheduler.jobs[job_id]
+        self.assertEqual(job.trigger_config["time_of_day"], "07:00")
+        self.assertEqual(job.delivery_policy["targets"][0]["address_id"], "addr.feishu.direct.chat-1")
+        self.assertEqual(job.run_template["output_policy"]["delivery_targets"][0]["address_id"], "addr.feishu.direct.chat-1")
+        self.assertEqual(job.run_template["tool_bundle"], ["get_current_system_time", "emit_progress_notice"])
 
 
 if __name__ == "__main__":

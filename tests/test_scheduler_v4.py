@@ -94,6 +94,47 @@ class SchedulerV4Tests(unittest.TestCase):
         finally:
             engine.dispose()
 
+    def test_scheduler_service_canonicalizes_daily_time_aliases(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        try:
+            scheduler = SchedulerService(Session)
+
+            job = scheduler.create_job(
+                job_id="daily.alias",
+                kind="scheduled_workflow",
+                trigger_type="daily",
+                trigger_config={"type": "daily", "hour": 7, "minute": 0},
+                timezone="Asia/Shanghai",
+            )
+
+            self.assertEqual(job.trigger_config, {"type": "daily", "time_of_day": "07:00"})
+            self.assertIsNotNone(job.next_fire_at)
+        finally:
+            engine.dispose()
+
+    def test_scheduler_service_preserves_daily_time_on_shape_only_update(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        try:
+            scheduler = SchedulerService(Session)
+            scheduler.create_job(
+                job_id="daily.preserve",
+                kind="scheduled_workflow",
+                trigger_type="daily",
+                trigger_config={"type": "daily", "time_of_day": "07:00"},
+                timezone="Asia/Shanghai",
+            )
+
+            job = scheduler.update_job(job_id="daily.preserve", trigger_config={"type": "daily"})
+
+            self.assertEqual(job.trigger_config, {"type": "daily", "time_of_day": "07:00"})
+            self.assertIsNotNone(job.next_fire_at)
+        finally:
+            engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()
