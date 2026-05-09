@@ -200,12 +200,12 @@ export default function ThreadPicker({
         ref={triggerRef}
         className={`${styles.trigger} ${open ? styles.open : ''}`}
         onClick={() => setOpen((current) => !current)}
-        title={activeItem?.tooltip || 'New Thread'}
+        title={activeItem?.tooltip || '新会话'}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         <MessageSquare size={14} aria-hidden="true" />
-        <span className={styles.triggerTitle}>{activeItem?.title || 'New Thread'}</span>
+        <span className={styles.triggerTitle}>{activeItem?.title || '新会话'}</span>
         <ChevronDown size={14} className={styles.chevron} aria-hidden="true" />
       </button>
 

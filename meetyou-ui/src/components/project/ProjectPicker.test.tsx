@@ -44,6 +44,6 @@ describe('ProjectPicker', () => {
       />,
     )
 
-    expect(markup).toContain('All Threads')
+    expect(markup).toContain('全部会话')
   })
 })

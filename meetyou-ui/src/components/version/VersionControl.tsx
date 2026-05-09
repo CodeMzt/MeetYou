@@ -14,7 +14,11 @@ interface VersionControlProps {
 }
 
 function labelCheckpoint(checkpoint: RuntimeConversationCheckpoint): string {
-  return String(checkpoint.title || checkpoint.checkpoint_id.slice(-8) || 'Checkpoint').trim()
+  return String(checkpoint.title || checkpoint.checkpoint_id.slice(-8) || '检查点').trim()
+}
+
+function labelBranch(branch: RuntimeThreadBranch): string {
+  return String(branch.title || branch.branch_id.slice(-8) || '分支').trim()
 }
 
 function shortTime(value: string): string {
@@ -26,6 +30,35 @@ function shortTime(value: string): string {
     return ''
   }
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function isActiveBranch(branch: RuntimeThreadBranch): boolean {
+  return branch.metadata?.is_active === true || branch.metadata?.active === true
+}
+
+export function resolveActiveBranch(branches: RuntimeThreadBranch[]): RuntimeThreadBranch | null {
+  return branches.find(isActiveBranch) || branches[branches.length - 1] || null
+}
+
+export function buildBranchPath(branches: RuntimeThreadBranch[], activeBranchId: string): RuntimeThreadBranch[] {
+  const branchById = new Map(branches.map((branch) => [branch.branch_id, branch]))
+  const path: RuntimeThreadBranch[] = []
+  const seen = new Set<string>()
+  let current = branchById.get(activeBranchId) || null
+  while (current && !seen.has(current.branch_id)) {
+    path.unshift(current)
+    seen.add(current.branch_id)
+    current = current.parent_branch_id ? branchById.get(current.parent_branch_id) || null : null
+  }
+  return path
+}
+
+export function siblingBranches(branches: RuntimeThreadBranch[], activeBranchId: string): RuntimeThreadBranch[] {
+  const active = branches.find((branch) => branch.branch_id === activeBranchId)
+  if (!active) {
+    return branches
+  }
+  return branches.filter((branch) => branch.parent_branch_id === active.parent_branch_id)
 }
 
 export default function VersionControl({
@@ -41,7 +74,16 @@ export default function VersionControl({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({})
-  const title = useMemo(() => `${branches.length || 1} branches / ${checkpoints.length} checkpoints`, [branches.length, checkpoints.length])
+  const activeBranch = useMemo(() => resolveActiveBranch(branches), [branches])
+  const currentPath = useMemo(
+    () => (activeBranch ? buildBranchPath(branches, activeBranch.branch_id) : []),
+    [activeBranch, branches],
+  )
+  const siblings = useMemo(
+    () => (activeBranch ? siblingBranches(branches, activeBranch.branch_id) : branches),
+    [activeBranch, branches],
+  )
+  const title = useMemo(() => `${branches.length || 1} 个分支 / ${checkpoints.length} 个检查点`, [branches.length, checkpoints.length])
 
   useEffect(() => {
     if (!open) {
@@ -80,9 +122,9 @@ export default function VersionControl({
       const width = Math.min(320, window.innerWidth - gutter * 2)
       setMenuStyle({
         left: Math.min(Math.max(gutter, rect.right - width), Math.max(gutter, window.innerWidth - width - gutter)),
-        top: Math.min(rect.bottom + 10, Math.max(gutter, window.innerHeight - 220)),
+        top: Math.min(rect.bottom + 10, Math.max(gutter, window.innerHeight - 300)),
         width,
-        maxHeight: Math.max(220, window.innerHeight - rect.bottom - 22),
+        maxHeight: Math.max(260, window.innerHeight - rect.bottom - 22),
       })
     }
     updatePosition()
@@ -106,7 +148,7 @@ export default function VersionControl({
         setOpen(false)
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '操作失败')
+      setError(caught instanceof Error ? caught.message : '版本操作失败')
     } finally {
       setBusy('')
     }
@@ -130,7 +172,7 @@ export default function VersionControl({
       </button>
 
       {open && typeof document !== 'undefined' && createPortal(
-        <div className={styles.menu} ref={menuRef} style={menuStyle} role="menu" aria-label="Conversation versions" data-version-control-menu="true">
+        <div className={styles.menu} ref={menuRef} style={menuStyle} role="menu" aria-label="对话版本" data-version-control-menu="true">
           <button
             type="button"
             className={styles.primaryAction}
@@ -143,11 +185,47 @@ export default function VersionControl({
           </button>
 
           <div className={styles.summaryRow}>
-            <span>{branches.length || 1} branches</span>
-            <span>{checkpoints.length} checkpoints</span>
+            <span>{branches.length || 1} 个分支</span>
+            <span>{checkpoints.length} 个检查点</span>
           </div>
 
           {error ? <div className={styles.error}>{error}</div> : null}
+
+          <div className={styles.sectionTitle}>当前路径</div>
+          {currentPath.length === 0 ? (
+            <div className={styles.empty}>暂无分支路径</div>
+          ) : (
+            <div className={styles.branchPath} data-version-current-path="true">
+              {currentPath.map((branch, index) => (
+                <div className={styles.pathItem} key={branch.branch_id} data-version-path-branch={branch.branch_id}>
+                  <span>{index + 1}</span>
+                  <strong>{labelBranch(branch)}</strong>
+                  {branch.branch_id === activeBranch?.branch_id ? <em>当前</em> : null}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className={styles.sectionTitle}>同级变体</div>
+          {siblings.length === 0 ? (
+            <div className={styles.empty}>暂无同级变体</div>
+          ) : (
+            <div className={styles.variantList} data-version-sibling-variants="true">
+              {siblings.slice(0, 8).map((branch) => (
+                <div
+                  className={`${styles.variantItem} ${branch.branch_id === activeBranch?.branch_id ? styles.activeVariant : ''}`}
+                  key={branch.branch_id}
+                  data-version-sibling-variant={branch.branch_id}
+                >
+                  <div>
+                    <strong>{labelBranch(branch)}</strong>
+                    <span>{shortTime(branch.created_at) || branch.branch_id.slice(-8)}</span>
+                  </div>
+                  <small>{branch.current_leaf_message_id || branch.branch_id.slice(-8)}</small>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className={styles.sectionTitle}>检查点</div>
           {checkpoints.length === 0 ? (
@@ -163,6 +241,7 @@ export default function VersionControl({
                   type="button"
                   title="恢复到检查点"
                   data-version-control-restore="true"
+                  data-version-checkpoint-id={checkpoint.checkpoint_id}
                   disabled={Boolean(busy)}
                   onClick={() => void runAction(`restore-${checkpoint.checkpoint_id}`, () => onRestoreCheckpoint(checkpoint.checkpoint_id), true)}
                 >
@@ -172,6 +251,7 @@ export default function VersionControl({
                   type="button"
                   title="从检查点签出"
                   data-version-control-checkout="true"
+                  data-version-checkpoint-id={checkpoint.checkpoint_id}
                   disabled={Boolean(busy)}
                   onClick={() => void runAction(`checkout-${checkpoint.checkpoint_id}`, () => onCheckoutCheckpoint(checkpoint.checkpoint_id), true)}
                 >

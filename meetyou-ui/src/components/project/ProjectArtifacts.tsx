@@ -14,7 +14,7 @@ interface ProjectArtifactsProps {
 }
 
 function artifactTitle(artifact: RuntimeArtifact): string {
-  return String(artifact.filename || artifact.artifact_id || 'Artifact').trim()
+  return String(artifact.filename || artifact.artifact_id || '产物').trim()
 }
 
 function formatBytes(value: number): string {
@@ -34,7 +34,7 @@ function formatBytes(value: number): string {
 function formatSavedAt(artifact: RuntimeArtifact): string {
   const value = artifact.created_at || artifact.updated_at
   if (!value) {
-    return 'unknown time'
+    return '未知时间'
   }
   try {
     return new Intl.DateTimeFormat(undefined, {
@@ -46,6 +46,25 @@ function formatSavedAt(artifact: RuntimeArtifact): string {
   } catch {
     return String(value)
   }
+}
+
+function artifactTypeLabel(value: string): string {
+  const key = String(value || '').trim()
+  const labels: Record<string, string> = {
+    research_report: '研究报告',
+    document: '文档',
+    markdown: 'Markdown',
+  }
+  return labels[key] || key || '产物'
+}
+
+function statusLabel(value: string): string {
+  const key = String(value || '').trim()
+  const labels: Record<string, string> = {
+    active: '可用',
+    archived: '已归档',
+  }
+  return labels[key] || key || '可用'
 }
 
 function metadataPreview(artifact: RuntimeArtifact): string {
@@ -156,7 +175,7 @@ export default function ProjectArtifacts({
     try {
       await onRefresh()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Failed to load project artifacts')
+      setError(caught instanceof Error ? caught.message : '加载项目产物失败')
     }
   }
 
@@ -168,7 +187,7 @@ export default function ProjectArtifacts({
     try {
       await onDownload(artifact)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Failed to download artifact')
+      setError(caught instanceof Error ? caught.message : '下载产物失败')
     }
   }
 
@@ -189,7 +208,7 @@ export default function ProjectArtifacts({
         type="button"
         className={`${styles.trigger} ${open ? styles.open : ''}`}
         data-project-artifacts-trigger="true"
-        title={disabled ? 'Select a project to view artifacts' : `${artifacts.length} project artifacts`}
+        title={disabled ? '选择项目后查看产物' : `${artifacts.length} 个项目产物`}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
@@ -200,10 +219,10 @@ export default function ProjectArtifacts({
       </button>
 
       {open && typeof document !== 'undefined' && createPortal(
-        <div className={styles.menu} ref={menuRef} style={menuStyle} role="menu" aria-label="Project artifacts" data-project-artifacts-menu="true">
+        <div className={styles.menu} ref={menuRef} style={menuStyle} role="menu" aria-label="项目产物" data-project-artifacts-menu="true">
           <div className={styles.header}>
-            <span>{artifacts.length} project artifacts</span>
-            <button type="button" title="Refresh project artifacts" onClick={() => void refresh()} disabled={busy} data-project-artifacts-refresh="true">
+            <span>{artifacts.length} 个项目产物</span>
+            <button type="button" title="刷新项目产物" onClick={() => void refresh()} disabled={busy} data-project-artifacts-refresh="true">
               <RefreshCw size={14} aria-hidden="true" />
             </button>
           </div>
@@ -211,7 +230,7 @@ export default function ProjectArtifacts({
           {error ? <div className={styles.error}>{error}</div> : null}
 
           {artifacts.length === 0 ? (
-            <div className={styles.empty}>No project artifacts</div>
+            <div className={styles.empty}>暂无项目产物</div>
           ) : (
             <div className={styles.grid}>
               <div className={styles.list}>
@@ -227,17 +246,17 @@ export default function ProjectArtifacts({
                     <FileText size={13} aria-hidden="true" />
                     <span>
                       <strong>{artifactTitle(artifact)}</strong>
-                      <small>{artifact.artifact_type || artifact.artifact_id.slice(-8)}</small>
+                      <small>{artifactTypeLabel(artifact.artifact_type) || artifact.artifact_id.slice(-8)}</small>
                     </span>
                   </button>
                 ))}
               </div>
 
               <div className={styles.detail}>
-                <div className={styles.detailTitle}>{selectedArtifact ? artifactTitle(selectedArtifact) : 'Artifact'}</div>
+                <div className={styles.detailTitle}>{selectedArtifact ? artifactTitle(selectedArtifact) : '产物'}</div>
                 <div className={styles.detailMeta} data-project-artifact-detail="true">
                   {selectedArtifact
-                    ? `${selectedArtifact.artifact_type || 'artifact'} / ${selectedArtifact.status || 'active'} / ${formatBytes(selectedArtifact.byte_size)} / ${formatSavedAt(selectedArtifact)}`
+                    ? `${artifactTypeLabel(selectedArtifact.artifact_type)} / ${statusLabel(selectedArtifact.status)} / ${formatBytes(selectedArtifact.byte_size)} / ${formatSavedAt(selectedArtifact)}`
                     : ''}
                 </div>
                 <div className={styles.checksum}>{selectedArtifact?.checksum || ''}</div>
@@ -253,7 +272,7 @@ export default function ProjectArtifacts({
                     onClick={() => void download(selectedArtifact)}
                   >
                     <Download size={14} aria-hidden="true" />
-                    <span>Download</span>
+                    <span>下载</span>
                   </button>
                 ) : null}
               </div>

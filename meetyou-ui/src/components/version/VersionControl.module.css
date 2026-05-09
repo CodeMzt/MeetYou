@@ -99,6 +99,94 @@
   text-transform: uppercase;
 }
 
+.branchPath,
+.variantList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pathItem,
+.variantItem {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.pathItem {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+}
+
+.pathItem span {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--bg-accent);
+  color: var(--text-accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pathItem strong,
+.variantItem strong,
+.variantItem small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pathItem strong {
+  font-size: 12px;
+}
+
+.pathItem em {
+  color: var(--text-accent);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.variantItem {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 7px 8px;
+}
+
+.activeVariant {
+  background: var(--bg-accent);
+  border-color: var(--border-accent);
+}
+
+.variantItem div {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.variantItem strong {
+  font-size: 12px;
+}
+
+.variantItem span,
+.variantItem small {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .empty,
 .error {
   padding: 8px;

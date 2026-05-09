@@ -49,7 +49,7 @@ describe('ThreadPicker', () => {
       />,
     )
 
-    expect(markup).toContain('New Thread')
+    expect(markup).toContain('新会话')
     expect(markup).toContain('aria-haspopup="listbox"')
   })
 

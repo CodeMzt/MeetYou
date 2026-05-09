@@ -13,7 +13,7 @@ interface ProjectPickerProps {
 }
 
 function projectTitle(project: RuntimeProject): string {
-  return String(project.title || project.project_id || '').trim() || 'Untitled Project'
+  return String(project.title || project.project_id || '').trim() || '未命名项目'
 }
 
 export default function ProjectPicker({
@@ -33,7 +33,7 @@ export default function ProjectPicker({
     () => projects.find((project) => project.project_id === activeProjectId) ?? null,
     [activeProjectId, projects],
   )
-  const triggerTitle = activeProject ? projectTitle(activeProject) : 'All Threads'
+  const triggerTitle = activeProject ? projectTitle(activeProject) : '全部会话'
 
   useEffect(() => {
     if (!open) {
@@ -134,17 +134,17 @@ export default function ProjectPicker({
           ref={menuRef}
           style={menuStyle}
           role="listbox"
-          aria-label="Select project"
+          aria-label="选择项目"
         >
           <form className={styles.createForm} onSubmit={handleCreate}>
             <input
               className={styles.createInput}
               value={draftTitle}
               onChange={(event) => setDraftTitle(event.target.value)}
-              placeholder="New project"
+              placeholder="新项目"
               maxLength={80}
             />
-            <button type="submit" className={styles.iconButton} title="Create project" disabled={creating || !draftTitle.trim()}>
+            <button type="submit" className={styles.iconButton} title="创建项目" disabled={creating || !draftTitle.trim()}>
               <Plus size={14} aria-hidden="true" />
             </button>
           </form>
@@ -156,8 +156,8 @@ export default function ProjectPicker({
             onClick={() => handleSelect('')}
           >
             <span className={styles.itemText}>
-              <span className={styles.itemTitle}>All Threads</span>
-              <span className={styles.itemDetail}>Workspace threads</span>
+              <span className={styles.itemTitle}>全部会话</span>
+              <span className={styles.itemDetail}>工作区会话</span>
             </span>
             {!activeProjectId && <Check size={14} className={styles.checkIcon} aria-hidden="true" />}
           </button>

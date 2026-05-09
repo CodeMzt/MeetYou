@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import VersionControl from './VersionControl'
+import VersionControl, { buildBranchPath, resolveActiveBranch, siblingBranches } from './VersionControl'
 import type { RuntimeConversationCheckpoint, RuntimeThreadBranch } from '../../types'
 
 const branch: RuntimeThreadBranch = {
@@ -10,7 +10,7 @@ const branch: RuntimeThreadBranch = {
   title: 'Default',
   status: 'active',
   current_leaf_message_id: 'msg_1',
-  metadata: {},
+  metadata: { is_active: true },
   created_at: '2026-05-09T00:00:00Z',
   updated_at: '2026-05-09T00:00:00Z',
 }
@@ -41,8 +41,33 @@ describe('VersionControl', () => {
       />,
     )
 
-    expect(markup).toContain('1 branches / 1 checkpoints')
+    expect(markup).toContain('1 个分支 / 1 个检查点')
     expect(markup).toContain('aria-haspopup="menu"')
     expect(markup).toContain('data-version-control-trigger="true"')
+  })
+
+  it('derives active branch path and sibling variants from branch metadata', () => {
+    const checkoutBranch: RuntimeThreadBranch = {
+      ...branch,
+      branch_id: 'br_2',
+      parent_branch_id: 'br_1',
+      title: 'Retry',
+      current_leaf_message_id: 'msg_2',
+      metadata: { is_active: true },
+    }
+    const siblingBranch: RuntimeThreadBranch = {
+      ...branch,
+      branch_id: 'br_3',
+      parent_branch_id: 'br_1',
+      title: 'Retry again',
+      current_leaf_message_id: 'msg_3',
+      metadata: {},
+    }
+    const rootBranch = { ...branch, metadata: {} }
+    const branches = [rootBranch, checkoutBranch, siblingBranch]
+
+    expect(resolveActiveBranch(branches)?.branch_id).toBe('br_2')
+    expect(buildBranchPath(branches, 'br_2').map((item) => item.branch_id)).toEqual(['br_1', 'br_2'])
+    expect(siblingBranches(branches, 'br_2').map((item) => item.branch_id)).toEqual(['br_2', 'br_3'])
   })
 })

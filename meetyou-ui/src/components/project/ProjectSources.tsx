@@ -13,7 +13,7 @@ interface ProjectSourcesProps {
 }
 
 function sourceTitle(source: RuntimeProjectSource): string {
-  return String(source.title || source.source_id || 'Project source').trim()
+  return String(source.title || source.source_id || '项目源').trim()
 }
 
 function sourcePreview(source: RuntimeProjectSource): string {
@@ -23,7 +23,7 @@ function sourcePreview(source: RuntimeProjectSource): string {
 function formatSavedAt(source: RuntimeProjectSource): string {
   const value = source.created_at || source.updated_at
   if (!value) {
-    return 'unknown time'
+    return '未知时间'
   }
   try {
     return new Intl.DateTimeFormat(undefined, {
@@ -35,6 +35,26 @@ function formatSavedAt(source: RuntimeProjectSource): string {
   } catch {
     return String(value)
   }
+}
+
+function sourceTypeLabel(value: string): string {
+  const key = String(value || '').trim()
+  const labels: Record<string, string> = {
+    message_snapshot: '消息快照',
+    note: '笔记',
+    file: '文件',
+    artifact: '产物',
+  }
+  return labels[key] || key || '项目源'
+}
+
+function statusLabel(value: string): string {
+  const key = String(value || '').trim()
+  const labels: Record<string, string> = {
+    active: '可用',
+    archived: '已归档',
+  }
+  return labels[key] || key || '可用'
 }
 
 function metadataPreview(source: RuntimeProjectSource): string {
@@ -133,7 +153,7 @@ export default function ProjectSources({
     try {
       await onRefresh()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Failed to load project sources')
+      setError(caught instanceof Error ? caught.message : '加载项目源失败')
     }
   }
 
@@ -154,7 +174,7 @@ export default function ProjectSources({
         type="button"
         className={`${styles.trigger} ${open ? styles.open : ''}`}
         data-project-sources-trigger="true"
-        title={disabled ? 'Select a project to view sources' : `${sources.length} project sources`}
+        title={disabled ? '选择项目后查看项目源' : `${sources.length} 个项目源`}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
@@ -165,10 +185,10 @@ export default function ProjectSources({
       </button>
 
       {open && typeof document !== 'undefined' && createPortal(
-        <div className={styles.menu} ref={menuRef} style={menuStyle} role="menu" aria-label="Project sources" data-project-sources-menu="true">
+        <div className={styles.menu} ref={menuRef} style={menuStyle} role="menu" aria-label="项目源" data-project-sources-menu="true">
           <div className={styles.header}>
-            <span>{sources.length} project sources</span>
-            <button type="button" title="Refresh project sources" onClick={() => void refresh()} disabled={busy} data-project-sources-refresh="true">
+            <span>{sources.length} 个项目源</span>
+            <button type="button" title="刷新项目源" onClick={() => void refresh()} disabled={busy} data-project-sources-refresh="true">
               <RefreshCw size={14} aria-hidden="true" />
             </button>
           </div>
@@ -176,7 +196,7 @@ export default function ProjectSources({
           {error ? <div className={styles.error}>{error}</div> : null}
 
           {sources.length === 0 ? (
-            <div className={styles.empty}>No project sources</div>
+            <div className={styles.empty}>暂无项目源</div>
           ) : (
             <div className={styles.grid}>
               <div className={styles.list}>
@@ -192,17 +212,17 @@ export default function ProjectSources({
                     <FileText size={13} aria-hidden="true" />
                     <span>
                       <strong>{sourceTitle(source)}</strong>
-                      <small>{source.source_type || source.source_id.slice(-8)}</small>
+                      <small>{sourceTypeLabel(source.source_type) || source.source_id.slice(-8)}</small>
                     </span>
                   </button>
                 ))}
               </div>
 
               <div className={styles.detail}>
-                <div className={styles.detailTitle}>{selectedSource ? sourceTitle(selectedSource) : 'Project source'}</div>
+                <div className={styles.detailTitle}>{selectedSource ? sourceTitle(selectedSource) : '项目源'}</div>
                 <div className={styles.detailMeta}>
                   {selectedSource
-                    ? `${selectedSource.source_type || 'source'} / ${selectedSource.status || 'active'} / ${formatSavedAt(selectedSource)}`
+                    ? `${sourceTypeLabel(selectedSource.source_type)} / ${statusLabel(selectedSource.status)} / ${formatSavedAt(selectedSource)}`
                     : ''}
                 </div>
                 <pre className={styles.content} data-project-source-content="true">{selectedSource ? sourcePreview(selectedSource) : ''}</pre>

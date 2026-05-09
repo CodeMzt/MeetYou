@@ -57,9 +57,11 @@ Project artifact controls sit beside project sources. The first UI slice lists a
 
 Research mode is selectable from the desktop composer. The first research UI slice exposes ResearchTask intake, plan viewing/editing before start, approve/start/cancel actions, task refresh, and artifact download. `start` now reaches a conservative Core read-only runner that can gather implemented academic adapters and project sources into an evidence ledger and persist a Markdown report artifact. Full deep-research parity still requires later progress streaming, richer ranking/reading, web-search integration, and PDF/DOCX derivation.
 
-The main Electron window is a constrained floating surface (`400x620` by default, `340x460` minimum). Project/Thread UI must be validated at the real main-window size, not only in wide browser viewports. At the default width the project trigger may collapse to an icon while preserving the full project title in the button tooltip.
+The main Electron window is a constrained floating surface (`400x620` by default, `340x460` minimum). Project/Thread UI must be validated at the real main-window size, not only in wide browser viewports. At the default width the top control dock must remain a single row; compact controls may collapse to icons and the thread selector may shrink, but the dock must not wrap into a second row or steal chat vertical space.
 
 Message menus, edit dialogs, version menus, project source popovers, and project artifact popovers must also be validated at the real main-window size. Menus render through a portal and clamp to the visible viewport so bottom-of-thread actions, version popovers, source previews, and artifact previews do not render outside the floating window.
+
+Desktop V5 UI text is Chinese-first. Protocol field names, artifact filenames, ids, and provider-returned metadata can remain in their native form, but visible control labels, empty states, tooltips, and status notices should use Chinese by default.
 
 ## Delivery And Verification Workflow
 
@@ -69,4 +71,4 @@ Each phase must produce a concrete phase plan, make scoped changes, run local te
 
 The Core deploy workflow is branch-aware. CI success on `main` deploys `main`; CI success on `v5` deploys `v5`. Manual deployment dispatch accepts an explicit branch input, validates it as a Git branch name, fetches that branch on the Core host, and resets the remote working tree to `origin/<branch>` before invoking the host deploy script.
 
-First-stage implementation provides durable API/data skeleton and local ArtifactStore. Full background research execution and a complete sibling-variant browser are follow-up work.
+First-stage implementation provides durable API/data skeleton, local ArtifactStore, a conservative read-only research runner, and compact branch path/sibling variant visibility. A complete visual conversation tree editor remains follow-up work.

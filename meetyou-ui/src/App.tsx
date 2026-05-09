@@ -168,14 +168,16 @@ export default function App() {
 
       <div className={styles.mainContent}>
         <div className={styles.topDock}>
-          <StatusIsland
-            runtimeSnapshot={runtimeSnapshot}
-            usageSnapshot={usageSnapshot}
-            healthSnapshot={healthSnapshot}
-            statusFeedback={statusFeedback}
-            preferredMode={preferredMode}
-            danxiStatusText={danxiStatusText}
-          />
+          <div className={styles.statusIslandSlot}>
+            <StatusIsland
+              runtimeSnapshot={runtimeSnapshot}
+              usageSnapshot={usageSnapshot}
+              healthSnapshot={healthSnapshot}
+              statusFeedback={statusFeedback}
+              preferredMode={preferredMode}
+              danxiStatusText={danxiStatusText}
+            />
+          </div>
 
           <div className={styles.threadPickerSlot}>
             <ProjectPicker

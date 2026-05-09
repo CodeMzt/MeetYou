@@ -258,17 +258,29 @@ def _artifact_response(domain, artifact) -> RuntimeArtifactResponse:
     )
 
 
-def _branch_response(domain, branch) -> RuntimeThreadBranchResponse:
+def _branch_response(domain, branch, branch_by_row_id: dict | None = None) -> RuntimeThreadBranchResponse:
     thread = domain.services.thread.get_by_id(getattr(branch, "thread_id", None))
     leaf = domain.services.message.get_by_id(getattr(branch, "current_leaf_message_id", None)) if getattr(branch, "current_leaf_message_id", None) else None
+    parent_branch_id = ""
+    parent_row_id = getattr(branch, "parent_branch_id", None)
+    if parent_row_id is not None:
+        parent_branch = (branch_by_row_id or {}).get(parent_row_id)
+        if parent_branch is None and thread is not None:
+            for candidate in domain.services.conversation_version.list_branches(thread_id=getattr(thread, "thread_id", "")) or []:
+                if getattr(candidate, "id", None) == parent_row_id:
+                    parent_branch = candidate
+                    break
+        parent_branch_id = str(getattr(parent_branch, "branch_id", "") or "")
+    metadata = dict(getattr(branch, "meta", {}) or {})
+    metadata["is_active"] = bool(thread is not None and getattr(thread, "active_branch_id", None) == getattr(branch, "id", None))
     return RuntimeThreadBranchResponse(
         branch_id=str(getattr(branch, "branch_id", "") or ""),
         thread_id=str(getattr(thread, "thread_id", "") or ""),
-        parent_branch_id="",
+        parent_branch_id=parent_branch_id,
         title=str(getattr(branch, "title", "") or ""),
         status=str(getattr(branch, "status", "") or "active"),
         current_leaf_message_id=str(getattr(leaf, "message_id", "") or ""),
-        metadata=dict(getattr(branch, "meta", {}) or {}),
+        metadata=metadata,
         created_at=_iso(branch, "created_at"),
         updated_at=_iso(branch, "updated_at"),
     )
@@ -1130,7 +1142,8 @@ def build_runtime_router(gateway) -> APIRouter:
         rows = domain.services.conversation_version.list_branches(thread_id=thread_id)
         if rows is None:
             gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"Unknown thread: {thread_id}")
-        return [_branch_response(domain, row) for row in rows]
+        branch_by_row_id = {getattr(row, "id", None): row for row in rows}
+        return [_branch_response(domain, row, branch_by_row_id) for row in rows]
 
     @router.get("/threads/{thread_id}/checkpoints", response_model=list[RuntimeConversationCheckpointResponse])
     async def list_thread_checkpoints(thread_id: str, request: Request, limit: int = 100):

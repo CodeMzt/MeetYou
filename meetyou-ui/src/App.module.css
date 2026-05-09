@@ -42,6 +42,11 @@
   pointer-events: none;
 }
 
+.statusIslandSlot {
+  min-width: 0;
+  pointer-events: auto;
+}
+
 .threadPickerSlot {
   display: flex;
   align-items: center;
@@ -52,21 +57,28 @@
 
 @media (max-width: 420px) {
   .topDock {
-    left: var(--spacing-md);
-    right: var(--spacing-md);
+    left: 8px;
+    right: 8px;
     transform: none;
-    flex-wrap: wrap;
-    row-gap: 8px;
+    flex-wrap: nowrap;
+    gap: 4px;
     max-width: none;
+    align-items: center;
+  }
+
+  .statusIslandSlot {
+    display: none;
   }
 
   .threadPickerSlot {
-    max-width: 100%;
+    flex: 1 1 auto;
+    gap: 4px;
+    max-width: none;
     justify-content: center;
   }
 
   .contentArea {
-    padding-top: 104px;
+    padding-top: 58px;
   }
 }
 

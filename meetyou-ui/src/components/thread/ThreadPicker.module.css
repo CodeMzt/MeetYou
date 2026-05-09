@@ -213,14 +213,14 @@
   background: var(--bg-error);
 }
 
-@media (max-width: 360px) {
+@media (max-width: 420px) {
   .trigger {
-    min-width: 40px;
-    width: 40px;
-    padding: 0;
+    min-width: 88px;
+    width: clamp(88px, calc(100vw - 250px), 132px);
+    max-width: 132px;
+    padding: 0 8px;
   }
 
-  .triggerTitle,
   .chevron {
     display: none;
   }

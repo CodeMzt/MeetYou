@@ -245,6 +245,8 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         )
         self.assertEqual(branches_response.status_code, 200)
         self.assertEqual(len(branches_response.json()), 1)
+        default_branch_id = branches_response.json()[0]["branch_id"]
+        self.assertTrue(branches_response.json()[0]["metadata"]["is_active"])
 
         checkpoint_response = self.client.post(
             f"/runtime/threads/{thread.thread_id}/checkpoints",
@@ -261,6 +263,8 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         )
         self.assertEqual(checkout_response.status_code, 200)
         self.assertEqual(checkout_response.json()["title"], "Branch from checkpoint")
+        self.assertEqual(checkout_response.json()["parent_branch_id"], default_branch_id)
+        self.assertTrue(checkout_response.json()["metadata"]["is_active"])
 
         edit_retry_response = self.client.post(
             f"/runtime/messages/{user_message.message_id}/edit-retry",
@@ -270,6 +274,20 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(edit_retry_response.status_code, 200)
         self.assertEqual(edit_retry_response.json()["message"]["content"], "edited prompt")
         self.assertEqual(edit_retry_response.json()["replay_status"], "branch_created")
+        self.assertEqual(edit_retry_response.json()["branch"]["parent_branch_id"], default_branch_id)
+        self.assertTrue(edit_retry_response.json()["branch"]["metadata"]["is_active"])
+
+        branches_after_retry_response = self.client.get(
+            f"/runtime/threads/{thread.thread_id}/branches",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(branches_after_retry_response.status_code, 200)
+        branches_after_retry = branches_after_retry_response.json()
+        self.assertEqual(len(branches_after_retry), 3)
+        active_branches = [row for row in branches_after_retry if row["metadata"]["is_active"]]
+        self.assertEqual([row["branch_id"] for row in active_branches], [edit_retry_response.json()["branch"]["branch_id"]])
+        sibling_branch_ids = [row["branch_id"] for row in branches_after_retry if row["parent_branch_id"] == default_branch_id]
+        self.assertEqual(set(sibling_branch_ids), {checkout_response.json()["branch_id"], edit_retry_response.json()["branch"]["branch_id"]})
 
     def test_research_task_start_auto_executes_read_only_runner(self) -> None:
         project_response = self.client.post(

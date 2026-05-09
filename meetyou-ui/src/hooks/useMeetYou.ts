@@ -414,7 +414,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       throw new Error('没有可用会话')
     }
     const checkpoint = await createRuntimeThreadCheckpoint(baseUrl, threadId, {
-      title: String(title || '').trim() || `Checkpoint ${new Date().toLocaleTimeString()}`,
+      title: String(title || '').trim() || `检查点 ${new Date().toLocaleTimeString()}`,
       checkpoint_type: 'manual',
     })
     await refreshThreadVersionState(threadId)
@@ -450,7 +450,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       throw new Error('没有可用会话')
     }
     const branch = await checkoutRuntimeThreadCheckpoint(baseUrl, threadId, checkpointId, {
-      title: `Checkout ${new Date().toLocaleTimeString()}`,
+      title: `签出 ${new Date().toLocaleTimeString()}`,
     })
     await loadThreadHistory(threadId)
     await refreshRuntimeThreads(endpointContext?.workspace.workspace_id)
@@ -536,7 +536,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   ) => {
     const artifactId = String(artifact.artifact_id || '').trim()
     if (!artifactId) {
-      throw new Error('Artifact is not downloadable')
+      throw new Error('产物不可下载')
     }
     const blob = await downloadRuntimeArtifact(baseUrl, artifactId)
     const filename = String(artifact.filename || fallbackFilename || `${artifactId}.md`)
@@ -573,7 +573,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const downloadProjectArtifact = useCallback(async (artifact: RuntimeArtifact) => {
     setProjectArtifactsBusy(true)
     try {
-      await downloadArtifactFile(artifact, artifact.filename || `${artifact.artifact_id}.md`, 'Artifact download started')
+      await downloadArtifactFile(artifact, artifact.filename || `${artifact.artifact_id}.md`, '已开始下载产物')
     } finally {
       setProjectArtifactsBusy(false)
     }
