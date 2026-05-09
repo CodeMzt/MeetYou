@@ -133,6 +133,8 @@ class CoreDomainContext:
     tool_router: object
     principal: object
     workspaces: dict[str, object]
+    research_fetcher: object | None = None
+    research_web_searcher: object | None = None
 
 
 def _project_root() -> Path:

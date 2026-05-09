@@ -13,7 +13,7 @@
 - Project context injection is Core-owned. Ordinary turns in project threads should receive bounded Project title/description/instructions/source snapshots from Core; clients must not assemble hidden project prompts themselves.
 - Research panel source/progress UI must display Core `ResearchTask` evidence, summary, and artifact metadata. Do not fabricate source lists from frontend-only plan state.
 - Research runner stage UI must read `ResearchTask.metadata.progress` / `progress_events`. Do not model research stage progress as frontend-only state.
-- The first Core `web` research adapter reads direct seed URLs from `source_policy.web_urls` / `seed_urls` / `source_urls`. Do not claim general web-search discovery is implemented until a governed search-fetch path is wired into ResearchTask execution.
+- Core `web` research gathering supports direct seed URLs and governed `search_web` discovery. Search-result-only entries are discovery seeds, not verified evidence; reports may cite them only after Core has a readable source summary or direct fetch evidence in the ResearchTask evidence ledger.
 - Project artifact UI must list/download Core Artifact records through artifact APIs. Do not infer the project artifact list only from visible ResearchTask state.
 - Evidence-ledger citations must refer to recorded sources. Do not invent citations or cite unread sources as verified.
 - Starting a V5 ResearchTask may trigger the Core read-only research runner. If no readable evidence is gathered, fail the task instead of producing an uncited report.

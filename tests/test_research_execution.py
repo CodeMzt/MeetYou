@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -123,6 +124,97 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Readable V5 web source", Path(report_path).read_text(encoding="utf-8"))
 
+    def test_runner_discovers_read_web_evidence_from_search(self) -> None:
+        def fake_web_search(query: str, max_results: int = 3, **kwargs) -> str:
+            self.assertEqual(query, "branchable research checkpoints")
+            self.assertEqual(max_results, 2)
+            self.assertEqual(kwargs["quality"], "deep")
+            return json.dumps(
+                {
+                    "sources": [
+                        {
+                            "title": "Search-discovered V5 source",
+                            "url": "https://example.test/discovered",
+                            "summary": "Search reader evidence about checkpoint checkout and research artifacts.",
+                            "reader": "tavily_extract",
+                            "verification_status": "read",
+                            "provider": "tavily",
+                            "retrieved_at": "2026-05-09T00:00:00+00:00",
+                        }
+                    ]
+                }
+            )
+
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="branchable research checkpoints",
+            source_policy={
+                "source_adapters": ["web"],
+                "web_search": True,
+                "web_limit": 2,
+                "limit": 2,
+            },
+        )
+        result = ResearchExecutionService(self.services, web_searcher=fake_web_search).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.evidence_ledger[0]["source_type"], "web_page")
+        self.assertEqual(completed.evidence_ledger[0]["adapter"], "web")
+        self.assertEqual(completed.evidence_ledger[0]["reader"], "tavily_extract")
+        self.assertEqual(completed.evidence_ledger[0]["verification_status"], "read")
+        self.assertEqual(completed.evidence_ledger[0]["search_query"], "branchable research checkpoints")
+        self.assertIn("research artifacts", completed.evidence_ledger[0]["snippet"])
+        self.assertEqual(completed.meta["gather_errors"], [])
+        artifact = self.services.artifact.get_by_id(completed.artifact_id)
+        report_path = self.services.artifact.resolve_local_path(artifact)
+        self.assertIn("Search-discovered V5 source", Path(report_path).read_text(encoding="utf-8"))
+
+    def test_runner_fetches_search_discovered_urls_when_reader_summary_is_not_available(self) -> None:
+        def fake_web_search(query: str, max_results: int = 3, **kwargs) -> str:
+            del query, max_results, kwargs
+            return json.dumps(
+                {
+                    "additional_results": [
+                        {
+                            "title": "Discovered URL",
+                            "url": "https://example.test/from-search",
+                            "snippet": "Search-result-only snippets are not enough for report evidence.",
+                            "verification_status": "search_result_only",
+                        }
+                    ]
+                }
+            )
+
+        def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
+            del timeout
+            self.assertEqual(url, "https://example.test/from-search")
+            return {
+                "url": url,
+                "title": "Fetched discovered page",
+                "content_type": "text/plain",
+                "content": "Fetched readable page text about search discovery and evidence ledgers.",
+            }
+
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="search discovery fallback",
+            source_policy={"source_adapters": ["web"], "web_search": True, "web_limit": 1},
+        )
+        result = ResearchExecutionService(
+            self.services,
+            web_searcher=fake_web_search,
+            web_fetcher=fake_web_fetch,
+        ).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.evidence_ledger[0]["title"], "Fetched discovered page")
+        self.assertEqual(completed.evidence_ledger[0]["reader"], "core.web_source.v1")
+        self.assertIn("evidence ledgers", completed.evidence_ledger[0]["snippet"])
+
     def test_runner_reports_web_adapter_missing_seed_urls(self) -> None:
         task = self.services.research_task.create_task(
             principal_id=self.principal.id,
@@ -139,6 +231,20 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(failed.meta["gather_errors"][0]["error_type"], "WebSeedUrlsRequired")
         self.assertEqual(failed.meta["progress"]["stage"], "gather")
         self.assertEqual(failed.meta["progress"]["status"], "failed")
+
+    def test_runner_reports_web_search_unavailable_when_discovery_is_requested(self) -> None:
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="web search without searcher",
+            source_policy={"source_adapters": ["web"], "web_search": True},
+        )
+        result = ResearchExecutionService(self.services).run_task(task.research_task_id)
+
+        self.assertFalse(result["ok"])
+        failed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.meta["runner_error"], "no_evidence")
+        self.assertEqual(failed.meta["gather_errors"][0]["error_type"], "WebSearchUnavailable")
 
     def test_runner_uses_project_sources_without_external_fetch(self) -> None:
         project = self.services.project.create_project(

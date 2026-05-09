@@ -177,6 +177,30 @@ async def setup_app_runtime(app) -> None:
         mcp_config_diagnostic.get("message") or "未提供 Core MCP 配置诊断。",
     )
     await app.tools_manager.init_tools(tools_schema_path, mcp_servers)
+    async def research_web_searcher(
+        *,
+        query: str,
+        max_results: int = 5,
+        source_profile: str = "",
+        quality: str = "deep",
+        official_only: bool | None = None,
+        freshness: str = "",
+        **_: Any,
+    ):
+        web_search_tools = getattr(app.tools_manager, "_web_search_tools", None)
+        search_web = getattr(web_search_tools, "search_web", None)
+        if not callable(search_web):
+            raise RuntimeError("Core web search tools are not available")
+        return await search_web(
+            query=query,
+            max_results=max_results,
+            source_profile=source_profile,
+            quality=quality,
+            official_only=official_only,
+            freshness=freshness,
+        )
+
+    app.core_domain.research_web_searcher = research_web_searcher
     core_mcp_diagnostics = app.get_core_mcp_diagnostics()
     core_mcp_summary = core_mcp_diagnostics.get("summary") or {}
     logger.info(

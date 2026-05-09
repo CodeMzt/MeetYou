@@ -16,9 +16,9 @@ The first executable runner is deliberately conservative:
 
 - `PATCH /runtime/research-tasks/{id}` with `action=start` transitions the task to `running`; unless `source_policy.auto_execute=false`, Runtime schedules the Core read-only runner.
 - `manage_research_tasks(action="run")` executes the same runner from assistant tools.
-- The runner gathers from implemented academic adapters, direct read-only web seed URLs, and, when requested, ProjectSource snapshots. It does not mutate sources or send private data to write channels.
+- The runner gathers from implemented academic adapters, direct read-only web seed URLs, governed web-search discovery, and, when requested, ProjectSource snapshots. It does not mutate sources or send private data to write channels.
 - Unsupported adapters are recorded in `metadata.gather_errors`; they do not become citations.
-- `web` is implemented first as direct page gathering from `source_policy.web_urls`, `seed_urls`, or `source_urls`. If a task requests `web` without seed URLs, the runner records `WebSeedUrlsRequired` and continues with other configured sources.
+- `web` supports direct page gathering from `source_policy.web_urls`, `seed_urls`, or `source_urls`. If `source_policy.web_search=true` or explicit `web_queries` / `web_search_queries` / `search_queries` are present, Core first uses the governed `search_web` path to discover sources. Sources already read by the search tool can enter the evidence ledger; search-result-only URLs must be fetched by the direct web reader before they become citeable evidence. If a task requests `web` without seed URLs or search discovery, the runner records `WebSeedUrlsRequired` and continues with other configured sources.
 - The runner persists lightweight progress into `ResearchTask.metadata.progress` and keeps recent `metadata.progress_events`. Current stages are `gather`, `synthesize`, `artifact`, and `completed`; this is pollable task state, not a replacement for future streaming progress.
 - If no readable evidence is gathered, the task transitions to `failed` and no report artifact is created.
 - If evidence is gathered, the runner builds a Markdown report, validates bracket citations against `evidence_ledger`, creates a `research_report` Artifact, and completes the task.
@@ -67,7 +67,7 @@ The desktop UI exposes `research` as a composer mode and shows a compact Researc
 - inspect durable progress context from the selected task, including current runner stage, stage message, evidence count, gather error count, output format, summary, the first evidence ledger entries, and completed artifact filename/size;
 - download a completed report artifact through the authenticated `/desktop/artifacts/{artifact_id}/download` proxy.
 
-This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; stage progress must be derived from `ResearchTask.metadata.progress`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, PDF/DOCX derivation, and tool-backed web-search discovery remain later V5 stages.
+This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; stage progress must be derived from `ResearchTask.metadata.progress`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, richer source ranking, PDF/DOCX derivation, and broad provider selection remain later V5 stages.
 
 ## Project Artifacts UI
 
@@ -83,9 +83,9 @@ The desktop top control dock includes a Project Sources popover for the active p
 
 ## Web Sources
 
-The first Core `web` adapter is read-only direct page gathering. Research tasks may provide `source_policy.web_urls`, `source_policy.seed_urls`, or `source_policy.source_urls`; each valid HTTP(S) URL is fetched, stripped of scripts/styles/svg/noscript blocks, summarized into a bounded snippet, and recorded as `source_type=web_page` with `verification_status=fetched`.
+The Core `web` adapter is read-only. Research tasks may provide `source_policy.web_urls`, `source_policy.seed_urls`, or `source_policy.source_urls`; each valid HTTP(S) URL is fetched, stripped of scripts/styles/svg/noscript blocks, summarized into a bounded snippet, and recorded as `source_type=web_page` with `verification_status=fetched`.
 
-This is intentionally not yet a general web-search discovery engine. Tasks that request `web` without seed URLs get a `WebSeedUrlsRequired` gather error. A later V5 slice should connect the existing governed `search_web` / `read_web_page` tool chain or an equivalent provider-backed search-fetch path so research tasks can discover URLs before direct reading.
+Search discovery is opt-in through `source_policy.web_search=true` or explicit query lists in `source_policy.web_queries`, `web_search_queries`, `search_queries`, or `queries`. When enabled, Runtime bridges the ResearchTask runner to Core `search_web` without exposing raw MCP tools to the task. Search payloads are normalized into evidence only when the search reader already produced readable source summaries. Search-result-only entries are treated as discovery seeds and must be fetched by the direct web reader before the report may cite them. Tasks that request `web` without seed URLs or search discovery still get a `WebSeedUrlsRequired` gather error.
 
 ## Academic Sources
 

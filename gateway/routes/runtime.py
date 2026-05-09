@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -881,10 +882,40 @@ def build_runtime_router(gateway) -> APIRouter:
         policy = dict(getattr(task, "source_policy", {}) or {})
         return bool(policy.get("auto_execute", True))
 
-    def _run_research_task_background(domain, research_task_id: str) -> None:
+    def _research_web_searcher_bridge(domain, loop: asyncio.AbstractEventLoop):
+        web_searcher = getattr(domain, "research_web_searcher", None)
+        if not callable(web_searcher):
+            return None
+
+        def call_web_searcher(*args, **kwargs):
+            timeout = float(kwargs.pop("timeout", 45) or 45)
+            result = web_searcher(*args, **kwargs)
+            if inspect.isawaitable(result):
+                future = asyncio.run_coroutine_threadsafe(result, loop)
+                try:
+                    return future.result(timeout=timeout)
+                except Exception:
+                    if not future.done():
+                        future.cancel()
+                    raise
+            return result
+
+        return call_web_searcher
+
+    async def _run_research_task_background(domain, research_task_id: str) -> None:
         try:
-            fetcher = getattr(domain, "research_fetcher", None)
-            ResearchExecutionService(domain.services, fetcher=fetcher).run_task(research_task_id)
+            loop = asyncio.get_running_loop()
+
+            def run_task() -> dict[str, Any]:
+                fetcher = getattr(domain, "research_fetcher", None)
+                web_searcher = _research_web_searcher_bridge(domain, loop)
+                return ResearchExecutionService(
+                    domain.services,
+                    fetcher=fetcher,
+                    web_searcher=web_searcher,
+                ).run_task(research_task_id)
+
+            await asyncio.to_thread(run_task)
         except Exception as exc:  # noqa: BLE001 - background task must fail the ResearchTask instead of crashing request handling.
             try:
                 domain.services.research_task.transition_task(

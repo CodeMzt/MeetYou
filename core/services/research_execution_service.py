@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from core.research.academic_sources import AcademicSourceRegistry, FetchAcademicSource
 from core.research.web_sources import FetchWebSource, WebSourceRegistry
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 
 
+FetchWebSearch = Callable[..., Any]
 _TERMINAL_STATUSES = {"cancelled", "completed", "failed"}
 
 
@@ -55,6 +57,156 @@ def _web_seed_urls(policy: dict[str, Any]) -> list[Any]:
     return values
 
 
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    items: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        items.append(text)
+    return items
+
+
+def _policy_bool(policy: dict[str, Any], *keys: str) -> bool:
+    for key in keys:
+        value = policy.get(key)
+        if isinstance(value, str):
+            if value.strip().lower() in {"1", "true", "yes", "on", "enabled"}:
+                return True
+            continue
+        if bool(value):
+            return True
+    return False
+
+
+def _web_search_queries(task, policy: dict[str, Any]) -> list[str]:
+    queries: list[str] = []
+    for key in ("web_queries", "web_search_queries", "search_queries", "queries"):
+        queries.extend(_string_list(policy.get(key)))
+    if not queries and _policy_bool(policy, "web_search", "enable_web_search", "discover_urls", "search_discovery"):
+        topic = str(getattr(task, "topic", "") or "").strip()
+        if topic:
+            queries.append(topic)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        key = query.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(query)
+    return unique[:4]
+
+
+def _loads_json(value: str) -> Any:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+
+def _search_payload(raw_result: Any) -> tuple[Any, dict[str, Any] | None]:
+    if hasattr(raw_result, "ok") and hasattr(raw_result, "content"):
+        ok = bool(getattr(raw_result, "ok", False))
+        if not ok:
+            error = getattr(raw_result, "error", None)
+            return None, {
+                "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
+                "message": str(getattr(error, "message", "") or "web search failed"),
+                "error_type": str(getattr(error, "code", "") or "WebSearchFailed"),
+            }
+        content = getattr(raw_result, "content", None)
+        data = getattr(content, "data", None)
+        if data is not None:
+            return data, None
+        return _loads_json(str(getattr(content, "text", "") or "")), None
+    if isinstance(raw_result, str):
+        return _loads_json(raw_result), None
+    return raw_result, None
+
+
+def _search_items(payload: Any, *keys: str) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        values = payload
+    elif isinstance(payload, dict):
+        values = []
+        for key in keys:
+            raw = payload.get(key)
+            if isinstance(raw, list):
+                values.extend(raw)
+    else:
+        return []
+    return [dict(item) for item in values if isinstance(item, dict)]
+
+
+def _normalize_seed_key(item: Any) -> str:
+    seeds = WebSourceRegistry.normalize_url_entries([item])
+    return seeds[0].url if seeds else ""
+
+
+def _search_seed_entries(payload: Any) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in _search_items(payload, "sources", "results", "additional_results", "evidence", "evidence_ledger"):
+        url = str(item.get("url") or item.get("link") or item.get("canonical_url") or "").strip()
+        title = str(item.get("title") or item.get("name") or url).strip()
+        key = _normalize_seed_key({"url": url})
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        entries.append({"url": key, "title": title})
+    return entries
+
+
+def _search_read_evidence(payload: Any, *, query: str, source_id_start: int, limit: int) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    next_source_id = int(source_id_start or 1)
+    for item in _search_items(payload, "sources"):
+        if len(evidence) >= limit:
+            break
+        url = str(item.get("url") or item.get("canonical_url") or "").strip()
+        title = str(item.get("title") or url).strip()
+        snippet = _excerpt(item.get("summary") or item.get("excerpt") or item.get("content") or item.get("snippet"), limit=900)
+        verification_status = str(item.get("verification_status") or "").strip()
+        reader = str(item.get("reader") or "").strip()
+        if not snippet:
+            continue
+        if verification_status == "search_result_only" and reader in {"", "search_result"}:
+            continue
+        if not _normalize_seed_key({"url": url}):
+            continue
+        evidence.append(
+            {
+                "source_id": str(next_source_id),
+                "source_type": "web_page",
+                "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
+                "title": title or url,
+                "url": url,
+                "snippet": snippet,
+                "content_type": "text/plain",
+                "reader": reader or "core.web_search.v1",
+                "verification_status": verification_status or "read",
+                "provider": str(item.get("provider") or ""),
+                "search_query": query,
+                "fetched_at": str(item.get("retrieved_at") or item.get("fetched_at") or _now_iso()),
+                "prompt_injection_mitigation": "web search reader summaries are treated as untrusted evidence and citations are limited to recorded source ids",
+            }
+        )
+        next_source_id += 1
+    return evidence
+
+
 class ResearchExecutionService:
     """Minimal read-only V5 research runner.
 
@@ -69,11 +221,13 @@ class ResearchExecutionService:
         *,
         fetcher: FetchAcademicSource | None = None,
         web_fetcher: FetchWebSource | None = None,
+        web_searcher: FetchWebSearch | None = None,
         fetch_timeout: float = 8.0,
     ) -> None:
         self.services = services
         self.fetcher = fetcher
         self.web_fetcher = web_fetcher
+        self.web_searcher = web_searcher
         self.fetch_timeout = float(fetch_timeout or 8.0)
 
     def run_task(self, research_task_id: str) -> dict[str, Any]:
@@ -278,25 +432,14 @@ class ResearchExecutionService:
 
         evidence: list[dict[str, Any]] = []
         if web_requested:
-            seed_urls = _web_seed_urls(policy)
-            if seed_urls:
-                web_evidence, web_errors = WebSourceRegistry.fetch_evidence(
-                    seed_urls,
-                    limit=min(_web_limit(policy), max_sources),
-                    fetcher=self.web_fetcher,
-                    timeout=self.fetch_timeout,
-                    source_id_start=1,
-                )
-                evidence.extend(web_evidence)
-                gather_errors.extend(web_errors)
-            else:
-                gather_errors.append(
-                    {
-                        "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
-                        "message": "web adapter requires source_policy.web_urls, seed_urls, or source_urls for read-only direct page gathering",
-                        "error_type": "WebSeedUrlsRequired",
-                    }
-                )
+            web_evidence, web_errors = self._gather_web_evidence(
+                task,
+                policy=policy,
+                max_sources=max_sources,
+                source_id_start=1,
+            )
+            evidence.extend(web_evidence)
+            gather_errors.extend(web_errors)
         academic_evidence, adapter_errors = AcademicSourceRegistry.fetch_evidence(
             getattr(task, "topic", ""),
             adapters=academic_adapters,
@@ -312,6 +455,133 @@ class ResearchExecutionService:
         if policy.get("include_project_sources"):
             evidence.extend(self._project_source_evidence(task, source_id_start=len(evidence) + 1, limit=max_sources - len(evidence)))
         return evidence[:max_sources], gather_errors
+
+    def _gather_web_evidence(
+        self,
+        task,
+        *,
+        policy: dict[str, Any],
+        max_sources: int,
+        source_id_start: int,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        web_limit = min(_web_limit(policy), max_sources)
+        evidence: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        seed_urls = _web_seed_urls(policy)
+        seed_keys = {_normalize_seed_key(item) for item in seed_urls}
+        seed_keys.discard("")
+        if seed_urls and web_limit > 0:
+            web_evidence, web_errors = WebSourceRegistry.fetch_evidence(
+                seed_urls,
+                limit=web_limit,
+                fetcher=self.web_fetcher,
+                timeout=self.fetch_timeout,
+                source_id_start=source_id_start,
+            )
+            evidence.extend(web_evidence)
+            errors.extend(web_errors)
+
+        remaining = max(0, web_limit - len(evidence))
+        queries = _web_search_queries(task, policy)
+        if not queries:
+            if not seed_urls:
+                errors.append(
+                    {
+                        "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
+                        "message": "web adapter requires source_policy.web_urls, seed_urls, source_urls, or web search discovery queries",
+                        "error_type": "WebSeedUrlsRequired",
+                    }
+                )
+            return evidence, errors
+        if remaining <= 0:
+            return evidence, errors
+        if self.web_searcher is None:
+            errors.append(
+                {
+                    "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
+                    "message": "web search discovery is enabled, but no Core web searcher is available",
+                    "error_type": "WebSearchUnavailable",
+                }
+            )
+            return evidence, errors
+
+        discovered_seed_entries: list[dict[str, str]] = []
+        for query in queries:
+            if remaining <= 0:
+                break
+            try:
+                raw_result = self.web_searcher(
+                    query=query,
+                    max_results=remaining,
+                    source_profile=str(policy.get("source_profile") or ""),
+                    quality=str(policy.get("web_search_quality") or policy.get("quality") or "deep"),
+                    official_only=policy.get("official_only"),
+                    freshness=str(policy.get("freshness") or ""),
+                    timeout=float(policy.get("web_search_timeout", 45) or 45),
+                )
+            except Exception as exc:  # noqa: BLE001 - search failure should be represented in the task.
+                errors.append(
+                    {
+                        "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
+                        "query": query,
+                        "message": str(exc),
+                        "error_type": type(exc).__name__,
+                    }
+                )
+                continue
+            payload, error = _search_payload(raw_result)
+            if error:
+                error["query"] = query
+                errors.append(error)
+                continue
+            if payload is None:
+                errors.append(
+                    {
+                        "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
+                        "query": query,
+                        "message": "web search returned no parseable result payload",
+                        "error_type": "WebSearchPayloadInvalid",
+                    }
+                )
+                continue
+            read_evidence = _search_read_evidence(
+                payload,
+                query=query,
+                source_id_start=source_id_start + len(evidence),
+                limit=remaining,
+            )
+            evidence.extend(read_evidence)
+            for item in read_evidence:
+                key = _normalize_seed_key({"url": item.get("url")})
+                if key:
+                    seed_keys.add(key)
+            remaining = max(0, web_limit - len(evidence))
+            for entry in _search_seed_entries(payload):
+                key = _normalize_seed_key(entry)
+                if not key or key in seed_keys:
+                    continue
+                seed_keys.add(key)
+                discovered_seed_entries.append(entry)
+
+        if remaining > 0 and discovered_seed_entries:
+            fetched_evidence, fetched_errors = WebSourceRegistry.fetch_evidence(
+                discovered_seed_entries,
+                limit=remaining,
+                fetcher=self.web_fetcher,
+                timeout=self.fetch_timeout,
+                source_id_start=source_id_start + len(evidence),
+            )
+            evidence.extend(fetched_evidence)
+            errors.extend(fetched_errors)
+        if queries and not evidence:
+            errors.append(
+                {
+                    "adapter": WebSourceRegistry.SUPPORTED_ADAPTER,
+                    "message": "web search discovery did not produce readable evidence",
+                    "error_type": "WebSearchNoReadableSources",
+                }
+            )
+        return evidence, errors
 
     def _project_source_evidence(self, task, *, source_id_start: int, limit: int) -> list[dict[str, Any]]:
         if limit <= 0 or getattr(task, "project_id", None) is None:
