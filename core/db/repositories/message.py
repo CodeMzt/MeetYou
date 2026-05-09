@@ -22,6 +22,11 @@ class MessageRepository(RepositoryBase):
         created_by_actor_id=None,
         origin_endpoint_id=None,
         active_workspace_id=None,
+        parent_message_id=None,
+        branch_id=None,
+        revision_of_message_id=None,
+        variant_index: int = 0,
+        visibility: str = "active",
         meta: dict | None = None,
     ) -> Message:
         row = Message(
@@ -37,6 +42,11 @@ class MessageRepository(RepositoryBase):
             created_by_actor_id=created_by_actor_id,
             origin_endpoint_id=origin_endpoint_id,
             active_workspace_id=active_workspace_id,
+            parent_message_id=parent_message_id,
+            branch_id=branch_id,
+            revision_of_message_id=revision_of_message_id,
+            variant_index=int(variant_index or 0),
+            visibility=str(visibility or "active").strip() or "active",
             meta=dict(meta or {}),
         )
         self.session.add(row)
@@ -161,3 +171,6 @@ class MessageRepository(RepositoryBase):
 
     def get_by_message_id(self, message_id: str) -> Message | None:
         return self.session.query(Message).filter_by(message_id=message_id).one_or_none()
+
+    def get_by_id(self, row_id) -> Message | None:
+        return self.session.query(Message).filter_by(id=row_id).one_or_none()

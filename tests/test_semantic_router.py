@@ -82,7 +82,7 @@ class SemanticRouterAgentTests(unittest.TestCase):
                 value="research",
                 confidence="high",
                 score=0.95,
-                reason="Stub selected retired research mode.",
+                reason="Stub selected public research mode.",
                 signals=["stub_research"],
                 adapter_name="stub_semantic_adapter",
             ),
@@ -93,12 +93,12 @@ class SemanticRouterAgentTests(unittest.TestCase):
 
         result = agent.analyze("Create a research report about finance policy and cite official sources.")
 
-        self.assertEqual(result.mode, "general")
+        self.assertEqual(result.mode, "research")
         self.assertEqual(result.source_profile, "finance_macro")
         self.assertTrue(result.prefer_live_web)
         self.assertFalse(result.used_keyword_fallback)
         self.assertEqual(result.adapter_name, "stub_semantic_adapter")
-        self.assertIn("Stub selected retired research mode.", result.reason)
+        self.assertIn("Stub selected public research mode.", result.reason)
 
     def test_uses_keyword_fallback_when_semantic_signal_is_low(self):
         adapter = _StubSemanticAdapter(
@@ -127,7 +127,7 @@ class SemanticRouterAgentTests(unittest.TestCase):
             "Create a research report with citations and track source updates for OpenAI policy changes."
         )
 
-        self.assertEqual(result.mode, "general")
+        self.assertEqual(result.mode, "research")
         self.assertEqual(result.source_profile, "policy_global")
         self.assertIn("research_grounding", result.active_skills)
         self.assertFalse(result.used_keyword_fallback)

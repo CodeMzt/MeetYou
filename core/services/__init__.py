@@ -36,6 +36,7 @@ from core.services.task_state_service import TaskStateService
 from core.services.thread_service import ThreadService
 from core.services.tool_router_service import ToolRouterService
 from core.services.workspace_service import WorkspaceService
+from core.services.v5_service import ArtifactService, ConversationVersionService, ProjectService, ResearchTaskService
 
 
 @dataclass(slots=True)
@@ -72,6 +73,10 @@ class CoreServices:
     context_pool: ContextPoolService
     memory_state: MemoryStateService
     task_state: TaskStateService
+    project: ProjectService
+    artifact: ArtifactService
+    conversation_version: ConversationVersionService
+    research_task: ResearchTaskService
 
 
 __all__ = [
@@ -111,4 +116,8 @@ __all__ = [
     "ThreadService",
     "ToolRouterService",
     "WorkspaceService",
+    "ArtifactService",
+    "ConversationVersionService",
+    "ProjectService",
+    "ResearchTaskService",
 ]

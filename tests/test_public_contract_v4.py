@@ -12,15 +12,17 @@ from core.public_contract import (
 
 
 class PublicContractV4Tests(unittest.TestCase):
-    def test_public_modes_are_reduced_to_general_automation_and_danxi(self):
-        self.assertEqual(PUBLIC_ASSISTANT_MODES, ("general", "automation", "danxi"))
+    def test_public_modes_include_v5_research_mode(self):
+        self.assertEqual(PUBLIC_ASSISTANT_MODES, ("general", "automation", "research", "danxi"))
         for old_mode in ("normal", "auto"):
             self.assertEqual(to_public_assistant_mode(old_mode), "general")
             self.assertEqual(to_internal_assistant_mode(old_mode), "general")
-        for retired_mode in ("documents", "research", "study"):
+        for retired_mode in ("documents", "study"):
             self.assertEqual(to_public_assistant_mode(retired_mode), "general")
             self.assertEqual(to_internal_assistant_mode(retired_mode), "general")
             self.assertEqual(to_internal_assistant_mode(retired_mode, fallback="normal"), "general")
+        self.assertEqual(to_public_assistant_mode("research"), "research")
+        self.assertEqual(to_internal_assistant_mode("research"), "research")
         self.assertEqual(to_public_assistant_mode("office"), "automation")
         self.assertEqual(to_internal_assistant_mode("office"), "automation")
         self.assertEqual(to_internal_assistant_mode("automation"), "automation")

@@ -25,6 +25,14 @@ from core.db.models.session import Session
 from core.db.models.state_blob import RuntimeStateBlob
 from core.db.models.task import TaskState
 from core.db.models.thread import Thread
+from core.db.models.v5 import (
+    Artifact,
+    ConversationCheckpoint,
+    Project,
+    ProjectSource,
+    ResearchTask,
+    ThreadBranch,
+)
 from core.db.models.workspace import Workspace
 
 __all__ = [
@@ -58,5 +66,11 @@ __all__ = [
     "RuntimeStateBlob",
     "TaskState",
     "Thread",
+    "Artifact",
+    "ConversationCheckpoint",
+    "Project",
+    "ProjectSource",
+    "ResearchTask",
+    "ThreadBranch",
     "Workspace",
 ]

@@ -26,11 +26,15 @@ from core.services import (
     EndpointRegistryService,
     EndpointWorkspaceMembershipService,
     EndpointThreadBindingService,
+    ArtifactService,
+    ConversationVersionService,
     MemoryStateService,
     MessageService,
     OperationService,
     OperationCallService,
     PrincipalService,
+    ProjectService,
+    ResearchTaskService,
     RunEventService,
     RunService,
     ScheduledJobRunService,
@@ -199,7 +203,11 @@ def build_core_services(session_factory) -> CoreServices:
         context_pool=ContextPoolService(session_factory),
         memory_state=MemoryStateService(session_factory),
         task_state=TaskStateService(session_factory),
-)
+        project=ProjectService(session_factory),
+        artifact=ArtifactService(session_factory),
+        conversation_version=ConversationVersionService(session_factory),
+        research_task=ResearchTaskService(session_factory),
+    )
 
 
 def _ensure_v4_system_records(services: CoreServices) -> None:

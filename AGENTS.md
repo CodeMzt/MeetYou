@@ -1,5 +1,18 @@
 # AGENTS
 
+## V5 Architecture Rules
+
+- V5 extends the Core-owned Runtime + Endpoint Provider boundary from V4 unless a task explicitly says to redesign that boundary.
+- `research` is a public assistant mode in V5. Do not normalize `research` to `general`; legacy `normal` / `auto` / `documents` / `study` still normalize according to the public contract.
+- Project is a user work container, not the same thing as Workspace. Workspace remains the governance, permissions, endpoint, and execution boundary.
+- Core owns Project / ProjectSource / Artifact / ResearchTask / ThreadBranch / ConversationCheckpoint.
+- Endpoint Providers may expose local research/file/search capabilities, but they must not own project source truth, artifact metadata, conversation branches, or checkpoints.
+- Deep research must use read-only evidence gathering unless the user explicitly asks for a separate write action.
+- Research reports must persist as Artifacts; final assistant messages should summarize and link to artifacts instead of embedding large report files.
+- Evidence-ledger citations must refer to recorded sources. Do not invent citations or cite unread sources as verified.
+- Conversation checkpoint restore and checkout are non-destructive. Do not delete old messages when switching branch/checkpoint.
+- Historical edit retry creates a new message revision and branch. Do not overwrite the original message content.
+
 ## V4 Architecture Rules
 
 - V4 is a development-period replacement, not a V3 compatibility layer.
@@ -24,7 +37,7 @@
 - Permissions live on Actor / Workspace / RunPolicy. Execution ability lives on EndpointCapability.
 - V4 HTTP facade is `/runtime/*`; local Desktop `/desktop/*` may proxy to `/runtime/*`, `/operator/*`, or `/developer/*`, never to old `/client/*`.
 - Do not keep `/client/ws`, `source_client_id`, `target_client_id`, or `ClientToolDispatchService` compatibility paths.
-- Runtime assistant modes are limited to `general`, `automation`, and `danxi`. Legacy `normal` / `auto` / `documents` / `research` / `study` inputs normalize to `general`; legacy `office` normalizes to `automation`. Do not persist or expose `normal` / `office` as runtime modes.
+- Runtime assistant modes are `general`, `automation`, `research`, and `danxi`. Legacy `normal` / `auto` / `documents` / `study` inputs normalize to `general`; legacy `office` normalizes to `automation`. Do not persist or expose `normal` / `office` as runtime modes.
 - Procedure is removed in V4. Do not reintroduce Procedure API, table, tool, prompt layer, pinned Procedure fields, or UI. Reusable workflow guidance must use SKILL.
 - SKILL is the only reusable workflow guide layer. Public workflow discovery and authoring go through `list_skills`, `load_skill`, and `create_skill`; skill lookup must match titles, summaries, scenarios, and recommended tools; capability exposure flows through `CapabilityRegistry`, semantic routing, ToolRouter, and ExecutionTarget.
 
@@ -35,7 +48,7 @@
 - Development entrypoints remain `python main.py service`, `python main.py cil`, `python main.py desktop-client`, and `python main.py edge-client`; `python main.py` / `python main.py launcher` opens the launcher.
 - Production entrypoints remain `python -m service_runtime`, `python -m desktop_client`, and `python -m edge_client`.
 - Dependencies remain split across `requirements-core.txt`, `requirements-desktop-client.txt`, and `requirements-edge-client.txt`.
-- V4 implementation source of truth is the necessary design material in `docs/v4/` plus this file. Development plans, subplans, historical V3 notes, and phase reports are local/ignored artifacts, not part of the public project body.
+- V4/V5 implementation source of truth is the necessary design material in `docs/v4/`, `docs/v5/`, plus this file. Development plans, subplans, historical V3 notes, and phase reports are local/ignored artifacts, not part of the public project body.
 
 ## Repository Workflow
 
@@ -144,7 +157,7 @@
 - Before declaring work complete, confirm changes landed in the right boundary and did not reintroduce old entrypoint names or old protocol contracts.
 - When changes touch protocol, config, persistence, or cross-surface behavior, add the smallest relevant verification.
 - When interfaces, startup modes, config items, or validation flows change, update `AGENTS.md`, `README.md`, or related docs.
-- V4 design, plan, deployment, compatibility-window, or cross-endpoint work updates go in `docs/v4/`.
+- V4 design, plan, deployment, compatibility-window, or cross-endpoint work updates go in `docs/v4/`; V5 research, project, artifact, checkpoint, branch, and edit-retry work updates go in `docs/v5/`.
 - After each phase is complete, commit once so phase-level docs and code do not sit uncommitted for long. After the task is complete, merge to `main` and push `main`.
 - Release/rollback docs must state that Core Service owns database migration and protocol negotiation. Only claim safe Core rollback when the matching PostgreSQL snapshot is retained.
 - If behavior changes without repository test coverage, explicitly call out the test gap.

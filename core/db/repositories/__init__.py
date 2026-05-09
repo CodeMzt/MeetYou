@@ -26,6 +26,14 @@ from core.db.repositories.session import SessionRepository
 from core.db.repositories.state_blob import RuntimeStateBlobRepository
 from core.db.repositories.task import TaskStateRepository
 from core.db.repositories.thread import ThreadRepository
+from core.db.repositories.v5 import (
+    ArtifactRepository,
+    ConversationCheckpointRepository,
+    ProjectRepository,
+    ProjectSourceRepository,
+    ResearchTaskRepository,
+    ThreadBranchRepository,
+)
 from core.db.repositories.workspace import WorkspaceRepository
 
 __all__ = [
@@ -57,5 +65,11 @@ __all__ = [
     "RuntimeStateBlobRepository",
     "TaskStateRepository",
     "ThreadRepository",
+    "ArtifactRepository",
+    "ConversationCheckpointRepository",
+    "ProjectRepository",
+    "ProjectSourceRepository",
+    "ResearchTaskRepository",
+    "ThreadBranchRepository",
     "WorkspaceRepository",
 ]

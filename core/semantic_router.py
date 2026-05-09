@@ -14,9 +14,11 @@ from core.source_catalog import normalize_source_profile_name
 
 ASSISTANT_MODE_GENERAL = "general"
 ASSISTANT_MODE_AUTOMATION = "automation"
+ASSISTANT_MODE_RESEARCH = "research"
 ASSISTANT_MODES = (
     ASSISTANT_MODE_GENERAL,
     ASSISTANT_MODE_AUTOMATION,
+    ASSISTANT_MODE_RESEARCH,
 )
 
 _PUBLIC_MODE_ALIASES = {
@@ -24,7 +26,7 @@ _PUBLIC_MODE_ALIASES = {
     "normal": ASSISTANT_MODE_GENERAL,
     "auto": ASSISTANT_MODE_GENERAL,
     "documents": ASSISTANT_MODE_GENERAL,
-    "research": ASSISTANT_MODE_GENERAL,
+    "research": ASSISTANT_MODE_RESEARCH,
     "study": ASSISTANT_MODE_GENERAL,
     "automation": ASSISTANT_MODE_AUTOMATION,
     "office": ASSISTANT_MODE_AUTOMATION,
@@ -365,12 +367,15 @@ _MODE_EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("workspace_analysis", "analyze the repository structure, inspect the workspace, and explain the directory tree"),
         ("document_editing", "read a local markdown file, rewrite the document, and summarize the folder contents"),
         ("local_artifacts", "open a local path and generate a report from files in the project workspace"),
-        ("evidence_report", "create a research report with citations, evidence tables, and official sources"),
-        ("update_monitoring", "track source updates, monitor policy changes, and verify information with sources"),
-        ("deep_verification", "do deep research, cite the sources, and keep the answer evidence-heavy"),
         ("learning_support", "quiz me on the course material, generate flashcards, and explain key learning points"),
         ("study_planning", "build a study plan, review a chapter, and track mastery for an upcoming exam"),
         ("practice_session", "teach me the lesson, create practice problems, and coach me through the material"),
+    ),
+    ASSISTANT_MODE_RESEARCH: (
+        ("evidence_report", "create a research report with citations, evidence tables, and official sources"),
+        ("update_monitoring", "track source updates, monitor policy changes, and verify information with sources"),
+        ("deep_verification", "do deep research, cite the sources, and keep the answer evidence-heavy"),
+        ("literature_review", "review academic papers, arxiv preprints, doi records, and synthesize a cited literature review"),
     ),
     ASSISTANT_MODE_AUTOMATION: (
         ("meeting_coordination", "draft a meeting agenda, schedule sync, attendee note, and follow-up email"),
@@ -787,8 +792,8 @@ class KeywordFallbackAdapter:
             scores[ASSISTANT_MODE_GENERAL] += _score(document_matches)
             reasons[ASSISTANT_MODE_GENERAL].extend(document_matches[:4])
         if research_matches:
-            scores[ASSISTANT_MODE_GENERAL] += _score(research_matches, weight=3)
-            reasons[ASSISTANT_MODE_GENERAL].extend(research_matches[:4])
+            scores[ASSISTANT_MODE_RESEARCH] += _score(research_matches, weight=3)
+            reasons[ASSISTANT_MODE_RESEARCH].extend(research_matches[:4])
         if office_matches:
             scores[ASSISTANT_MODE_AUTOMATION] += _score(office_matches)
             reasons[ASSISTANT_MODE_AUTOMATION].extend(office_matches[:4])

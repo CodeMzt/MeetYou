@@ -22,6 +22,7 @@ class ThreadService(ServiceBase):
         principal_id,
         home_workspace_id=None,
         workspace_id=None,
+        project_id=None,
         title: str = "",
         metadata: dict | None = None,
     ):
@@ -31,6 +32,7 @@ class ThreadService(ServiceBase):
                 thread_id=f"thr_{uuid4().hex}",
                 principal_id=principal_id,
                 home_workspace_id=resolved_home_workspace_id,
+                project_id=project_id,
                 title=title,
                 metadata=metadata,
             )

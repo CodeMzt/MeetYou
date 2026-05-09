@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import FileResponse
 from core.credential_transport import CredentialTransportError, decrypt_json_payload
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
@@ -50,6 +51,22 @@ from gateway.models import (
     RuntimeWorkspaceResponse,
     ContextPoolQueryResponse,
     EndpointAvailableResponse,
+    RuntimeArtifactResponse,
+    RuntimeCheckpointCheckoutRequest,
+    RuntimeConversationCheckpointCreateRequest,
+    RuntimeConversationCheckpointResponse,
+    RuntimeMessageEditRetryRequest,
+    RuntimeMessageEditRetryResponse,
+    RuntimeProjectCreateRequest,
+    RuntimeProjectResponse,
+    RuntimeProjectSourceCreateRequest,
+    RuntimeProjectSourceFromMessageRequest,
+    RuntimeProjectSourceResponse,
+    RuntimeProjectUpdateRequest,
+    RuntimeResearchTaskCreateRequest,
+    RuntimeResearchTaskPatchRequest,
+    RuntimeResearchTaskResponse,
+    RuntimeThreadBranchResponse,
 )
 from tools.danxi_tools import DanxiError, get_shared_danxi_tools
 
@@ -167,6 +184,129 @@ def _message_response(
         channel=message.channel,
         created_at=message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
         idempotent_replay=bool(idempotent_replay),
+    )
+
+
+def _iso(row, attr: str) -> str:
+    value = getattr(row, attr, None)
+    return value.isoformat() if value is not None and hasattr(value, "isoformat") else ""
+
+
+def _project_response(project, workspace_id: str = "") -> RuntimeProjectResponse:
+    return RuntimeProjectResponse(
+        project_id=str(getattr(project, "project_id", "") or ""),
+        workspace_id=workspace_id,
+        title=str(getattr(project, "title", "") or ""),
+        description=str(getattr(project, "description", "") or ""),
+        instructions=str(getattr(project, "instructions", "") or ""),
+        status=str(getattr(project, "status", "") or "active"),
+        memory_scope=dict(getattr(project, "memory_scope", {}) or {}),
+        metadata=dict(getattr(project, "meta", {}) or {}),
+        created_at=_iso(project, "created_at"),
+        updated_at=_iso(project, "updated_at"),
+    )
+
+
+def _project_source_response(source, *, project_id: str) -> RuntimeProjectSourceResponse:
+    return RuntimeProjectSourceResponse(
+        source_id=str(getattr(source, "source_id", "") or ""),
+        project_id=project_id,
+        source_type=str(getattr(source, "source_type", "") or "note"),
+        title=str(getattr(source, "title", "") or ""),
+        content=str(getattr(source, "content", "") or ""),
+        content_type=str(getattr(source, "content_type", "") or "text"),
+        checksum=str(getattr(source, "checksum", "") or ""),
+        status=str(getattr(source, "status", "") or "active"),
+        metadata=dict(getattr(source, "meta", {}) or {}),
+        created_at=_iso(source, "created_at"),
+        updated_at=_iso(source, "updated_at"),
+    )
+
+
+def _artifact_response(domain, artifact) -> RuntimeArtifactResponse:
+    project = domain.services.project.get_by_id(getattr(artifact, "project_id", None)) if getattr(artifact, "project_id", None) else None
+    thread = domain.services.thread.get_by_id(getattr(artifact, "thread_id", None)) if getattr(artifact, "thread_id", None) else None
+    artifact_id = str(getattr(artifact, "artifact_id", "") or "")
+    return RuntimeArtifactResponse(
+        artifact_id=artifact_id,
+        project_id=str(getattr(project, "project_id", "") or ""),
+        thread_id=str(getattr(thread, "thread_id", "") or ""),
+        artifact_type=str(getattr(artifact, "artifact_type", "") or "document"),
+        filename=str(getattr(artifact, "filename", "") or ""),
+        content_type=str(getattr(artifact, "content_type", "") or "application/octet-stream"),
+        byte_size=int(getattr(artifact, "byte_size", 0) or 0),
+        checksum=str(getattr(artifact, "checksum", "") or ""),
+        status=str(getattr(artifact, "status", "") or "active"),
+        download_url=f"/runtime/artifacts/{artifact_id}/download" if artifact_id else "",
+        metadata=dict(getattr(artifact, "meta", {}) or {}),
+        created_at=_iso(artifact, "created_at"),
+        updated_at=_iso(artifact, "updated_at"),
+    )
+
+
+def _branch_response(domain, branch) -> RuntimeThreadBranchResponse:
+    thread = domain.services.thread.get_by_id(getattr(branch, "thread_id", None))
+    leaf = domain.services.message.get_by_id(getattr(branch, "current_leaf_message_id", None)) if getattr(branch, "current_leaf_message_id", None) else None
+    return RuntimeThreadBranchResponse(
+        branch_id=str(getattr(branch, "branch_id", "") or ""),
+        thread_id=str(getattr(thread, "thread_id", "") or ""),
+        parent_branch_id="",
+        title=str(getattr(branch, "title", "") or ""),
+        status=str(getattr(branch, "status", "") or "active"),
+        current_leaf_message_id=str(getattr(leaf, "message_id", "") or ""),
+        metadata=dict(getattr(branch, "meta", {}) or {}),
+        created_at=_iso(branch, "created_at"),
+        updated_at=_iso(branch, "updated_at"),
+    )
+
+
+def _checkpoint_response(domain, checkpoint) -> RuntimeConversationCheckpointResponse:
+    thread = domain.services.thread.get_by_id(getattr(checkpoint, "thread_id", None))
+    branch = None
+    message = domain.services.message.get_by_id(getattr(checkpoint, "message_id", None)) if getattr(checkpoint, "message_id", None) else None
+    for candidate in domain.services.conversation_version.list_branches(thread_id=getattr(thread, "thread_id", "")) or []:
+        if getattr(candidate, "id", None) == getattr(checkpoint, "branch_id", None):
+            branch = candidate
+            break
+    return RuntimeConversationCheckpointResponse(
+        checkpoint_id=str(getattr(checkpoint, "checkpoint_id", "") or ""),
+        thread_id=str(getattr(thread, "thread_id", "") or ""),
+        branch_id=str(getattr(branch, "branch_id", "") or ""),
+        message_id=str(getattr(message, "message_id", "") or ""),
+        checkpoint_type=str(getattr(checkpoint, "checkpoint_type", "") or "manual"),
+        title=str(getattr(checkpoint, "title", "") or ""),
+        state=dict(getattr(checkpoint, "state", {}) or {}),
+        status=str(getattr(checkpoint, "status", "") or "active"),
+        metadata=dict(getattr(checkpoint, "meta", {}) or {}),
+        created_at=_iso(checkpoint, "created_at"),
+        updated_at=_iso(checkpoint, "updated_at"),
+    )
+
+
+def _research_task_response(domain, task) -> RuntimeResearchTaskResponse:
+    project = domain.services.project.get_by_id(getattr(task, "project_id", None)) if getattr(task, "project_id", None) else None
+    thread = domain.services.thread.get_by_id(getattr(task, "thread_id", None)) if getattr(task, "thread_id", None) else None
+    artifact_response = None
+    if getattr(task, "artifact_id", None):
+        artifact = domain.services.artifact.get_by_id(getattr(task, "artifact_id", None))
+        if artifact is not None:
+            artifact_response = _artifact_response(domain, artifact)
+    return RuntimeResearchTaskResponse(
+        research_task_id=str(getattr(task, "research_task_id", "") or ""),
+        project_id=str(getattr(project, "project_id", "") or ""),
+        thread_id=str(getattr(thread, "thread_id", "") or ""),
+        artifact_id=str(getattr(artifact_response, "artifact_id", "") or ""),
+        topic=str(getattr(task, "topic", "") or ""),
+        status=str(getattr(task, "status", "") or "planned"),
+        plan=dict(getattr(task, "plan", {}) or {}),
+        source_policy=dict(getattr(task, "source_policy", {}) or {}),
+        evidence_ledger=list(getattr(task, "evidence_ledger", []) or []),
+        output_format=str(getattr(task, "output_format", "") or "markdown"),
+        summary=str(getattr(task, "summary", "") or ""),
+        artifact=artifact_response,
+        metadata=dict(getattr(task, "meta", {}) or {}),
+        created_at=_iso(task, "created_at"),
+        updated_at=_iso(task, "updated_at"),
     )
 
 
@@ -488,6 +628,210 @@ def build_runtime_router(gateway) -> APIRouter:
             )
         return endpoints
 
+    @router.get("/projects", response_model=list[RuntimeProjectResponse])
+    async def list_projects(request: Request, workspace_id: str = "", include_archived: bool = False, limit: int = 100):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        workspace = _find_workspace(domain, workspace_id) if str(workspace_id or "").strip() else None
+        rows = domain.services.project.list_projects(
+            principal_id=domain.principal.id,
+            workspace_id=getattr(workspace, "id", None),
+            include_archived=include_archived,
+            limit=limit,
+        )
+        return [
+            _project_response(row, str(getattr(domain.services.workspace.get_by_id(getattr(row, "workspace_id", None)), "workspace_id", "") or ""))
+            for row in rows
+        ]
+
+    @router.post("/projects", response_model=RuntimeProjectResponse)
+    async def create_project(payload: RuntimeProjectCreateRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        workspace = _find_workspace(domain, payload.workspace_id) if str(payload.workspace_id or "").strip() else None
+        project = domain.services.project.create_project(
+            principal_id=domain.principal.id,
+            workspace_id=getattr(workspace, "id", None),
+            title=payload.title,
+            description=payload.description,
+            instructions=payload.instructions,
+            memory_scope=payload.memory_scope,
+            metadata=payload.metadata,
+        )
+        return _project_response(project, str(getattr(workspace, "workspace_id", "") or ""))
+
+    @router.patch("/projects/{project_id}", response_model=RuntimeProjectResponse)
+    async def update_project(project_id: str, payload: RuntimeProjectUpdateRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        project = domain.services.project.update_project(
+            project_id=project_id,
+            fields=payload.model_dump(exclude_unset=True),
+        )
+        if project is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
+        workspace = domain.services.workspace.get_by_id(getattr(project, "workspace_id", None)) if getattr(project, "workspace_id", None) else None
+        return _project_response(project, str(getattr(workspace, "workspace_id", "") or ""))
+
+    @router.delete("/projects/{project_id}", response_model=RuntimeProjectResponse)
+    async def archive_project(project_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        project = domain.services.project.archive_project(project_id=project_id)
+        if project is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
+        workspace = domain.services.workspace.get_by_id(getattr(project, "workspace_id", None)) if getattr(project, "workspace_id", None) else None
+        return _project_response(project, str(getattr(workspace, "workspace_id", "") or ""))
+
+    @router.get("/projects/{project_id}/sources", response_model=list[RuntimeProjectSourceResponse])
+    async def list_project_sources(project_id: str, request: Request, include_archived: bool = False, limit: int = 100):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        rows = domain.services.project.list_sources(project_id=project_id, include_archived=include_archived, limit=limit)
+        if rows is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
+        return [_project_source_response(row, project_id=project_id) for row in rows]
+
+    @router.post("/projects/{project_id}/sources", response_model=RuntimeProjectSourceResponse)
+    async def create_project_source(project_id: str, payload: RuntimeProjectSourceCreateRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        try:
+            source = domain.services.project.add_source(
+                project_id=project_id,
+                principal_id=domain.principal.id,
+                source_type=payload.source_type,
+                title=payload.title,
+                content=payload.content,
+                content_type=payload.content_type,
+                metadata=payload.metadata,
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(status_code=400, code="project_source_invalid", message=str(exc))
+        if source is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
+        return _project_source_response(source, project_id=project_id)
+
+    @router.post("/projects/{project_id}/sources/from-message", response_model=RuntimeProjectSourceResponse)
+    async def create_project_source_from_message(project_id: str, payload: RuntimeProjectSourceFromMessageRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        source = domain.services.project.save_message_source(
+            project_id=project_id,
+            principal_id=domain.principal.id,
+            message_id=payload.message_id,
+            title=payload.title,
+            metadata=payload.metadata,
+        )
+        if source is None:
+            gateway._raise_http_error(status_code=404, code="project_or_message_not_found", message="Unknown project or message.")
+        return _project_source_response(source, project_id=project_id)
+
+    @router.get("/projects/{project_id}/artifacts", response_model=list[RuntimeArtifactResponse])
+    async def list_project_artifacts(project_id: str, request: Request, include_archived: bool = False, limit: int = 100):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        rows = domain.services.artifact.list_for_project(project_id=project_id, include_archived=include_archived, limit=limit)
+        if rows is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
+        return [_artifact_response(domain, row) for row in rows]
+
+    @router.get("/artifacts/{artifact_id}/download")
+    async def download_artifact(artifact_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        artifact = domain.services.artifact.get_by_artifact_id(artifact_id)
+        if artifact is None:
+            gateway._raise_http_error(status_code=404, code="artifact_not_found", message=f"Unknown artifact: {artifact_id}")
+        path = domain.services.artifact.resolve_local_path(artifact)
+        if not path:
+            gateway._raise_http_error(status_code=501, code="artifact_backend_not_supported", message="Only local ArtifactStore downloads are available in this build.")
+        from pathlib import Path
+
+        file_path = Path(path)
+        if not file_path.exists() or not file_path.is_file():
+            gateway._raise_http_error(status_code=404, code="artifact_file_missing", message="Artifact file is missing from local storage.")
+        return FileResponse(
+            str(file_path),
+            media_type=str(getattr(artifact, "content_type", "") or "application/octet-stream"),
+            filename=str(getattr(artifact, "filename", "") or artifact_id),
+        )
+
+    @router.get("/research-tasks", response_model=list[RuntimeResearchTaskResponse])
+    async def list_research_tasks(request: Request, project_id: str = "", limit: int = 100):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        project = domain.services.project.get_by_project_id(project_id) if str(project_id or "").strip() else None
+        rows = domain.services.research_task.list_tasks(
+            principal_id=domain.principal.id,
+            project_id=getattr(project, "id", None),
+            limit=limit,
+        )
+        return [_research_task_response(domain, row) for row in rows]
+
+    @router.post("/research-tasks", response_model=RuntimeResearchTaskResponse)
+    async def create_research_task(payload: RuntimeResearchTaskCreateRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        project = domain.services.project.get_by_project_id(payload.project_id) if str(payload.project_id or "").strip() else None
+        thread = domain.services.thread.get_by_thread_id(payload.thread_id) if str(payload.thread_id or "").strip() else None
+        if payload.project_id and project is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {payload.project_id}")
+        if payload.thread_id and thread is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"Unknown thread: {payload.thread_id}")
+        try:
+            task = domain.services.research_task.create_task(
+                principal_id=domain.principal.id,
+                project_id=getattr(project, "id", None),
+                thread_id=getattr(thread, "id", None),
+                topic=payload.topic,
+                source_policy=payload.source_policy,
+                output_format=payload.output_format,
+                metadata=payload.metadata,
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(status_code=400, code="research_task_invalid", message=str(exc))
+        return _research_task_response(domain, task)
+
+    @router.get("/research-tasks/{research_task_id}", response_model=RuntimeResearchTaskResponse)
+    async def get_research_task(research_task_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        task = domain.services.research_task.get_by_research_task_id(research_task_id)
+        if task is None:
+            gateway._raise_http_error(status_code=404, code="research_task_not_found", message=f"Unknown research task: {research_task_id}")
+        return _research_task_response(domain, task)
+
+    @router.patch("/research-tasks/{research_task_id}", response_model=RuntimeResearchTaskResponse)
+    async def patch_research_task(research_task_id: str, payload: RuntimeResearchTaskPatchRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        fields = payload.model_dump(exclude_unset=True)
+        action = str(fields.pop("action", "") or "").strip().lower()
+        if action in {"start", "cancel", "complete"}:
+            fields["status"] = {"start": "running", "cancel": "cancelled", "complete": "completed"}[action]
+        report_markdown = fields.pop("report_markdown", None)
+        report_filename = str(fields.pop("report_filename", "") or "").strip()
+        task = domain.services.research_task.get_by_research_task_id(research_task_id)
+        if task is None:
+            gateway._raise_http_error(status_code=404, code="research_task_not_found", message=f"Unknown research task: {research_task_id}")
+        if report_markdown is not None:
+            artifact = domain.services.artifact.create_text_artifact(
+                principal_id=domain.principal.id,
+                project_id=getattr(task, "project_id", None),
+                thread_id=getattr(task, "thread_id", None),
+                text=str(report_markdown or ""),
+                filename=report_filename or f"{research_task_id}.md",
+                artifact_type="research_report",
+                metadata={"research_task_id": research_task_id},
+            )
+            fields["artifact_id"] = artifact.id
+            fields.setdefault("metadata", {})
+            fields["metadata"] = {**dict(fields.get("metadata") or {}), "artifact_id": artifact.artifact_id}
+            fields.setdefault("status", "completed")
+        task = domain.services.research_task.update_task(research_task_id=research_task_id, fields=fields) or task
+        return _research_task_response(domain, task)
+
     @router.get("/threads", response_model=list[RuntimeThreadResponse])
     async def list_threads(request: Request, workspace_id: str = "", limit: int = 50, cursor: str = ""):
         del cursor
@@ -567,6 +911,60 @@ def build_runtime_router(gateway) -> APIRouter:
             reason=result.reason,
             default_thread=result.default_thread,
         )
+
+    @router.get("/threads/{thread_id}/branches", response_model=list[RuntimeThreadBranchResponse])
+    async def list_thread_branches(thread_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        rows = domain.services.conversation_version.list_branches(thread_id=thread_id)
+        if rows is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"Unknown thread: {thread_id}")
+        return [_branch_response(domain, row) for row in rows]
+
+    @router.get("/threads/{thread_id}/checkpoints", response_model=list[RuntimeConversationCheckpointResponse])
+    async def list_thread_checkpoints(thread_id: str, request: Request, limit: int = 100):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        rows = domain.services.conversation_version.list_checkpoints(thread_id=thread_id, limit=limit)
+        if rows is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"Unknown thread: {thread_id}")
+        return [_checkpoint_response(domain, row) for row in rows]
+
+    @router.post("/threads/{thread_id}/checkpoints", response_model=RuntimeConversationCheckpointResponse)
+    async def create_thread_checkpoint(thread_id: str, payload: RuntimeConversationCheckpointCreateRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        checkpoint = domain.services.conversation_version.create_checkpoint(
+            thread_id=thread_id,
+            title=payload.title,
+            checkpoint_type=payload.checkpoint_type,
+            metadata=payload.metadata,
+        )
+        if checkpoint is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"Unknown thread: {thread_id}")
+        return _checkpoint_response(domain, checkpoint)
+
+    @router.post("/threads/{thread_id}/checkpoints/{checkpoint_id}/restore", response_model=RuntimeConversationCheckpointResponse)
+    async def restore_thread_checkpoint(thread_id: str, checkpoint_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        checkpoint = domain.services.conversation_version.restore_checkpoint(thread_id=thread_id, checkpoint_id=checkpoint_id)
+        if checkpoint is None:
+            gateway._raise_http_error(status_code=404, code="checkpoint_not_found", message=f"Unknown checkpoint: {checkpoint_id}")
+        return _checkpoint_response(domain, checkpoint)
+
+    @router.post("/threads/{thread_id}/checkpoints/{checkpoint_id}/checkout", response_model=RuntimeThreadBranchResponse)
+    async def checkout_thread_checkpoint(thread_id: str, checkpoint_id: str, payload: RuntimeCheckpointCheckoutRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        branch = domain.services.conversation_version.checkout_checkpoint(
+            thread_id=thread_id,
+            checkpoint_id=checkpoint_id,
+            title=payload.title,
+        )
+        if branch is None:
+            gateway._raise_http_error(status_code=404, code="checkpoint_not_found", message=f"Unknown checkpoint: {checkpoint_id}")
+        return _branch_response(domain, branch)
 
     @router.post("/endpoint-sessions/resolve", response_model=RuntimeEndpointSessionResolveResponse)
     async def resolve_endpoint_session(payload: RuntimeEndpointSessionResolveRequest, request: Request):
@@ -705,6 +1103,14 @@ def build_runtime_router(gateway) -> APIRouter:
             active_workspace_id=workspace.id,
             meta=metadata,
         )
+        conversation_version = getattr(domain.services, "conversation_version", None)
+        if conversation_version is not None:
+            attached_message = conversation_version.attach_message_to_active_branch(
+                thread_row_id=thread.id,
+                message_row_id=message.id,
+            )
+            if attached_message is not None:
+                message = attached_message
         _record_context_pool_runtime_user_message(
             domain,
             message=message,
@@ -757,6 +1163,33 @@ def build_runtime_router(gateway) -> APIRouter:
             _message_response(message, thread_id=thread.thread_id, workspace_id=getattr(workspace, "workspace_id", ""))
             for message in domain.services.message.list_messages_for_thread(thread.id)
         ]
+
+    @router.post("/messages/{message_id}/edit-retry", response_model=RuntimeMessageEditRetryResponse)
+    async def edit_retry_message(message_id: str, payload: RuntimeMessageEditRetryRequest, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        result = domain.services.conversation_version.edit_retry(
+            message_id=message_id,
+            new_content=payload.content,
+            title=payload.title,
+        )
+        if result is None:
+            gateway._raise_http_error(status_code=404, code="message_not_found_or_not_user", message=f"Unknown user message: {message_id}")
+        branch = result["branch"]
+        message = result["message"]
+        thread = domain.services.thread.get_by_id(getattr(message, "thread_id", None))
+        workspace = domain.services.workspace.get_by_id(getattr(message, "active_workspace_id", None) or getattr(thread, "home_workspace_id", None))
+        session = domain.services.session.get_by_id(getattr(message, "session_id", None)) if getattr(message, "session_id", None) else None
+        return RuntimeMessageEditRetryResponse(
+            branch=_branch_response(domain, branch),
+            message=_message_response(
+                message,
+                thread_id=str(getattr(thread, "thread_id", "") or ""),
+                workspace_id=str(getattr(workspace, "workspace_id", "") or ""),
+                session_id=str(getattr(session, "session_id", "") or ""),
+            ),
+            replay_status=str(result.get("replay_status") or "branch_created"),
+        )
 
     @router.post("/operations", response_model=RuntimeOperationResponse)
     async def create_operation(payload: RuntimeOperationCreateRequest, request: Request):

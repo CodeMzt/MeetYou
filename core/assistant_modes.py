@@ -23,8 +23,9 @@ ASSISTANT_MODE_NORMAL = "general"
 ASSISTANT_MODE_GENERAL = ASSISTANT_MODE_NORMAL
 ASSISTANT_MODE_AUTO = "auto"
 ASSISTANT_MODE_AUTOMATION = "automation"
+ASSISTANT_MODE_RESEARCH = "research"
 ASSISTANT_MODE_DANXI = "danxi"
-ASSISTANT_SPECIALIZED_MODES = (ASSISTANT_MODE_AUTOMATION, ASSISTANT_MODE_DANXI)
+ASSISTANT_SPECIALIZED_MODES = (ASSISTANT_MODE_AUTOMATION, ASSISTANT_MODE_RESEARCH, ASSISTANT_MODE_DANXI)
 ASSISTANT_MODES = (ASSISTANT_MODE_NORMAL, *ASSISTANT_SPECIALIZED_MODES)
 VALID_ASSISTANT_MODES = (ASSISTANT_MODE_AUTO, *ASSISTANT_MODES)
 
@@ -174,6 +175,26 @@ _MODE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "命令",
         "终端",
         "运行命令",
+    ),
+    ASSISTANT_MODE_RESEARCH: (
+        "deep research",
+        "research report",
+        "literature review",
+        "systematic review",
+        "papers",
+        "citations",
+        "evidence ledger",
+        "source verification",
+        "academic",
+        "arxiv",
+        "doi",
+        "深度研究",
+        "研究报告",
+        "文献综述",
+        "论文",
+        "引用",
+        "证据",
+        "学术",
     ),
 }
 
@@ -411,6 +432,8 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
             "write_local_document",
             "rewrite_local_document",
             "research_topic",
+            "create_research_task",
+            "manage_research_tasks",
             "inspect_page",
             "track_source_updates",
             "compile_report",
@@ -431,6 +454,22 @@ _DEFAULT_MODE_TOOL_BUNDLES = {
             "draft_message",
             "meeting_brief",
             "sync_notes",
+        ],
+        "mcp_servers": ["filesystem_tools"],
+    },
+    ASSISTANT_MODE_RESEARCH: {
+        "tools": [
+            "emit_progress_notice",
+            "search_web",
+            "read_web_page",
+            "research_topic",
+            "create_research_task",
+            "manage_research_tasks",
+            "search_academic_sources",
+            "inspect_page",
+            "compile_report",
+            "list_skills",
+            "load_skill",
         ],
         "mcp_servers": ["filesystem_tools"],
     },
@@ -487,6 +526,9 @@ _DEFAULT_BASIC_MODE_TOOLS = [
     "search_memory",
     "search_web",
     "read_web_page",
+    "search_academic_sources",
+    "create_research_task",
+    "manage_research_tasks",
     "remember_knowledge",
     "manage_memories",
     "summarize_text",
@@ -556,13 +598,14 @@ _MODE_PROMPT_FALLBACKS = {
         "[Auto Router]\n"
         "Choose the smallest public mode that matches the user's next immediate step.\n"
         "Modes:\n"
-        "- general: ordinary conversation, local/workspace work, web/page reading, research-style evidence gathering, study help, and private knowledge lookup\n"
+        "- general: ordinary conversation, local/workspace work, lightweight web/page reading, study help, and private knowledge lookup\n"
         "- automation: schedules, meeting briefs, drafts, notes sync, endpoint messaging, action items, and coordination artifacts\n"
+        "- research: deep research reports, literature reviews, citation-heavy investigation, artifact-producing research, and evidence ledgers\n"
         "- danxi: FDU campus-forum browsing, thread search, favorites or subscriptions, messages, and normal-user post or reply actions through the Danxi tool suite\n"
         "Shared basic tools across modes include search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
         "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, endpoint tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
         "Task-style reminders can also activate the task_recognition skill to expose manage_tasks for user TODOs, create_scheduled_workflow/manage_scheduled_workflows for ordinary recurring work, create_scheduled_delivery/manage_scheduled_deliveries only when the output must be delivered to an endpoint address, and manage_scheduled_jobs only for advanced Scheduler maintenance.\n"
-        "Legacy documents/research/study requests remain in general and should use skills/tools instead of switching modes."
+        "Legacy documents/study requests remain in general and should use skills/tools; explicit research requests should use research mode."
     ),
     "general": (
         "[General Mode]\n"
@@ -587,6 +630,12 @@ _MODE_PROMPT_FALLBACKS = {
         "Use Danxi tools only in this mode to browse forum content, search threads or floors, manage subscriptions or favorites, and perform normal-user post or reply operations.\n"
         "Prefer safe, low-frequency actions that match ordinary user behavior. Ask for confirmation before destructive actions such as deleting a post or reply.\n"
         "Keep all forum-side claims grounded in the returned Danxi API data, and use summarize_text, organize_notes, or extract_action_items to turn fetched thread data into concise deliverables."
+    ),
+    "research": (
+        "[Research Mode]\n"
+        "You are operating as a deep research assistant. Start by creating or refining a research plan, then gather only read-only evidence from web, academic, and project sources.\n"
+        "Use create_research_task/manage_research_tasks for long-running or artifact-producing research. Use research_topic, search_web, read_web_page, and search_academic_sources for evidence gathering.\n"
+        "Every substantive claim in the final report must map to an evidence source. Save long reports as artifacts and keep the final assistant message to a short summary plus download links."
     ),
 }
 
@@ -633,12 +682,19 @@ _SKILL_PROMPT_FALLBACKS = {
         "Browse divisions, threads, floors, subscriptions, favorites, and messages with Danxi tools; keep all forum writes low-risk and confirmation-first.\n"
         "Do not attempt admin-only APIs, bulk operations, concurrency tests, or other high-risk forum actions."
     ),
+    "mode-research": (
+        "[Research Mode Skill]\n"
+        "Operate as a deep-research workflow specialist.\n"
+        "Plan first, gather only read-only evidence from web, academic, and project sources, then produce cited artifact-backed reports.\n"
+        "Keep long reports in artifacts and keep final chat replies short."
+    ),
 }
 
 _DEFAULT_PROMPT_REGISTRY = {
     "auto-router": {"path": "prompt/modes/auto-router", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["auto-router"]},
     "mode:general": {"path": "prompt/modes/general", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["general"]},
     "mode:automation": {"path": "prompt/modes/automation", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["automation"]},
+    "mode:research": {"path": "prompt/modes/research", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["research"]},
     "mode:danxi": {"path": "prompt/modes/danxi", "kind": "mode", "fallback": _MODE_PROMPT_FALLBACKS["danxi"]},
     "skill:task-recognition": {
         "path": "prompt/SKILL/task-recognition",
@@ -679,6 +735,11 @@ _DEFAULT_PROMPT_REGISTRY = {
         "path": "prompt/SKILL/mode-danxi",
         "kind": "skill",
         "fallback": _SKILL_PROMPT_FALLBACKS["mode-danxi"],
+    },
+    "skill:mode-research": {
+        "path": "prompt/SKILL/mode-research",
+        "kind": "skill",
+        "fallback": _SKILL_PROMPT_FALLBACKS["mode-research"],
     },
 }
 
@@ -757,6 +818,11 @@ _DEFAULT_SKILL_REGISTRY = {
         "scenes": ["danxi_forum_ops"],
         "activation_keywords": ["danxi", "旦夕", "fduhole", "forum", "帖子", "楼层", "校内论坛"],
     },
+    "mode:research": {
+        "prompts": ["skill:mode-research"],
+        "tools": [],
+        "mcp_servers": [],
+    },
 }
 
 _DEFAULT_SCENE_DEFINITIONS = {
@@ -783,7 +849,7 @@ _DEFAULT_SCENE_DEFINITIONS = {
     "research_synthesis": {
         "title": "研究综合",
         "summary": "科研、资料核验与来源追踪。",
-        "applicable_modes": [ASSISTANT_MODE_GENERAL],
+        "applicable_modes": [ASSISTANT_MODE_GENERAL, ASSISTANT_MODE_RESEARCH],
         "skills": ["research_grounding", "knowledge_synthesis"],
         "tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
         "mcp_servers": ["tavily_web", "browser_automation"],
@@ -814,7 +880,7 @@ _DEFAULT_SCENE_DEFINITIONS = {
     "hotspot_tracking": {
         "title": "热点追踪",
         "summary": "热点事件追踪、多源比对与摘要输出。",
-        "applicable_modes": [ASSISTANT_MODE_GENERAL],
+        "applicable_modes": [ASSISTANT_MODE_GENERAL, ASSISTANT_MODE_RESEARCH],
         "skills": ["hotspot_tracking", "research_grounding"],
         "tools": ["research_topic", "inspect_page", "track_source_updates", "summarize_text"],
         "mcp_servers": ["tavily_web", "browser_automation"],
@@ -985,6 +1051,16 @@ _DEFAULT_MODE_DEFINITIONS = {
         "skills": [],
         "auto_skills": ["task_recognition", "office_coordination", "knowledge_synthesis"],
         "scenes": ["office_coordination", "knowledge_synthesis"],
+    },
+    ASSISTANT_MODE_RESEARCH: {
+        "prompts": ["mode:research"],
+        "mode_skills": ["mode:research"],
+        "tools": _DEFAULT_MODE_TOOL_BUNDLES[ASSISTANT_MODE_RESEARCH]["tools"],
+        "mcp_servers": _DEFAULT_MODE_TOOL_BUNDLES[ASSISTANT_MODE_RESEARCH]["mcp_servers"],
+        "skills": ["research_grounding"],
+        "auto_skills": ["knowledge_synthesis", "hotspot_tracking"],
+        "scenes": ["research_synthesis"],
+        "authorization": {"read_only": True},
     },
     ASSISTANT_MODE_DANXI: {
         "prompts": ["mode:danxi"],
@@ -1580,9 +1656,9 @@ class AssistantModeManager:
 
         for keyword in _DEEP_RESEARCH_HINTS:
             if keyword in lowered:
-                scores[ASSISTANT_MODE_NORMAL] += 3
-                if len(triggers[ASSISTANT_MODE_NORMAL]) < 4:
-                    triggers[ASSISTANT_MODE_NORMAL].append(keyword)
+                scores[ASSISTANT_MODE_RESEARCH] += 3
+                if len(triggers[ASSISTANT_MODE_RESEARCH]) < 4:
+                    triggers[ASSISTANT_MODE_RESEARCH].append(keyword)
 
         if _URL_RE.search(content):
             scores[ASSISTANT_MODE_NORMAL] += 4
@@ -1690,5 +1766,7 @@ class AssistantModeManager:
     def _default_source_profile_for_mode(self, mode: str, content: str) -> str:
         if mode == ASSISTANT_MODE_DANXI:
             return "campus_forum"
+        if mode == ASSISTANT_MODE_RESEARCH:
+            return self.classify_research_source_profile(content)
         return "workspace_local"
 

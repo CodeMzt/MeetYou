@@ -768,6 +768,167 @@ class ContextPoolQueryResponse(BaseModel):
     items: list[ContextPoolQueryItemResponse] = Field(default_factory=list)
 
 
+class RuntimeProjectCreateRequest(BaseModel):
+    workspace_id: str = ""
+    title: str
+    description: str = ""
+    instructions: str = ""
+    memory_scope: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeProjectUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    instructions: str | None = None
+    status: str | None = None
+    memory_scope: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class RuntimeProjectResponse(BaseModel):
+    project_id: str
+    workspace_id: str = ""
+    title: str
+    description: str = ""
+    instructions: str = ""
+    status: str = "active"
+    memory_scope: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class RuntimeProjectSourceCreateRequest(BaseModel):
+    source_type: str = "note"
+    title: str = ""
+    content: str
+    content_type: str = "text"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeProjectSourceFromMessageRequest(BaseModel):
+    message_id: str
+    title: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeProjectSourceResponse(BaseModel):
+    source_id: str
+    project_id: str
+    source_type: str
+    title: str = ""
+    content: str = ""
+    content_type: str = "text"
+    checksum: str = ""
+    status: str = "active"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class RuntimeArtifactResponse(BaseModel):
+    artifact_id: str
+    project_id: str = ""
+    thread_id: str = ""
+    artifact_type: str = "document"
+    filename: str = ""
+    content_type: str = "application/octet-stream"
+    byte_size: int = 0
+    checksum: str = ""
+    status: str = "active"
+    download_url: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class RuntimeThreadBranchResponse(BaseModel):
+    branch_id: str
+    thread_id: str
+    parent_branch_id: str = ""
+    title: str = ""
+    status: str = "active"
+    current_leaf_message_id: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class RuntimeConversationCheckpointCreateRequest(BaseModel):
+    title: str = ""
+    checkpoint_type: str = "manual"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeConversationCheckpointResponse(BaseModel):
+    checkpoint_id: str
+    thread_id: str
+    branch_id: str = ""
+    message_id: str = ""
+    checkpoint_type: str = "manual"
+    title: str = ""
+    state: dict[str, Any] = Field(default_factory=dict)
+    status: str = "active"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class RuntimeCheckpointCheckoutRequest(BaseModel):
+    title: str = ""
+
+
+class RuntimeMessageEditRetryRequest(BaseModel):
+    content: str
+    title: str = ""
+
+
+class RuntimeMessageEditRetryResponse(BaseModel):
+    branch: RuntimeThreadBranchResponse
+    message: RuntimeMessageResponse
+    replay_status: str = "branch_created"
+
+
+class RuntimeResearchTaskCreateRequest(BaseModel):
+    topic: str
+    project_id: str = ""
+    thread_id: str = ""
+    source_policy: dict[str, Any] = Field(default_factory=dict)
+    output_format: str = "markdown"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeResearchTaskPatchRequest(BaseModel):
+    action: str = ""
+    status: str | None = None
+    plan: dict[str, Any] | None = None
+    source_policy: dict[str, Any] | None = None
+    evidence_ledger: list[dict[str, Any]] | None = None
+    summary: str | None = None
+    report_markdown: str | None = None
+    report_filename: str = ""
+    metadata: dict[str, Any] | None = None
+
+
+class RuntimeResearchTaskResponse(BaseModel):
+    research_task_id: str
+    project_id: str = ""
+    thread_id: str = ""
+    artifact_id: str = ""
+    topic: str
+    status: str = "planned"
+    plan: dict[str, Any] = Field(default_factory=dict)
+    source_policy: dict[str, Any] = Field(default_factory=dict)
+    evidence_ledger: list[dict[str, Any]] = Field(default_factory=list)
+    output_format: str = "markdown"
+    summary: str = ""
+    artifact: RuntimeArtifactResponse | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+
+
 class OperatorWorkspaceCreateRequest(BaseModel):
     workspace_id: str
     title: str = ""

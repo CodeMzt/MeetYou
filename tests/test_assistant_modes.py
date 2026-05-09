@@ -74,6 +74,7 @@ def _populate_skill_dir(target_dir: Path) -> None:
         "hotspot-tracking",
         "mode-general",
         "mode-automation",
+        "mode-research",
         "mode-danxi",
     ):
         (target_dir / skill_name).write_text((source_dir / skill_name).read_text(encoding="utf-8"), encoding="utf-8")
@@ -140,7 +141,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             source=SimpleNamespace(kind="web", id="browser-tab"),
         )
 
-        self.assertEqual(route.current_mode, "general")
+        self.assertEqual(route.current_mode, "research")
         self.assertEqual(route.source_profile, "policy_global")
         self.assertIn("research", route.route_reason)
         self.assertIn("research_grounding", route.active_skills or [])
@@ -189,6 +190,7 @@ class AssistantModeManagerTests(unittest.TestCase):
             "hotspot-tracking",
             "mode-general",
             "mode-automation",
+            "mode-research",
             "mode-danxi",
         ):
             skill_path = repo_root / "prompt" / "SKILL" / skill_name
@@ -247,10 +249,12 @@ class AssistantModeManagerTests(unittest.TestCase):
 
         automation_bundle = manager.get_tool_bundle("automation")
         general_bundle = manager.get_tool_bundle("general")
+        research_bundle = manager.get_tool_bundle("research")
         danxi_bundle = manager.get_tool_bundle("danxi")
 
         self.assertIn("exec_core_cmd", automation_bundle["tools"])
         self.assertIn("exec_core_cmd", general_bundle["tools"])
+        self.assertIn("exec_core_cmd", research_bundle["tools"])
         self.assertIn("exec_core_cmd", danxi_bundle["tools"])
 
     def test_task_recognition_skill_extends_study_mode_tools(self):
@@ -288,10 +292,13 @@ class AssistantModeManagerTests(unittest.TestCase):
             source=SimpleNamespace(kind="web", id="browser-tab"),
         )
 
-        self.assertEqual(route.current_mode, "general")
+        self.assertEqual(route.current_mode, "research")
         self.assertIn("search_memory", route.tool_bundle)
         self.assertIn("search_web", route.tool_bundle)
         self.assertIn("read_web_page", route.tool_bundle)
+        self.assertIn("search_academic_sources", route.tool_bundle)
+        self.assertIn("create_research_task", route.tool_bundle)
+        self.assertIn("manage_research_tasks", route.tool_bundle)
         self.assertIn("list_skills", route.tool_bundle)
         self.assertIn("load_skill", route.tool_bundle)
         self.assertIn("create_skill", route.tool_bundle)
@@ -466,7 +473,7 @@ class AssistantModeManagerTests(unittest.TestCase):
     def test_skill_management_tools_are_available_in_all_modes(self):
         manager = AssistantModeManager(_FakeConfig())
 
-        for mode in ("general", "automation", "danxi"):
+        for mode in ("general", "automation", "research", "danxi"):
             bundle = manager.get_tool_bundle(mode)
             self.assertIn("list_skills", bundle["tools"])
             self.assertIn("load_skill", bundle["tools"])
@@ -724,6 +731,9 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "extract_action_items",
                     "get_sys_vitals",
                     "research_topic",
+                    "search_academic_sources",
+                    "create_research_task",
+                    "manage_research_tasks",
                     "inspect_page",
                     "track_source_updates",
                     "exec_core_cmd",

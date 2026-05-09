@@ -13,6 +13,7 @@ class ThreadRepository(RepositoryBase):
         principal_id,
         home_workspace_id=None,
         workspace_id=None,
+        project_id=None,
         title: str = "",
         metadata: dict | None = None,
     ) -> Thread:
@@ -21,6 +22,7 @@ class ThreadRepository(RepositoryBase):
             thread_id=thread_id,
             principal_id=principal_id,
             home_workspace_id=resolved_home_workspace_id,
+            project_id=project_id,
             title=title,
             meta=dict(metadata or {}),
         )

@@ -2,7 +2,7 @@ export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
-export type AssistantMode = 'general' | 'automation' | 'danxi'
+export type AssistantMode = 'general' | 'automation' | 'research' | 'danxi'
 
 export type RuntimeStatus = string
 

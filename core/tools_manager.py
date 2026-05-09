@@ -30,6 +30,7 @@ from tools.scheduler_tools import SchedulerTools
 from tools.scenario_tools import ScenarioTools
 from tools.study_tools import StudyTools
 from tools.thread_tools import ThreadTools
+from tools.research_tools import ResearchTools
 from tools.web_search import WebSearchTools
 from tools.workspace_tools import WorkspaceTools
 
@@ -108,8 +109,8 @@ def _normalize_url_key(value: str) -> str:
 
 class ToolsManager:
     def __init__(self, memory, context_manager, mcp_manager, system_tools_module, mode_manager=None, task_manager=None, config=None):
-        self._system_tools_module = system_tools_module
         self._mcp_manager = mcp_manager
+        self._system_tools_module = system_tools_module
         self._mode_manager = mode_manager
         self._memory_tools = MemoryTools(memory)
         self._web_search_tools = WebSearchTools(mcp_manager, config=config)
@@ -121,6 +122,7 @@ class ToolsManager:
         self._lightweight_tools = LightweightTools()
         self._scheduler_tools = SchedulerTools()
         self._thread_tools = ThreadTools()
+        self._research_tools = ResearchTools()
         self._workspace_tools = WorkspaceTools()
         self._scenario_tools = ScenarioTools(
             memory,
@@ -161,6 +163,9 @@ class ToolsManager:
             "search_web": self._web_search_tools.search_web,
             "read_web_page": self._web_search_tools.read_web_page,
             "research_topic": self._scenario_tools.research_topic,
+            "create_research_task": self._research_tools.create_research_task,
+            "manage_research_tasks": self._research_tools.manage_research_tasks,
+            "search_academic_sources": self._research_tools.search_academic_sources,
             "inspect_page": self._scenario_tools.inspect_page,
             "track_source_updates": self._scenario_tools.track_source_updates,
             "search_knowledge": self._scenario_tools.search_knowledge,
@@ -280,6 +285,7 @@ class ToolsManager:
         self._core_domain = core_domain
         self._scheduler_tools.set_core_domain(core_domain)
         self._thread_tools.set_core_domain(core_domain)
+        self._research_tools.set_core_domain(core_domain)
         self._workspace_tools.set_core_domain(core_domain)
         self._endpoint_tools.set_core_domain(core_domain)
 
