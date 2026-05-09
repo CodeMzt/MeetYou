@@ -17,9 +17,16 @@ const task: RuntimeResearchTask = {
     ],
   },
   source_policy: {},
-  evidence_ledger: [],
+  evidence_ledger: [
+    {
+      evidence_id: 'ev_1',
+      title: 'Conversation trees',
+      source_type: 'project_source',
+      url: 'https://example.test/source',
+    },
+  ],
   output_format: 'markdown',
-  summary: '',
+  summary: 'Conversation versions should be durable.',
   artifact: {
     artifact_id: 'art_1',
     project_id: 'prj_1',
@@ -59,5 +66,7 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('data-research-panel="true"')
     expect(markup).toContain('Durable conversation history')
     expect(markup).toContain('data-research-download="true"')
+    expect(markup).toContain('data-research-evidence-list="true"')
+    expect(markup).toContain('Conversation versions should be durable.')
   })
 })

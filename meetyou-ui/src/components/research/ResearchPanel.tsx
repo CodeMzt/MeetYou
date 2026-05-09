@@ -40,11 +40,42 @@ function getPlanSteps(task: RuntimeResearchTask): Array<{ id: string; title: str
       const step = item as Record<string, unknown>
       return {
         id: String(step.id || index),
-        title: String(step.title || step.id || `Step ${index + 1}`),
+        title: String(step.title || step.id || `步骤 ${index + 1}`),
         status: String(step.status || ''),
       }
     })
     .filter((item): item is { id: string; title: string; status: string } => Boolean(item))
+}
+
+function getEvidenceItems(task: RuntimeResearchTask): Array<{ id: string; title: string; source: string; url: string }> {
+  return (Array.isArray(task.evidence_ledger) ? task.evidence_ledger : [])
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return null
+      }
+      const evidence = item as Record<string, unknown>
+      const title = String(evidence.title || evidence.source_title || evidence.name || evidence.url || evidence.source_id || `来源 ${index + 1}`)
+      return {
+        id: String(evidence.evidence_id || evidence.source_id || evidence.url || index),
+        title,
+        source: String(evidence.source_type || evidence.adapter || evidence.kind || '来源'),
+        url: String(evidence.url || evidence.href || ''),
+      }
+    })
+    .filter((item): item is { id: string; title: string; source: string; url: string } => Boolean(item))
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 B'
+  }
+  if (value < 1024) {
+    return `${value} B`
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`
+  }
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
 function formatPlan(plan: Record<string, unknown>): string {
@@ -76,6 +107,7 @@ export default function ResearchPanel({
     [selectedTaskId, tasks],
   )
   const planSteps = selectedTask ? getPlanSteps(selectedTask) : []
+  const evidenceItems = selectedTask ? getEvidenceItems(selectedTask) : []
   const editablePlan = selectedTask?.status === 'planned'
 
   useEffect(() => {
@@ -172,9 +204,38 @@ export default function ResearchPanel({
               {planSteps.slice(0, 4).map((step) => (
                 <div className={styles.step} key={step.id}>
                   <span>{step.title}</span>
-                  <span>{step.status || 'planned'}</span>
+                  <span>{statusLabel(step.status || 'planned')}</span>
                 </div>
               ))}
+            </div>
+          ) : null}
+
+          <div className={styles.progressRow} data-research-progress="true">
+            <span>来源 {evidenceItems.length}</span>
+            <span>格式 {selectedTask.output_format || 'markdown'}</span>
+            {selectedTask.artifact ? <span>{formatBytes(selectedTask.artifact.byte_size)}</span> : null}
+          </div>
+
+          {selectedTask.summary ? (
+            <div className={styles.summary} data-research-summary="true">{selectedTask.summary}</div>
+          ) : null}
+
+          {evidenceItems.length ? (
+            <div className={styles.evidenceList} data-research-evidence-list="true">
+              <div className={styles.sectionLabel}>来源</div>
+              {evidenceItems.slice(0, 5).map((item) => (
+                <div className={styles.evidenceItem} key={item.id}>
+                  <span>{item.title}</span>
+                  <small>{item.source}{item.url ? ` · ${item.url}` : ''}</small>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {selectedTask.artifact ? (
+            <div className={styles.artifactMeta} data-research-artifact-meta="true">
+              <FileText size={13} aria-hidden="true" />
+              <span>{selectedTask.artifact.filename}</span>
             </div>
           ) : null}
 

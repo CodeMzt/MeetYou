@@ -109,7 +109,8 @@
 .taskList,
 .detail,
 .steps,
-.planEditor {
+.planEditor,
+.evidenceList {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -171,8 +172,24 @@
   order: 2;
 }
 
-.planEditor {
+.progressRow {
   order: 3;
+}
+
+.summary {
+  order: 4;
+}
+
+.evidenceList {
+  order: 5;
+}
+
+.artifactMeta {
+  order: 6;
+}
+
+.planEditor {
+  order: 7;
 }
 
 .detailHeader span:first-child {
@@ -199,6 +216,81 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
+  font-size: 12px;
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.progressRow span {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.summary {
+  padding: 8px;
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sectionLabel {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.evidenceItem {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: var(--bg-input);
+}
+
+.evidenceItem span,
+.evidenceItem small,
+.artifactMeta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidenceItem span {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.evidenceItem small {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.artifactMeta {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 

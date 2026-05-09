@@ -5,7 +5,7 @@
 Deep research is represented by `ResearchTask`.
 
 1. Intake: store topic, optional project/thread, source policy, and output format.
-2. Plan: create an editable plan with explicit gather/synthesize/artifact steps.
+2. Plan: create an editable Chinese-first plan with explicit gather/synthesize/artifact steps.
 3. Approval/start: user or automation approves the editable plan, then starts the task. Status transitions are explicit: `planned -> approved -> running`; `planned -> running` remains allowed for single-step automation.
 4. Gather: use read-only web, academic, project-source, file-search, or MCP search/fetch tools.
 5. Synthesize: produce claims that map to evidence records.
@@ -62,9 +62,10 @@ The desktop UI exposes `research` as a composer mode and shows a compact Researc
 - inspect generated plan steps;
 - edit and save the plan while status is `planned`;
 - approve, start, cancel, and refresh task state;
+- inspect durable progress context from the selected task, including evidence count, output format, summary, the first evidence ledger entries, and completed artifact filename/size;
 - download a completed report artifact through the authenticated `/desktop/artifacts/{artifact_id}/download` proxy.
 
-This UI is a task shell over the durable API and runner. It can create/approve/start a task and later download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, PDF/DOCX derivation, and web-search integration remain later V5 stages.
+This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, PDF/DOCX derivation, and web-search integration remain later V5 stages.
 
 ## Project Artifacts UI
 

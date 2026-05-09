@@ -224,6 +224,10 @@ class V5ServiceTests(unittest.TestCase):
         self.assertTrue(task.plan["requires_approval"])
         self.assertEqual(task.plan["source_adapters"], ["arxiv", "openalex"])
         self.assertEqual([step["id"] for step in task.plan["steps"]], ["intake", "gather", "synthesize", "artifact"])
+        self.assertEqual(
+            [step["title"] for step in task.plan["steps"]],
+            ["澄清范围与约束", "收集网页、学术与项目来源证据", "综合带引用的研究结论", "生成可下载报告产物"],
+        )
         self.assertEqual(updated.status, "running")
         self.assertEqual(updated.evidence_ledger[0]["source_id"], 1)
         self.assertEqual(updated.meta["events"][0]["action"], "start")
