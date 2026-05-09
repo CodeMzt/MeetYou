@@ -12,6 +12,15 @@ Deep research is represented by `ResearchTask`.
 6. Artifact: validate report citations against the evidence ledger, then save a Markdown report through `ArtifactStore`; PDF/DOCX export can be added as derived artifacts.
 7. Deliver: assistant final message contains a short summary and artifact link, not the full large report body.
 
+The first executable runner is deliberately conservative:
+
+- `PATCH /runtime/research-tasks/{id}` with `action=start` transitions the task to `running`; unless `source_policy.auto_execute=false`, Runtime schedules the Core read-only runner.
+- `manage_research_tasks(action="run")` executes the same runner from assistant tools.
+- The runner gathers from implemented academic adapters and, when requested, ProjectSource snapshots. It does not mutate sources or send private data to write channels.
+- Unsupported adapters are recorded in `metadata.gather_errors`; they do not become citations.
+- If no readable evidence is gathered, the task transitions to `failed` and no report artifact is created.
+- If evidence is gathered, the runner builds a Markdown report, validates bracket citations against `evidence_ledger`, creates a `research_report` Artifact, and completes the task.
+
 ## Evidence Ledger
 
 Every research report must carry an evidence ledger. The ledger records source id, adapter, URL or project-source id, title, verification status, and freshness notes.
@@ -19,11 +28,11 @@ Every research report must carry an evidence ledger. The ledger records source i
 Allowed verification statuses:
 
 - `query_url`: adapter produced a query URL but content is not read yet.
-- `read`: source content was fetched/read.
-- `project_source`: source came from durable project source material.
+- `fetched`: source content was fetched/read.
+- `project_source_snapshot`: source came from durable project source material.
 - `derived`: source is a derived artifact, not primary evidence.
 
-Final research claims should cite only `read` or `project_source` evidence unless the report explicitly labels the gap. The current guard validates numeric inline citations such as `[1]` and `[2]`; every cited id must exist in `evidence_ledger[].source_id`, or the API/tool request fails with `research_report_citation_invalid` before any report artifact is written.
+Final research claims should cite only fetched or project-source evidence unless the report explicitly labels the gap. The current guard validates numeric inline citations such as `[1]` and `[2]`; every cited id must exist in `evidence_ledger[].source_id`, or the API/tool request fails with `research_report_citation_invalid` before any report artifact is written.
 
 ## Task State Guard
 
@@ -55,7 +64,7 @@ The desktop UI exposes `research` as a composer mode and shows a compact Researc
 - approve, start, cancel, and refresh task state;
 - download a completed report artifact through the authenticated `/desktop/artifacts/{artifact_id}/download` proxy.
 
-This UI does not claim to run the full deep-research engine yet. Until gather/synthesize execution lands, completion/report artifact creation can be driven by the Runtime API or assistant tools and then surfaced by the same panel.
+This UI is a task shell over the durable API and runner. It can create/approve/start a task and later download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, PDF/DOCX derivation, and web-search integration remain later V5 stages.
 
 ## Project Sources
 
@@ -63,11 +72,11 @@ Message snapshots saved from the desktop message menu are persisted through Core
 
 ## Academic Sources
 
-First-stage academic source adapters are read-only query adapters for:
+Academic source adapters are read-only adapters for:
 
 - arXiv
 - OpenAlex
 - Crossref
 - Semantic Scholar
 
-The initial adapter returns normalized query URLs and ledger entries. A later worker can fetch, rank, and read source records through the same evidence ledger shape.
+The current Core implementation can produce normalized query URLs, fetch adapter results, parse provider payloads into evidence entries, and run under a test-injectable fetcher so CI does not depend on external networks. The `web` adapter remains a planned integration point for the existing web-search capability; until it lands, `web` is recorded as an unsupported adapter during runner execution instead of being cited.

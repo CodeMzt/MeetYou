@@ -10,6 +10,7 @@
 - Deep research must use read-only evidence gathering unless the user explicitly asks for a separate write action.
 - Research reports must persist as Artifacts; final assistant messages should summarize and link to artifacts instead of embedding large report files.
 - Evidence-ledger citations must refer to recorded sources. Do not invent citations or cite unread sources as verified.
+- Starting a V5 ResearchTask may trigger the Core read-only research runner. If no readable evidence is gathered, fail the task instead of producing an uncited report.
 - Conversation checkpoint restore and checkout are non-destructive. Do not delete old messages when switching branch/checkpoint.
 - Core must create automatic conversation checkpoints when persisted messages advance a thread leaf. Checkout should not depend on users manually creating checkpoints.
 - Historical edit retry creates a new message revision and branch. Do not overwrite the original message content.

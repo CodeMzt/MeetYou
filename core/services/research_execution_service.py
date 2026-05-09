@@ -1,0 +1,264 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from core.research.academic_sources import AcademicSourceRegistry, FetchAcademicSource
+from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
+
+
+_TERMINAL_STATUSES = {"cancelled", "completed", "failed"}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _excerpt(value: Any, *, limit: int = 700) -> str:
+    text = " ".join(str(value or "").split())
+    return text[:limit]
+
+
+def _source_limit(policy: dict[str, Any]) -> int:
+    raw = policy.get("max_sources", policy.get("limit", 8))
+    try:
+        return max(1, min(int(raw or 8), 24))
+    except (TypeError, ValueError):
+        return 8
+
+
+def _academic_limit(policy: dict[str, Any]) -> int:
+    raw = policy.get("academic_limit", policy.get("limit", 3))
+    try:
+        return max(1, min(int(raw or 3), 10))
+    except (TypeError, ValueError):
+        return 3
+
+
+class ResearchExecutionService:
+    """Minimal read-only V5 research runner.
+
+    The runner deliberately gathers evidence only from configured read-only
+    sources and persists the final report as an Artifact. It does not send data
+    to external write channels or mutate project sources.
+    """
+
+    def __init__(self, services, *, fetcher: FetchAcademicSource | None = None, fetch_timeout: float = 8.0) -> None:
+        self.services = services
+        self.fetcher = fetcher
+        self.fetch_timeout = float(fetch_timeout or 8.0)
+
+    def run_task(self, research_task_id: str) -> dict[str, Any]:
+        task = self.services.research_task.get_by_research_task_id(research_task_id)
+        if task is None:
+            return {"ok": False, "code": "research_task_not_found", "message": f"Unknown research task: {research_task_id}"}
+
+        status = str(getattr(task, "status", "") or "planned").strip().lower()
+        if status in _TERMINAL_STATUSES:
+            return {"ok": True, "skipped": True, "reason": f"terminal:{status}", "status": status}
+        if status != "running":
+            try:
+                task = self.services.research_task.transition_task(research_task_id=research_task_id, action="start") or task
+            except ResearchTaskStateError as exc:
+                return {"ok": False, "code": exc.code, "message": str(exc)}
+
+        policy = dict(getattr(task, "source_policy", {}) or {})
+        if policy.get("read_only") is False:
+            return self._fail_task(
+                research_task_id,
+                summary="Research source policy is not read-only.",
+                metadata={"runner_error": "read_only_policy_required"},
+            )
+
+        max_sources = _source_limit(policy)
+        evidence, gather_errors = self._gather_evidence(task, policy=policy, max_sources=max_sources)
+        if not evidence:
+            return self._fail_task(
+                research_task_id,
+                summary="Research execution did not gather any readable evidence.",
+                metadata={
+                    "runner_error": "no_evidence",
+                    "gather_errors": gather_errors,
+                    "completed_at": _now_iso(),
+                },
+            )
+
+        refreshed = self.services.research_task.get_by_research_task_id(research_task_id)
+        if refreshed is None:
+            return {"ok": False, "code": "research_task_not_found", "message": f"Unknown research task: {research_task_id}"}
+        if str(getattr(refreshed, "status", "") or "").strip().lower() == "cancelled":
+            return {"ok": True, "skipped": True, "reason": "cancelled", "status": "cancelled"}
+
+        report_markdown = self._build_report(refreshed, evidence=evidence, gather_errors=gather_errors)
+        try:
+            citation_validation = self.services.research_task.validate_report_citations(report_markdown, evidence)
+        except ResearchTaskCitationError as exc:
+            return self._fail_task(
+                research_task_id,
+                summary="Research report citation validation failed.",
+                metadata={
+                    "runner_error": "citation_validation_failed",
+                    "missing_source_ids": exc.missing_source_ids,
+                    "citation_ids": exc.citation_ids,
+                    "evidence_source_ids": exc.evidence_source_ids,
+                },
+            )
+
+        artifact = self.services.artifact.create_text_artifact(
+            principal_id=getattr(refreshed, "principal_id", None),
+            project_id=getattr(refreshed, "project_id", None),
+            thread_id=getattr(refreshed, "thread_id", None),
+            text=report_markdown,
+            filename=f"{research_task_id}.md",
+            artifact_type="research_report",
+            metadata={
+                "research_task_id": research_task_id,
+                "runner": "core.research_execution.v1",
+                "citation_validation": citation_validation,
+            },
+        )
+        summary = self._summary(refreshed, evidence)
+        completed = self.services.research_task.transition_task(
+            research_task_id=research_task_id,
+            action="complete",
+            fields={
+                "summary": summary,
+                "evidence_ledger": evidence,
+                "artifact_id": artifact.id,
+                "metadata": {
+                    "artifact_id": artifact.artifact_id,
+                    "runner": "core.research_execution.v1",
+                    "completed_at": _now_iso(),
+                    "gather_errors": gather_errors,
+                    "citation_validation": citation_validation,
+                },
+            },
+        )
+        return {
+            "ok": True,
+            "research_task_id": research_task_id,
+            "status": getattr(completed, "status", "completed"),
+            "artifact_id": artifact.artifact_id,
+            "evidence_count": len(evidence),
+            "gather_error_count": len(gather_errors),
+        }
+
+    def _gather_evidence(self, task, *, policy: dict[str, Any], max_sources: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        adapters = policy.get("source_adapters")
+        if adapters is None:
+            adapters = ["arxiv", "openalex", "crossref", "semantic_scholar"]
+        if isinstance(adapters, str):
+            adapters = [adapters]
+        normalized_adapters = [AcademicSourceRegistry.normalize_adapter(item) for item in adapters]
+        academic_adapters = [item for item in normalized_adapters if item in AcademicSourceRegistry.SUPPORTED_ADAPTERS]
+        gather_errors = [
+            {
+                "adapter": item,
+                "message": "adapter is not implemented in the Core read-only research runner",
+                "error_type": "UnsupportedAdapter",
+            }
+            for item in normalized_adapters
+            if item and item not in AcademicSourceRegistry.SUPPORTED_ADAPTERS
+        ]
+        evidence, adapter_errors = AcademicSourceRegistry.fetch_evidence(
+            getattr(task, "topic", ""),
+            adapters=academic_adapters,
+            limit=_academic_limit(policy),
+            fetcher=self.fetcher,
+            timeout=self.fetch_timeout,
+            source_id_start=1,
+        )
+        gather_errors.extend(adapter_errors)
+        evidence = evidence[:max_sources]
+
+        if policy.get("include_project_sources"):
+            evidence.extend(self._project_source_evidence(task, source_id_start=len(evidence) + 1, limit=max_sources - len(evidence)))
+        return evidence[:max_sources], gather_errors
+
+    def _project_source_evidence(self, task, *, source_id_start: int, limit: int) -> list[dict[str, Any]]:
+        if limit <= 0 or getattr(task, "project_id", None) is None:
+            return []
+        project = self.services.project.get_by_id(getattr(task, "project_id", None))
+        project_id = str(getattr(project, "project_id", "") or "")
+        if not project_id:
+            return []
+        sources = self.services.project.list_sources(project_id=project_id, limit=limit) or []
+        evidence: list[dict[str, Any]] = []
+        next_source_id = int(source_id_start or 1)
+        for source in sources[:limit]:
+            evidence.append(
+                {
+                    "source_id": str(next_source_id),
+                    "source_type": "project_source",
+                    "project_source_id": getattr(source, "source_id", ""),
+                    "title": getattr(source, "title", "") or getattr(source, "source_id", ""),
+                    "url": "",
+                    "snippet": _excerpt(getattr(source, "content", "")),
+                    "content_type": getattr(source, "content_type", ""),
+                    "checksum": getattr(source, "checksum", ""),
+                    "verification_status": "project_source_snapshot",
+                    "fetched_at": _now_iso(),
+                }
+            )
+            next_source_id += 1
+        return evidence
+
+    def _summary(self, task, evidence: list[dict[str, Any]]) -> str:
+        return f"Generated a read-only research report for {getattr(task, 'topic', 'the topic')} from {len(evidence)} recorded sources."
+
+    def _build_report(self, task, *, evidence: list[dict[str, Any]], gather_errors: list[dict[str, Any]]) -> str:
+        topic = str(getattr(task, "topic", "") or "Research task").strip()
+        lines = [
+            f"# {topic}",
+            "",
+            "## Summary",
+            "",
+            self._summary(task, evidence),
+            "",
+            "## Evidence-Based Notes",
+            "",
+        ]
+        for item in evidence:
+            source_id = str(item.get("source_id") or "")
+            title = str(item.get("title") or f"Source {source_id}")
+            snippet = _excerpt(item.get("snippet") or "No excerpt was available.", limit=500)
+            lines.append(f"- {title}: {snippet} [{source_id}]")
+        lines.extend(["", "## Sources", ""])
+        for item in evidence:
+            source_id = str(item.get("source_id") or "")
+            title = str(item.get("title") or f"Source {source_id}")
+            url = str(item.get("url") or "")
+            source_type = str(item.get("source_type") or "")
+            adapter = str(item.get("adapter") or "")
+            suffix = f" - {url}" if url else ""
+            adapter_text = f", {adapter}" if adapter else ""
+            lines.append(f"- [{source_id}] {title} ({source_type}{adapter_text}){suffix}")
+        lines.extend(["", "## Risks And Uncertainty", ""])
+        if gather_errors:
+            lines.append("Some configured sources could not be gathered:")
+            for error in gather_errors:
+                lines.append(f"- {error.get('adapter') or 'source'}: {error.get('message') or error.get('error_type') or 'unknown error'}")
+        else:
+            lines.append("No adapter failures were recorded. This report is still limited to the retrieved sources and should be reviewed before high-stakes use.")
+        return "\n".join(lines).strip() + "\n"
+
+    def _fail_task(self, research_task_id: str, *, summary: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        failed = self.services.research_task.transition_task(
+            research_task_id=research_task_id,
+            action="fail",
+            fields={
+                "summary": summary,
+                "metadata": {
+                    "runner": "core.research_execution.v1",
+                    "failed_at": _now_iso(),
+                    **dict(metadata or {}),
+                },
+            },
+        )
+        return {
+            "ok": False,
+            "research_task_id": research_task_id,
+            "status": getattr(failed, "status", "failed"),
+            "summary": summary,
+            "metadata": metadata,
+        }

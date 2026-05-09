@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import FileResponse
 from core.credential_transport import CredentialTransportError, decrypt_json_payload
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
 from core.services.endpoint_service import EndpointThreadBindingError
+from core.services.research_execution_service import ResearchExecutionService
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 from core.services.workspace_service import WorkspaceService
 from core.services.tool_router_service import ToolRouterError
@@ -864,6 +865,31 @@ def build_runtime_router(gateway) -> APIRouter:
             filename=str(getattr(artifact, "filename", "") or artifact_id),
         )
 
+    def _research_task_auto_execute(task) -> bool:
+        policy = dict(getattr(task, "source_policy", {}) or {})
+        return bool(policy.get("auto_execute", True))
+
+    def _run_research_task_background(domain, research_task_id: str) -> None:
+        try:
+            fetcher = getattr(domain, "research_fetcher", None)
+            ResearchExecutionService(domain.services, fetcher=fetcher).run_task(research_task_id)
+        except Exception as exc:  # noqa: BLE001 - background task must fail the ResearchTask instead of crashing request handling.
+            try:
+                domain.services.research_task.transition_task(
+                    research_task_id=research_task_id,
+                    action="fail",
+                    fields={
+                        "summary": "Research execution failed before a report artifact could be created.",
+                        "metadata": {
+                            "runner": "core.research_execution.v1",
+                            "runner_error": type(exc).__name__,
+                            "runner_error_message": str(exc),
+                        },
+                    },
+                )
+            except Exception:
+                pass
+
     @router.get("/research-tasks", response_model=list[RuntimeResearchTaskResponse])
     async def list_research_tasks(request: Request, project_id: str = "", limit: int = 100):
         gateway._require_http_auth(request)
@@ -910,7 +936,7 @@ def build_runtime_router(gateway) -> APIRouter:
         return _research_task_response(domain, task)
 
     @router.patch("/research-tasks/{research_task_id}", response_model=RuntimeResearchTaskResponse)
-    async def patch_research_task(research_task_id: str, payload: RuntimeResearchTaskPatchRequest, request: Request):
+    async def patch_research_task(research_task_id: str, payload: RuntimeResearchTaskPatchRequest, request: Request, background_tasks: BackgroundTasks):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         fields = payload.model_dump(exclude_unset=True)
@@ -975,6 +1001,8 @@ def build_runtime_router(gateway) -> APIRouter:
             ) or task
         except ResearchTaskStateError as exc:
             gateway._raise_http_error(status_code=400, code=exc.code, message=str(exc))
+        if action == "start" and _research_task_auto_execute(task):
+            background_tasks.add_task(_run_research_task_background, domain, research_task_id)
         return _research_task_response(domain, task)
 
     @router.get("/threads", response_model=list[RuntimeThreadResponse])

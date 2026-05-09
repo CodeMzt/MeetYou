@@ -87,6 +87,33 @@ class ResearchToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed["artifact"]["filename"], "evidence.md")
         self.assertEqual(completed["artifact"]["citation_validation"]["citation_ids"], ["1"])
 
+    async def test_manage_research_tasks_run_uses_core_runner(self) -> None:
+        project = self.domain.services.project.create_project(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="Tool runner project",
+        )
+        self.domain.services.project.add_source(
+            project_id=project.project_id,
+            principal_id=self.principal.id,
+            title="Tool source",
+            content="Tool-managed research can use project evidence.",
+        )
+        created = await self.tools.create_research_task(
+            topic="tool managed run",
+            project_id=project.project_id,
+            source_policy={"source_adapters": [], "include_project_sources": True},
+        )
+
+        result = await self.tools.manage_research_tasks(
+            action="run",
+            research_task_id=created["research_task_id"],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["evidence_ledger"][0]["source_type"], "project_source")
+
 
 if __name__ == "__main__":
     unittest.main()

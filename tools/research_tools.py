@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.services.research_execution_service import ResearchExecutionService
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 from tools.academic_sources import AcademicSourceRegistry
 
@@ -103,6 +104,18 @@ class ResearchTools:
         task = domain.services.research_task.get_by_research_task_id(research_task_id)
         if task is None:
             return {"ok": False, "code": "research_task_not_found", "message": f"Unknown research task: {research_task_id}"}
+        if normalized_action in {"run", "execute"}:
+            result = ResearchExecutionService(domain.services).run_task(research_task_id)
+            refreshed = domain.services.research_task.get_by_research_task_id(research_task_id) or task
+            return {
+                **dict(result or {}),
+                "research_task_id": refreshed.research_task_id,
+                "status": refreshed.status,
+                "topic": refreshed.topic,
+                "summary": refreshed.summary,
+                "plan": dict(refreshed.plan or {}),
+                "evidence_ledger": list(refreshed.evidence_ledger or []),
+            }
         fields: dict[str, Any] = {}
         transition_action = "" if normalized_action in {"list", "update"} else normalized_action
         if status:

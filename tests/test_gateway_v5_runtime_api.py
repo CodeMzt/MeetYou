@@ -148,7 +148,7 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
             json={
                 "project_id": project_id,
                 "topic": "conversation version trees",
-                "source_policy": {"source_adapters": ["arxiv"]},
+                "source_policy": {"source_adapters": ["arxiv"], "auto_execute": False},
             },
             headers=self._auth_headers(),
         )
@@ -270,6 +270,57 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(edit_retry_response.status_code, 200)
         self.assertEqual(edit_retry_response.json()["message"]["content"], "edited prompt")
         self.assertEqual(edit_retry_response.json()["replay_status"], "branch_created")
+
+    def test_research_task_start_auto_executes_read_only_runner(self) -> None:
+        project_response = self.client.post(
+            "/runtime/projects",
+            json={"workspace_id": "personal", "title": "Research Runner Project"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(project_response.status_code, 200)
+        project_id = project_response.json()["project_id"]
+        source_response = self.client.post(
+            f"/runtime/projects/{project_id}/sources",
+            json={
+                "source_type": "note",
+                "title": "Project evidence note",
+                "content": "Saved project evidence for automatic research execution.",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(source_response.status_code, 200)
+        task_response = self.client.post(
+            "/runtime/research-tasks",
+            json={
+                "project_id": project_id,
+                "topic": "automatic research execution",
+                "source_policy": {"source_adapters": [], "include_project_sources": True},
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(task_response.status_code, 200)
+        research_task_id = task_response.json()["research_task_id"]
+
+        start_response = self.client.patch(
+            f"/runtime/research-tasks/{research_task_id}",
+            json={"action": "start"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(start_response.status_code, 200)
+        self.assertEqual(start_response.json()["status"], "running")
+
+        completed_response = self.client.get(
+            f"/runtime/research-tasks/{research_task_id}",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(completed_response.status_code, 200)
+        completed = completed_response.json()
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["evidence_ledger"][0]["source_type"], "project_source")
+        self.assertTrue(completed["artifact_id"])
+        download_response = self.client.get(completed["artifact"]["download_url"], headers=self._auth_headers())
+        self.assertEqual(download_response.status_code, 200)
+        self.assertIn("Project evidence note", download_response.text)
 
     def test_edit_retry_queues_runtime_event_when_message_has_session(self) -> None:
         thread_response = self.client.post(
