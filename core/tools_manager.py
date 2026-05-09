@@ -26,6 +26,7 @@ from tools.document_tools import DocumentTools
 from tools.endpoint_tools import EndpointTools
 from tools.lightweight_tools import LightweightTools
 from tools.office_tools import OfficeTools
+from tools.project_tools import ProjectTools
 from tools.scheduler_tools import SchedulerTools
 from tools.scenario_tools import ScenarioTools
 from tools.study_tools import StudyTools
@@ -122,6 +123,7 @@ class ToolsManager:
         self._lightweight_tools = LightweightTools()
         self._scheduler_tools = SchedulerTools()
         self._thread_tools = ThreadTools()
+        self._project_tools = ProjectTools()
         self._research_tools = ResearchTools()
         self._workspace_tools = WorkspaceTools()
         self._scenario_tools = ScenarioTools(
@@ -163,6 +165,8 @@ class ToolsManager:
             "search_web": self._web_search_tools.search_web,
             "read_web_page": self._web_search_tools.read_web_page,
             "research_topic": self._scenario_tools.research_topic,
+            "manage_projects": self._project_tools.manage_projects,
+            "manage_project_sources": self._project_tools.manage_project_sources,
             "create_research_task": self._research_tools.create_research_task,
             "manage_research_tasks": self._research_tools.manage_research_tasks,
             "search_academic_sources": self._research_tools.search_academic_sources,
@@ -285,6 +289,7 @@ class ToolsManager:
         self._core_domain = core_domain
         self._scheduler_tools.set_core_domain(core_domain)
         self._thread_tools.set_core_domain(core_domain)
+        self._project_tools.set_core_domain(core_domain)
         self._research_tools.set_core_domain(core_domain)
         self._workspace_tools.set_core_domain(core_domain)
         self._endpoint_tools.set_core_domain(core_domain)

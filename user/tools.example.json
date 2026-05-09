@@ -416,6 +416,145 @@
     {
       "type": "function",
       "function": {
+        "name": "manage_projects",
+        "description": "Manage V5 Projects: list, create, inspect, update, archive, list project threads, and attach or detach a thread from a project. Project is a user work container; Workspace remains the governance boundary.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "list",
+                "create",
+                "get",
+                "update",
+                "archive",
+                "list_threads",
+                "attach_thread",
+                "detach_thread"
+              ],
+              "description": "Project action to perform."
+            },
+            "project_id": {
+              "type": "string",
+              "description": "Project public id, required for all actions except list/create and detach_thread."
+            },
+            "workspace_id": {
+              "type": "string",
+              "description": "Optional Workspace public id used to scope list/create."
+            },
+            "title": {
+              "type": "string",
+              "description": "Project title for create/update."
+            },
+            "description": {
+              "type": "string",
+              "description": "Project description for create/update."
+            },
+            "instructions": {
+              "type": "string",
+              "description": "Project instructions for create/update."
+            },
+            "memory_scope": {
+              "type": "object",
+              "description": "Optional project memory scope."
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Optional metadata to merge into the project."
+            },
+            "thread_id": {
+              "type": "string",
+              "description": "Thread public id for attach_thread or detach_thread."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum rows for list actions."
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        "metadata": {
+          "safe_parallel": false,
+          "requires_order": true
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "manage_project_sources",
+        "description": "Manage V5 Project Sources: list, view content, create a note source, or save a message snapshot as a project source.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "list",
+                "get",
+                "create",
+                "save_message"
+              ],
+              "description": "Project source action to perform."
+            },
+            "project_id": {
+              "type": "string",
+              "description": "Project public id."
+            },
+            "source_id": {
+              "type": "string",
+              "description": "Project source public id for get."
+            },
+            "source_type": {
+              "type": "string",
+              "description": "Source type for create, such as note."
+            },
+            "title": {
+              "type": "string",
+              "description": "Source title."
+            },
+            "content": {
+              "type": "string",
+              "description": "Source content for create."
+            },
+            "content_type": {
+              "type": "string",
+              "description": "Content type, defaults to text."
+            },
+            "message_id": {
+              "type": "string",
+              "description": "Message public id for save_message."
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Optional source metadata."
+            },
+            "include_archived": {
+              "type": "boolean",
+              "description": "Include archived sources when listing."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum rows for list."
+            }
+          },
+          "required": [
+            "action",
+            "project_id"
+          ]
+        },
+        "metadata": {
+          "safe_parallel": false,
+          "requires_order": true
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "inspect_page",
         "description": "Inspect a direct webpage or PDF URL.",
         "parameters": {
@@ -730,12 +869,13 @@
             },
             "applicable_modes": {
               "type": "array",
-              "description": "V4 public assistant modes only: general, automation, or danxi. Research, documents, and study are skills/source profiles inside general, not modes.",
+              "description": "Runtime public assistant modes: general, automation, research, or danxi. Legacy documents and study are skills/source profiles inside general.",
               "items": {
                 "type": "string",
                 "enum": [
                   "general",
                   "automation",
+                  "research",
                   "danxi"
                 ]
               }
@@ -802,12 +942,13 @@
             },
             "applicable_modes": {
               "type": "array",
-              "description": "V4 public assistant modes only: general, automation, or danxi.",
+              "description": "Runtime public assistant modes: general, automation, research, or danxi.",
               "items": {
                 "type": "string",
                 "enum": [
                   "general",
                   "automation",
+                  "research",
                   "danxi"
                 ]
               }

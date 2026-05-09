@@ -186,6 +186,14 @@ class ProjectService(ServiceBase):
                 limit=limit,
             )
 
+    def get_source(self, *, project_id: str, source_id: str):
+        with self.session_scope() as session:
+            project = ProjectRepository(session).get_by_project_id(project_id)
+            source = ProjectSourceRepository(session).get_by_source_id(source_id)
+            if project is None or source is None or source.project_id != project.id:
+                return None
+            return source
+
 
 class ArtifactService(ServiceBase):
     def __init__(self, session_factory, *, store: LocalArtifactStore | None = None):
