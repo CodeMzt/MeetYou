@@ -4,13 +4,17 @@ import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
 import {
   checkoutRuntimeThreadCheckpoint,
   createRuntimeProjectSourceFromMessage,
+  createRuntimeResearchTask,
   createRuntimeThreadCheckpoint,
+  downloadRuntimeArtifact,
   editRetryRuntimeMessage,
+  listRuntimeResearchTasks,
   listRuntimeThreadBranches,
   listRuntimeThreadCheckpoints,
+  patchRuntimeResearchTask,
   restoreRuntimeThreadCheckpoint,
 } from '../runtimeApi'
-import type { RuntimeConversationCheckpoint, RuntimeThreadBranch } from '../types'
+import type { RuntimeConversationCheckpoint, RuntimeResearchTask, RuntimeThreadBranch } from '../types'
 import {
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
   useEndpointContext,
@@ -27,6 +31,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const [statusFeedback, setStatusFeedback] = useState<StatusFeedback | null>(null)
   const [threadBranches, setThreadBranches] = useState<RuntimeThreadBranch[]>([])
   const [threadCheckpoints, setThreadCheckpoints] = useState<RuntimeConversationCheckpoint[]>([])
+  const [researchTasks, setResearchTasks] = useState<RuntimeResearchTask[]>([])
+  const [researchBusy, setResearchBusy] = useState(false)
 
   const {
     endpointContext,
@@ -227,6 +233,26 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     void refreshThreadVersionState(endpointContext.threadId)
   }, [endpointContext?.threadId, refreshThreadVersionState])
 
+  const refreshResearchTasks = useCallback(async (projectIdOverride?: string) => {
+    const projectId = String(projectIdOverride ?? activeProjectId ?? '').trim()
+    try {
+      const tasks = await listRuntimeResearchTasks(baseUrl, {
+        project_id: projectId || undefined,
+        limit: 50,
+      })
+      setResearchTasks(tasks)
+      return tasks
+    } catch (error) {
+      console.warn('刷新研究任务失败:', error)
+      setResearchTasks([])
+      return []
+    }
+  }, [activeProjectId, baseUrl])
+
+  useEffect(() => {
+    void refreshResearchTasks(activeProjectId)
+  }, [activeProjectId, refreshResearchTasks])
+
   const effectiveConnectionState = useMemo(() => {
     if (!endpointContext || endpointConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
       return 'connecting' as const
@@ -383,6 +409,99 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return branch
   }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
 
+  const createResearchTask = useCallback(async (topic: string) => {
+    const nextTopic = String(topic || '').trim()
+    if (!nextTopic) {
+      throw new Error('研究主题不能为空')
+    }
+    setResearchBusy(true)
+    try {
+      const task = await createRuntimeResearchTask(baseUrl, {
+        topic: nextTopic,
+        project_id: activeProjectId || undefined,
+        thread_id: endpointContext?.threadId || undefined,
+        source_policy: {
+          source_adapters: ['web', 'arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+          include_project_sources: Boolean(activeProjectId),
+        },
+        output_format: 'markdown',
+        metadata: { created_from: 'desktop.research_panel' },
+      })
+      await refreshResearchTasks(activeProjectId)
+      setStatusFeedback({
+        id: `research-create-${Date.now()}`,
+        text: '已创建研究计划',
+        tone: 'success',
+        createdAt: Date.now(),
+      })
+      return task
+    } finally {
+      setResearchBusy(false)
+    }
+  }, [activeProjectId, baseUrl, endpointContext?.threadId, refreshResearchTasks])
+
+  const patchResearchTask = useCallback(async (researchTaskId: string, payload: Parameters<typeof patchRuntimeResearchTask>[2], successText: string) => {
+    setResearchBusy(true)
+    try {
+      const task = await patchRuntimeResearchTask(baseUrl, researchTaskId, payload)
+      await refreshResearchTasks(activeProjectId)
+      setStatusFeedback({
+        id: `research-${Date.now()}`,
+        text: successText,
+        tone: 'success',
+        createdAt: Date.now(),
+      })
+      return task
+    } finally {
+      setResearchBusy(false)
+    }
+  }, [activeProjectId, baseUrl, refreshResearchTasks])
+
+  const approveResearchTask = useCallback((researchTaskId: string) => (
+    patchResearchTask(researchTaskId, { action: 'approve' }, '已确认研究计划')
+  ), [patchResearchTask])
+
+  const startResearchTask = useCallback((researchTaskId: string) => (
+    patchResearchTask(researchTaskId, { action: 'start' }, '研究任务已开始')
+  ), [patchResearchTask])
+
+  const cancelResearchTask = useCallback((researchTaskId: string) => (
+    patchResearchTask(researchTaskId, { action: 'cancel' }, '研究任务已取消')
+  ), [patchResearchTask])
+
+  const saveResearchTaskPlan = useCallback((researchTaskId: string, plan: Record<string, unknown>) => (
+    patchResearchTask(researchTaskId, { plan }, '已保存研究计划')
+  ), [patchResearchTask])
+
+  const downloadResearchTaskArtifact = useCallback(async (task: RuntimeResearchTask) => {
+    const artifactId = String(task.artifact?.artifact_id || task.artifact_id || '').trim()
+    if (!artifactId) {
+      throw new Error('研究任务还没有可下载报告')
+    }
+    setResearchBusy(true)
+    try {
+      const blob = await downloadRuntimeArtifact(baseUrl, artifactId)
+      const filename = String(task.artifact?.filename || `${artifactId}.md`)
+      const objectUrl = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = filename
+      anchor.rel = 'noopener'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000)
+      setStatusFeedback({
+        id: `research-download-${Date.now()}`,
+        text: '已开始下载研究报告',
+        tone: 'success',
+        createdAt: Date.now(),
+      })
+    } finally {
+      setResearchBusy(false)
+    }
+  }, [baseUrl])
+
   return {
     messages: chatState.messages,
     operations,
@@ -391,6 +510,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     projects: runtimeProjects,
     branches: threadBranches,
     checkpoints: threadCheckpoints,
+    researchTasks,
+    researchBusy,
     activeProjectId,
     threadId: endpointContext?.threadId || '',
     defaultThreadId,
@@ -420,6 +541,13 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     createCheckpoint,
     restoreCheckpoint,
     checkoutCheckpoint,
+    createResearchTask,
+    approveResearchTask,
+    startResearchTask,
+    cancelResearchTask,
+    saveResearchTaskPlan,
+    downloadResearchTaskArtifact,
+    refreshResearchTasks,
     createThread: createAndSelectRuntimeThread,
     createProject: createRuntimeProjectAndRemember,
     deleteThread: deleteRuntimeThreadAndSelect,

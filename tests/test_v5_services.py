@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from core.artifacts import LocalArtifactStore
 from core.db.base import Base
-from core.db.models import Message, Principal, Thread, Workspace
+from core.db.models import ConversationCheckpoint, Message, Principal, Thread, Workspace
 from core.services.message_service import MessageService
 from core.services.thread_service import ThreadService
 from core.services.v5_service import (
@@ -148,18 +148,22 @@ class V5ServiceTests(unittest.TestCase):
         self.version_service.attach_message_to_active_branch(thread_row_id=thread.id, message_row_id=first.id)
         second = self.message_service.create_message(thread_id=thread.id, role="assistant", content="original answer")
         self.version_service.attach_message_to_active_branch(thread_row_id=thread.id, message_row_id=second.id)
-        checkpoint = self.version_service.create_checkpoint(thread_id=thread.thread_id, title="Before follow-up")
+        checkpoints = self.version_service.list_checkpoints(thread_id=thread.thread_id)
+        auto_checkpoint = next(
+            checkpoint for checkpoint in checkpoints
+            if checkpoint.checkpoint_type == "auto" and checkpoint.message_id == second.id
+        )
         third = self.message_service.create_message(thread_id=thread.id, role="user", content="follow-up")
         self.version_service.attach_message_to_active_branch(thread_row_id=thread.id, message_row_id=third.id)
 
         restored = self.version_service.restore_checkpoint(
             thread_id=thread.thread_id,
-            checkpoint_id=checkpoint.checkpoint_id,
+            checkpoint_id=auto_checkpoint.checkpoint_id,
         )
         restored_visible = self.message_service.list_messages_for_thread(thread.id)
         checkout = self.version_service.checkout_checkpoint(
             thread_id=thread.thread_id,
-            checkpoint_id=checkpoint.checkpoint_id,
+            checkpoint_id=auto_checkpoint.checkpoint_id,
             title="Alternative branch",
         )
         checkout_visible = self.message_service.list_messages_for_thread(thread.id)
@@ -182,11 +186,13 @@ class V5ServiceTests(unittest.TestCase):
 
         with self.Session() as session:
             stored_thread = session.query(Thread).filter_by(id=thread.id).one()
+            auto_checkpoints = session.query(ConversationCheckpoint).filter_by(thread_id=thread.id, checkpoint_type="auto").all()
             old_first = session.query(Message).filter_by(id=first.id).one()
             old_second = session.query(Message).filter_by(id=second.id).one()
             old_third = session.query(Message).filter_by(id=third.id).one()
             edited = session.query(Message).filter_by(id=edit_result["message"].id).one()
 
+        self.assertEqual({row.message_id for row in auto_checkpoints}, {first.id, second.id, third.id, edit_result["message"].id})
         self.assertEqual(stored_thread.active_branch_id, edit_result["branch"].id)
         self.assertEqual(stored_thread.current_leaf_message_id, edited.id)
         self.assertEqual(old_first.content, "original question")

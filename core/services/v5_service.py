@@ -7,7 +7,7 @@ from typing import Any
 
 from core.artifacts import LocalArtifactStore
 from core.db.base import utcnow
-from core.db.models import Message
+from core.db.models import ConversationCheckpoint, Message
 from core.db.repositories import (
     ArtifactRepository,
     ConversationCheckpointRepository,
@@ -357,6 +357,45 @@ class ConversationVersionService(ServiceBase):
                 metadata=metadata,
             )
 
+    def _create_auto_checkpoint_in_session(self, session, *, thread, branch, message):
+        if thread is None or branch is None or message is None:
+            return None
+        existing = (
+            session.query(ConversationCheckpoint)
+            .filter(
+                ConversationCheckpoint.thread_id == thread.id,
+                ConversationCheckpoint.message_id == message.id,
+                ConversationCheckpoint.checkpoint_type == "auto",
+            )
+            .one_or_none()
+        )
+        if existing is not None:
+            return existing
+        message_meta = dict(getattr(message, "meta", {}) or {})
+        state = {
+            "thread_id": thread.thread_id,
+            "active_branch_id": getattr(branch, "branch_id", "") or "",
+            "current_leaf_message_id": getattr(message, "message_id", "") or "",
+        }
+        title = f"Auto checkpoint: {getattr(message, 'role', '') or 'message'} {str(getattr(message, 'message_id', '') or '')[-8:]}"
+        return ConversationCheckpointRepository(session).create(
+            checkpoint_id=_public_id("chk"),
+            thread_id=thread.id,
+            branch_id=getattr(branch, "id", None),
+            message_id=message.id,
+            checkpoint_type="auto",
+            title=title,
+            state=state,
+            metadata={
+                "auto": True,
+                "auto_reason": "message_persisted",
+                "message_id": getattr(message, "message_id", "") or "",
+                "role": getattr(message, "role", "") or "",
+                "turn_id": str(message_meta.get("turn_id") or ""),
+                "stream_id": str(message_meta.get("stream_id") or ""),
+            },
+        )
+
     def attach_message_to_active_branch(self, *, thread_row_id, message_row_id):
         with self.session_scope() as session:
             thread = ThreadRepository(session).get_by_id(thread_row_id)
@@ -375,6 +414,12 @@ class ConversationVersionService(ServiceBase):
                 thread_id=thread.id,
                 active_branch_id=active_branch.id,
                 current_leaf_message_id=message.id,
+            )
+            self._create_auto_checkpoint_in_session(
+                session,
+                thread=thread,
+                branch=active_branch,
+                message=message,
             )
             return message
 
@@ -474,6 +519,12 @@ class ConversationVersionService(ServiceBase):
                 thread_id=thread.id,
                 active_branch_id=branch.id,
                 current_leaf_message_id=edited.id,
+            )
+            self._create_auto_checkpoint_in_session(
+                session,
+                thread=thread,
+                branch=branch,
+                message=edited,
             )
             return {"branch": branch, "message": edited, "replay_status": "branch_created"}
 

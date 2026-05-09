@@ -33,7 +33,7 @@ V5 intentionally does not treat Project as Workspace. Workspace remains the gove
 ## V4 Rules Changed
 
 - `research` is a public assistant mode in V5. It must not normalize to `general`.
-- Checkpoint/rollback is no longer only session-memory reply control. Durable checkpoints live in PostgreSQL and can survive service restarts.
+- Checkpoint/rollback is no longer only session-memory reply control. Durable checkpoints live in PostgreSQL and can survive service restarts. Core automatically creates message-boundary checkpoints as threads advance, so checkout does not rely on users manually preparing checkpoints.
 - Retry is no longer limited to the latest assistant reply. Historical user-message edit retry creates a new branch and message revision.
 - Projects are not just Workspaces. Do not overload Workspace governance fields for user-facing project source management.
 
@@ -49,7 +49,9 @@ The desktop main window exposes Project as a lightweight scope selector next to 
 
 Persisted messages expose a compact action menu in the message bubble. The menu can save any persisted message as a ProjectSource when a project is active, and it can edit-and-retry persisted user messages through `/runtime/messages/{message_id}/edit-retry`. The edit dialog submits the current textarea value and relies on Core to create the message revision and branch; it must not mutate the original message locally.
 
-Conversation version controls live next to the project/thread selectors in the floating desktop window. The first branch/checkpoint UI slice lists branch and checkpoint counts, creates manual checkpoints, restores the active thread leaf to a checkpoint, and checks out a new branch from a checkpoint. Restore/checkout must reload visible thread history through Core instead of filtering messages locally; Core owns active branch path projection.
+Conversation version controls live next to the project/thread selectors in the floating desktop window. The first branch/checkpoint UI slice lists branch and checkpoint counts, exposes automatic checkpoints created by Core, supports optional manual checkpoints, restores the active thread leaf to a checkpoint, and checks out a new branch from a checkpoint. Restore/checkout must reload visible thread history through Core instead of filtering messages locally; Core owns active branch path projection.
+
+Research mode is selectable from the desktop composer. The first research UI slice exposes ResearchTask intake, plan viewing/editing before start, approve/start/cancel actions, task refresh, and artifact download. It is a task-management shell over the durable API; the full gather/synthesize research engine remains a follow-up stage.
 
 The main Electron window is a constrained floating surface (`400x620` by default, `340x460` minimum). Project/Thread UI must be validated at the real main-window size, not only in wide browser viewports. At the default width the project trigger may collapse to an icon while preserving the full project title in the button tooltip.
 

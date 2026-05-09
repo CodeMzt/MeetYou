@@ -177,6 +177,40 @@ export interface RuntimeConversationCheckpoint {
   updated_at: string
 }
 
+export interface RuntimeArtifact {
+  artifact_id: string
+  project_id: string
+  thread_id: string
+  artifact_type: string
+  filename: string
+  content_type: string
+  byte_size: number
+  checksum: string
+  status: string
+  download_url: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeResearchTask {
+  research_task_id: string
+  project_id: string
+  thread_id: string
+  artifact_id: string
+  topic: string
+  status: string
+  plan: Record<string, unknown>
+  source_policy: Record<string, unknown>
+  evidence_ledger: Array<Record<string, unknown>>
+  output_format: string
+  summary: string
+  artifact: RuntimeArtifact | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
 export interface RuntimeThreadDeleteResult {
   ok: boolean
   thread_id: string

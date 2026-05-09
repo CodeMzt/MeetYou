@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   clearDesktopMemory,
+  createRuntimeResearchTask,
   createRuntimeProject,
   createRuntimeProjectSourceFromMessage,
   createRuntimeThreadCheckpoint,
@@ -10,6 +11,7 @@ import {
   deleteRuntimeThread,
   deleteDesktopMemoryRecord,
   deleteDanxiReply,
+  downloadRuntimeArtifact,
   ensureDefaultRuntimeThread,
   editRetryRuntimeMessage,
   fetchRuntimeUsageSnapshot,
@@ -25,6 +27,7 @@ import {
   listOperatorSourceProfiles,
   listWorkspaceTopology,
   listRuntimeProjects,
+  listRuntimeResearchTasks,
   listRuntimeThreadBranches,
   listRuntimeThreadCheckpoints,
   listRuntimeThreads,
@@ -32,6 +35,7 @@ import {
   removeAddressWorkspace,
   restoreOperatorWorkspace,
   restoreRuntimeThreadCheckpoint,
+  patchRuntimeResearchTask,
   setAddressPrimaryWorkspace,
   updateDanxiReply,
   updateDanxiWebvpnCookie,
@@ -796,6 +800,46 @@ describe('runtimeApi', () => {
     expect(globalThis.fetch).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:8000/desktop/threads/thr_1/checkpoints', expect.objectContaining({ method: 'POST' }))
     expect(globalThis.fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:8000/desktop/threads/thr_1/checkpoints/chk_1/restore', expect.objectContaining({ method: 'POST' }))
     expect(globalThis.fetch).toHaveBeenNthCalledWith(5, 'http://127.0.0.1:8000/desktop/threads/thr_1/checkpoints/chk_1/checkout', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('manages research tasks and artifact downloads through desktop runtime APIs', async () => {
+    const task = {
+      research_task_id: 'res_1',
+      project_id: 'prj_1',
+      thread_id: 'thr_1',
+      artifact_id: 'art_1',
+      topic: 'Deep research',
+      status: 'planned',
+      plan: { steps: [] },
+      source_policy: {},
+      evidence_ledger: [],
+      output_format: 'markdown',
+      summary: '',
+      artifact: null,
+      metadata: {},
+      created_at: '2026-05-09T00:00:00Z',
+      updated_at: '2026-05-09T00:00:00Z',
+    }
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([task]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...task, research_task_id: 'res_2' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...task, status: 'running' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response('report body', { status: 200, headers: { 'Content-Type': 'text/markdown' } })) as typeof fetch
+
+    const tasks = await listRuntimeResearchTasks('http://127.0.0.1:8000', { project_id: 'prj_1', limit: 50 })
+    const created = await createRuntimeResearchTask('http://127.0.0.1:8000', { topic: 'Deep research', project_id: 'prj_1' })
+    const patched = await patchRuntimeResearchTask('http://127.0.0.1:8000', 'res_1', { action: 'start' })
+    const artifact = await downloadRuntimeArtifact('http://127.0.0.1:8000', 'art_1')
+
+    expect(tasks[0].research_task_id).toBe('res_1')
+    expect(created.research_task_id).toBe('res_2')
+    expect(patched.status).toBe('running')
+    expect(await artifact.text()).toBe('report body')
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:8000/desktop/research-tasks?project_id=prj_1&limit=50', expect.any(Object))
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:8000/desktop/research-tasks', expect.objectContaining({ method: 'POST' }))
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:8000/desktop/research-tasks/res_1', expect.objectContaining({ method: 'PATCH' }))
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:8000/desktop/artifacts/art_1/download', expect.any(Object))
   })
 
   it('deletes runtime threads through desktop runtime API', async () => {

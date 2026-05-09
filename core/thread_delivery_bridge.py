@@ -523,6 +523,14 @@ class ThreadDeliveryBridge:
                     "workspace_id": workspace_id,
                 },
             )
+            conversation_version = getattr(core_services, "conversation_version", None)
+            if conversation_version is not None:
+                attached_message = conversation_version.attach_message_to_active_branch(
+                    thread_row_id=thread_row.id,
+                    message_row_id=message.id,
+                )
+                if attached_message is not None:
+                    message = attached_message
             self._record_context_pool_message(
                 core_services,
                 message=message,

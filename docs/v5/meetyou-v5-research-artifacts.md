@@ -45,6 +45,18 @@ The first implementation ships `LocalArtifactStore`:
 
 Production storage must implement the same ArtifactStore contract and return an artifact download route or signed URL without changing ResearchTask semantics.
 
+## Desktop Research UI
+
+The desktop UI exposes `research` as a composer mode and shows a compact ResearchTask panel in the main thread view while that mode is active. The first UI slice supports:
+
+- create a task with topic, active project, active thread, default read-only source policy, and Markdown output format;
+- inspect generated plan steps;
+- edit and save the plan while status is `planned`;
+- approve, start, cancel, and refresh task state;
+- download a completed report artifact through the authenticated `/desktop/artifacts/{artifact_id}/download` proxy.
+
+This UI does not claim to run the full deep-research engine yet. Until gather/synthesize execution lands, completion/report artifact creation can be driven by the Runtime API or assistant tools and then surfaced by the same panel.
+
 ## Project Sources
 
 Message snapshots saved from the desktop message menu are persisted through Core as ProjectSource records. The UI only sends the source request for already-persisted messages (`msg_*`) and a currently active project; Core owns the source content, checksum, metadata, and project membership.

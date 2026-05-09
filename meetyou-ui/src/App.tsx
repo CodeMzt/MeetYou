@@ -8,6 +8,7 @@ import ChatInput from './components/input/ChatInput'
 import ProjectPicker from './components/project/ProjectPicker'
 import ThreadPicker from './components/thread/ThreadPicker'
 import VersionControl from './components/version/VersionControl'
+import ResearchPanel from './components/research/ResearchPanel'
 import { AssistantMode, ThinkingOverride } from './types'
 import { getVisibleRuntimeThreadItems } from './threadPresentation'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
@@ -35,6 +36,8 @@ export default function App() {
     projects,
     branches,
     checkpoints,
+    researchTasks,
+    researchBusy,
     activeProjectId,
     threadId,
     defaultThreadId,
@@ -46,6 +49,13 @@ export default function App() {
     createCheckpoint,
     restoreCheckpoint,
     checkoutCheckpoint,
+    createResearchTask,
+    approveResearchTask,
+    startResearchTask,
+    cancelResearchTask,
+    saveResearchTaskPlan,
+    downloadResearchTaskArtifact,
+    refreshResearchTasks,
     createThread,
     createProject,
     deleteThread,
@@ -183,6 +193,20 @@ export default function App() {
         </div>
 
         <div className={styles.contentArea}>
+          {preferredMode === 'research' ? (
+            <ResearchPanel
+              tasks={researchTasks}
+              busy={researchBusy}
+              onCreateTask={(topic) => createResearchTask(topic)}
+              onApproveTask={(taskId) => approveResearchTask(taskId)}
+              onStartTask={(taskId) => startResearchTask(taskId)}
+              onCancelTask={(taskId) => cancelResearchTask(taskId)}
+              onSavePlan={(taskId, plan) => saveResearchTaskPlan(taskId, plan)}
+              onDownloadArtifact={(task) => downloadResearchTaskArtifact(task)}
+              onRefresh={() => refreshResearchTasks(activeProjectId)}
+            />
+          ) : null}
+
           <MessageList
             connected={connected}
             messages={messages}

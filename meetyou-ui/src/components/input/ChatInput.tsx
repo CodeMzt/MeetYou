@@ -15,6 +15,7 @@ const THINKING_OPTIONS: Array<{ label: string; value: ThinkingOverride }> = [
 const MODE_OPTIONS: Array<{ label: string; value: AssistantMode }> = [
   { label: '通用', value: 'general' },
   { label: '自动化', value: 'automation' },
+  { label: '研究', value: 'research' },
   { label: '旦夕', value: 'danxi' },
 ]
 
@@ -125,7 +126,11 @@ export default function ChatInput({
                   <button
                     key={opt.value}
                     className={`${styles.segmentBtn} ${preferredMode === opt.value ? styles.active : ''}`}
-                    onClick={() => setPreferredMode(opt.value)}
+                    data-mode-value={opt.value}
+                    onClick={() => {
+                      setPreferredMode(opt.value)
+                      setShowOptions(false)
+                    }}
                   >
                     {opt.label}
                   </button>
@@ -156,6 +161,7 @@ export default function ChatInput({
           className={styles.settingsBtn} 
           onClick={() => setShowOptions(!showOptions)}
           disabled={composerLocked}
+          data-chat-settings="true"
           title="会话设置"
         >
           <Settings2 size={18} />

@@ -19,6 +19,7 @@ import type {
   RuntimeOperation,
   RuntimeProject,
   RuntimeProjectSource,
+  RuntimeResearchTask,
   OperatorSourceProfile,
   RuntimeSession,
   RuntimeThread,
@@ -695,6 +696,75 @@ export async function checkoutRuntimeThreadCheckpoint(
     body: JSON.stringify(payload),
   })
   return readJsonOrThrow<RuntimeThreadBranch>(response, '签出检查点失败')
+}
+
+export async function listRuntimeResearchTasks(
+  baseUrl: string,
+  params: { project_id?: string; limit?: number } = {},
+): Promise<RuntimeResearchTask[]> {
+  const url = new URL(buildDesktopUrl(baseUrl, '/research-tasks'))
+  if (params.project_id) {
+    url.searchParams.set('project_id', params.project_id)
+  }
+  if (params.limit) {
+    url.searchParams.set('limit', String(params.limit))
+  }
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<RuntimeResearchTask[]>(response, '加载研究任务失败')
+}
+
+export async function createRuntimeResearchTask(
+  baseUrl: string,
+  payload: {
+    topic: string
+    project_id?: string
+    thread_id?: string
+    source_policy?: Record<string, unknown>
+    output_format?: string
+    metadata?: Record<string, unknown>
+  },
+): Promise<RuntimeResearchTask> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, '/research-tasks'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeResearchTask>(response, '创建研究任务失败')
+}
+
+export async function patchRuntimeResearchTask(
+  baseUrl: string,
+  researchTaskId: string,
+  payload: {
+    action?: string
+    status?: string
+    plan?: Record<string, unknown>
+    source_policy?: Record<string, unknown>
+    evidence_ledger?: Array<Record<string, unknown>>
+    summary?: string
+    report_markdown?: string
+    report_filename?: string
+    metadata?: Record<string, unknown>
+  },
+): Promise<RuntimeResearchTask> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/research-tasks/${encodeURIComponent(researchTaskId)}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeResearchTask>(response, '更新研究任务失败')
+}
+
+export async function downloadRuntimeArtifact(
+  baseUrl: string,
+  artifactId: string,
+): Promise<Blob> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/artifacts/${encodeURIComponent(artifactId)}/download`))
+  if (response.ok) {
+    return await response.blob()
+  }
+  const failure = await readErrorMessage(response, '下载 Artifact 失败')
+  throw new Error(failure.message)
 }
 
 export async function listThreadMessages(baseUrl: string, threadId: string): Promise<RuntimeMessage[]> {

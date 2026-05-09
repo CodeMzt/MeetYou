@@ -1,0 +1,243 @@
+.panel {
+  width: 100%;
+  max-height: min(360px, 48vh);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  background: #f7f7f8;
+  box-shadow: var(--shadow-subtle);
+}
+
+@media (prefers-color-scheme: dark) {
+  .panel {
+    background: #2c2c2e;
+  }
+}
+
+.header,
+.title,
+.actions,
+.detailHeader,
+.taskItem,
+.step {
+  display: flex;
+  align-items: center;
+}
+
+.header {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.title {
+  min-width: 0;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+
+.composer input {
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.composer input:focus,
+.planEditor textarea:focus {
+  border-color: var(--border-focus);
+}
+
+.composer button,
+.iconButton,
+.actions button,
+.planEditor button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.composer button {
+  height: 34px;
+  background: var(--bg-accent);
+  border-color: var(--border-accent);
+  color: var(--text-accent);
+}
+
+.iconButton {
+  width: 30px;
+  height: 30px;
+}
+
+.composer button:hover,
+.iconButton:hover,
+.actions button:hover,
+.planEditor button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+.composer button:disabled,
+.iconButton:disabled,
+.actions button:disabled,
+.planEditor button:disabled {
+  opacity: 0.52;
+  cursor: default;
+}
+
+.taskList,
+.detail,
+.steps,
+.planEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.taskItem {
+  width: 100%;
+  min-height: 34px;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.taskItem span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.taskItem span:last-child,
+.detailHeader span:last-child,
+.step span:last-child {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.taskItem:hover,
+.activeTask {
+  background: var(--bg-input);
+  border-color: var(--border-subtle);
+}
+
+.detail {
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.detailHeader {
+  justify-content: space-between;
+  gap: 10px;
+  order: 0;
+}
+
+.actions {
+  order: 1;
+}
+
+.steps {
+  order: 2;
+}
+
+.planEditor {
+  order: 3;
+}
+
+.detailHeader span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.step {
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--bg-input);
+}
+
+.step span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.planEditor textarea {
+  min-height: 92px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  outline: none;
+}
+
+.planEditor button,
+.actions button {
+  min-height: 30px;
+  gap: 6px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.empty,
+.error {
+  padding: 8px;
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--text-error);
+}
