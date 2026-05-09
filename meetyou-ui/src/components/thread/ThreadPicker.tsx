@@ -203,6 +203,7 @@ export default function ThreadPicker({
         title={activeItem?.tooltip || '新会话'}
         aria-haspopup="listbox"
         aria-expanded={open}
+        data-thread-picker-trigger="true"
       >
         <MessageSquare size={14} aria-hidden="true" />
         <span className={styles.triggerTitle}>{activeItem?.title || '新会话'}</span>

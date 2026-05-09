@@ -91,6 +91,151 @@
   border-color: var(--border-focus);
 }
 
+.settingsPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-card) 58%, transparent);
+}
+
+.settingsToggle {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settingsToggle:hover,
+.settingsToggle.active {
+  background: var(--bg-accent);
+}
+
+.settingsToggleText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.settingsToggleText span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settingsToggleText span:last-child {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.settingsForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.textInput,
+.textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.textInput {
+  height: 30px;
+  padding: 0 9px;
+}
+
+.textarea {
+  min-height: 52px;
+  max-height: 118px;
+  padding: 7px 9px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.textInput:focus,
+.textarea:focus {
+  border-color: var(--border-focus);
+}
+
+.settingsActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.secondaryButton,
+.primaryButton {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.secondaryButton {
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.primaryButton {
+  border: 1px solid var(--border-accent);
+  background: var(--bg-accent);
+  color: var(--text-accent);
+}
+
+.secondaryButton:hover,
+.primaryButton:hover {
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+.secondaryButton:disabled,
+.primaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.errorText {
+  color: var(--text-danger, #ff6b6b);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .iconButton {
   width: 30px;
   height: 30px;

@@ -9,6 +9,7 @@ import {
   listRuntimeProjects,
   listRuntimeThreads,
   listRuntimeWorkspaces,
+  updateRuntimeProject,
 } from '../../runtimeApi'
 import { createInitialTransportState, reduceTransportState } from '../../transportState'
 import { createSystemTurn } from '../../chatState'
@@ -62,6 +63,15 @@ function buildTransportError(error: Error): RuntimeErrorPayload {
     details: {},
     occurred_at: '',
   }
+}
+
+export function mergeRuntimeProjectList(projects: RuntimeProject[], project: RuntimeProject): RuntimeProject[] {
+  const nextProjects = projects.map((item) => (
+    item.project_id === project.project_id ? project : item
+  ))
+  return nextProjects.some((item) => item.project_id === project.project_id)
+    ? nextProjects
+    : [project, ...nextProjects]
 }
 
 export function runtimeThreadDeleteErrorMessage(reason: string): string {
@@ -329,6 +339,25 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     return project
   }, [baseUrl, endpointContext?.workspace])
 
+  const updateRuntimeProjectAndRemember = useCallback(async (
+    projectId: string,
+    payload: {
+      title?: string
+      description?: string
+      instructions?: string
+      memory_scope?: Record<string, unknown>
+      metadata?: Record<string, unknown>
+    },
+  ) => {
+    const normalizedProjectId = String(projectId || '').trim()
+    if (!normalizedProjectId) {
+      throw new Error('项目不可用')
+    }
+    const project = await updateRuntimeProject(baseUrl, normalizedProjectId, payload)
+    setRuntimeProjects((currentProjects) => mergeRuntimeProjectList(currentProjects, project))
+    return project
+  }, [baseUrl])
+
   const createAndSelectRuntimeThread = useCallback(async (title?: string, projectIdOverride?: string) => {
     const workspaces = await listRuntimeWorkspaces(baseUrl)
     const activeWorkspace = endpointContext?.workspace ?? chooseWorkspace(workspaces)
@@ -426,6 +455,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     selectRuntimeProject,
     createAndSelectRuntimeThread,
     createRuntimeProjectAndRemember,
+    updateRuntimeProjectAndRemember,
     deleteRuntimeThreadAndSelect,
     refreshRuntimeThreads,
     refreshDesktopToolEndpoint,

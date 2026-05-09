@@ -558,6 +558,26 @@ export async function createRuntimeProject(
   return readJsonOrThrow<RuntimeProject>(response, '创建项目失败')
 }
 
+export async function updateRuntimeProject(
+  baseUrl: string,
+  projectId: string,
+  payload: {
+    title?: string
+    description?: string
+    instructions?: string
+    status?: string
+    memory_scope?: Record<string, unknown>
+    metadata?: Record<string, unknown>
+  },
+): Promise<RuntimeProject> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/projects/${encodeURIComponent(projectId)}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeProject>(response, '更新项目失败')
+}
+
 export async function createRuntimeProjectSourceFromMessage(
   baseUrl: string,
   projectId: string,

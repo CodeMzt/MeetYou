@@ -42,6 +42,7 @@ import {
   updateDanxiReply,
   updateDanxiWebvpnCookie,
   updateOperatorWorkspaceGovernance,
+  updateRuntimeProject,
   updateDesktopMemoryRecordStatus,
 } from './runtimeApi'
 const originalFetch = globalThis.fetch
@@ -608,6 +609,45 @@ describe('runtimeApi', () => {
         body: JSON.stringify({
           workspace_id: 'personal',
           title: 'New Project',
+        }),
+      }),
+    )
+  })
+
+  it('updates project settings through desktop runtime APIs', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          project_id: 'prj_1',
+          workspace_id: 'personal',
+          title: '论文项目',
+          description: '跟踪材料和产物',
+          instructions: '优先使用项目源。',
+          status: 'active',
+          memory_scope: {},
+          metadata: {},
+          created_at: '2026-05-09T00:00:00Z',
+          updated_at: '2026-05-09T00:00:01Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const project = await updateRuntimeProject('http://127.0.0.1:8000', 'prj_1', {
+      title: '论文项目',
+      description: '跟踪材料和产物',
+      instructions: '优先使用项目源。',
+    })
+
+    expect(project.instructions).toBe('优先使用项目源。')
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/desktop/projects/prj_1',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          title: '论文项目',
+          description: '跟踪材料和产物',
+          instructions: '优先使用项目源。',
         }),
       }),
     )

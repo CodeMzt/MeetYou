@@ -1,11 +1,27 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AvailableEndpoint } from '../../types'
+import type { AvailableEndpoint, RuntimeProject } from '../../types'
 import {
   chooseDesktopToolEndpoint,
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
+  mergeRuntimeProjectList,
   runtimeThreadDeleteErrorMessage,
   resolveDesktopToolEndpointId,
 } from './useEndpointContext'
+
+function project(project_id: string, title: string): RuntimeProject {
+  return {
+    project_id,
+    workspace_id: 'personal',
+    title,
+    description: '',
+    instructions: '',
+    status: 'active',
+    memory_scope: {},
+    metadata: {},
+    created_at: '2026-05-09T00:00:00Z',
+    updated_at: '2026-05-09T00:00:00Z',
+  }
+}
 
 describe('useEndpointContext helpers', () => {
   it('picks the online desktop tool endpoint for the current workspace', () => {
@@ -69,5 +85,19 @@ describe('useEndpointContext helpers', () => {
     expect(runtimeThreadDeleteErrorMessage('default_thread')).toBe('这是受保护的默认会话，未被删除。')
     expect(runtimeThreadDeleteErrorMessage('already_deleted')).toBe('')
     expect(runtimeThreadDeleteErrorMessage('unknown')).toBe('删除会话线程失败。')
+  })
+
+  it('merges updated project settings into the remembered project list', () => {
+    const updated = {
+      ...project('prj_1', '论文项目'),
+      description: '跟踪材料和产物',
+      instructions: '优先使用项目源。',
+    }
+
+    expect(mergeRuntimeProjectList([project('prj_1', '旧名称'), project('prj_2', '课程')], updated)).toEqual([
+      updated,
+      project('prj_2', '课程'),
+    ])
+    expect(mergeRuntimeProjectList([], updated)).toEqual([updated])
   })
 })

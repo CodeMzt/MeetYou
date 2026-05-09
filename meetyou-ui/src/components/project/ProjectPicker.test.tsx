@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import ProjectPicker from './ProjectPicker'
+import ProjectPicker, { ProjectSettingsForm } from './ProjectPicker'
 import type { RuntimeProject } from '../../types'
 
 function project(project_id: string, title: string): RuntimeProject {
@@ -45,5 +45,27 @@ describe('ProjectPicker', () => {
     )
 
     expect(markup).toContain('全部会话')
+  })
+
+  it('renders the project settings form with Chinese labels', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectSettingsForm
+        title="论文项目"
+        description="跟踪材料和产物"
+        instructions="优先使用项目源。"
+        updating={false}
+        error=""
+        onTitleChange={vi.fn()}
+        onDescriptionChange={vi.fn()}
+        onInstructionsChange={vi.fn()}
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('项目名称')
+    expect(markup).toContain('项目说明')
+    expect(markup).toContain('项目指令')
+    expect(markup).toContain('data-project-settings-save="true"')
   })
 })

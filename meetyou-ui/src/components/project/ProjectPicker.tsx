@@ -1,19 +1,103 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, Folder, Layers3, Plus } from 'lucide-react'
+import { Check, ChevronDown, Folder, Layers3, Plus, Save, Settings, X } from 'lucide-react'
 import type { RuntimeProject } from '../../types'
 import styles from './ProjectPicker.module.css'
+
+export interface ProjectSettingsPayload {
+  title?: string
+  description?: string
+  instructions?: string
+}
 
 interface ProjectPickerProps {
   projects: RuntimeProject[]
   activeProjectId: string
   onSelectProject: (projectId: string) => unknown | Promise<unknown>
   onCreateProject: (title: string) => RuntimeProject | Promise<RuntimeProject | null> | null
+  onUpdateProject?: (
+    projectId: string,
+    payload: ProjectSettingsPayload,
+  ) => RuntimeProject | Promise<RuntimeProject | null> | null
 }
 
 function projectTitle(project: RuntimeProject): string {
   return String(project.title || project.project_id || '').trim() || '未命名项目'
+}
+
+export interface ProjectSettingsFormProps {
+  title: string
+  description: string
+  instructions: string
+  updating: boolean
+  error: string
+  onTitleChange: (value: string) => void
+  onDescriptionChange: (value: string) => void
+  onInstructionsChange: (value: string) => void
+  onCancel: () => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+}
+
+export function ProjectSettingsForm({
+  title,
+  description,
+  instructions,
+  updating,
+  error,
+  onTitleChange,
+  onDescriptionChange,
+  onInstructionsChange,
+  onCancel,
+  onSubmit,
+}: ProjectSettingsFormProps) {
+  return (
+    <form className={styles.settingsForm} onSubmit={onSubmit} data-project-settings-form="true">
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>项目名称</span>
+        <input
+          className={styles.textInput}
+          value={title}
+          onChange={(event) => onTitleChange(event.target.value)}
+          maxLength={80}
+          data-project-title-input="true"
+        />
+      </label>
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>项目说明</span>
+        <textarea
+          className={styles.textarea}
+          value={description}
+          onChange={(event) => onDescriptionChange(event.target.value)}
+          rows={2}
+          maxLength={500}
+          data-project-description-input="true"
+        />
+      </label>
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>项目指令</span>
+        <textarea
+          className={styles.textarea}
+          value={instructions}
+          onChange={(event) => onInstructionsChange(event.target.value)}
+          rows={4}
+          maxLength={4000}
+          data-project-instructions-input="true"
+        />
+      </label>
+      {error && <div className={styles.errorText}>{error}</div>}
+      <div className={styles.settingsActions}>
+        <button type="button" className={styles.secondaryButton} onClick={onCancel} disabled={updating}>
+          <X size={13} aria-hidden="true" />
+          取消
+        </button>
+        <button type="submit" className={styles.primaryButton} disabled={updating || !title.trim()} data-project-settings-save="true">
+          <Save size={13} aria-hidden="true" />
+          {updating ? '保存中' : '保存'}
+        </button>
+      </div>
+    </form>
+  )
 }
 
 export default function ProjectPicker({
@@ -21,10 +105,17 @@ export default function ProjectPicker({
   activeProjectId,
   onSelectProject,
   onCreateProject,
+  onUpdateProject,
 }: ProjectPickerProps) {
   const [open, setOpen] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
   const [creating, setCreating] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editInstructions, setEditInstructions] = useState('')
+  const [updating, setUpdating] = useState(false)
+  const [settingsError, setSettingsError] = useState('')
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -34,6 +125,32 @@ export default function ProjectPicker({
     [activeProjectId, projects],
   )
   const triggerTitle = activeProject ? projectTitle(activeProject) : '全部会话'
+
+  useEffect(() => {
+    if (!open) {
+      setSettingsOpen(false)
+      setSettingsError('')
+      return
+    }
+    if (!activeProject) {
+      setEditTitle('')
+      setEditDescription('')
+      setEditInstructions('')
+      setSettingsOpen(false)
+      setSettingsError('')
+      return
+    }
+    setEditTitle(projectTitle(activeProject))
+    setEditDescription(String(activeProject.description || ''))
+    setEditInstructions(String(activeProject.instructions || ''))
+    setSettingsError('')
+  }, [
+    activeProject?.project_id,
+    activeProject?.title,
+    activeProject?.description,
+    activeProject?.instructions,
+    open,
+  ])
 
   useEffect(() => {
     if (!open) {
@@ -88,6 +205,7 @@ export default function ProjectPicker({
 
   const handleSelect = (projectId: string) => {
     setOpen(false)
+    setSettingsOpen(false)
     if (projectId !== activeProjectId) {
       void onSelectProject(projectId)
     }
@@ -106,9 +224,41 @@ export default function ProjectPicker({
         await onSelectProject(project.project_id)
       }
       setDraftTitle('')
+      setSettingsOpen(false)
       setOpen(false)
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleSettingsSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!activeProject || !onUpdateProject || updating) {
+      return
+    }
+    const title = editTitle.trim()
+    if (!title) {
+      setSettingsError('项目名称不能为空')
+      return
+    }
+    setUpdating(true)
+    setSettingsError('')
+    try {
+      const project = await onUpdateProject(activeProject.project_id, {
+        title,
+        description: editDescription.trim(),
+        instructions: editInstructions.trim(),
+      })
+      if (project) {
+        setEditTitle(projectTitle(project))
+        setEditDescription(String(project.description || ''))
+        setEditInstructions(String(project.instructions || ''))
+      }
+      setSettingsOpen(false)
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : '保存项目设置失败')
+    } finally {
+      setUpdating(false)
     }
   }
 
@@ -122,6 +272,7 @@ export default function ProjectPicker({
         title={triggerTitle}
         aria-haspopup="listbox"
         aria-expanded={open}
+        data-project-picker-trigger="true"
       >
         {activeProject ? <Folder size={14} aria-hidden="true" /> : <Layers3 size={14} aria-hidden="true" />}
         <span className={styles.triggerTitle}>{triggerTitle}</span>
@@ -148,6 +299,40 @@ export default function ProjectPicker({
               <Plus size={14} aria-hidden="true" />
             </button>
           </form>
+          {activeProject && onUpdateProject && (
+            <div className={styles.settingsPanel} data-project-settings-panel="true">
+              <button
+                type="button"
+                className={`${styles.settingsToggle} ${settingsOpen ? styles.active : ''}`}
+                onClick={() => setSettingsOpen((current) => !current)}
+                data-project-settings-toggle="true"
+              >
+                <Settings size={14} aria-hidden="true" />
+                <span className={styles.settingsToggleText}>
+                  <span>项目设置</span>
+                  <span>{projectTitle(activeProject)}</span>
+                </span>
+                <ChevronDown size={14} className={styles.chevron} aria-hidden="true" />
+              </button>
+              {settingsOpen && (
+                <ProjectSettingsForm
+                  title={editTitle}
+                  description={editDescription}
+                  instructions={editInstructions}
+                  updating={updating}
+                  error={settingsError}
+                  onTitleChange={setEditTitle}
+                  onDescriptionChange={setEditDescription}
+                  onInstructionsChange={setEditInstructions}
+                  onCancel={() => {
+                    setSettingsOpen(false)
+                    setSettingsError('')
+                  }}
+                  onSubmit={handleSettingsSubmit}
+                />
+              )}
+            </div>
+          )}
           <button
             type="button"
             className={`${styles.menuItem} ${activeProjectId ? '' : styles.active}`}

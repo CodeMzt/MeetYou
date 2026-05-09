@@ -64,6 +64,7 @@ export default function App() {
     refreshResearchTasks,
     createThread,
     createProject,
+    updateProject,
     deleteThread,
     downloadProjectArtifact,
     refreshWorkspace,
@@ -185,6 +186,7 @@ export default function App() {
               activeProjectId={activeProjectId}
               onSelectProject={(nextProjectId) => selectProject(nextProjectId)}
               onCreateProject={(title) => createProject(title)}
+              onUpdateProject={(projectId, payload) => updateProject(projectId, payload)}
             />
             <ThreadPicker
               items={visibleThreads}
