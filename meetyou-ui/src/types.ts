@@ -206,6 +206,7 @@ export interface RuntimeResearchTask {
   output_format: string
   summary: string
   artifact: RuntimeArtifact | null
+  derived_artifacts?: RuntimeArtifact[]
   metadata: Record<string, unknown>
   created_at: string
   updated_at: string

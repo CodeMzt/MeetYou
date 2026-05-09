@@ -113,6 +113,13 @@
   gap: 6px;
 }
 
+.exportScope {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
 .scopeLabel {
   min-height: 30px;
   display: inline-flex;
@@ -126,6 +133,14 @@
 
 .adapterScroller {
   grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.formatScroller {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -148,7 +163,29 @@
   white-space: nowrap;
 }
 
+.formatChip {
+  min-height: 30px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .adapterChip input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--text-accent);
+}
+
+.formatChip input {
   width: 13px;
   height: 13px;
   margin: 0;
@@ -168,6 +205,7 @@
 }
 
 .adapterChip:has(input:disabled),
+.formatChip:has(input:disabled),
 .sourceScope select:disabled {
   opacity: 0.6;
 }

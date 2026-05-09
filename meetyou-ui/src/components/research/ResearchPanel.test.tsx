@@ -42,6 +42,23 @@ const task: RuntimeResearchTask = {
     created_at: '2026-05-09T00:00:00Z',
     updated_at: '2026-05-09T00:00:00Z',
   },
+  derived_artifacts: [
+    {
+      artifact_id: 'art_pdf',
+      project_id: 'prj_1',
+      thread_id: 'thr_1',
+      artifact_type: 'research_report_derivative',
+      filename: 'report.pdf',
+      content_type: 'application/pdf',
+      byte_size: 34,
+      checksum: 'sha256:pdf',
+      status: 'active',
+      download_url: '/runtime/artifacts/art_pdf/download',
+      metadata: { derived_format: 'pdf' },
+      created_at: '2026-05-09T00:00:00Z',
+      updated_at: '2026-05-09T00:00:00Z',
+    },
+  ],
   metadata: {
     progress: {
       stage: 'gather',
@@ -93,5 +110,10 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('data-research-academic-adapter="semantic_scholar"')
     expect(markup).toContain('data-research-source-limit="true"')
     expect(markup).toContain('学术源')
+    expect(markup).toContain('data-research-export-scope="true"')
+    expect(markup).toContain('data-research-derived-format="pdf"')
+    expect(markup).toContain('data-research-derived-format="docx"')
+    expect(markup).toContain('导出 1')
+    expect(markup).toContain('report.pdf')
   })
 })

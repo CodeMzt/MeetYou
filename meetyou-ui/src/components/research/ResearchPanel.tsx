@@ -21,6 +21,7 @@ interface ResearchCreateOptions {
   webQueries?: string[]
   webUrls?: string[]
   academicAdapters?: string[]
+  derivedFormats?: string[]
   limit?: number
 }
 
@@ -32,6 +33,11 @@ const ACADEMIC_ADAPTER_OPTIONS = [
 ] as const
 
 const DEFAULT_ACADEMIC_ADAPTERS = ACADEMIC_ADAPTER_OPTIONS.map((option) => option.id)
+
+const REPORT_FORMAT_OPTIONS = [
+  { id: 'pdf', label: 'PDF', title: '同时生成 PDF 报告' },
+  { id: 'docx', label: 'DOCX', title: '同时生成 Word 文档' },
+] as const
 
 function statusLabel(status: string): string {
   const normalized = String(status || '').toLowerCase()
@@ -169,11 +175,13 @@ export default function ResearchPanel({
   const [webQueryText, setWebQueryText] = useState('')
   const [webUrlText, setWebUrlText] = useState('')
   const [academicAdapters, setAcademicAdapters] = useState<string[]>(DEFAULT_ACADEMIC_ADAPTERS)
+  const [derivedFormats, setDerivedFormats] = useState<string[]>([])
   const [sourceLimit, setSourceLimit] = useState('3')
   const webSearchInputRef = useRef<HTMLInputElement | null>(null)
   const webQueryInputRef = useRef<HTMLInputElement | null>(null)
   const webUrlInputRef = useRef<HTMLInputElement | null>(null)
   const academicInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const formatInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const sourceLimitRef = useRef<HTMLSelectElement | null>(null)
 
   const selectedTask = useMemo(
@@ -184,6 +192,7 @@ export default function ResearchPanel({
   const evidenceItems = selectedTask ? getEvidenceItems(selectedTask) : []
   const researchProgress = selectedTask ? getResearchProgress(selectedTask) : null
   const editablePlan = selectedTask?.status === 'planned'
+  const selectedDerivedArtifacts = selectedTask?.derived_artifacts || []
 
   useEffect(() => {
     if (selectedTask) {
@@ -208,6 +217,17 @@ export default function ResearchPanel({
     })
   }
 
+  const updateDerivedFormat = (format: string, checked: boolean) => {
+    setDerivedFormats((current) => {
+      const next = checked
+        ? Array.from(new Set([...current, format]))
+        : current.filter((item) => item !== format)
+      return REPORT_FORMAT_OPTIONS
+        .map((option) => option.id)
+        .filter((item) => next.includes(item))
+    })
+  }
+
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const nextTopic = topic.trim()
@@ -220,6 +240,9 @@ export default function ResearchPanel({
     const currentAcademicAdapters = ACADEMIC_ADAPTER_OPTIONS
       .filter((option) => academicInputRefs.current[option.id]?.checked ?? academicAdapters.includes(option.id))
       .map((option) => option.id)
+    const currentDerivedFormats = REPORT_FORMAT_OPTIONS
+      .filter((option) => formatInputRefs.current[option.id]?.checked ?? derivedFormats.includes(option.id))
+      .map((option) => option.id)
     const currentLimit = Number(sourceLimitRef.current?.value || sourceLimit || 3)
     setLocalError('')
     await onCreateTask(nextTopic, {
@@ -227,6 +250,7 @@ export default function ResearchPanel({
       webQueries: parseQueryList(currentWebQueryText),
       webUrls: parseQueryList(currentWebUrlText),
       academicAdapters: currentAcademicAdapters,
+      derivedFormats: currentDerivedFormats,
       limit: Number.isFinite(currentLimit) ? currentLimit : 3,
     })
     setTopic('')
@@ -338,6 +362,27 @@ export default function ResearchPanel({
         </div>
       </div>
 
+      <div className={styles.exportScope} data-research-export-scope="true">
+        <span className={styles.scopeLabel}>导出</span>
+        <div className={styles.formatScroller}>
+          {REPORT_FORMAT_OPTIONS.map((option) => (
+            <label className={styles.formatChip} key={option.id} title={option.title}>
+              <input
+                ref={(element) => {
+                  formatInputRefs.current[option.id] = element
+                }}
+                type="checkbox"
+                checked={derivedFormats.includes(option.id)}
+                onChange={(event) => updateDerivedFormat(option.id, event.target.checked)}
+                disabled={busy}
+                data-research-derived-format={option.id}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
       {localError ? <div className={styles.error}>{localError}</div> : null}
 
       {tasks.length > 0 ? (
@@ -380,6 +425,7 @@ export default function ResearchPanel({
           <div className={styles.progressRow} data-research-progress="true">
             <span>来源 {evidenceItems.length}</span>
             <span>格式 {selectedTask.output_format || 'markdown'}</span>
+            {selectedDerivedArtifacts.length ? <span data-research-derived-count="true">导出 {selectedDerivedArtifacts.length}</span> : null}
             {researchProgress?.errorCount ? <span data-research-progress-errors="true">错误 {researchProgress.errorCount}</span> : null}
             {selectedTask.artifact ? <span>{formatBytes(selectedTask.artifact.byte_size)}</span> : null}
           </div>
@@ -415,6 +461,13 @@ export default function ResearchPanel({
             <div className={styles.artifactMeta} data-research-artifact-meta="true">
               <FileText size={13} aria-hidden="true" />
               <span>{selectedTask.artifact.filename}</span>
+            </div>
+          ) : null}
+
+          {selectedDerivedArtifacts.length ? (
+            <div className={styles.artifactMeta} data-research-derived-artifacts="true">
+              <FileText size={13} aria-hidden="true" />
+              <span>导出 {selectedDerivedArtifacts.map((artifact) => artifact.filename || artifact.artifact_id).join(' / ')}</span>
             </div>
           ) : null}
 
