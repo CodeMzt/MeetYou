@@ -6,6 +6,7 @@ import StatusIsland from './components/status/StatusIsland'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
 import ProjectPicker from './components/project/ProjectPicker'
+import ProjectSources from './components/project/ProjectSources'
 import ThreadPicker from './components/thread/ThreadPicker'
 import VersionControl from './components/version/VersionControl'
 import ResearchPanel from './components/research/ResearchPanel'
@@ -36,6 +37,8 @@ export default function App() {
     projects,
     branches,
     checkpoints,
+    projectSources,
+    projectSourcesBusy,
     researchTasks,
     researchBusy,
     activeProjectId,
@@ -60,6 +63,7 @@ export default function App() {
     createProject,
     deleteThread,
     refreshWorkspace,
+    refreshProjectSources,
     selectProject,
     selectThread,
   } = useMeetYou(baseUrl)
@@ -188,6 +192,12 @@ export default function App() {
               onCreateCheckpoint={() => createCheckpoint()}
               onRestoreCheckpoint={(checkpointId) => restoreCheckpoint(checkpointId)}
               onCheckoutCheckpoint={(checkpointId) => checkoutCheckpoint(checkpointId)}
+            />
+            <ProjectSources
+              activeProjectId={activeProjectId}
+              sources={projectSources}
+              busy={projectSourcesBusy}
+              onRefresh={() => refreshProjectSources(activeProjectId)}
             />
           </div>
         </div>

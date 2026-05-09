@@ -25,6 +25,7 @@ import {
   listDanxiFloors,
   listDanxiPosts,
   listOperatorSourceProfiles,
+  listRuntimeProjectSources,
   listWorkspaceTopology,
   listRuntimeProjects,
   listRuntimeResearchTasks,
@@ -611,7 +612,7 @@ describe('runtimeApi', () => {
     )
   })
 
-  it('saves message snapshots and submits edit-retry through desktop runtime APIs', async () => {
+  it('saves and lists project sources through desktop runtime APIs', async () => {
     globalThis.fetch = vi
       .fn()
       .mockResolvedValueOnce(
@@ -629,6 +630,26 @@ describe('runtimeApi', () => {
             created_at: '2026-05-09T00:00:00Z',
             updated_at: '2026-05-09T00:00:00Z',
           }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              source_id: 'src_1',
+              project_id: 'prj_1',
+              source_type: 'message_snapshot',
+              title: 'Saved message',
+              content: 'hello',
+              content_type: 'text',
+              checksum: 'sha256:abc',
+              status: 'active',
+              metadata: { message_id: 'msg_1' },
+              created_at: '2026-05-09T00:00:00Z',
+              updated_at: '2026-05-09T00:00:00Z',
+            },
+          ]),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
       )
@@ -669,12 +690,14 @@ describe('runtimeApi', () => {
       message_id: 'msg_1',
       title: 'Saved message',
     })
+    const sources = await listRuntimeProjectSources('http://127.0.0.1:8000', 'prj_1', { limit: 50 })
     const retry = await editRetryRuntimeMessage('http://127.0.0.1:8000', 'msg_1', {
       content: 'edited hello',
       title: 'Retry branch',
     })
 
     expect(source.source_type).toBe('message_snapshot')
+    expect(sources[0]?.content).toBe('hello')
     expect(retry.replay_status).toBe('queued')
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       1,
@@ -686,6 +709,11 @@ describe('runtimeApi', () => {
     )
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       2,
+      'http://127.0.0.1:8000/desktop/projects/prj_1/sources?limit=50',
+      expect.anything(),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      3,
       'http://127.0.0.1:8000/desktop/messages/msg_1/edit-retry',
       expect.objectContaining({
         method: 'POST',

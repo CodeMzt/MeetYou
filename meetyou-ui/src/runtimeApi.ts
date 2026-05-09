@@ -574,6 +574,22 @@ export async function createRuntimeProjectSourceFromMessage(
   return readJsonOrThrow<RuntimeProjectSource>(response, '保存项目源失败')
 }
 
+export async function listRuntimeProjectSources(
+  baseUrl: string,
+  projectId: string,
+  params: { include_archived?: boolean; limit?: number } = {},
+): Promise<RuntimeProjectSource[]> {
+  const url = new URL(buildDesktopUrl(baseUrl, `/projects/${encodeURIComponent(projectId)}/sources`))
+  if (params.include_archived) {
+    url.searchParams.set('include_archived', 'true')
+  }
+  if (params.limit) {
+    url.searchParams.set('limit', String(params.limit))
+  }
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<RuntimeProjectSource[]>(response, '加载项目源失败')
+}
+
 export async function deleteRuntimeThread(
   baseUrl: string,
   threadId: string,

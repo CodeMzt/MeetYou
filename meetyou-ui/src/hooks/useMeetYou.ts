@@ -8,13 +8,14 @@ import {
   createRuntimeThreadCheckpoint,
   downloadRuntimeArtifact,
   editRetryRuntimeMessage,
+  listRuntimeProjectSources,
   listRuntimeResearchTasks,
   listRuntimeThreadBranches,
   listRuntimeThreadCheckpoints,
   patchRuntimeResearchTask,
   restoreRuntimeThreadCheckpoint,
 } from '../runtimeApi'
-import type { RuntimeConversationCheckpoint, RuntimeResearchTask, RuntimeThreadBranch } from '../types'
+import type { RuntimeConversationCheckpoint, RuntimeProjectSource, RuntimeResearchTask, RuntimeThreadBranch } from '../types'
 import {
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
   useEndpointContext,
@@ -31,6 +32,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const [statusFeedback, setStatusFeedback] = useState<StatusFeedback | null>(null)
   const [threadBranches, setThreadBranches] = useState<RuntimeThreadBranch[]>([])
   const [threadCheckpoints, setThreadCheckpoints] = useState<RuntimeConversationCheckpoint[]>([])
+  const [projectSources, setProjectSources] = useState<RuntimeProjectSource[]>([])
+  const [projectSourcesBusy, setProjectSourcesBusy] = useState(false)
   const [researchTasks, setResearchTasks] = useState<RuntimeResearchTask[]>([])
   const [researchBusy, setResearchBusy] = useState(false)
 
@@ -253,6 +256,30 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     void refreshResearchTasks(activeProjectId)
   }, [activeProjectId, refreshResearchTasks])
 
+  const refreshProjectSources = useCallback(async (projectIdOverride?: string) => {
+    const projectId = String(projectIdOverride ?? activeProjectId ?? '').trim()
+    if (!projectId) {
+      setProjectSources([])
+      return []
+    }
+    setProjectSourcesBusy(true)
+    try {
+      const sources = await listRuntimeProjectSources(baseUrl, projectId, { limit: 100 })
+      setProjectSources(sources)
+      return sources
+    } catch (error) {
+      console.warn('刷新项目源失败:', error)
+      setProjectSources([])
+      return []
+    } finally {
+      setProjectSourcesBusy(false)
+    }
+  }, [activeProjectId, baseUrl])
+
+  useEffect(() => {
+    void refreshProjectSources(activeProjectId)
+  }, [activeProjectId, refreshProjectSources])
+
   const effectiveConnectionState = useMemo(() => {
     if (!endpointContext || endpointConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
       return 'connecting' as const
@@ -313,6 +340,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
         thread_id: endpointContext?.threadId || '',
       },
     })
+    void refreshProjectSources(projectId)
     setStatusFeedback({
       id: `project-source-${Date.now()}`,
       text: '已保存为项目源',
@@ -320,7 +348,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       createdAt: Date.now(),
     })
     return source
-  }, [activeProjectId, baseUrl, endpointContext?.threadId])
+  }, [activeProjectId, baseUrl, endpointContext?.threadId, refreshProjectSources])
 
   const editRetryMessage = useCallback(async (message: ChatTurn, content: string) => {
     const messageId = String(message.id || '').trim()
@@ -510,6 +538,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     projects: runtimeProjects,
     branches: threadBranches,
     checkpoints: threadCheckpoints,
+    projectSources,
+    projectSourcesBusy,
     researchTasks,
     researchBusy,
     activeProjectId,
@@ -553,6 +583,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     deleteThread: deleteRuntimeThreadAndSelect,
     refreshHealth,
     refreshWorkspace,
+    refreshProjectSources,
     selectProject: selectRuntimeProject,
     selectThread: selectRuntimeThread,
     setStatusFeedback,

@@ -1,0 +1,231 @@
+.projectSources {
+  position: relative;
+  z-index: var(--z-island);
+  pointer-events: auto;
+}
+
+.trigger {
+  height: 36px;
+  min-width: 54px;
+  max-width: 88px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  background: var(--bg-island);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-island);
+  backdrop-filter: var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+  cursor: pointer;
+}
+
+.trigger:hover,
+.trigger.open {
+  background: var(--bg-card);
+  border-color: var(--border-focus);
+}
+
+.trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.triggerTitle {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.menu {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  background: #f7f7f8;
+  box-shadow: var(--shadow-island);
+}
+
+@media (prefers-color-scheme: dark) {
+  .menu {
+    background: #2c2c2e;
+  }
+}
+
+.header {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.header button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.header button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+.header button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.46fr) minmax(0, 0.54fr);
+  gap: 8px;
+  min-height: 190px;
+}
+
+.list {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+}
+
+.sourceItem {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sourceItem:hover,
+.sourceItem.active {
+  background: var(--bg-accent);
+  border-color: var(--border-accent);
+}
+
+.sourceItem span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sourceItem strong,
+.sourceItem small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourceItem strong {
+  font-size: 12px;
+}
+
+.sourceItem small,
+.detailMeta {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+
+.detailTitle {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content {
+  min-height: 120px;
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.metadata {
+  max-height: 72px;
+  margin: 0;
+  padding-top: 6px;
+  overflow: auto;
+  border-top: 1px solid var(--border-glass);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.empty,
+.error {
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--text-error);
+}
+
+@media (max-width: 420px) {
+  .trigger {
+    width: 40px;
+    min-width: 40px;
+    padding: 0;
+  }
+
+  .triggerTitle {
+    display: none;
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
