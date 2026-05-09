@@ -22,6 +22,7 @@ The first executable runner is deliberately conservative:
 - The runner persists lightweight progress into `ResearchTask.metadata.progress` and keeps recent `metadata.progress_events`. Current stages are `gather`, `synthesize`, `artifact`, and `completed`; this is pollable task state, not a replacement for future streaming progress.
 - If no readable evidence is gathered, the task transitions to `failed` and no report artifact is created.
 - If evidence is gathered, the runner builds a Markdown report, validates bracket citations against `evidence_ledger`, creates a `research_report` Artifact, and completes the task.
+- If the task is bound to a thread, the runner also persists an assistant Message with a short summary, artifact download link, ResearchTask id, and evidence count. It then attaches the message to the active conversation branch so the ordinary automatic checkpoint path still applies.
 
 ## Evidence Ledger
 

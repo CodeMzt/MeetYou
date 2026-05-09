@@ -124,6 +124,44 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Readable V5 web source", Path(report_path).read_text(encoding="utf-8"))
 
+    def test_runner_delivers_completed_report_message_to_bound_thread(self) -> None:
+        def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
+            del timeout
+            return {
+                "url": url,
+                "title": "Thread delivered web source",
+                "content_type": "text/plain",
+                "content": "Readable evidence for a delivered research report message.",
+            }
+
+        thread = self.services.thread.create_thread(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="Research delivery thread",
+        )
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            thread_id=thread.id,
+            topic="thread delivery",
+            source_policy={"source_adapters": ["web"], "web_urls": ["https://example.test/delivery"], "limit": 1},
+        )
+        result = ResearchExecutionService(self.services, web_fetcher=fake_web_fetch).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertTrue(completed.meta["delivery_thread_message"])
+        messages = self.services.message.list_messages_for_thread(thread.id)
+        self.assertEqual(len(messages), 1)
+        delivered = messages[0]
+        self.assertEqual(delivered.role, "assistant")
+        self.assertEqual(delivered.content_type, "text/markdown")
+        self.assertIn("研究报告已完成", delivered.content)
+        self.assertIn(result["artifact_id"], delivered.content)
+        self.assertEqual(delivered.meta["research_task_id"], task.research_task_id)
+        checkpoints = self.services.conversation_version.list_checkpoints(thread_id=thread.thread_id)
+        self.assertEqual(len(checkpoints), 1)
+        self.assertEqual(checkpoints[0].message_id, delivered.id)
+
     def test_runner_discovers_read_web_evidence_from_search(self) -> None:
         def fake_web_search(query: str, max_results: int = 3, **kwargs) -> str:
             self.assertEqual(query, "branchable research checkpoints")

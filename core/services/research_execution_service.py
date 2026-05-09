@@ -365,6 +365,20 @@ class ResearchExecutionService:
                 },
             },
         )
+        delivered_message = self._deliver_report_message(
+            completed or refreshed,
+            artifact=artifact,
+            summary=summary,
+            evidence_count=len(evidence),
+        )
+        if delivered_message is not None:
+            completed_meta = dict(getattr(completed, "meta", {}) or {})
+            completed_meta["delivery_message_id"] = getattr(delivered_message, "message_id", "")
+            completed_meta["delivery_thread_message"] = True
+            completed = self.services.research_task.update_task(
+                research_task_id=research_task_id,
+                fields={"metadata": completed_meta},
+            ) or completed
         self._record_progress(
             research_task_id,
             stage="completed",
@@ -380,6 +394,44 @@ class ResearchExecutionService:
             "evidence_count": len(evidence),
             "gather_error_count": len(gather_errors),
         }
+
+    def _deliver_report_message(self, task, *, artifact, summary: str, evidence_count: int):
+        thread_row_id = getattr(task, "thread_id", None)
+        if thread_row_id is None:
+            return None
+        artifact_id = str(getattr(artifact, "artifact_id", "") or "")
+        filename = str(getattr(artifact, "filename", "") or artifact_id or "research-report.md")
+        research_task_id = str(getattr(task, "research_task_id", "") or "")
+        content = "\n".join(
+            [
+                "研究报告已完成。",
+                "",
+                str(summary or "").strip(),
+                "",
+                f"- 报告产物: [{filename}](/runtime/artifacts/{artifact_id}/download)",
+                f"- ResearchTask: `{research_task_id}`",
+                f"- 证据来源: {int(evidence_count or 0)}",
+            ]
+        ).strip()
+        message = self.services.message.create_message(
+            thread_id=thread_row_id,
+            role="assistant",
+            content=content,
+            content_type="text/markdown",
+            status="completed",
+            meta={
+                "research_task_id": research_task_id,
+                "artifact_id": artifact_id,
+                "artifact_filename": filename,
+                "delivery": "research_report",
+                "evidence_count": int(evidence_count or 0),
+            },
+        )
+        version_service = getattr(self.services, "conversation_version", None)
+        attach = getattr(version_service, "attach_message_to_active_branch", None)
+        if callable(attach):
+            attach(thread_row_id=thread_row_id, message_row_id=getattr(message, "id", None))
+        return message
 
     def _record_progress(
         self,

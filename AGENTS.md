@@ -9,6 +9,7 @@
 - Endpoint Providers may expose local research/file/search capabilities, but they must not own project source truth, artifact metadata, conversation branches, or checkpoints.
 - Deep research must use read-only evidence gathering unless the user explicitly asks for a separate write action.
 - Research reports must persist as Artifacts; final assistant messages should summarize and link to artifacts instead of embedding large report files.
+- Completed ResearchTasks bound to a thread should persist an assistant Message containing only a short summary and artifact link, then attach that message to the active conversation branch so automatic checkpoints still apply.
 - Project settings UI must edit Core Project title/description/instructions through project APIs. Do not store project instructions in frontend-only state or Workspace governance fields.
 - Project context injection is Core-owned. Ordinary turns in project threads should receive bounded Project title/description/instructions/source snapshots from Core; clients must not assemble hidden project prompts themselves.
 - Research panel source/progress UI must display Core `ResearchTask` evidence, summary, and artifact metadata. Do not fabricate source lists from frontend-only plan state.
