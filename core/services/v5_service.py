@@ -79,7 +79,7 @@ class ProjectService(ServiceBase):
                 project_id=_public_id("prj"),
                 principal_id=principal_id,
                 workspace_id=workspace_id,
-                title=str(title or "").strip() or "Untitled Project",
+                title=str(title or "").strip() or "未命名项目",
                 description=str(description or "").strip(),
                 instructions=str(instructions or "").strip(),
                 memory_scope=memory_scope,
@@ -133,7 +133,7 @@ class ProjectService(ServiceBase):
                 project_id=project.id,
                 principal_id=principal_id,
                 source_type=str(source_type or "note").strip() or "note",
-                title=str(title or "").strip() or "Project Source",
+                title=str(title or "").strip() or "项目源",
                 content=text,
                 content_type=str(content_type or "text").strip() or "text",
                 checksum=_sha256_text(text),
@@ -161,7 +161,7 @@ class ProjectService(ServiceBase):
                 project_id=project.id,
                 principal_id=principal_id,
                 source_type="message_snapshot",
-                title=str(title or "").strip() or f"Message {message.message_id}",
+                title=str(title or "").strip() or f"消息快照 {str(message.message_id or '')[-8:]}",
                 content=content,
                 content_type=str(getattr(message, "content_type", "") or "text"),
                 source_thread_id=getattr(thread, "id", None),
@@ -316,7 +316,7 @@ class ConversationVersionService(ServiceBase):
                 branch_id=_public_id("br"),
                 thread_id=thread_row_id,
                 current_leaf_message_id=getattr(leaf, "id", None),
-                title="Default",
+                title="默认分支",
                 metadata={"default_branch": True},
             )
             for message in session.query(Message).filter_by(thread_id=thread_row_id).order_by(Message.created_at.asc()).all():
@@ -346,7 +346,7 @@ class ConversationVersionService(ServiceBase):
                 branch_id=_public_id("br"),
                 thread_id=thread.id,
                 current_leaf_message_id=getattr(leaf, "id", None),
-                title="Default",
+                title="默认分支",
                 metadata={"default_branch": True},
             )
             for message in session.query(Message).filter_by(thread_id=thread.id).order_by(Message.created_at.asc()).all():
@@ -389,7 +389,7 @@ class ConversationVersionService(ServiceBase):
                 branch_id=getattr(active_branch, "id", None),
                 message_id=leaf_id,
                 checkpoint_type=checkpoint_type,
-                title=str(title or "").strip() or "Checkpoint",
+                title=str(title or "").strip() or "检查点",
                 state=state,
                 metadata=metadata,
             )
@@ -414,7 +414,13 @@ class ConversationVersionService(ServiceBase):
             "active_branch_id": getattr(branch, "branch_id", "") or "",
             "current_leaf_message_id": getattr(message, "message_id", "") or "",
         }
-        title = f"Auto checkpoint: {getattr(message, 'role', '') or 'message'} {str(getattr(message, 'message_id', '') or '')[-8:]}"
+        role_label = {
+            "user": "用户消息",
+            "assistant": "助手消息",
+            "system": "系统消息",
+            "tool": "工具消息",
+        }.get(str(getattr(message, "role", "") or "").strip().lower(), "消息")
+        title = f"自动检查点：{role_label} {str(getattr(message, 'message_id', '') or '')[-8:]}"
         return ConversationCheckpointRepository(session).create(
             checkpoint_id=_public_id("chk"),
             thread_id=thread.id,
@@ -494,7 +500,7 @@ class ConversationVersionService(ServiceBase):
                 parent_branch_id=parent_branch_id,
                 root_message_id=checkpoint.message_id,
                 current_leaf_message_id=checkpoint.message_id,
-                title=str(title or "").strip() or f"Checkout from {checkpoint.checkpoint_id}",
+                title=str(title or "").strip() or f"从检查点签出 {str(checkpoint.checkpoint_id or '')[-8:]}",
                 metadata={"checkout_checkpoint_id": checkpoint.checkpoint_id},
             )
             update_thread_version_pointer(
@@ -519,7 +525,7 @@ class ConversationVersionService(ServiceBase):
                 thread_id=thread.id,
                 parent_branch_id=message.branch_id,
                 root_message_id=message.parent_message_id,
-                title=str(title or "").strip() or f"Edit retry from {message.message_id}",
+                title=str(title or "").strip() or f"编辑重试 {str(message.message_id or '')[-8:]}",
                 metadata={"edit_retry_of_message_id": message.message_id},
             )
             sibling_count = (

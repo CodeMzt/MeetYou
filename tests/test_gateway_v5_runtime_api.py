@@ -259,6 +259,7 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(branches_response.status_code, 200)
         self.assertEqual(len(branches_response.json()), 1)
         default_branch_id = branches_response.json()[0]["branch_id"]
+        self.assertEqual(branches_response.json()[0]["title"], "默认分支")
         self.assertTrue(branches_response.json()[0]["metadata"]["is_active"])
 
         checkpoint_response = self.client.post(

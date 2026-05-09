@@ -359,7 +359,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     if (!messageId || message.temporary || !messageId.startsWith('msg_')) {
       throw new Error('消息尚未持久化，不能保存为项目源')
     }
-    const title = `${message.role === 'assistant' ? 'Assistant' : 'User'} message ${messageId.slice(-8)}`
+    const title = `${message.role === 'assistant' ? '助手消息' : '用户消息'} ${messageId.slice(-8)}`
     const source = await createRuntimeProjectSourceFromMessage(baseUrl, projectId, {
       message_id: messageId,
       title,
@@ -392,7 +392,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     }
     const result = await editRetryRuntimeMessage(baseUrl, messageId, {
       content: nextContent,
-      title: `Edit retry ${messageId.slice(-8)}`,
+      title: `编辑重试 ${messageId.slice(-8)}`,
     })
     const targetThreadId = result.message.thread_id || endpointContext?.threadId || ''
     if (targetThreadId) {

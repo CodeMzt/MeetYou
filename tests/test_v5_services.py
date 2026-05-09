@@ -94,6 +94,35 @@ class V5ServiceTests(unittest.TestCase):
         self.assertEqual(source.meta["source_message_id"], message.message_id)
         self.assertEqual([row.source_id for row in sources], [source.source_id])
 
+    def test_project_visible_defaults_are_localized(self) -> None:
+        project = self.project_service.create_project(
+            principal_id=self.principal_id,
+            workspace_id=self.workspace_id,
+            title="",
+        )
+        note = self.project_service.add_source(
+            project_id=project.project_id,
+            principal_id=self.principal_id,
+            title="",
+            content="Project note",
+        )
+        thread = self._create_thread()
+        message = self.message_service.create_message(
+            thread_id=thread.id,
+            role="assistant",
+            content="Snapshot content.",
+        )
+        snapshot = self.project_service.save_message_source(
+            project_id=project.project_id,
+            principal_id=self.principal_id,
+            message_id=message.message_id,
+            title="",
+        )
+
+        self.assertEqual(project.title, "未命名项目")
+        self.assertEqual(note.title, "项目源")
+        self.assertTrue(snapshot.title.startswith("消息快照 "))
+
     def test_threads_can_attach_to_and_leave_projects(self) -> None:
         project = self.project_service.create_project(
             principal_id=self.principal_id,
@@ -148,6 +177,7 @@ class V5ServiceTests(unittest.TestCase):
         self.version_service.attach_message_to_active_branch(thread_row_id=thread.id, message_row_id=first.id)
         second = self.message_service.create_message(thread_id=thread.id, role="assistant", content="original answer")
         self.version_service.attach_message_to_active_branch(thread_row_id=thread.id, message_row_id=second.id)
+        branches = self.version_service.list_branches(thread_id=thread.thread_id)
         checkpoints = self.version_service.list_checkpoints(thread_id=thread.thread_id)
         auto_checkpoint = next(
             checkpoint for checkpoint in checkpoints
@@ -164,21 +194,25 @@ class V5ServiceTests(unittest.TestCase):
         checkout = self.version_service.checkout_checkpoint(
             thread_id=thread.thread_id,
             checkpoint_id=auto_checkpoint.checkpoint_id,
-            title="Alternative branch",
+            title="",
         )
         checkout_visible = self.message_service.list_messages_for_thread(thread.id)
         edit_result = self.version_service.edit_retry(
             message_id=first.message_id,
             new_content="edited question",
-            title="Edited branch",
+            title="",
         )
         edit_visible = self.message_service.list_messages_for_thread(thread.id)
 
+        self.assertEqual([row.title for row in branches], ["默认分支"])
+        self.assertTrue(auto_checkpoint.title.startswith("自动检查点：助手消息 "))
         self.assertEqual(restored.message_id, second.id)
         self.assertEqual([row.message_id for row in restored_visible], [first.message_id, second.message_id])
         self.assertEqual(checkout.root_message_id, second.id)
+        self.assertTrue(checkout.title.startswith("从检查点签出 "))
         self.assertEqual([row.message_id for row in checkout_visible], [first.message_id, second.message_id])
         self.assertEqual(edit_result["replay_status"], "branch_created")
+        self.assertTrue(edit_result["branch"].title.startswith("编辑重试 "))
         self.assertEqual(edit_result["message"].content, "edited question")
         self.assertEqual(edit_result["message"].revision_of_message_id, first.id)
         self.assertEqual(edit_result["message"].variant_index, 1)
