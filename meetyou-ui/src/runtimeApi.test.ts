@@ -25,6 +25,7 @@ import {
   listDanxiFloors,
   listDanxiPosts,
   listOperatorSourceProfiles,
+  listRuntimeProjectArtifacts,
   listRuntimeProjectSources,
   listWorkspaceTopology,
   listRuntimeProjects,
@@ -719,6 +720,39 @@ describe('runtimeApi', () => {
         method: 'POST',
         body: JSON.stringify({ content: 'edited hello', title: 'Retry branch' }),
       }),
+    )
+  })
+
+  it('lists project artifacts through desktop runtime APIs', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            artifact_id: 'art_1',
+            project_id: 'prj_1',
+            thread_id: 'thr_1',
+            artifact_type: 'research_report',
+            filename: 'report.md',
+            content_type: 'text/markdown',
+            byte_size: 512,
+            checksum: 'sha256:abc',
+            status: 'active',
+            download_url: '/runtime/artifacts/art_1/download',
+            metadata: { research_task_id: 'res_1' },
+            created_at: '2026-05-09T00:00:00Z',
+            updated_at: '2026-05-09T00:00:00Z',
+          },
+        ]),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const artifacts = await listRuntimeProjectArtifacts('http://127.0.0.1:8000', 'prj_1', { limit: 25 })
+
+    expect(artifacts[0]?.filename).toBe('report.md')
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/desktop/projects/prj_1/artifacts?limit=25',
+      expect.anything(),
     )
   })
 

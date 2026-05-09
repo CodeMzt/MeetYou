@@ -53,11 +53,13 @@ Conversation version controls live next to the project/thread selectors in the f
 
 Project source controls also live in the top desktop control dock. The first UI slice lists active ProjectSource records for the selected project, refreshes after saving a message snapshot, and shows a compact source preview with metadata. The control is disabled when no project is active; source truth remains Core-owned and the UI must reload from `/runtime/projects/{project_id}/sources` rather than caching message-derived content as project state.
 
+Project artifact controls sit beside project sources. The first UI slice lists active project artifacts, shows artifact type, status, size, checksum, timestamp, and selected metadata, and downloads through `/runtime/artifacts/{artifact_id}/download`. The UI must not infer artifact availability only from the current ResearchTask list; artifacts are Core-owned project outputs and can outlive or come from outside the current thread panel.
+
 Research mode is selectable from the desktop composer. The first research UI slice exposes ResearchTask intake, plan viewing/editing before start, approve/start/cancel actions, task refresh, and artifact download. `start` now reaches a conservative Core read-only runner that can gather implemented academic adapters and project sources into an evidence ledger and persist a Markdown report artifact. Full deep-research parity still requires later progress streaming, richer ranking/reading, web-search integration, and PDF/DOCX derivation.
 
 The main Electron window is a constrained floating surface (`400x620` by default, `340x460` minimum). Project/Thread UI must be validated at the real main-window size, not only in wide browser viewports. At the default width the project trigger may collapse to an icon while preserving the full project title in the button tooltip.
 
-Message menus, edit dialogs, version menus, and project source popovers must also be validated at the real main-window size. Menus render through a portal and clamp to the visible viewport so bottom-of-thread actions, version popovers, and source previews do not render outside the floating window.
+Message menus, edit dialogs, version menus, project source popovers, and project artifact popovers must also be validated at the real main-window size. Menus render through a portal and clamp to the visible viewport so bottom-of-thread actions, version popovers, source previews, and artifact previews do not render outside the floating window.
 
 ## Delivery And Verification Workflow
 

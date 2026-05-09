@@ -8,6 +8,7 @@ import {
   createRuntimeThreadCheckpoint,
   downloadRuntimeArtifact,
   editRetryRuntimeMessage,
+  listRuntimeProjectArtifacts,
   listRuntimeProjectSources,
   listRuntimeResearchTasks,
   listRuntimeThreadBranches,
@@ -15,7 +16,7 @@ import {
   patchRuntimeResearchTask,
   restoreRuntimeThreadCheckpoint,
 } from '../runtimeApi'
-import type { RuntimeConversationCheckpoint, RuntimeProjectSource, RuntimeResearchTask, RuntimeThreadBranch } from '../types'
+import type { RuntimeArtifact, RuntimeConversationCheckpoint, RuntimeProjectSource, RuntimeResearchTask, RuntimeThreadBranch } from '../types'
 import {
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
   useEndpointContext,
@@ -34,6 +35,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const [threadCheckpoints, setThreadCheckpoints] = useState<RuntimeConversationCheckpoint[]>([])
   const [projectSources, setProjectSources] = useState<RuntimeProjectSource[]>([])
   const [projectSourcesBusy, setProjectSourcesBusy] = useState(false)
+  const [projectArtifacts, setProjectArtifacts] = useState<RuntimeArtifact[]>([])
+  const [projectArtifactsBusy, setProjectArtifactsBusy] = useState(false)
   const [researchTasks, setResearchTasks] = useState<RuntimeResearchTask[]>([])
   const [researchBusy, setResearchBusy] = useState(false)
 
@@ -280,6 +283,30 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     void refreshProjectSources(activeProjectId)
   }, [activeProjectId, refreshProjectSources])
 
+  const refreshProjectArtifacts = useCallback(async (projectIdOverride?: string) => {
+    const projectId = String(projectIdOverride ?? activeProjectId ?? '').trim()
+    if (!projectId) {
+      setProjectArtifacts([])
+      return []
+    }
+    setProjectArtifactsBusy(true)
+    try {
+      const artifacts = await listRuntimeProjectArtifacts(baseUrl, projectId, { limit: 100 })
+      setProjectArtifacts(artifacts)
+      return artifacts
+    } catch (error) {
+      console.warn('刷新项目产物失败:', error)
+      setProjectArtifacts([])
+      return []
+    } finally {
+      setProjectArtifactsBusy(false)
+    }
+  }, [activeProjectId, baseUrl])
+
+  useEffect(() => {
+    void refreshProjectArtifacts(activeProjectId)
+  }, [activeProjectId, refreshProjectArtifacts])
+
   const effectiveConnectionState = useMemo(() => {
     if (!endpointContext || endpointConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
       return 'connecting' as const
@@ -473,6 +500,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     try {
       const task = await patchRuntimeResearchTask(baseUrl, researchTaskId, payload)
       await refreshResearchTasks(activeProjectId)
+      void refreshProjectArtifacts(activeProjectId)
       setStatusFeedback({
         id: `research-${Date.now()}`,
         text: successText,
@@ -483,7 +511,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     } finally {
       setResearchBusy(false)
     }
-  }, [activeProjectId, baseUrl, refreshResearchTasks])
+  }, [activeProjectId, baseUrl, refreshProjectArtifacts, refreshResearchTasks])
 
   const approveResearchTask = useCallback((researchTaskId: string) => (
     patchResearchTask(researchTaskId, { action: 'approve' }, '已确认研究计划')
@@ -501,6 +529,34 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     patchResearchTask(researchTaskId, { plan }, '已保存研究计划')
   ), [patchResearchTask])
 
+  const downloadArtifactFile = useCallback(async (
+    artifact: Pick<RuntimeArtifact, 'artifact_id' | 'filename'>,
+    fallbackFilename: string,
+    successText: string,
+  ) => {
+    const artifactId = String(artifact.artifact_id || '').trim()
+    if (!artifactId) {
+      throw new Error('Artifact is not downloadable')
+    }
+    const blob = await downloadRuntimeArtifact(baseUrl, artifactId)
+    const filename = String(artifact.filename || fallbackFilename || `${artifactId}.md`)
+    const objectUrl = window.URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = objectUrl
+    anchor.download = filename
+    anchor.rel = 'noopener'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000)
+    setStatusFeedback({
+      id: `artifact-download-${Date.now()}`,
+      text: successText,
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+  }, [baseUrl])
+
   const downloadResearchTaskArtifact = useCallback(async (task: RuntimeResearchTask) => {
     const artifactId = String(task.artifact?.artifact_id || task.artifact_id || '').trim()
     if (!artifactId) {
@@ -508,27 +564,20 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     }
     setResearchBusy(true)
     try {
-      const blob = await downloadRuntimeArtifact(baseUrl, artifactId)
-      const filename = String(task.artifact?.filename || `${artifactId}.md`)
-      const objectUrl = window.URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = objectUrl
-      anchor.download = filename
-      anchor.rel = 'noopener'
-      document.body.appendChild(anchor)
-      anchor.click()
-      anchor.remove()
-      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000)
-      setStatusFeedback({
-        id: `research-download-${Date.now()}`,
-        text: '已开始下载研究报告',
-        tone: 'success',
-        createdAt: Date.now(),
-      })
+      await downloadArtifactFile(task.artifact || { artifact_id: artifactId, filename: `${artifactId}.md` }, `${artifactId}.md`, '已开始下载研究报告')
     } finally {
       setResearchBusy(false)
     }
-  }, [baseUrl])
+  }, [downloadArtifactFile])
+
+  const downloadProjectArtifact = useCallback(async (artifact: RuntimeArtifact) => {
+    setProjectArtifactsBusy(true)
+    try {
+      await downloadArtifactFile(artifact, artifact.filename || `${artifact.artifact_id}.md`, 'Artifact download started')
+    } finally {
+      setProjectArtifactsBusy(false)
+    }
+  }, [downloadArtifactFile])
 
   return {
     messages: chatState.messages,
@@ -540,6 +589,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     checkpoints: threadCheckpoints,
     projectSources,
     projectSourcesBusy,
+    projectArtifacts,
+    projectArtifactsBusy,
     researchTasks,
     researchBusy,
     activeProjectId,
@@ -577,6 +628,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     cancelResearchTask,
     saveResearchTaskPlan,
     downloadResearchTaskArtifact,
+    downloadProjectArtifact,
     refreshResearchTasks,
     createThread: createAndSelectRuntimeThread,
     createProject: createRuntimeProjectAndRemember,
@@ -584,6 +636,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     refreshHealth,
     refreshWorkspace,
     refreshProjectSources,
+    refreshProjectArtifacts,
     selectProject: selectRuntimeProject,
     selectThread: selectRuntimeThread,
     setStatusFeedback,

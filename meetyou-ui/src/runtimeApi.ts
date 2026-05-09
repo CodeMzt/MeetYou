@@ -15,6 +15,7 @@ import type {
   RuntimeMessage,
   RuntimeMessageCreatePayload,
   RuntimeMessageEditRetryResult,
+  RuntimeArtifact,
   RuntimeConversationCheckpoint,
   RuntimeOperation,
   RuntimeProject,
@@ -588,6 +589,22 @@ export async function listRuntimeProjectSources(
   }
   const response = await fetchWithAuth(url.toString())
   return readJsonOrThrow<RuntimeProjectSource[]>(response, '加载项目源失败')
+}
+
+export async function listRuntimeProjectArtifacts(
+  baseUrl: string,
+  projectId: string,
+  params: { include_archived?: boolean; limit?: number } = {},
+): Promise<RuntimeArtifact[]> {
+  const url = new URL(buildDesktopUrl(baseUrl, `/projects/${encodeURIComponent(projectId)}/artifacts`))
+  if (params.include_archived) {
+    url.searchParams.set('include_archived', 'true')
+  }
+  if (params.limit) {
+    url.searchParams.set('limit', String(params.limit))
+  }
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<RuntimeArtifact[]>(response, '加载项目产物失败')
 }
 
 export async function deleteRuntimeThread(

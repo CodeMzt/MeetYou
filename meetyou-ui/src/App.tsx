@@ -5,6 +5,7 @@ import Titlebar from './components/layout/Titlebar'
 import StatusIsland from './components/status/StatusIsland'
 import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
+import ProjectArtifacts from './components/project/ProjectArtifacts'
 import ProjectPicker from './components/project/ProjectPicker'
 import ProjectSources from './components/project/ProjectSources'
 import ThreadPicker from './components/thread/ThreadPicker'
@@ -37,6 +38,8 @@ export default function App() {
     projects,
     branches,
     checkpoints,
+    projectArtifacts,
+    projectArtifactsBusy,
     projectSources,
     projectSourcesBusy,
     researchTasks,
@@ -62,7 +65,9 @@ export default function App() {
     createThread,
     createProject,
     deleteThread,
+    downloadProjectArtifact,
     refreshWorkspace,
+    refreshProjectArtifacts,
     refreshProjectSources,
     selectProject,
     selectThread,
@@ -198,6 +203,13 @@ export default function App() {
               sources={projectSources}
               busy={projectSourcesBusy}
               onRefresh={() => refreshProjectSources(activeProjectId)}
+            />
+            <ProjectArtifacts
+              activeProjectId={activeProjectId}
+              artifacts={projectArtifacts}
+              busy={projectArtifactsBusy}
+              onRefresh={() => refreshProjectArtifacts(activeProjectId)}
+              onDownload={(artifact) => downloadProjectArtifact(artifact)}
             />
           </div>
         </div>
