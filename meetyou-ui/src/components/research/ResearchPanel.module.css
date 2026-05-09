@@ -106,6 +106,72 @@
   width: 100%;
 }
 
+.sourceScope {
+  display: grid;
+  grid-template-columns: auto 66px;
+  align-items: center;
+  gap: 6px;
+}
+
+.scopeLabel {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.adapterScroller {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.adapterChip {
+  min-height: 30px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.adapterChip input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--text-accent);
+}
+
+.sourceScope select {
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 11px;
+  outline: none;
+}
+
+.adapterChip:has(input:disabled),
+.sourceScope select:disabled {
+  opacity: 0.6;
+}
+
 .composer button,
 .iconButton,
 .actions button,

@@ -465,7 +465,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return branch
   }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
 
-  const createResearchTask = useCallback(async (topic: string, options?: { webSearch?: boolean; webQueries?: string[]; webUrls?: string[] }) => {
+  const createResearchTask = useCallback(async (topic: string, options?: { webSearch?: boolean; webQueries?: string[]; webUrls?: string[]; academicAdapters?: string[]; limit?: number }) => {
     const nextTopic = String(topic || '').trim()
     if (!nextTopic) {
       throw new Error('研究主题不能为空')
@@ -480,12 +480,14 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       .filter(Boolean)
       .slice(0, 8)
     const includeWebAdapter = webSearchEnabled || webUrls.length > 0
+    const supportedAcademicAdapters = ['arxiv', 'openalex', 'crossref', 'semantic_scholar']
+    const selectedAcademicAdapters = (options?.academicAdapters || supportedAcademicAdapters)
+      .map((item) => String(item || '').trim())
+      .filter((item, index, all) => supportedAcademicAdapters.includes(item) && all.indexOf(item) === index)
+    const boundedLimit = Math.max(1, Math.min(8, Math.floor(Number(options?.limit || 3) || 3)))
     const sourceAdapters = [
       ...(includeWebAdapter ? ['web'] : []),
-      'arxiv',
-      'openalex',
-      'crossref',
-      'semantic_scholar',
+      ...selectedAcademicAdapters,
     ]
     setResearchBusy(true)
     try {
@@ -499,6 +501,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
           ...(webSearchEnabled ? { web_search: true } : {}),
           ...(webSearchEnabled && webQueries.length ? { web_queries: webQueries } : {}),
           ...(webUrls.length ? { web_urls: webUrls } : {}),
+          limit: boundedLimit,
         },
         output_format: 'markdown',
         metadata: { created_from: 'desktop.research_panel' },

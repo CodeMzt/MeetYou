@@ -20,7 +20,18 @@ interface ResearchCreateOptions {
   webSearch?: boolean
   webQueries?: string[]
   webUrls?: string[]
+  academicAdapters?: string[]
+  limit?: number
 }
+
+const ACADEMIC_ADAPTER_OPTIONS = [
+  { id: 'arxiv', label: 'arXiv', title: 'arXiv' },
+  { id: 'openalex', label: 'OA', title: 'OpenAlex' },
+  { id: 'crossref', label: 'DOI', title: 'Crossref' },
+  { id: 'semantic_scholar', label: 'S2', title: 'Semantic Scholar' },
+] as const
+
+const DEFAULT_ACADEMIC_ADAPTERS = ACADEMIC_ADAPTER_OPTIONS.map((option) => option.id)
 
 function statusLabel(status: string): string {
   const normalized = String(status || '').toLowerCase()
@@ -157,9 +168,13 @@ export default function ResearchPanel({
   const [webSearchEnabled, setWebSearchEnabled] = useState(true)
   const [webQueryText, setWebQueryText] = useState('')
   const [webUrlText, setWebUrlText] = useState('')
+  const [academicAdapters, setAcademicAdapters] = useState<string[]>(DEFAULT_ACADEMIC_ADAPTERS)
+  const [sourceLimit, setSourceLimit] = useState('3')
   const webSearchInputRef = useRef<HTMLInputElement | null>(null)
   const webQueryInputRef = useRef<HTMLInputElement | null>(null)
   const webUrlInputRef = useRef<HTMLInputElement | null>(null)
+  const academicInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const sourceLimitRef = useRef<HTMLSelectElement | null>(null)
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.research_task_id === selectedTaskId) || tasks[0] || null,
@@ -182,6 +197,17 @@ export default function ResearchPanel({
     setLocalError('')
   }
 
+  const updateAcademicAdapter = (adapter: string, checked: boolean) => {
+    setAcademicAdapters((current) => {
+      const next = checked
+        ? Array.from(new Set([...current, adapter]))
+        : current.filter((item) => item !== adapter)
+      return ACADEMIC_ADAPTER_OPTIONS
+        .map((option) => option.id)
+        .filter((item) => next.includes(item))
+    })
+  }
+
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const nextTopic = topic.trim()
@@ -191,11 +217,17 @@ export default function ResearchPanel({
     const currentWebSearchEnabled = webSearchInputRef.current?.checked ?? webSearchEnabled
     const currentWebQueryText = webQueryInputRef.current?.value ?? webQueryText
     const currentWebUrlText = webUrlInputRef.current?.value ?? webUrlText
+    const currentAcademicAdapters = ACADEMIC_ADAPTER_OPTIONS
+      .filter((option) => academicInputRefs.current[option.id]?.checked ?? academicAdapters.includes(option.id))
+      .map((option) => option.id)
+    const currentLimit = Number(sourceLimitRef.current?.value || sourceLimit || 3)
     setLocalError('')
     await onCreateTask(nextTopic, {
       webSearch: currentWebSearchEnabled,
       webQueries: parseQueryList(currentWebQueryText),
       webUrls: parseQueryList(currentWebUrlText),
+      academicAdapters: currentAcademicAdapters,
+      limit: Number.isFinite(currentLimit) ? currentLimit : 3,
     })
     setTopic('')
   }
@@ -271,6 +303,40 @@ export default function ResearchPanel({
         disabled={busy}
         data-research-web-url-input="true"
       />
+
+      <div className={styles.sourceScope} data-research-source-scope="true">
+        <span className={styles.scopeLabel}>学术源</span>
+        <select
+          ref={sourceLimitRef}
+          value={sourceLimit}
+          onChange={(event) => setSourceLimit(event.target.value)}
+          disabled={busy}
+          aria-label="来源数量"
+          data-research-source-limit="true"
+        >
+          <option value="1">1 条</option>
+          <option value="3">3 条</option>
+          <option value="5">5 条</option>
+          <option value="8">8 条</option>
+        </select>
+        <div className={styles.adapterScroller}>
+          {ACADEMIC_ADAPTER_OPTIONS.map((option) => (
+            <label className={styles.adapterChip} key={option.id} title={option.title}>
+              <input
+                ref={(element) => {
+                  academicInputRefs.current[option.id] = element
+                }}
+                type="checkbox"
+                checked={academicAdapters.includes(option.id)}
+                onChange={(event) => updateAcademicAdapter(option.id, event.target.checked)}
+                disabled={busy}
+                data-research-academic-adapter={option.id}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
 
       {localError ? <div className={styles.error}>{localError}</div> : null}
 

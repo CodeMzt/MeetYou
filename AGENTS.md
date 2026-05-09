@@ -15,6 +15,7 @@
 - Research panel source/progress UI must display Core `ResearchTask` evidence, summary, and artifact metadata. Do not fabricate source lists from frontend-only plan state.
 - Research runner stage UI must read `ResearchTask.metadata.progress` / `progress_events`. Do not model research stage progress as frontend-only state.
 - Research panel web controls must write `source_policy.web_search`, optional `source_policy.web_queries`, and optional `source_policy.web_urls` into Core ResearchTask creation. If web search is disabled and no seed URLs are provided, omit the `web` adapter instead of creating a guaranteed `WebSeedUrlsRequired` task.
+- Research panel academic controls must write selected read-only academic adapters (`arxiv`, `openalex`, `crossref`, `semantic_scholar`) and bounded `source_policy.limit` into Core ResearchTask creation. Do not hide academic provider selection in frontend-only defaults.
 - Core `web` research gathering supports direct seed URLs and governed `search_web` discovery. Search-result-only entries are discovery seeds, not verified evidence; reports may cite them only after Core has a readable source summary or direct fetch evidence in the ResearchTask evidence ledger.
 - Project artifact UI must list/download Core Artifact records through artifact APIs. Do not infer the project artifact list only from visible ResearchTask state.
 - Evidence-ledger citations must refer to recorded sources. Do not invent citations or cite unread sources as verified.
