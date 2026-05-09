@@ -15,12 +15,14 @@ import type {
   RuntimeMessage,
   RuntimeMessageCreatePayload,
   RuntimeMessageEditRetryResult,
+  RuntimeConversationCheckpoint,
   RuntimeOperation,
   RuntimeProject,
   RuntimeProjectSource,
   OperatorSourceProfile,
   RuntimeSession,
   RuntimeThread,
+  RuntimeThreadBranch,
   RuntimeThreadDeleteResult,
   RuntimeUsageSnapshot,
   RuntimeWorkspace,
@@ -641,6 +643,58 @@ export async function editRetryRuntimeMessage(
     body: JSON.stringify(payload),
   })
   return readJsonOrThrow<RuntimeMessageEditRetryResult>(response, '编辑并重试失败')
+}
+
+export async function listRuntimeThreadBranches(baseUrl: string, threadId: string): Promise<RuntimeThreadBranch[]> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/branches`))
+  return readJsonOrThrow<RuntimeThreadBranch[]>(response, '加载分支列表失败')
+}
+
+export async function listRuntimeThreadCheckpoints(baseUrl: string, threadId: string): Promise<RuntimeConversationCheckpoint[]> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/checkpoints`))
+  return readJsonOrThrow<RuntimeConversationCheckpoint[]>(response, '加载检查点列表失败')
+}
+
+export async function createRuntimeThreadCheckpoint(
+  baseUrl: string,
+  threadId: string,
+  payload: {
+    title?: string
+    checkpoint_type?: string
+    metadata?: Record<string, unknown>
+  } = {},
+): Promise<RuntimeConversationCheckpoint> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/checkpoints`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeConversationCheckpoint>(response, '创建检查点失败')
+}
+
+export async function restoreRuntimeThreadCheckpoint(
+  baseUrl: string,
+  threadId: string,
+  checkpointId: string,
+): Promise<RuntimeConversationCheckpoint> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/checkpoints/${encodeURIComponent(checkpointId)}/restore`), {
+    method: 'POST',
+  })
+  return readJsonOrThrow<RuntimeConversationCheckpoint>(response, '恢复检查点失败')
+}
+
+export async function checkoutRuntimeThreadCheckpoint(
+  baseUrl: string,
+  threadId: string,
+  checkpointId: string,
+  payload: { title?: string } = {},
+): Promise<RuntimeThreadBranch> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/checkpoints/${encodeURIComponent(checkpointId)}/checkout`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeThreadBranch>(response, '签出检查点失败')
 }
 
 export async function listThreadMessages(baseUrl: string, threadId: string): Promise<RuntimeMessage[]> {

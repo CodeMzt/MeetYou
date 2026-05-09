@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatTurn, StatusFeedback } from '../types'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
-import { createRuntimeProjectSourceFromMessage, editRetryRuntimeMessage } from '../runtimeApi'
+import {
+  checkoutRuntimeThreadCheckpoint,
+  createRuntimeProjectSourceFromMessage,
+  createRuntimeThreadCheckpoint,
+  editRetryRuntimeMessage,
+  listRuntimeThreadBranches,
+  listRuntimeThreadCheckpoints,
+  restoreRuntimeThreadCheckpoint,
+} from '../runtimeApi'
+import type { RuntimeConversationCheckpoint, RuntimeThreadBranch } from '../types'
 import {
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
   useEndpointContext,
@@ -16,6 +25,8 @@ const STATUS_FEEDBACK_TTL_MS = 6000
 export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const autoInitializeAttemptedRef = useRef(false)
   const [statusFeedback, setStatusFeedback] = useState<StatusFeedback | null>(null)
+  const [threadBranches, setThreadBranches] = useState<RuntimeThreadBranch[]>([])
+  const [threadCheckpoints, setThreadCheckpoints] = useState<RuntimeConversationCheckpoint[]>([])
 
   const {
     endpointContext,
@@ -184,6 +195,38 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return () => window.clearInterval(timer)
   }, [endpointContext, refreshDesktopToolEndpoint])
 
+  const refreshThreadVersionState = useCallback(async (threadIdOverride?: string) => {
+    const targetThreadId = String(threadIdOverride || endpointContext?.threadId || '').trim()
+    if (!targetThreadId) {
+      setThreadBranches([])
+      setThreadCheckpoints([])
+      return { branches: [], checkpoints: [] }
+    }
+    try {
+      const [branches, checkpoints] = await Promise.all([
+        listRuntimeThreadBranches(baseUrl, targetThreadId),
+        listRuntimeThreadCheckpoints(baseUrl, targetThreadId),
+      ])
+      setThreadBranches(branches)
+      setThreadCheckpoints(checkpoints)
+      return { branches, checkpoints }
+    } catch (error) {
+      console.warn('刷新分支/检查点失败:', error)
+      setThreadBranches([])
+      setThreadCheckpoints([])
+      return { branches: [], checkpoints: [] }
+    }
+  }, [baseUrl, endpointContext?.threadId])
+
+  useEffect(() => {
+    if (!endpointContext?.threadId) {
+      setThreadBranches([])
+      setThreadCheckpoints([])
+      return
+    }
+    void refreshThreadVersionState(endpointContext.threadId)
+  }, [endpointContext?.threadId, refreshThreadVersionState])
+
   const effectiveConnectionState = useMemo(() => {
     if (!endpointContext || endpointConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
       return 'connecting' as const
@@ -274,6 +317,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       await loadThreadHistory(targetThreadId)
     }
     await refreshRuntimeThreads(endpointContext?.workspace.workspace_id)
+    await refreshThreadVersionState(targetThreadId)
     setStatusFeedback({
       id: `edit-retry-${Date.now()}`,
       text: result.replay_status === 'queued' ? '已创建分支并开始重试' : '已创建编辑重试分支',
@@ -281,7 +325,63 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       createdAt: Date.now(),
     })
     return result
-  }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads])
+  }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
+
+  const createCheckpoint = useCallback(async (title?: string) => {
+    const threadId = String(endpointContext?.threadId || '').trim()
+    if (!threadId) {
+      throw new Error('没有可用会话')
+    }
+    const checkpoint = await createRuntimeThreadCheckpoint(baseUrl, threadId, {
+      title: String(title || '').trim() || `Checkpoint ${new Date().toLocaleTimeString()}`,
+      checkpoint_type: 'manual',
+    })
+    await refreshThreadVersionState(threadId)
+    setStatusFeedback({
+      id: `checkpoint-${Date.now()}`,
+      text: '已创建检查点',
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+    return checkpoint
+  }, [baseUrl, endpointContext?.threadId, refreshThreadVersionState])
+
+  const restoreCheckpoint = useCallback(async (checkpointId: string) => {
+    const threadId = String(endpointContext?.threadId || '').trim()
+    if (!threadId) {
+      throw new Error('没有可用会话')
+    }
+    const checkpoint = await restoreRuntimeThreadCheckpoint(baseUrl, threadId, checkpointId)
+    await loadThreadHistory(threadId)
+    await refreshThreadVersionState(threadId)
+    setStatusFeedback({
+      id: `checkpoint-restore-${Date.now()}`,
+      text: '已恢复到检查点',
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+    return checkpoint
+  }, [baseUrl, endpointContext?.threadId, loadThreadHistory, refreshThreadVersionState])
+
+  const checkoutCheckpoint = useCallback(async (checkpointId: string) => {
+    const threadId = String(endpointContext?.threadId || '').trim()
+    if (!threadId) {
+      throw new Error('没有可用会话')
+    }
+    const branch = await checkoutRuntimeThreadCheckpoint(baseUrl, threadId, checkpointId, {
+      title: `Checkout ${new Date().toLocaleTimeString()}`,
+    })
+    await loadThreadHistory(threadId)
+    await refreshRuntimeThreads(endpointContext?.workspace.workspace_id)
+    await refreshThreadVersionState(threadId)
+    setStatusFeedback({
+      id: `checkpoint-checkout-${Date.now()}`,
+      text: '已从检查点签出分支',
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+    return branch
+  }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
 
   return {
     messages: chatState.messages,
@@ -289,6 +389,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     workspace: endpointContext?.workspace || null,
     threads: runtimeThreads,
     projects: runtimeProjects,
+    branches: threadBranches,
+    checkpoints: threadCheckpoints,
     activeProjectId,
     threadId: endpointContext?.threadId || '',
     defaultThreadId,
@@ -315,6 +417,9 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     sendControlCommand,
     saveMessageAsProjectSource,
     editRetryMessage,
+    createCheckpoint,
+    restoreCheckpoint,
+    checkoutCheckpoint,
     createThread: createAndSelectRuntimeThread,
     createProject: createRuntimeProjectAndRemember,
     deleteThread: deleteRuntimeThreadAndSelect,

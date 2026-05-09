@@ -1,0 +1,184 @@
+.versionControl {
+  position: relative;
+  z-index: var(--z-island);
+  pointer-events: auto;
+}
+
+.trigger {
+  height: 36px;
+  min-width: 54px;
+  max-width: 88px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-full);
+  background: var(--bg-island);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-island);
+  backdrop-filter: var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+  cursor: pointer;
+}
+
+.trigger:hover,
+.trigger.open {
+  background: var(--bg-card);
+  border-color: var(--border-focus);
+}
+
+.triggerTitle {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chevron {
+  transition: transform 0.18s ease;
+}
+
+.open .chevron {
+  transform: rotate(180deg);
+}
+
+.menu {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-app) 88%, transparent);
+  box-shadow: var(--shadow-island);
+  backdrop-filter: var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+}
+
+.primaryAction,
+.checkpointItem {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.primaryAction {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--bg-accent);
+  border-color: var(--border-accent);
+  color: var(--text-accent);
+  cursor: pointer;
+}
+
+.primaryAction:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.summaryRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sectionTitle {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.empty,
+.error {
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--text-error);
+}
+
+.checkpointItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-input);
+}
+
+.checkpointText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.checkpointTitle {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpointMeta {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.actionGroup {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.actionGroup button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.actionGroup button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+.actionGroup button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 420px) {
+  .trigger {
+    width: 40px;
+    min-width: 40px;
+    padding: 0;
+  }
+
+  .triggerTitle,
+  .chevron {
+    display: none;
+  }
+}

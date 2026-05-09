@@ -156,23 +156,29 @@ class V5ServiceTests(unittest.TestCase):
             thread_id=thread.thread_id,
             checkpoint_id=checkpoint.checkpoint_id,
         )
+        restored_visible = self.message_service.list_messages_for_thread(thread.id)
         checkout = self.version_service.checkout_checkpoint(
             thread_id=thread.thread_id,
             checkpoint_id=checkpoint.checkpoint_id,
             title="Alternative branch",
         )
+        checkout_visible = self.message_service.list_messages_for_thread(thread.id)
         edit_result = self.version_service.edit_retry(
             message_id=first.message_id,
             new_content="edited question",
             title="Edited branch",
         )
+        edit_visible = self.message_service.list_messages_for_thread(thread.id)
 
         self.assertEqual(restored.message_id, second.id)
+        self.assertEqual([row.message_id for row in restored_visible], [first.message_id, second.message_id])
         self.assertEqual(checkout.root_message_id, second.id)
+        self.assertEqual([row.message_id for row in checkout_visible], [first.message_id, second.message_id])
         self.assertEqual(edit_result["replay_status"], "branch_created")
         self.assertEqual(edit_result["message"].content, "edited question")
         self.assertEqual(edit_result["message"].revision_of_message_id, first.id)
         self.assertEqual(edit_result["message"].variant_index, 1)
+        self.assertEqual([row.message_id for row in edit_visible], [edit_result["message"].message_id])
 
         with self.Session() as session:
             stored_thread = session.query(Thread).filter_by(id=thread.id).one()

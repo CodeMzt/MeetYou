@@ -3,8 +3,10 @@ import {
   clearDesktopMemory,
   createRuntimeProject,
   createRuntimeProjectSourceFromMessage,
+  createRuntimeThreadCheckpoint,
   createRuntimeThread,
   createDanxiReply,
+  checkoutRuntimeThreadCheckpoint,
   deleteRuntimeThread,
   deleteDesktopMemoryRecord,
   deleteDanxiReply,
@@ -23,10 +25,13 @@ import {
   listOperatorSourceProfiles,
   listWorkspaceTopology,
   listRuntimeProjects,
+  listRuntimeThreadBranches,
+  listRuntimeThreadCheckpoints,
   listRuntimeThreads,
   loginDanxiSession,
   removeAddressWorkspace,
   restoreOperatorWorkspace,
+  restoreRuntimeThreadCheckpoint,
   setAddressPrimaryWorkspace,
   updateDanxiReply,
   updateDanxiWebvpnCookie,
@@ -683,6 +688,114 @@ describe('runtimeApi', () => {
         body: JSON.stringify({ content: 'edited hello', title: 'Retry branch' }),
       }),
     )
+  })
+
+  it('manages thread branches and checkpoints through desktop runtime APIs', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([{
+            branch_id: 'br_1',
+            thread_id: 'thr_1',
+            parent_branch_id: '',
+            title: 'Default',
+            status: 'active',
+            current_leaf_message_id: 'msg_1',
+            metadata: {},
+            created_at: '2026-05-09T00:00:00Z',
+            updated_at: '2026-05-09T00:00:00Z',
+          }]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([{
+            checkpoint_id: 'chk_1',
+            thread_id: 'thr_1',
+            branch_id: 'br_1',
+            message_id: 'msg_1',
+            checkpoint_type: 'manual',
+            title: 'Checkpoint',
+            state: {},
+            status: 'active',
+            metadata: {},
+            created_at: '2026-05-09T00:00:00Z',
+            updated_at: '2026-05-09T00:00:00Z',
+          }]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            checkpoint_id: 'chk_2',
+            thread_id: 'thr_1',
+            branch_id: 'br_1',
+            message_id: 'msg_2',
+            checkpoint_type: 'manual',
+            title: 'Created',
+            state: {},
+            status: 'active',
+            metadata: {},
+            created_at: '2026-05-09T00:00:01Z',
+            updated_at: '2026-05-09T00:00:01Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            checkpoint_id: 'chk_1',
+            thread_id: 'thr_1',
+            branch_id: 'br_1',
+            message_id: 'msg_1',
+            checkpoint_type: 'manual',
+            title: 'Checkpoint',
+            state: {},
+            status: 'active',
+            metadata: {},
+            created_at: '2026-05-09T00:00:00Z',
+            updated_at: '2026-05-09T00:00:02Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            branch_id: 'br_checkout',
+            thread_id: 'thr_1',
+            parent_branch_id: 'br_1',
+            title: 'Checkout',
+            status: 'active',
+            current_leaf_message_id: 'msg_1',
+            metadata: {},
+            created_at: '2026-05-09T00:00:03Z',
+            updated_at: '2026-05-09T00:00:03Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const branches = await listRuntimeThreadBranches('http://127.0.0.1:8000', 'thr_1')
+    const checkpoints = await listRuntimeThreadCheckpoints('http://127.0.0.1:8000', 'thr_1')
+    const created = await createRuntimeThreadCheckpoint('http://127.0.0.1:8000', 'thr_1', { title: 'Created' })
+    const restored = await restoreRuntimeThreadCheckpoint('http://127.0.0.1:8000', 'thr_1', 'chk_1')
+    const checkout = await checkoutRuntimeThreadCheckpoint('http://127.0.0.1:8000', 'thr_1', 'chk_1', { title: 'Checkout' })
+
+    expect(branches[0].branch_id).toBe('br_1')
+    expect(checkpoints[0].checkpoint_id).toBe('chk_1')
+    expect(created.title).toBe('Created')
+    expect(restored.message_id).toBe('msg_1')
+    expect(checkout.branch_id).toBe('br_checkout')
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:8000/desktop/threads/thr_1/branches', expect.any(Object))
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:8000/desktop/threads/thr_1/checkpoints', expect.any(Object))
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:8000/desktop/threads/thr_1/checkpoints', expect.objectContaining({ method: 'POST' }))
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:8000/desktop/threads/thr_1/checkpoints/chk_1/restore', expect.objectContaining({ method: 'POST' }))
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(5, 'http://127.0.0.1:8000/desktop/threads/thr_1/checkpoints/chk_1/checkout', expect.objectContaining({ method: 'POST' }))
   })
 
   it('deletes runtime threads through desktop runtime API', async () => {

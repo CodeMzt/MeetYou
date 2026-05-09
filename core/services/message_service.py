@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from core.db.models import Thread
 from core.db.repositories import MessageRepository
 from core.services.base import ServiceBase
 
@@ -52,7 +53,16 @@ class MessageService(ServiceBase):
 
     def list_messages_for_thread(self, thread_id):
         with self.session_scope() as session:
-            return MessageRepository(session).list_by_thread_id(thread_id)
+            repo = MessageRepository(session)
+            thread = session.get(Thread, thread_id)
+            if thread is not None and getattr(thread, "current_leaf_message_id", None):
+                path = repo.list_branch_path(
+                    thread_id=thread_id,
+                    leaf_message_id=thread.current_leaf_message_id,
+                )
+                if path:
+                    return path
+            return repo.list_by_thread_id(thread_id)
 
     def load_thread_context_window(
         self,

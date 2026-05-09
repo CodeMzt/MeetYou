@@ -61,6 +61,21 @@ class MessageRepository(RepositoryBase):
             .all()
         )
 
+    def list_branch_path(self, *, thread_id, leaf_message_id) -> list[Message]:
+        if leaf_message_id is None:
+            return []
+        rows = self.list_by_thread_id(thread_id)
+        by_id = {row.id: row for row in rows}
+        current = by_id.get(leaf_message_id)
+        path: list[Message] = []
+        seen = set()
+        while current is not None and current.id not in seen:
+            seen.add(current.id)
+            path.append(current)
+            parent_id = getattr(current, "parent_message_id", None)
+            current = by_id.get(parent_id) if parent_id is not None else None
+        return list(reversed(path))
+
     def _thread_context_query(
         self,
         *,

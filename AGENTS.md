@@ -12,6 +12,7 @@
 - Evidence-ledger citations must refer to recorded sources. Do not invent citations or cite unread sources as verified.
 - Conversation checkpoint restore and checkout are non-destructive. Do not delete old messages when switching branch/checkpoint.
 - Historical edit retry creates a new message revision and branch. Do not overwrite the original message content.
+- V5 visible thread history must be projected by Core from `Thread.current_leaf_message_id` through `Message.parent_message_id`. Frontend branch/checkpoint controls must reload Core history after restore/checkout instead of hiding messages locally.
 
 ## V4 Architecture Rules
 
@@ -69,6 +70,7 @@
 - Edge provider runtime: `edge_client/`, especially `edge_client/runtime.py`.
 - UI entrypoints: `meetyou-ui/electron/main.ts` for Electron main process and `meetyou-ui/src/main.tsx` for renderer.
 - Frontend Core access path: `meetyou-ui/src/hooks/useMeetYou.ts` and `meetyou-ui/src/windowBridge.ts`.
+- V5 desktop version UI: `meetyou-ui/src/components/version/`, with branch/checkpoint state wired through `meetyou-ui/src/hooks/useMeetYou.ts`.
 - Persistence and migrations: `core/db/*` and `alembic/versions/*`.
 - Do not move local file, general Shell, local MCP lifecycle, or workspace-local execution back into Core. The only Core shell exception is `exec_core_cmd`, fixed to the Core process working directory and constrained by the Core whitelist policy; all other local execution capabilities must be exposed as endpoint execution capabilities and routed through ToolRouter / ExecutionTarget.
 

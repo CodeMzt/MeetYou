@@ -163,6 +163,20 @@ export interface RuntimeMessageEditRetryResult {
   replay_status: string
 }
 
+export interface RuntimeConversationCheckpoint {
+  checkpoint_id: string
+  thread_id: string
+  branch_id: string
+  message_id: string
+  checkpoint_type: string
+  title: string
+  state: Record<string, unknown>
+  status: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
 export interface RuntimeThreadDeleteResult {
   ok: boolean
   thread_id: string

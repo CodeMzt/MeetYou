@@ -49,9 +49,11 @@ The desktop main window exposes Project as a lightweight scope selector next to 
 
 Persisted messages expose a compact action menu in the message bubble. The menu can save any persisted message as a ProjectSource when a project is active, and it can edit-and-retry persisted user messages through `/runtime/messages/{message_id}/edit-retry`. The edit dialog submits the current textarea value and relies on Core to create the message revision and branch; it must not mutate the original message locally.
 
+Conversation version controls live next to the project/thread selectors in the floating desktop window. The first branch/checkpoint UI slice lists branch and checkpoint counts, creates manual checkpoints, restores the active thread leaf to a checkpoint, and checks out a new branch from a checkpoint. Restore/checkout must reload visible thread history through Core instead of filtering messages locally; Core owns active branch path projection.
+
 The main Electron window is a constrained floating surface (`400x620` by default, `340x460` minimum). Project/Thread UI must be validated at the real main-window size, not only in wide browser viewports. At the default width the project trigger may collapse to an icon while preserving the full project title in the button tooltip.
 
-Message menus and edit dialogs must also be validated at the real main-window size. Menus render through a portal and clamp to the visible viewport so bottom-of-thread actions do not render outside the floating window.
+Message menus, edit dialogs, and version menus must also be validated at the real main-window size. Menus render through a portal and clamp to the visible viewport so bottom-of-thread actions and version popovers do not render outside the floating window.
 
 ## Delivery And Verification Workflow
 
@@ -61,4 +63,4 @@ Each phase must produce a concrete phase plan, make scoped changes, run local te
 
 The Core deploy workflow is branch-aware. CI success on `main` deploys `main`; CI success on `v5` deploys `v5`. Manual deployment dispatch accepts an explicit branch input, validates it as a Git branch name, fetches that branch on the Core host, and resets the remote working tree to `origin/<branch>` before invoking the host deploy script.
 
-First-stage implementation provides durable API/data skeleton and local ArtifactStore. Full background research execution and full project/branch UI are follow-up work.
+First-stage implementation provides durable API/data skeleton and local ArtifactStore. Full background research execution and a complete sibling-variant browser are follow-up work.

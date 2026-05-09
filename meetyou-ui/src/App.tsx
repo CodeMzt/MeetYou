@@ -7,6 +7,7 @@ import MessageList from './components/chat/MessageList'
 import ChatInput from './components/input/ChatInput'
 import ProjectPicker from './components/project/ProjectPicker'
 import ThreadPicker from './components/thread/ThreadPicker'
+import VersionControl from './components/version/VersionControl'
 import { AssistantMode, ThinkingOverride } from './types'
 import { getVisibleRuntimeThreadItems } from './threadPresentation'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
@@ -32,6 +33,8 @@ export default function App() {
     statusFeedback,
     threads,
     projects,
+    branches,
+    checkpoints,
     activeProjectId,
     threadId,
     defaultThreadId,
@@ -40,6 +43,9 @@ export default function App() {
     sendControlCommand,
     saveMessageAsProjectSource,
     editRetryMessage,
+    createCheckpoint,
+    restoreCheckpoint,
+    checkoutCheckpoint,
     createThread,
     createProject,
     deleteThread,
@@ -165,6 +171,13 @@ export default function App() {
               onSelectThread={(nextThreadId) => void selectThread(nextThreadId)}
               onCreateThread={(title) => createThread(title, activeProjectId)}
               onDeleteThread={(nextThreadId) => deleteThread(nextThreadId)}
+            />
+            <VersionControl
+              branches={branches}
+              checkpoints={checkpoints}
+              onCreateCheckpoint={() => createCheckpoint()}
+              onRestoreCheckpoint={(checkpointId) => restoreCheckpoint(checkpointId)}
+              onCheckoutCheckpoint={(checkpointId) => checkoutCheckpoint(checkpointId)}
             />
           </div>
         </div>
