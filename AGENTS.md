@@ -66,7 +66,7 @@
 - Endpoint lifecycle frames are `endpoint.hello`, `endpoint.capabilities.snapshot`, `endpoint.ready`, `endpoint.heartbeat`, and `endpoint.goodbye`.
 - Endpoint address frames are `endpoint.addresses.snapshot`, `endpoint.address.upsert`, and `endpoint.address.delete`.
 - Subscription frames are `subscription.start`, `subscription.update`, and `subscription.stop`.
-- Delivery frames are `delivery.message`, `delivery.run_event`, `delivery.notice`, `delivery.operation_update`, and `delivery.inbox_item`.
+- Delivery frames are `delivery.message`, `delivery.run_event`, `delivery.notice`, `delivery.operation_update`, `delivery.inbox_item`, `delivery.result`, `delivery.error`, and `delivery.result.ack`.
 - Address-targeted `delivery.message` and `delivery.notice` payloads include `target_address_id`, `target_provider_type`, `target_address_type`, and `target_external_ref`.
 - Tool frames are `tool.call.request`, `tool.call.accepted`, `tool.call.progress`, `tool.call.result`, `tool.call.error`, and `tool.call.cancel`.
 - Use `origin_endpoint_id`, `target_endpoint_id`, and `execution_target_id` in V4 data paths. Do not add new runtime usage of `source_client_id` or `target_client_id`.
