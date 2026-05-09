@@ -465,11 +465,23 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return branch
   }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
 
-  const createResearchTask = useCallback(async (topic: string) => {
+  const createResearchTask = useCallback(async (topic: string, options?: { webSearch?: boolean; webQueries?: string[] }) => {
     const nextTopic = String(topic || '').trim()
     if (!nextTopic) {
       throw new Error('研究主题不能为空')
     }
+    const webSearchEnabled = options?.webSearch !== false
+    const webQueries = (options?.webQueries || [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .slice(0, 4)
+    const sourceAdapters = [
+      ...(webSearchEnabled ? ['web'] : []),
+      'arxiv',
+      'openalex',
+      'crossref',
+      'semantic_scholar',
+    ]
     setResearchBusy(true)
     try {
       const task = await createRuntimeResearchTask(baseUrl, {
@@ -477,8 +489,10 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
         project_id: activeProjectId || undefined,
         thread_id: endpointContext?.threadId || undefined,
         source_policy: {
-          source_adapters: ['web', 'arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+          source_adapters: sourceAdapters,
           include_project_sources: Boolean(activeProjectId),
+          ...(webSearchEnabled ? { web_search: true } : {}),
+          ...(webSearchEnabled && webQueries.length ? { web_queries: webQueries } : {}),
         },
         output_format: 'markdown',
         metadata: { created_from: 'desktop.research_panel' },

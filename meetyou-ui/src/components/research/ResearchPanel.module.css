@@ -47,7 +47,8 @@
   gap: 6px;
 }
 
-.composer input {
+.composer input,
+.searchOptions input[type='text'] {
   min-width: 0;
   height: 34px;
   padding: 0 10px;
@@ -60,8 +61,42 @@
 }
 
 .composer input:focus,
+.searchOptions input[type='text']:focus,
 .planEditor textarea:focus {
   border-color: var(--border-focus);
+}
+
+.searchOptions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.searchToggle {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.searchToggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--text-accent);
+}
+
+.searchOptions input[type='text']:disabled,
+.searchToggle:has(input:disabled) {
+  opacity: 0.6;
 }
 
 .composer button,

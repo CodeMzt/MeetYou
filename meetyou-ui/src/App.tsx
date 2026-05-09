@@ -223,7 +223,7 @@ export default function App() {
             <ResearchPanel
               tasks={researchTasks}
               busy={researchBusy}
-              onCreateTask={(topic) => createResearchTask(topic)}
+              onCreateTask={(topic, options) => createResearchTask(topic, options)}
               onApproveTask={(taskId) => approveResearchTask(taskId)}
               onStartTask={(taskId) => startResearchTask(taskId)}
               onCancelTask={(taskId) => cancelResearchTask(taskId)}

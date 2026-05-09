@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Check, Download, FileText, Play, RefreshCw, Save, Search, X } from 'lucide-react'
 import type { RuntimeResearchTask } from '../../types'
@@ -7,13 +7,18 @@ import styles from './ResearchPanel.module.css'
 interface ResearchPanelProps {
   tasks: RuntimeResearchTask[]
   busy: boolean
-  onCreateTask: (topic: string) => Promise<unknown>
+  onCreateTask: (topic: string, options?: ResearchCreateOptions) => Promise<unknown>
   onApproveTask: (taskId: string) => Promise<unknown>
   onStartTask: (taskId: string) => Promise<unknown>
   onCancelTask: (taskId: string) => Promise<unknown>
   onSavePlan: (taskId: string, plan: Record<string, unknown>) => Promise<unknown>
   onDownloadArtifact: (task: RuntimeResearchTask) => Promise<unknown>
   onRefresh: () => Promise<unknown>
+}
+
+interface ResearchCreateOptions {
+  webSearch?: boolean
+  webQueries?: string[]
 }
 
 function statusLabel(status: string): string {
@@ -125,6 +130,14 @@ function formatPlan(plan: Record<string, unknown>): string {
   }
 }
 
+function parseQueryList(value: string): string[] {
+  return String(value || '')
+    .split(/\r?\n|[,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 4)
+}
+
 export default function ResearchPanel({
   tasks,
   busy,
@@ -140,6 +153,10 @@ export default function ResearchPanel({
   const [selectedTaskId, setSelectedTaskId] = useState('')
   const [planText, setPlanText] = useState('')
   const [localError, setLocalError] = useState('')
+  const [webSearchEnabled, setWebSearchEnabled] = useState(true)
+  const [webQueryText, setWebQueryText] = useState('')
+  const webSearchInputRef = useRef<HTMLInputElement | null>(null)
+  const webQueryInputRef = useRef<HTMLInputElement | null>(null)
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.research_task_id === selectedTaskId) || tasks[0] || null,
@@ -168,8 +185,13 @@ export default function ResearchPanel({
     if (!nextTopic || busy) {
       return
     }
+    const currentWebSearchEnabled = webSearchInputRef.current?.checked ?? webSearchEnabled
+    const currentWebQueryText = webQueryInputRef.current?.value ?? webQueryText
     setLocalError('')
-    await onCreateTask(nextTopic)
+    await onCreateTask(nextTopic, {
+      webSearch: currentWebSearchEnabled,
+      webQueries: parseQueryList(currentWebQueryText),
+    })
     setTopic('')
   }
 
@@ -210,6 +232,29 @@ export default function ResearchPanel({
           <FileText size={14} aria-hidden="true" />
         </button>
       </form>
+
+      <div className={styles.searchOptions}>
+        <label className={styles.searchToggle}>
+          <input
+            ref={webSearchInputRef}
+            type="checkbox"
+            checked={webSearchEnabled}
+            onChange={(event) => setWebSearchEnabled(event.target.checked)}
+            disabled={busy}
+            data-research-web-search-toggle="true"
+          />
+          <span>联网搜索</span>
+        </label>
+        <input
+          ref={webQueryInputRef}
+          type="text"
+          value={webQueryText}
+          onChange={(event) => setWebQueryText(event.target.value)}
+          placeholder="搜索查询，留空使用主题"
+          disabled={busy || !webSearchEnabled}
+          data-research-web-query-input="true"
+        />
+      </div>
 
       {localError ? <div className={styles.error}>{localError}</div> : null}
 

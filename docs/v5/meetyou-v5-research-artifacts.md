@@ -61,13 +61,14 @@ Production storage must implement the same ArtifactStore contract and return an 
 The desktop UI exposes `research` as a composer mode and shows a compact ResearchTask panel in the main thread view while that mode is active. The first UI slice supports:
 
 - create a task with topic, active project, active thread, default read-only source policy, and Markdown output format;
+- enable or disable governed web-search discovery and optionally provide explicit search queries before creating the task;
 - inspect generated plan steps;
 - edit and save the plan while status is `planned`;
 - approve, start, cancel, and refresh task state;
 - inspect durable progress context from the selected task, including current runner stage, stage message, evidence count, gather error count, output format, summary, the first evidence ledger entries, and completed artifact filename/size;
 - download a completed report artifact through the authenticated `/desktop/artifacts/{artifact_id}/download` proxy.
 
-This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; stage progress must be derived from `ResearchTask.metadata.progress`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, richer source ranking, PDF/DOCX derivation, and broad provider selection remain later V5 stages.
+This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; stage progress must be derived from `ResearchTask.metadata.progress`; artifact labels and downloads must be derived from the Core artifact record attached to the task. The search controls write `source_policy.web_search=true` and optional `source_policy.web_queries` into task creation; when web search is disabled, the UI omits the `web` adapter until direct seed-URL controls exist. The current UI can create/approve/start a task, show completed source/summary/artifact state, and download the completed artifact, but advanced capabilities such as editable multi-agent research plans, long-running progress streams, richer source ranking, PDF/DOCX derivation, and broad provider selection remain later V5 stages.
 
 ## Project Artifacts UI
 
