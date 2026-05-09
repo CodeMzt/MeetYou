@@ -73,7 +73,90 @@
   line-height: 1.6;
   box-shadow: 0 2px 12px var(--shadow-color, rgba(0, 0, 0, 0.05));
   word-wrap: break-word;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.messageActions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.messageInner:hover .messageActions,
+.messageActions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.messageActionTrigger,
+.editIconButton {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-card) 80%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.messageActionTrigger:hover,
+.editIconButton:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
+}
+
+.messageActionMenu {
+  position: fixed;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-modal);
+}
+
+.messageActionItem {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.messageActionItem:hover {
+  background: var(--bg-input);
+}
+
+.messageActionItem:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.inlineActionError,
+.actionError {
+  margin-top: 8px;
+  color: var(--text-error);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .user .messageInner {
@@ -118,4 +201,98 @@
   font-size: 12px;
   box-shadow: var(--shadow-sm);
   z-index: 2;
+}
+
+.editOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+}
+
+.editBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.editDialog {
+  position: relative;
+  width: min(420px, 100%);
+  max-height: calc(100vh - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.editHeader,
+.editFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.editTitle {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.editTextarea {
+  width: 100%;
+  min-height: 180px;
+  max-height: min(42vh, 320px);
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.5;
+  outline: none;
+}
+
+.editTextarea:focus {
+  border-color: var(--border-focus);
+}
+
+.secondaryButton,
+.primaryButton {
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.secondaryButton {
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.primaryButton {
+  border: 1px solid var(--border-accent);
+  background: var(--text-accent);
+  color: var(--text-inverse);
+}
+
+.secondaryButton:disabled,
+.primaryButton:disabled,
+.editIconButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }

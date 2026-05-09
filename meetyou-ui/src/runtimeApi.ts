@@ -14,8 +14,10 @@ import type {
   DanxiUserProfileResponse,
   RuntimeMessage,
   RuntimeMessageCreatePayload,
+  RuntimeMessageEditRetryResult,
   RuntimeOperation,
   RuntimeProject,
+  RuntimeProjectSource,
   OperatorSourceProfile,
   RuntimeSession,
   RuntimeThread,
@@ -552,6 +554,23 @@ export async function createRuntimeProject(
   return readJsonOrThrow<RuntimeProject>(response, '创建项目失败')
 }
 
+export async function createRuntimeProjectSourceFromMessage(
+  baseUrl: string,
+  projectId: string,
+  payload: {
+    message_id: string
+    title?: string
+    metadata?: Record<string, unknown>
+  },
+): Promise<RuntimeProjectSource> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/projects/${encodeURIComponent(projectId)}/sources/from-message`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeProjectSource>(response, '保存项目源失败')
+}
+
 export async function deleteRuntimeThread(
   baseUrl: string,
   threadId: string,
@@ -606,6 +625,22 @@ export async function sendRuntimeMessage(baseUrl: string, payload: RuntimeMessag
     body: JSON.stringify(payload),
   })
   return readJsonOrThrow<RuntimeMessage>(response, '发送消息失败')
+}
+
+export async function editRetryRuntimeMessage(
+  baseUrl: string,
+  messageId: string,
+  payload: {
+    content: string
+    title?: string
+  },
+): Promise<RuntimeMessageEditRetryResult> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/messages/${encodeURIComponent(messageId)}/edit-retry`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeMessageEditRetryResult>(response, '编辑并重试失败')
 }
 
 export async function listThreadMessages(baseUrl: string, threadId: string): Promise<RuntimeMessage[]> {

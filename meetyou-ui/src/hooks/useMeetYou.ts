@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { StatusFeedback } from '../types'
+import type { ChatTurn, StatusFeedback } from '../types'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
+import { createRuntimeProjectSourceFromMessage, editRetryRuntimeMessage } from '../runtimeApi'
 import {
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
   useEndpointContext,
@@ -225,6 +226,63 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     pendingHumanInput,
   ])
 
+  const saveMessageAsProjectSource = useCallback(async (message: ChatTurn) => {
+    const projectId = String(activeProjectId || '').trim()
+    const messageId = String(message.id || '').trim()
+    if (!projectId) {
+      throw new Error('请先选择项目')
+    }
+    if (!messageId || message.temporary || !messageId.startsWith('msg_')) {
+      throw new Error('消息尚未持久化，不能保存为项目源')
+    }
+    const title = `${message.role === 'assistant' ? 'Assistant' : 'User'} message ${messageId.slice(-8)}`
+    const source = await createRuntimeProjectSourceFromMessage(baseUrl, projectId, {
+      message_id: messageId,
+      title,
+      metadata: {
+        role: message.role,
+        thread_id: endpointContext?.threadId || '',
+      },
+    })
+    setStatusFeedback({
+      id: `project-source-${Date.now()}`,
+      text: '已保存为项目源',
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+    return source
+  }, [activeProjectId, baseUrl, endpointContext?.threadId])
+
+  const editRetryMessage = useCallback(async (message: ChatTurn, content: string) => {
+    const messageId = String(message.id || '').trim()
+    const nextContent = String(content || '').trim()
+    if (!messageId || message.temporary || !messageId.startsWith('msg_')) {
+      throw new Error('消息尚未持久化，不能编辑重试')
+    }
+    if (message.role !== 'user') {
+      throw new Error('只能编辑用户消息并重试')
+    }
+    if (!nextContent) {
+      throw new Error('编辑内容不能为空')
+    }
+    const result = await editRetryRuntimeMessage(baseUrl, messageId, {
+      content: nextContent,
+      title: `Edit retry ${messageId.slice(-8)}`,
+    })
+    const targetThreadId = result.message.thread_id || endpointContext?.threadId || ''
+    if (targetThreadId) {
+      await loadThreadHistory(targetThreadId)
+    }
+    await refreshRuntimeThreads(endpointContext?.workspace.workspace_id)
+    setStatusFeedback({
+      id: `edit-retry-${Date.now()}`,
+      text: result.replay_status === 'queued' ? '已创建分支并开始重试' : '已创建编辑重试分支',
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+    return result
+  }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads])
+
   return {
     messages: chatState.messages,
     operations,
@@ -255,6 +313,8 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
+    saveMessageAsProjectSource,
+    editRetryMessage,
     createThread: createAndSelectRuntimeThread,
     createProject: createRuntimeProjectAndRemember,
     deleteThread: deleteRuntimeThreadAndSelect,

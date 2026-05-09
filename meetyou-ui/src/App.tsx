@@ -38,6 +38,8 @@ export default function App() {
     sendConfirmResponse,
     sendHumanInputResponse,
     sendControlCommand,
+    saveMessageAsProjectSource,
+    editRetryMessage,
     createThread,
     createProject,
     deleteThread,
@@ -180,6 +182,9 @@ export default function App() {
             sendConfirmResponse={sendConfirmResponse}
             sendHumanInputResponse={sendHumanInputResponse}
             sendControlCommand={sendControlCommand}
+            activeProjectId={activeProjectId}
+            onSaveMessageAsProjectSource={saveMessageAsProjectSource}
+            onEditRetryMessage={editRetryMessage}
           />
         </div>
       </div>

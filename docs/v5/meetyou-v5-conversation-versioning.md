@@ -27,4 +27,6 @@ Existing V4 linear conversations migrate to a default branch. Existing messages 
 
 ## First-Stage Boundary
 
-The current backend implementation creates durable version records and APIs, and edit-retry reuses the normal inbound event path when a session is available. It does not yet rebuild the full UI branch path selector. UI work must use the same branch/message revision records rather than introducing a separate retry state.
+The current backend implementation creates durable version records and APIs, and edit-retry reuses the normal inbound event path when a session is available.
+
+The first frontend slice exposes edit-and-retry from persisted user messages. The dialog calls the Core edit-retry API and then reloads the thread history/thread list; it does not overwrite the original message. It does not yet rebuild the full UI branch path selector or sibling variant browser. Future branch UI must use the same branch/message revision records rather than introducing a separate retry state.

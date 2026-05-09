@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   clearDesktopMemory,
   createRuntimeProject,
+  createRuntimeProjectSourceFromMessage,
   createRuntimeThread,
   createDanxiReply,
   deleteRuntimeThread,
   deleteDesktopMemoryRecord,
   deleteDanxiReply,
   ensureDefaultRuntimeThread,
+  editRetryRuntimeMessage,
   fetchRuntimeUsageSnapshot,
   getDanxiPostSummary,
   getDanxiProfile,
@@ -596,6 +598,89 @@ describe('runtimeApi', () => {
           workspace_id: 'personal',
           title: 'New Project',
         }),
+      }),
+    )
+  })
+
+  it('saves message snapshots and submits edit-retry through desktop runtime APIs', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            source_id: 'src_1',
+            project_id: 'prj_1',
+            source_type: 'message_snapshot',
+            title: 'Saved message',
+            content: 'hello',
+            content_type: 'text',
+            checksum: 'sha256:abc',
+            status: 'active',
+            metadata: { message_id: 'msg_1' },
+            created_at: '2026-05-09T00:00:00Z',
+            updated_at: '2026-05-09T00:00:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            branch: {
+              branch_id: 'br_1',
+              thread_id: 'thr_1',
+              parent_branch_id: 'br_parent',
+              title: 'Retry branch',
+              status: 'active',
+              current_leaf_message_id: 'msg_2',
+              metadata: {},
+              created_at: '2026-05-09T00:00:00Z',
+              updated_at: '2026-05-09T00:00:00Z',
+            },
+            message: {
+              message_id: 'msg_2',
+              thread_id: 'thr_1',
+              session_id: 'sess_1',
+              active_workspace_id: 'personal',
+              workspace_id: 'personal',
+              endpoint_id: 'desktop-app',
+              role: 'user',
+              content: 'edited hello',
+              status: 'completed',
+              channel: 'message',
+              created_at: '2026-05-09T00:00:01Z',
+            },
+            replay_status: 'queued',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+
+    const source = await createRuntimeProjectSourceFromMessage('http://127.0.0.1:8000', 'prj_1', {
+      message_id: 'msg_1',
+      title: 'Saved message',
+    })
+    const retry = await editRetryRuntimeMessage('http://127.0.0.1:8000', 'msg_1', {
+      content: 'edited hello',
+      title: 'Retry branch',
+    })
+
+    expect(source.source_type).toBe('message_snapshot')
+    expect(retry.replay_status).toBe('queued')
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8000/desktop/projects/prj_1/sources/from-message',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ message_id: 'msg_1', title: 'Saved message' }),
+      }),
+    )
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8000/desktop/messages/msg_1/edit-retry',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ content: 'edited hello', title: 'Retry branch' }),
       }),
     )
   })

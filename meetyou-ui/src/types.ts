@@ -131,6 +131,38 @@ export interface RuntimeProject {
   updated_at: string
 }
 
+export interface RuntimeProjectSource {
+  source_id: string
+  project_id: string
+  source_type: string
+  title: string
+  content: string
+  content_type: string
+  checksum: string
+  status: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeThreadBranch {
+  branch_id: string
+  thread_id: string
+  parent_branch_id: string
+  title: string
+  status: string
+  current_leaf_message_id: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeMessageEditRetryResult {
+  branch: RuntimeThreadBranch
+  message: RuntimeMessage
+  replay_status: string
+}
+
 export interface RuntimeThreadDeleteResult {
   ok: boolean
   thread_id: string

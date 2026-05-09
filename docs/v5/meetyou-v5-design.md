@@ -47,7 +47,11 @@ Assistant-facing project operations use `manage_projects` and `manage_project_so
 
 The desktop main window exposes Project as a lightweight scope selector next to the thread selector. Selecting a project filters the thread list to that project. Creating a thread while a project is active sends `project_id` through the runtime thread create API. Selecting an empty project creates and selects the first project thread before switching context, so the message view never shows an unrelated thread under an active project.
 
+Persisted messages expose a compact action menu in the message bubble. The menu can save any persisted message as a ProjectSource when a project is active, and it can edit-and-retry persisted user messages through `/runtime/messages/{message_id}/edit-retry`. The edit dialog submits the current textarea value and relies on Core to create the message revision and branch; it must not mutate the original message locally.
+
 The main Electron window is a constrained floating surface (`400x620` by default, `340x460` minimum). Project/Thread UI must be validated at the real main-window size, not only in wide browser viewports. At the default width the project trigger may collapse to an icon while preserving the full project title in the button tooltip.
+
+Message menus and edit dialogs must also be validated at the real main-window size. Menus render through a portal and clamp to the visible viewport so bottom-of-thread actions do not render outside the floating window.
 
 ## Delivery And Verification Workflow
 

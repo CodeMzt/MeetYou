@@ -45,6 +45,10 @@ The first implementation ships `LocalArtifactStore`:
 
 Production storage must implement the same ArtifactStore contract and return an artifact download route or signed URL without changing ResearchTask semantics.
 
+## Project Sources
+
+Message snapshots saved from the desktop message menu are persisted through Core as ProjectSource records. The UI only sends the source request for already-persisted messages (`msg_*`) and a currently active project; Core owns the source content, checksum, metadata, and project membership.
+
 ## Academic Sources
 
 First-stage academic source adapters are read-only query adapters for:
