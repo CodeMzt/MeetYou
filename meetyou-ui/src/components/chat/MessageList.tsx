@@ -24,6 +24,7 @@ interface MessageListProps {
   sendControlCommand?: (action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback', params?: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string }) => void
   onSaveMessageAsProjectSource?: (message: ChatTurn) => Promise<unknown>
   onEditRetryMessage?: (message: ChatTurn, content: string) => Promise<unknown>
+  onArtifactDownload?: (artifactId: string) => Promise<unknown> | unknown
   onRestoreCheckpoint?: (checkpointId: string) => Promise<unknown>
   onCheckoutCheckpoint?: (checkpointId: string) => Promise<unknown>
 }
@@ -44,6 +45,7 @@ export default function MessageList({
   sendControlCommand,
   onSaveMessageAsProjectSource,
   onEditRetryMessage,
+  onArtifactDownload,
   onRestoreCheckpoint,
   onCheckoutCheckpoint,
 }: MessageListProps) {
@@ -393,6 +395,7 @@ export default function MessageList({
                     runtimeSnapshot={runtimeSnapshot}
                     isLastAssistantTurn={isLastAssistantTurn}
                     onRegenerate={sendControlCommand ? () => sendControlCommand('regenerate', { turn_id: message.turnId }) : undefined}
+                    onArtifactDownload={onArtifactDownload}
                   />
                   {(message.confirmRequest || message.humanInputRequest || message.confirmResponse || message.humanInputResponse) && (
                     <ActionCard 

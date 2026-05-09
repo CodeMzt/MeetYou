@@ -61,6 +61,7 @@ export default function App() {
     cancelResearchTask,
     saveResearchTaskPlan,
     downloadResearchTaskArtifact,
+    downloadArtifactById,
     refreshResearchTasks,
     createThread,
     createProject,
@@ -249,6 +250,7 @@ export default function App() {
             checkpoints={checkpoints}
             onSaveMessageAsProjectSource={saveMessageAsProjectSource}
             onEditRetryMessage={editRetryMessage}
+            onArtifactDownload={downloadArtifactById}
             onRestoreCheckpoint={restoreCheckpoint}
             onCheckoutCheckpoint={checkoutCheckpoint}
           />

@@ -9,6 +9,13 @@ import { normalizeAssistantDisplayText } from '../../utils/displayText';
 
 interface MarkdownRendererProps {
   content: string;
+  onArtifactDownload?: (artifactId: string) => Promise<unknown> | unknown;
+}
+
+function artifactIdFromDownloadHref(href: string | undefined): string {
+  const value = String(href || '').trim();
+  const match = value.match(/(?:^|\/)(?:runtime|desktop)\/artifacts\/(art_[A-Za-z0-9_-]+)\/download(?:[?#].*)?$/);
+  return match?.[1] || '';
 }
 
 const CodeBlock = ({ inline, className, children, ...props }: any) => {
@@ -52,12 +59,35 @@ const CodeBlock = ({ inline, className, children, ...props }: any) => {
   );
 };
 
-const markdownComponents = {
-  code: CodeBlock as any,
-};
-
-function MarkdownRenderer({ content }: MarkdownRendererProps) {
+function MarkdownRenderer({ content, onArtifactDownload }: MarkdownRendererProps) {
   const displayContent = normalizeAssistantDisplayText(content);
+  const markdownComponents = {
+    code: CodeBlock as any,
+    a: ({ href, children, ...props }: any) => {
+      const artifactId = artifactIdFromDownloadHref(href);
+      if (artifactId && onArtifactDownload) {
+        return (
+          <button
+            type="button"
+            className={styles.artifactLink}
+            data-artifact-download-link={artifactId}
+            title="下载产物"
+            onClick={(event) => {
+              event.preventDefault();
+              void onArtifactDownload(artifactId);
+            }}
+          >
+            {children}
+          </button>
+        );
+      }
+      return (
+        <a href={href} target="_blank" rel="noreferrer noopener" {...props}>
+          {children}
+        </a>
+      );
+    },
+  };
 
   return (
     <div className={styles.markdownBody}>

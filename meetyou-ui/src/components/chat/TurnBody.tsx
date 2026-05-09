@@ -12,9 +12,10 @@ interface TurnBodyProps {
   runtimeSnapshot: RuntimeStateSnapshot | null
   isLastAssistantTurn?: boolean
   onRegenerate?: () => void
+  onArtifactDownload?: (artifactId: string) => Promise<unknown> | unknown
 }
 
-export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, onRegenerate }: TurnBodyProps) {
+export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, onRegenerate, onArtifactDownload }: TurnBodyProps) {
   const isBusy = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
   const displayContent = turn.role === 'assistant' ? normalizeAssistantDisplayText(turn.content) : turn.content
   const showActionBar = !turn.isStreaming && turn.role === 'assistant' && !isBusy && isLastAssistantTurn && Boolean(onRegenerate)
@@ -39,7 +40,7 @@ export default function TurnBody({ turn, runtimeSnapshot, isLastAssistantTurn, o
       {turn.content ? (
         <div className={styles.content}>
           {turn.temporary ? <span className={styles.temporaryBadge}>临时回复</span> : null}
-          {turn.isStreaming ? <span className={styles.streamingText}>{displayContent}</span> : <MarkdownRenderer content={displayContent} />}
+          {turn.isStreaming ? <span className={styles.streamingText}>{displayContent}</span> : <MarkdownRenderer content={displayContent} onArtifactDownload={onArtifactDownload} />}
         </div>
       ) : placeholderText ? (
         <div className={styles.placeholder}>{placeholderText}</div>

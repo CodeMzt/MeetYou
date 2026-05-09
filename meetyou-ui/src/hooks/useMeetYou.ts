@@ -594,6 +594,18 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     }
   }, [downloadArtifactFile])
 
+  const downloadArtifactById = useCallback(async (artifactId: string) => {
+    const normalizedArtifactId = String(artifactId || '').trim()
+    if (!normalizedArtifactId) {
+      throw new Error('产物不可下载')
+    }
+    await downloadArtifactFile(
+      { artifact_id: normalizedArtifactId, filename: `${normalizedArtifactId}.md` },
+      `${normalizedArtifactId}.md`,
+      '已开始下载产物',
+    )
+  }, [downloadArtifactFile])
+
   const downloadProjectArtifact = useCallback(async (artifact: RuntimeArtifact) => {
     setProjectArtifactsBusy(true)
     try {
@@ -653,6 +665,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     saveResearchTaskPlan,
     downloadResearchTaskArtifact,
     downloadProjectArtifact,
+    downloadArtifactById,
     refreshResearchTasks,
     createThread: createAndSelectRuntimeThread,
     createProject: createRuntimeProjectAndRemember,

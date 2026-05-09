@@ -78,6 +78,21 @@
   text-decoration: underline;
 }
 
+.artifactLink {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-accent);
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.artifactLink:hover {
+  text-decoration: underline;
+}
+
 .markdownBody img {
   max-width: 100%;
   height: auto;
