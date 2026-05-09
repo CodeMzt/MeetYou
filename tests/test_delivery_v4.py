@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from core.db.base import Base
 from core.db.models import Endpoint
 from core.services.delivery_service import DeliveryService
-from core.services.endpoint_service import EndpointOutboxService
+from core.services.endpoint_service import DeliveryAttemptService, EndpointOutboxService
 
 
 class _Recorder:
@@ -24,6 +24,22 @@ class _Recorder:
     def record(self, **kwargs):
         row = SimpleNamespace(id="delivery_1", **kwargs)
         self.rows.append(row)
+        return row
+
+    def get_by_delivery_id(self, delivery_id):
+        return next((row for row in self.rows if getattr(row, "delivery_id", "") == delivery_id), None)
+
+    def update_result(self, *, delivery_id, status, error=None, metadata=None, outbox_id=None):
+        row = self.get_by_delivery_id(delivery_id)
+        if row is None:
+            return None
+        row.status = status
+        if error is not None:
+            row.error = dict(error or {})
+        if metadata:
+            row.metadata = {**dict(getattr(row, "metadata", {}) or {}), **dict(metadata or {})}
+        if outbox_id is not None:
+            row.outbox_id = outbox_id
         return row
 
 
@@ -120,6 +136,76 @@ class DeliveryV4Tests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["sent"])
         self.assertEqual(sent_frames[0]["frame"]["payload"]["content"], "bold and Docs (https://example.test)")
+
+    async def test_address_delivery_records_dispatched_until_endpoint_result(self):
+        outbox = _Recorder()
+        attempts = _Recorder()
+        service = DeliveryService(outbox_service=outbox, attempt_service=attempts)
+
+        async def transport(**kwargs):
+            del kwargs
+            return True
+
+        service.set_transport(transport)
+
+        result = await service.deliver(
+            target_endpoint=SimpleNamespace(id="endpoint-row", endpoint_id="wechat.provider.ui"),
+            target_address=SimpleNamespace(
+                id="address-row",
+                address_id="addr.wechat.direct.chat-1",
+                provider_type="wechat",
+                address_type="direct",
+                external_ref="chat-1",
+            ),
+            message_type="message",
+            payload={"role": "assistant", "content": "hello"},
+        )
+        delivery_id = result["frame"]["payload"]["delivery_id"]
+
+        self.assertEqual(result["status"], "dispatched")
+        self.assertEqual(attempts.rows[0].status, "dispatched")
+        self.assertEqual(attempts.rows[0].delivery_id, delivery_id)
+
+        ack = service.handle_delivery_result(delivery_id=delivery_id, status="sent")
+
+        self.assertTrue(ack["ok"])
+        self.assertEqual(attempts.rows[0].status, "delivered")
+
+    async def test_address_delivery_failure_result_requeues_original_frame(self):
+        outbox = _Recorder()
+        attempts = _Recorder()
+        service = DeliveryService(outbox_service=outbox, attempt_service=attempts)
+
+        async def transport(**kwargs):
+            del kwargs
+            return True
+
+        service.set_transport(transport)
+
+        result = await service.deliver(
+            target_endpoint=SimpleNamespace(id="endpoint-row", endpoint_id="wechat.provider.ui"),
+            target_address=SimpleNamespace(
+                id="address-row",
+                address_id="addr.wechat.direct.chat-1",
+                provider_type="wechat",
+                address_type="direct",
+                external_ref="chat-1",
+            ),
+            message_type="message",
+            payload={"role": "assistant", "content": "hello"},
+        )
+        delivery_id = result["frame"]["payload"]["delivery_id"]
+
+        ack = service.handle_delivery_result(
+            delivery_id=delivery_id,
+            status="failed",
+            error={"message": "sidecar unavailable"},
+        )
+
+        self.assertTrue(ack["ok"])
+        self.assertEqual(attempts.rows[0].status, "retry")
+        self.assertEqual(outbox.rows[0].payload["payload"]["delivery_id"], delivery_id)
+        self.assertEqual(outbox.rows[0].target_address_id, "address-row")
 
     async def test_delivery_outbox_drain_marks_sent_and_records_attempt(self):
         attempts = _Recorder()
@@ -225,6 +311,60 @@ class DeliveryV4Tests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(retry.available_at)
             self.assertEqual(inflight_again.attempt_count, 2)
             self.assertEqual(dead.status, "dead_letter")
+        finally:
+            engine.dispose()
+
+    async def test_delivery_result_requeue_persists_with_real_services(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        try:
+            with Session() as session:
+                endpoint = Endpoint(
+                    endpoint_id="wechat.provider.ui",
+                    endpoint_type="wechat_ui",
+                    provider_type="wechat",
+                    transport_type="websocket",
+                )
+                session.add(endpoint)
+                session.commit()
+                endpoint_row_id = endpoint.id
+
+            outbox = EndpointOutboxService(Session)
+            attempts = DeliveryAttemptService(Session)
+            service = DeliveryService(outbox_service=outbox, attempt_service=attempts)
+
+            async def transport(**kwargs):
+                del kwargs
+                return True
+
+            service.set_transport(transport)
+            result = await service.deliver(
+                target_endpoint=SimpleNamespace(id=endpoint_row_id, endpoint_id="wechat.provider.ui"),
+                target_address=SimpleNamespace(
+                    id=None,
+                    address_id="addr.wechat.direct.chat-1",
+                    provider_type="wechat",
+                    address_type="direct",
+                    external_ref="chat-1",
+                ),
+                message_type="message",
+                payload={"role": "assistant", "content": "hello"},
+            )
+            delivery_id = result["frame"]["payload"]["delivery_id"]
+
+            ack = service.handle_delivery_result(
+                delivery_id=delivery_id,
+                status="failed",
+                error={"message": "sidecar unavailable"},
+            )
+
+            self.assertEqual(ack["status"], "retry")
+            attempt = attempts.get_by_delivery_id(delivery_id)
+            due = outbox.list_due(target_endpoint_id=endpoint_row_id)
+            self.assertEqual(attempt.status, "retry")
+            self.assertEqual(len(due), 1)
+            self.assertEqual(due[0].payload["payload"]["delivery_id"], delivery_id)
         finally:
             engine.dispose()
 

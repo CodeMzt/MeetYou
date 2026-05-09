@@ -100,6 +100,8 @@ Update tools treat omitted policy objects and empty `{}` policy objects as "leav
 
 Daily schedules are stored canonically as `trigger_config={"type":"daily","time_of_day":"HH:MM"}`. Tool and operator updates may accept common aliases such as `time` or `hour`/`minute`, but a shape-only daily update (`{"type":"daily"}`) must preserve the existing daily time instead of falling back to a silent default.
 
+Address-targeted scheduled delivery is two-phase. Core first records `dispatched` when the `delivery.message` frame reaches the Endpoint Provider websocket. The provider must report `delivery.result` after the external surface send completes; only then is the delivery `delivered`. Provider send failure is recorded and requeued according to `offline_policy`.
+
 Default rule:
 
 - "每天早上提醒我整理日报" uses `create_scheduled_workflow`.

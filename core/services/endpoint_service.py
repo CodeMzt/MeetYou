@@ -920,10 +920,11 @@ class DeliveryAttemptService(ServiceBase):
         outbox_id=None,
         error: dict | None = None,
         metadata: dict | None = None,
+        delivery_id: str | None = None,
     ):
         with self.session_scope() as session:
             return DeliveryAttemptRepository(session).create(
-                delivery_id=f"delivery_{uuid4().hex}",
+                delivery_id=str(delivery_id or f"delivery_{uuid4().hex}").strip(),
                 outbox_id=outbox_id,
                 target_endpoint_id=target_endpoint_id,
                 target_address_id=target_address_id,
@@ -932,4 +933,26 @@ class DeliveryAttemptService(ServiceBase):
                 status=status,
                 error=error,
                 metadata=metadata,
+            )
+
+    def get_by_delivery_id(self, delivery_id: str):
+        with self.session_scope() as session:
+            return DeliveryAttemptRepository(session).get_by_delivery_id(delivery_id)
+
+    def update_result(
+        self,
+        *,
+        delivery_id: str,
+        status: str,
+        error: dict | None = None,
+        metadata: dict | None = None,
+        outbox_id=None,
+    ):
+        with self.session_scope() as session:
+            return DeliveryAttemptRepository(session).update_result(
+                delivery_id=delivery_id,
+                status=status,
+                error=error,
+                metadata=metadata,
+                outbox_id=outbox_id,
             )

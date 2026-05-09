@@ -423,6 +423,31 @@ class EndpointRuntimeConnection:
             }
         )
 
+    async def send_delivery_result(
+        self,
+        *,
+        delivery_id: str,
+        status: str,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        await self.start()
+        if self._ws is None or self._ws.closed:
+            raise EndpointRuntimeConnectionError("Endpoint websocket is not connected")
+        await self._ws.send_json(
+            {
+                "schema": "meetyou.endpoint.ws.v4",
+                "type": "delivery.result",
+                "endpoint_id": self.endpoint_id,
+                "payload": {
+                    "delivery_id": str(delivery_id or "").strip(),
+                    "status": str(status or "").strip(),
+                    "error": dict(error or {}),
+                    "metadata": dict(metadata or {}),
+                },
+            }
+        )
+
     async def submit_confirm_response(
         self,
         *,

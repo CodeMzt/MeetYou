@@ -808,3 +808,30 @@ class DeliveryAttemptRepository(RepositoryBase):
         self.session.add(row)
         self.session.flush()
         return row
+
+    def get_by_delivery_id(self, delivery_id: str) -> DeliveryAttempt | None:
+        return self.session.query(DeliveryAttempt).filter_by(delivery_id=str(delivery_id or "").strip()).one_or_none()
+
+    def update_result(
+        self,
+        *,
+        delivery_id: str,
+        status: str,
+        error: dict | None = None,
+        metadata: dict | None = None,
+        outbox_id=None,
+    ) -> DeliveryAttempt | None:
+        row = self.get_by_delivery_id(delivery_id)
+        if row is None:
+            return None
+        row.status = str(status or row.status or "pending").strip() or "pending"
+        if error is not None:
+            row.error = dict(error or {})
+        if metadata:
+            merged = dict(row.meta or {})
+            merged.update(dict(metadata or {}))
+            row.meta = merged
+        if outbox_id is not None:
+            row.outbox_id = outbox_id
+        self.session.flush()
+        return row

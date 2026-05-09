@@ -38,6 +38,9 @@ DEFAULT_OUTBOUND_WORKER_COUNT = 2
 DEFAULT_OUTBOUND_QUEUE_SIZE = 500
 DEFAULT_OUTBOUND_MIN_INTERVAL_MS = 250
 DEFAULT_SEND_TIMEOUT_MS = 10000
+DEFAULT_DIRECT_SEND_MAX_ATTEMPTS = 5
+DEFAULT_DIRECT_SEND_RETRY_BASE_SECONDS = 2.0
+DEFAULT_DIRECT_SEND_RETRY_MAX_SECONDS = 30.0
 DEFAULT_STATE_FLUSH_INTERVAL_MS = 500
 DEFAULT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS = 600
 _MAX_STATE_EVENTS = 4096
@@ -470,12 +473,14 @@ class MeetWeChatOutputService:
         state_store: MeetWeChatStateStore,
         policy: MeetWeChatProxyPolicy | None = None,
         sleeper: Callable[[float], Any] = asyncio.sleep,
+        delivery_result_sender: Callable[..., Any] | None = None,
     ):
         self._config = config
         self._client = client
         self._state_store = state_store
         self._policy = policy or MeetWeChatProxyPolicy.from_config(config.get("meetwechat_proxy_policy") or {})
         self._sleeper = sleeper
+        self._delivery_result_sender = delivery_result_sender
         self._stream_buffers: dict[str, list[str]] = {}
         self._queued_final_keys: set[str] = set()
         self._pending_replies: dict[str, _PendingReply] = {}
@@ -506,6 +511,9 @@ class MeetWeChatOutputService:
         self._outbound_message_counts: dict[str, int] = {}
         self._rate_lock = asyncio.Lock()
         self._last_send_at = 0.0
+
+    def set_delivery_result_sender(self, sender: Callable[..., Any] | None) -> None:
+        self._delivery_result_sender = sender
 
     async def close(self) -> None:
         for worker in self._outbound_workers:
@@ -594,11 +602,38 @@ class MeetWeChatOutputService:
         if asyncio.iscoroutine(result):
             await result
 
+    @staticmethod
+    def _delivery_id(payload: dict[str, Any], body_payload: dict[str, Any]) -> str:
+        return str(body_payload.get("delivery_id") or payload.get("delivery_id") or "").strip()
+
+    async def _report_delivery_result(
+        self,
+        delivery_id: str,
+        *,
+        status: str,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not delivery_id or self._delivery_result_sender is None:
+            return
+        try:
+            result = self._delivery_result_sender(
+                delivery_id=delivery_id,
+                status=status,
+                error=dict(error or {}),
+                metadata=dict(metadata or {}),
+            )
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            logger.warning("MeetWeChat delivery result report failed delivery=%s error=%s", _mask(delivery_id), exc)
+
     async def send_runtime_event(self, chat_id: str, payload: dict[str, Any]) -> None:
         if payload.get("schema") != "meetyou.endpoint.ws.v4":
             return
         frame_type = str(payload.get("type") or "")
         body_payload = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+        delivery_id = self._delivery_id(payload, body_payload)
         target_chat_id = str(body_payload.get("target_external_ref") or "").strip()
         if target_chat_id:
             # Address-targeted delivery may arrive on either the provider-level
@@ -631,7 +666,18 @@ class MeetWeChatOutputService:
             else:
                 try:
                     await self._send_direct_text(chat_id, content)
+                    await self._report_delivery_result(
+                        delivery_id,
+                        status="sent",
+                        metadata={"provider_type": "wechat", "chat_id": _mask(chat_id), "frame_type": frame_type},
+                    )
                 except Exception as exc:
+                    await self._report_delivery_result(
+                        delivery_id,
+                        status="failed",
+                        error={"message": str(exc), "type": exc.__class__.__name__},
+                        metadata={"provider_type": "wechat", "chat_id": _mask(chat_id), "frame_type": frame_type},
+                    )
                     logger.warning("MeetWeChat direct notice send failed chat=%s error=%s", _mask(chat_id), exc)
             return
         if frame_type == "delivery.message":
@@ -642,17 +688,37 @@ class MeetWeChatOutputService:
             text = str(message.get("content") or "").strip()
             if not text:
                 return
+            if pending is None:
+                final_key = self._final_delivery_key(
+                    chat_id,
+                    message_id=str(message.get("message_id") or ""),
+                    stream_key="",
+                )
+                if final_key and final_key in self._queued_final_keys:
+                    return
+                try:
+                    await self._send_direct_text(chat_id, text)
+                    if final_key:
+                        self._mark_final_delivery(final_key)
+                    await self._report_delivery_result(
+                        delivery_id,
+                        status="sent",
+                        metadata={"provider_type": "wechat", "chat_id": _mask(chat_id), "frame_type": frame_type},
+                    )
+                except Exception as exc:
+                    await self._report_delivery_result(
+                        delivery_id,
+                        status="failed",
+                        error={"message": str(exc), "type": exc.__class__.__name__},
+                        metadata={"provider_type": "wechat", "chat_id": _mask(chat_id), "frame_type": frame_type},
+                    )
+                    logger.warning("MeetWeChat direct message send failed chat=%s error=%s", _mask(chat_id), exc)
+                return
             if not self._remember_final_delivery(
                 chat_id,
                 message_id=str(message.get("message_id") or ""),
                 stream_key="",
             ):
-                return
-            if pending is None:
-                try:
-                    await self._send_direct_text(chat_id, text)
-                except Exception as exc:
-                    logger.warning("MeetWeChat direct message send failed chat=%s error=%s", _mask(chat_id), exc)
                 return
             self._enqueue_outbound(pending, text)
             return
@@ -710,7 +776,18 @@ class MeetWeChatOutputService:
             else:
                 try:
                     await self._send_direct_text(chat_id, content)
+                    await self._report_delivery_result(
+                        delivery_id,
+                        status="sent",
+                        metadata={"provider_type": "wechat", "chat_id": _mask(chat_id), "frame_type": frame_type},
+                    )
                 except Exception as exc:
+                    await self._report_delivery_result(
+                        delivery_id,
+                        status="failed",
+                        error={"message": str(exc), "type": exc.__class__.__name__},
+                        metadata={"provider_type": "wechat", "chat_id": _mask(chat_id), "frame_type": frame_type},
+                    )
                     logger.warning("MeetWeChat direct notice send failed chat=%s error=%s", _mask(chat_id), exc)
             return
         if event_type in {"reasoning.delta", "operation.updated", "activity.status"}:
@@ -733,16 +810,26 @@ class MeetWeChatOutputService:
                 return
             self._enqueue_outbound(pending, text)
 
-    def _remember_final_delivery(self, chat_id: str, *, message_id: str = "", stream_key: str = "") -> bool:
+    def _final_delivery_key(self, chat_id: str, *, message_id: str = "", stream_key: str = "") -> str:
         key = str(message_id or stream_key or "").strip()
         if not key:
-            return True
-        scoped_key = f"{chat_id}:{key}"
-        if scoped_key in self._queued_final_keys:
-            return False
+            return ""
+        return f"{chat_id}:{key}"
+
+    def _mark_final_delivery(self, scoped_key: str) -> None:
+        if not scoped_key:
+            return
         if len(self._queued_final_keys) > 4096:
             self._queued_final_keys.clear()
         self._queued_final_keys.add(scoped_key)
+
+    def _remember_final_delivery(self, chat_id: str, *, message_id: str = "", stream_key: str = "") -> bool:
+        scoped_key = self._final_delivery_key(chat_id, message_id=message_id, stream_key=stream_key)
+        if not scoped_key:
+            return True
+        if scoped_key in self._queued_final_keys:
+            return False
+        self._mark_final_delivery(scoped_key)
         return True
 
     def _ensure_outbound_workers(self) -> None:
@@ -792,17 +879,45 @@ class MeetWeChatOutputService:
         fragments = split_text_naturally(content, limit=limit)
         seed = hashlib.sha256(f"{chat_id}:{content}:{datetime.now(timezone.utc).isoformat()}".encode("utf-8")).hexdigest()[:16]
         for index, fragment in enumerate(fragments, start=1):
-            await self._wait_global_send_slot()
-            result = await asyncio.wait_for(
-                self._client.send_text(
-                    chat_id=chat_id,
-                    text=fragment,
-                    idempotency_key=f"meetyou:direct:{seed}:{index}",
-                    is_group_mention=False,
-                ),
-                timeout=self._send_timeout_seconds,
+            await self._send_direct_fragment_with_retry(
+                chat_id=chat_id,
+                fragment=fragment,
+                idempotency_key=f"meetyou:direct:{seed}:{index}",
             )
-            self._check_send_result(result)
+
+    async def _send_direct_fragment_with_retry(self, *, chat_id: str, fragment: str, idempotency_key: str) -> None:
+        max_attempts = _safe_positive_int(
+            self._config.get("meetwechat_direct_send_max_attempts"),
+            DEFAULT_DIRECT_SEND_MAX_ATTEMPTS,
+        )
+        base_delay = _safe_non_negative_float(
+            self._config.get("meetwechat_direct_send_retry_base_seconds"),
+            DEFAULT_DIRECT_SEND_RETRY_BASE_SECONDS,
+        )
+        max_delay = _safe_non_negative_float(
+            self._config.get("meetwechat_direct_send_retry_max_seconds"),
+            DEFAULT_DIRECT_SEND_RETRY_MAX_SECONDS,
+        )
+        for attempt in range(max_attempts):
+            try:
+                await self._wait_global_send_slot()
+                result = await asyncio.wait_for(
+                    self._client.send_text(
+                        chat_id=chat_id,
+                        text=fragment,
+                        idempotency_key=idempotency_key,
+                        is_group_mention=False,
+                    ),
+                    timeout=self._send_timeout_seconds,
+                )
+                self._check_send_result(result)
+                return
+            except Exception as exc:
+                if attempt >= max_attempts - 1 or not self._is_transient_send_error(exc):
+                    raise
+                delay = min(max_delay, base_delay * (2**attempt))
+                if delay > 0:
+                    await self._sleep(delay)
 
     def _next_outbound_message_index(self, event_id: str) -> int:
         key = str(event_id or "").strip()
@@ -982,6 +1097,7 @@ class MeetWeChatInputAdapter:
             state_store=self._state_store,
             policy=self._policy,
         )
+        self._output_adapter.set_delivery_result_sender(self._send_delivery_result)
         self._endpoint_connections: dict[str, Any] = {}
         self._provider_endpoint_connection: Any | None = None
         self._endpoint_connection_last_used: dict[str, float] = {}
@@ -1029,6 +1145,26 @@ class MeetWeChatInputAdapter:
             "supports_markdown": False,
             "metadata": {"chat_type": normalized_type, "supports_markdown": False},
         }
+
+    async def _send_delivery_result(
+        self,
+        *,
+        delivery_id: str,
+        status: str,
+        error: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        connection = await self._ensure_provider_endpoint_connection()
+        sender = getattr(connection, "send_delivery_result", None)
+        if callable(sender):
+            result = sender(
+                delivery_id=delivery_id,
+                status=status,
+                error=dict(error or {}),
+                metadata=dict(metadata or {}),
+            )
+            if asyncio.iscoroutine(result):
+                await result
 
     async def _discover_address_snapshot(self) -> list[dict[str, Any]]:
         addresses: list[dict[str, Any]] = []
@@ -1547,4 +1683,3 @@ class MeetWeChatInputAdapter:
             "raw_hash": event.raw_hash,
             "is_group_mention": event.is_group_mention,
         }
-

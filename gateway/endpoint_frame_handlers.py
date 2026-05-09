@@ -531,8 +531,10 @@ class EndpointLifecycleHandler(EndpointFrameHandler):
                 )
             updater = getattr(context.domain.services.endpoint, "update_heartbeat", None)
             if callable(updater) and endpoint_id:
-                updater(endpoint_id=endpoint_id, status=status, metrics=dict(metrics or {}), payload=context.payload)
+                endpoint = updater(endpoint_id=endpoint_id, status=status, metrics=dict(metrics or {}), payload=context.payload)
                 _invalidate_tool_router_cache(context.domain, endpoint_id=endpoint_id)
+                if status in {"ready", "online", "connected"}:
+                    await _drain_endpoint_outbox(context.domain, endpoint)
             return
 
         connection_id = str(context.state.get("connection_id") or "").strip()
@@ -651,6 +653,32 @@ class ToolResultHandler(EndpointFrameHandler):
         await _publish_operation_update(context.gateway, context.domain, call_row, phase="failed", error=error)
 
 
+class DeliveryResultHandler(EndpointFrameHandler):
+    frame_types = ("delivery.result", "delivery.error")
+
+    async def handle(self, context: EndpointFrameContext) -> None:
+        delivery_id = str(context.payload.get("delivery_id") or context.frame.get("delivery_id") or "").strip()
+        if not delivery_id:
+            await context.error(code="delivery_id_required", message="delivery.result requires delivery_id")
+            return
+        status = str(context.payload.get("status") or ("failed" if context.frame_type == "delivery.error" else "")).strip()
+        if not status:
+            status = "delivered"
+        error = context.payload.get("error") if isinstance(context.payload.get("error"), dict) else {}
+        metadata = context.payload.get("metadata") if isinstance(context.payload.get("metadata"), dict) else {}
+        result = context.domain.services.delivery.handle_delivery_result(
+            delivery_id=delivery_id,
+            status=status,
+            error=error,
+            metadata={
+                **metadata,
+                "endpoint_id": context.endpoint_id(),
+                "frame_type": context.frame_type,
+            },
+        )
+        await context.send("delivery.result.ack", payload=result)
+
+
 def build_default_endpoint_frame_registry() -> EndpointFrameRegistry:
     return EndpointFrameRegistry(
         [
@@ -659,6 +687,7 @@ def build_default_endpoint_frame_registry() -> EndpointFrameRegistry:
             AddressHandler(),
             EndpointLifecycleHandler(),
             SubscriptionHandler(),
+            DeliveryResultHandler(),
             ToolResultHandler(),
         ]
     )

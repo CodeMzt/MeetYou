@@ -33,6 +33,7 @@ class EndpointProtocolV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(names["subscription.start"], "SubscriptionHandler")
         self.assertEqual(names["subscription.update"], "SubscriptionHandler")
         self.assertEqual(names["subscription.stop"], "SubscriptionHandler")
+        self.assertEqual(names["delivery.result"], "DeliveryResultHandler")
         self.assertEqual(names["tool.call.result"], "ToolResultHandler")
         self.assertEqual(names["tool.call.cancel"], "ToolResultHandler")
         self.assertEqual(names["endpoint.heartbeat"], "EndpointLifecycleHandler")
@@ -197,6 +198,42 @@ class EndpointProtocolV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_router.result, {"echo": "ok"})
         self.assertEqual(published[0]["operation_id"], "op_1")
         self.assertEqual(published[0]["payload"]["phase"], "completed")
+
+    async def test_delivery_result_frame_updates_delivery_service(self):
+        calls = []
+
+        class Delivery:
+            def handle_delivery_result(self, **kwargs):
+                calls.append(kwargs)
+                return {"ok": True, "status": "delivered", "delivery_id": kwargs["delivery_id"]}
+
+        domain = SimpleNamespace(services=SimpleNamespace(delivery=Delivery()))
+
+        class Gateway:
+            def _require_core_domain(self):
+                return domain
+
+            async def _safe_send_json(self, websocket, frame):
+                websocket.sent.append(frame)
+
+        websocket = FakeWebSocket()
+
+        await _handle_endpoint_frame(
+            Gateway(),
+            websocket,
+            {
+                "schema": ENDPOINT_WS_SCHEMA,
+                "type": "delivery.result",
+                "endpoint_id": "wechat.provider.ui",
+                "payload": {"delivery_id": "delivery_1", "status": "sent"},
+            },
+            {"endpoint_id": "wechat.provider.ui"},
+        )
+
+        self.assertEqual(calls[0]["delivery_id"], "delivery_1")
+        self.assertEqual(calls[0]["status"], "sent")
+        self.assertEqual(websocket.sent[0]["type"], "delivery.result.ack")
+        self.assertTrue(websocket.sent[0]["payload"]["ok"])
 
     async def test_tool_cancel_frame_marks_call_cancelled_through_tool_router(self):
         call_row = SimpleNamespace(call_id="call_1", operation_id="operation-row", status="cancelled")

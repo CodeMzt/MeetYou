@@ -102,6 +102,7 @@ class _FakeEndpointConnection:
         self.confirm_responses = []
         self.human_input_responses = []
         self.commands = []
+        self.delivery_results = []
         self.message_response = kwargs.get("message_response") or {"ok": True, "message_id": "core-msg-1"}
         self.thread_after_send = kwargs.get("thread_after_send") or ""
         self.reply_payload = kwargs.get("reply_payload") or _run_event(
@@ -133,6 +134,9 @@ class _FakeEndpointConnection:
 
     async def send_command(self, action, **payload):
         self.commands.append({"action": action, **payload})
+
+    async def send_delivery_result(self, **payload):
+        self.delivery_results.append(payload)
 
     async def close(self):
         return None
@@ -419,6 +423,112 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
         await output.send_runtime_event("", payload)
 
         self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK"])
+        await output.close()
+
+    async def test_address_targeted_delivery_reports_provider_send_result(self):
+        meetwechat_client = _FakeMeetWeChatClient()
+        reports = []
+        config = _Config(meetwechat_state_file=self.state_path)
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(
+            config=config,
+            client=meetwechat_client,
+            state_store=state,
+            delivery_result_sender=lambda **payload: reports.append(payload),
+        )
+        payload = _message("OK", message_id="msg-final-address")
+        payload["payload"]["target_external_ref"] = "chat-1"
+        payload["payload"]["delivery_id"] = "delivery_1"
+
+        await output.send_runtime_event("", payload)
+
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK"])
+        self.assertEqual(reports[0]["delivery_id"], "delivery_1")
+        self.assertEqual(reports[0]["status"], "sent")
+        await output.close()
+
+    async def test_direct_address_delivery_retries_transient_send_failure(self):
+        class _FlakyMeetWeChatClient(_FakeMeetWeChatClient):
+            def __init__(self):
+                super().__init__()
+                self.failures_remaining = 2
+
+            async def send_text(self, **kwargs):
+                self.sent.append(dict(kwargs))
+                if self.failures_remaining > 0:
+                    self.failures_remaining -= 1
+                    return MeetWeChatSendResult(
+                        ok=False,
+                        status="failed",
+                        detail="agent-wechat sidecar is unreachable",
+                    )
+                return MeetWeChatSendResult(ok=True, status="sent")
+
+        meetwechat_client = _FlakyMeetWeChatClient()
+        reports = []
+        config = _Config(
+            meetwechat_state_file=self.state_path,
+            meetwechat_direct_send_max_attempts=3,
+            meetwechat_direct_send_retry_base_seconds=0,
+            meetwechat_direct_send_retry_max_seconds=0,
+        )
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(
+            config=config,
+            client=meetwechat_client,
+            state_store=state,
+            delivery_result_sender=lambda **payload: reports.append(payload),
+        )
+        payload = _message("OK", message_id="msg-final-address")
+        payload["payload"]["target_external_ref"] = "chat-1"
+        payload["payload"]["delivery_id"] = "delivery_1"
+
+        await output.send_runtime_event("", payload)
+
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK", "OK", "OK"])
+        self.assertEqual(len({item["idempotency_key"] for item in meetwechat_client.sent}), 1)
+        self.assertEqual(reports[0]["status"], "sent")
+        await output.close()
+
+    async def test_failed_direct_address_delivery_can_be_retried_with_same_message_id(self):
+        class _RecoveringMeetWeChatClient(_FakeMeetWeChatClient):
+            def __init__(self):
+                super().__init__()
+                self.fail = True
+
+            async def send_text(self, **kwargs):
+                self.sent.append(dict(kwargs))
+                if self.fail:
+                    return MeetWeChatSendResult(
+                        ok=False,
+                        status="failed",
+                        detail="agent-wechat sidecar is unreachable",
+                    )
+                return MeetWeChatSendResult(ok=True, status="sent")
+
+        meetwechat_client = _RecoveringMeetWeChatClient()
+        reports = []
+        config = _Config(
+            meetwechat_state_file=self.state_path,
+            meetwechat_direct_send_max_attempts=1,
+        )
+        state = MeetWeChatStateStore(self.state_path)
+        output = MeetWeChatOutputService(
+            config=config,
+            client=meetwechat_client,
+            state_store=state,
+            delivery_result_sender=lambda **payload: reports.append(payload),
+        )
+        payload = _message("OK", message_id="msg-final-address")
+        payload["payload"]["target_external_ref"] = "chat-1"
+        payload["payload"]["delivery_id"] = "delivery_1"
+
+        await output.send_runtime_event("", payload)
+        meetwechat_client.fail = False
+        await output.send_runtime_event("", payload)
+
+        self.assertEqual([item["text"] for item in meetwechat_client.sent], ["OK", "OK"])
+        self.assertEqual([item["status"] for item in reports], ["failed", "sent"])
         await output.close()
 
     async def test_run_event_and_delivery_message_do_not_duplicate_final_reply(self):
@@ -895,4 +1005,3 @@ class MeetWeChatAdapterTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
