@@ -48,7 +48,8 @@
 }
 
 .composer input,
-.searchOptions input[type='text'] {
+.searchOptions input[type='text'],
+.urlInput {
   min-width: 0;
   height: 34px;
   padding: 0 10px;
@@ -62,6 +63,7 @@
 
 .composer input:focus,
 .searchOptions input[type='text']:focus,
+.urlInput:focus,
 .planEditor textarea:focus {
   border-color: var(--border-focus);
 }
@@ -95,8 +97,13 @@
 }
 
 .searchOptions input[type='text']:disabled,
+.urlInput:disabled,
 .searchToggle:has(input:disabled) {
   opacity: 0.6;
+}
+
+.urlInput {
+  width: 100%;
 }
 
 .composer button,

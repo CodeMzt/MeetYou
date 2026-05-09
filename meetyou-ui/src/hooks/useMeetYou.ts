@@ -465,7 +465,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return branch
   }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
 
-  const createResearchTask = useCallback(async (topic: string, options?: { webSearch?: boolean; webQueries?: string[] }) => {
+  const createResearchTask = useCallback(async (topic: string, options?: { webSearch?: boolean; webQueries?: string[]; webUrls?: string[] }) => {
     const nextTopic = String(topic || '').trim()
     if (!nextTopic) {
       throw new Error('研究主题不能为空')
@@ -475,8 +475,13 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       .map((item) => String(item || '').trim())
       .filter(Boolean)
       .slice(0, 4)
+    const webUrls = (options?.webUrls || [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .slice(0, 8)
+    const includeWebAdapter = webSearchEnabled || webUrls.length > 0
     const sourceAdapters = [
-      ...(webSearchEnabled ? ['web'] : []),
+      ...(includeWebAdapter ? ['web'] : []),
       'arxiv',
       'openalex',
       'crossref',
@@ -493,6 +498,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
           include_project_sources: Boolean(activeProjectId),
           ...(webSearchEnabled ? { web_search: true } : {}),
           ...(webSearchEnabled && webQueries.length ? { web_queries: webQueries } : {}),
+          ...(webUrls.length ? { web_urls: webUrls } : {}),
         },
         output_format: 'markdown',
         metadata: { created_from: 'desktop.research_panel' },

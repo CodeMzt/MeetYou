@@ -19,6 +19,7 @@ interface ResearchPanelProps {
 interface ResearchCreateOptions {
   webSearch?: boolean
   webQueries?: string[]
+  webUrls?: string[]
 }
 
 function statusLabel(status: string): string {
@@ -155,8 +156,10 @@ export default function ResearchPanel({
   const [localError, setLocalError] = useState('')
   const [webSearchEnabled, setWebSearchEnabled] = useState(true)
   const [webQueryText, setWebQueryText] = useState('')
+  const [webUrlText, setWebUrlText] = useState('')
   const webSearchInputRef = useRef<HTMLInputElement | null>(null)
   const webQueryInputRef = useRef<HTMLInputElement | null>(null)
+  const webUrlInputRef = useRef<HTMLInputElement | null>(null)
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.research_task_id === selectedTaskId) || tasks[0] || null,
@@ -187,10 +190,12 @@ export default function ResearchPanel({
     }
     const currentWebSearchEnabled = webSearchInputRef.current?.checked ?? webSearchEnabled
     const currentWebQueryText = webQueryInputRef.current?.value ?? webQueryText
+    const currentWebUrlText = webUrlInputRef.current?.value ?? webUrlText
     setLocalError('')
     await onCreateTask(nextTopic, {
       webSearch: currentWebSearchEnabled,
       webQueries: parseQueryList(currentWebQueryText),
+      webUrls: parseQueryList(currentWebUrlText),
     })
     setTopic('')
   }
@@ -255,6 +260,17 @@ export default function ResearchPanel({
           data-research-web-query-input="true"
         />
       </div>
+
+      <input
+        ref={webUrlInputRef}
+        type="text"
+        className={styles.urlInput}
+        value={webUrlText}
+        onChange={(event) => setWebUrlText(event.target.value)}
+        placeholder="网页 URL，可逗号分隔"
+        disabled={busy}
+        data-research-web-url-input="true"
+      />
 
       {localError ? <div className={styles.error}>{localError}</div> : null}
 
