@@ -148,7 +148,7 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
             json={
                 "project_id": project_id,
                 "topic": "conversation version trees",
-                "source_policy": {"source_adapters": ["arxiv"], "auto_execute": False},
+                "source_policy": {"source_adapters": ["arxiv"], "auto_execute": False, "derived_formats": ["pdf", "docx"]},
             },
             headers=self._auth_headers(),
         )
@@ -206,6 +206,13 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(report_response.json()["status"], "completed")
         self.assertTrue(report_response.json()["artifact_id"])
         self.assertEqual(report_response.json()["artifact"]["metadata"]["citation_validation"]["citation_ids"], ["1"])
+        derived_artifacts = report_response.json()["derived_artifacts"]
+        self.assertEqual([row["content_type"] for row in derived_artifacts], [
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ])
+        self.assertEqual([row["metadata"]["derived_format"] for row in derived_artifacts], ["pdf", "docx"])
+        self.assertEqual(len(report_response.json()["metadata"]["derived_artifacts"]), 2)
 
         report_download_response = self.client.get(
             report_response.json()["artifact"]["download_url"],
@@ -213,6 +220,12 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         )
         self.assertEqual(report_download_response.status_code, 200)
         self.assertIn("A supported claim [1].", report_download_response.text)
+        pdf_download_response = self.client.get(derived_artifacts[0]["download_url"], headers=self._auth_headers())
+        self.assertEqual(pdf_download_response.status_code, 200)
+        self.assertTrue(pdf_download_response.content.startswith(b"%PDF-"))
+        docx_download_response = self.client.get(derived_artifacts[1]["download_url"], headers=self._auth_headers())
+        self.assertEqual(docx_download_response.status_code, 200)
+        self.assertTrue(docx_download_response.content.startswith(b"PK"))
 
         thread = self.services.thread.create_thread(
             principal_id=self.principal.id,

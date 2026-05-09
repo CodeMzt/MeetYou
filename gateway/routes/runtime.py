@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from core.credential_transport import CredentialTransportError, decrypt_json_payload
 from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, TargetKind, make_source
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
+from core.research.report_artifacts import create_research_report_derivatives
 from core.services.endpoint_service import EndpointThreadBindingError
 from core.services.research_execution_service import ResearchExecutionService
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
@@ -318,6 +319,17 @@ def _research_task_response(domain, task) -> RuntimeResearchTaskResponse:
         artifact = domain.services.artifact.get_by_id(getattr(task, "artifact_id", None))
         if artifact is not None:
             artifact_response = _artifact_response(domain, artifact)
+    metadata = dict(getattr(task, "meta", {}) or {})
+    derived_artifact_responses = []
+    for item in list(metadata.get("derived_artifacts") or []):
+        if not isinstance(item, dict):
+            continue
+        derived_artifact_id = str(item.get("artifact_id") or "").strip()
+        if not derived_artifact_id:
+            continue
+        derived_artifact = domain.services.artifact.get_by_artifact_id(derived_artifact_id)
+        if derived_artifact is not None:
+            derived_artifact_responses.append(_artifact_response(domain, derived_artifact))
     return RuntimeResearchTaskResponse(
         research_task_id=str(getattr(task, "research_task_id", "") or ""),
         project_id=str(getattr(project, "project_id", "") or ""),
@@ -331,7 +343,8 @@ def _research_task_response(domain, task) -> RuntimeResearchTaskResponse:
         output_format=str(getattr(task, "output_format", "") or "markdown"),
         summary=str(getattr(task, "summary", "") or ""),
         artifact=artifact_response,
-        metadata=dict(getattr(task, "meta", {}) or {}),
+        derived_artifacts=derived_artifact_responses,
+        metadata=metadata,
         created_at=_iso(task, "created_at"),
         updated_at=_iso(task, "updated_at"),
     )
@@ -1029,12 +1042,30 @@ def build_runtime_router(gateway) -> APIRouter:
                 artifact_type="research_report",
                 metadata={"research_task_id": research_task_id, "citation_validation": citation_validation},
             )
+            try:
+                derived_artifacts = create_research_report_derivatives(
+                    domain.services.artifact,
+                    task=task,
+                    report_markdown=str(report_markdown or ""),
+                    source_artifact=artifact,
+                    citation_validation=citation_validation,
+                    runner="runtime.research_task.report_submit.v1",
+                )
+            except Exception as exc:  # noqa: BLE001 - surface derivative generation failures to caller.
+                gateway._raise_http_error(
+                    status_code=500,
+                    code="research_report_derivative_failed",
+                    message="Research report derivative artifact creation failed.",
+                    details={"error_type": type(exc).__name__, "error_message": str(exc)},
+                )
             fields["artifact_id"] = artifact.id
             fields.setdefault("metadata", {})
             fields["metadata"] = {
                 **dict(fields.get("metadata") or {}),
                 "artifact_id": artifact.artifact_id,
                 "citation_validation": citation_validation,
+                "derived_artifacts": derived_artifacts,
+                "derived_artifact_ids": [item["artifact_id"] for item in derived_artifacts],
             }
         try:
             task = domain.services.research_task.transition_task(

@@ -200,6 +200,43 @@ class ArtifactService(ServiceBase):
         super().__init__(session_factory)
         self.store = store or LocalArtifactStore()
 
+    def create_bytes_artifact(
+        self,
+        *,
+        principal_id,
+        data: bytes | bytearray | memoryview,
+        filename: str,
+        project_id=None,
+        thread_id=None,
+        created_by_run_id=None,
+        artifact_type: str = "document",
+        content_type: str = "application/octet-stream",
+        metadata: dict | None = None,
+    ):
+        artifact_id = _public_id("art")
+        stored = self.store.put_bytes(
+            artifact_id=artifact_id,
+            data=bytes(data or b""),
+            filename=filename,
+            content_type=content_type,
+        )
+        with self.session_scope() as session:
+            return ArtifactRepository(session).create(
+                artifact_id=artifact_id,
+                principal_id=principal_id,
+                project_id=project_id,
+                thread_id=thread_id,
+                created_by_run_id=created_by_run_id,
+                artifact_type=artifact_type,
+                storage_backend=stored.storage_backend,
+                storage_key=stored.storage_key,
+                filename=stored.filename,
+                content_type=stored.content_type,
+                byte_size=stored.byte_size,
+                checksum=stored.checksum,
+                metadata=metadata,
+            )
+
     def create_text_artifact(
         self,
         *,

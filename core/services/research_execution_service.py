@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from core.research.academic_sources import AcademicSourceRegistry, FetchAcademicSource
+from core.research.report_artifacts import create_research_report_derivatives
 from core.research.web_sources import FetchWebSource, WebSourceRegistry
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 
@@ -361,6 +362,32 @@ class ResearchExecutionService:
                 "citation_validation": citation_validation,
             },
         )
+        try:
+            derived_artifacts = create_research_report_derivatives(
+                self.services.artifact,
+                task=refreshed,
+                report_markdown=report_markdown,
+                source_artifact=artifact,
+                citation_validation=citation_validation,
+            )
+        except Exception as exc:  # noqa: BLE001 - requested exports are part of artifact creation.
+            self._record_progress(
+                research_task_id,
+                stage="artifact",
+                status="failed",
+                message="Research report derivative artifact creation failed.",
+                metadata={"runner_error": type(exc).__name__, "runner_error_message": str(exc)},
+            )
+            return self._fail_task(
+                research_task_id,
+                summary="Research report derivative artifact creation failed.",
+                metadata={
+                    "runner_error": "derived_artifact_creation_failed",
+                    "runner_error_type": type(exc).__name__,
+                    "runner_error_message": str(exc),
+                    "artifact_id": artifact.artifact_id,
+                },
+            )
         summary = self._summary(refreshed, evidence)
         completed = self.services.research_task.transition_task(
             research_task_id=research_task_id,
@@ -375,12 +402,15 @@ class ResearchExecutionService:
                     "completed_at": _now_iso(),
                     "gather_errors": gather_errors,
                     "citation_validation": citation_validation,
+                    "derived_artifacts": derived_artifacts,
+                    "derived_artifact_ids": [item["artifact_id"] for item in derived_artifacts],
                 },
             },
         )
         delivered_message = self._deliver_report_message(
             completed or refreshed,
             artifact=artifact,
+            derived_artifacts=derived_artifacts,
             summary=summary,
             evidence_count=len(evidence),
         )
@@ -397,24 +427,37 @@ class ResearchExecutionService:
             stage="completed",
             status="completed",
             message="研究报告已完成并保存为产物。",
-            metadata={"artifact_id": artifact.artifact_id, "evidence_count": len(evidence)},
+            metadata={
+                "artifact_id": artifact.artifact_id,
+                "evidence_count": len(evidence),
+                "derived_artifact_count": len(derived_artifacts),
+            },
         )
         return {
             "ok": True,
             "research_task_id": research_task_id,
             "status": getattr(completed, "status", "completed"),
             "artifact_id": artifact.artifact_id,
+            "derived_artifacts": derived_artifacts,
+            "derived_artifact_count": len(derived_artifacts),
             "evidence_count": len(evidence),
             "gather_error_count": len(gather_errors),
         }
 
-    def _deliver_report_message(self, task, *, artifact, summary: str, evidence_count: int):
+    def _deliver_report_message(self, task, *, artifact, derived_artifacts: list[dict[str, Any]] | None = None, summary: str, evidence_count: int):
         thread_row_id = getattr(task, "thread_id", None)
         if thread_row_id is None:
             return None
         artifact_id = str(getattr(artifact, "artifact_id", "") or "")
         filename = str(getattr(artifact, "filename", "") or artifact_id or "research-report.md")
         research_task_id = str(getattr(task, "research_task_id", "") or "")
+        derivative_lines = []
+        for item in derived_artifacts or []:
+            derived_id = str(item.get("artifact_id") or "")
+            derived_filename = str(item.get("filename") or derived_id)
+            derived_format = str(item.get("format") or "derived").upper()
+            if derived_id:
+                derivative_lines.append(f"- {derived_format}: [{derived_filename}](/runtime/artifacts/{derived_id}/download)")
         content = "\n".join(
             [
                 "研究报告已完成。",
@@ -422,6 +465,7 @@ class ResearchExecutionService:
                 str(summary or "").strip(),
                 "",
                 f"- 报告产物: [{filename}](/runtime/artifacts/{artifact_id}/download)",
+                *derivative_lines,
                 f"- ResearchTask: `{research_task_id}`",
                 f"- 证据来源: {int(evidence_count or 0)}",
             ]
@@ -436,6 +480,7 @@ class ResearchExecutionService:
                 "research_task_id": research_task_id,
                 "artifact_id": artifact_id,
                 "artifact_filename": filename,
+                "derived_artifacts": list(derived_artifacts or []),
                 "delivery": "research_report",
                 "evidence_count": int(evidence_count or 0),
             },

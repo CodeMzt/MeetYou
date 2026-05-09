@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.research.report_artifacts import create_research_report_derivatives
 from core.services.research_execution_service import ResearchExecutionService
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 from tools.academic_sources import AcademicSourceRegistry
@@ -169,12 +170,31 @@ class ResearchTools:
                 artifact_type="research_report",
                 metadata={"research_task_id": research_task_id, "citation_validation": citation_validation},
             )
+            try:
+                derived_artifacts = create_research_report_derivatives(
+                    domain.services.artifact,
+                    task=task,
+                    report_markdown=report_markdown,
+                    source_artifact=artifact,
+                    citation_validation=citation_validation,
+                    runner="tool.manage_research_tasks.report_submit.v1",
+                )
+            except Exception as exc:  # noqa: BLE001 - tool callers need a structured failure.
+                return {
+                    "ok": False,
+                    "code": "research_report_derivative_failed",
+                    "message": "Research report derivative artifact creation failed.",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                }
             fields["artifact_id"] = artifact.id
             fields.setdefault("metadata", {})
             fields["metadata"] = {
                 **dict(fields.get("metadata") or {}),
                 "artifact_id": artifact.artifact_id,
                 "citation_validation": citation_validation,
+                "derived_artifacts": derived_artifacts,
+                "derived_artifact_ids": [item["artifact_id"] for item in derived_artifacts],
             }
             artifact_payload = {
                 "artifact_id": artifact.artifact_id,
@@ -182,6 +202,7 @@ class ResearchTools:
                 "filename": artifact.filename,
                 "checksum": artifact.checksum,
                 "citation_validation": citation_validation,
+                "derived_artifacts": derived_artifacts,
             }
         try:
             task = domain.services.research_task.transition_task(

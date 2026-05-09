@@ -9,7 +9,8 @@
 - Endpoint Providers may expose local research/file/search capabilities, but they must not own project source truth, artifact metadata, conversation branches, or checkpoints.
 - Deep research must use read-only evidence gathering unless the user explicitly asks for a separate write action.
 - Research reports must persist as Artifacts; final assistant messages should summarize and link to artifacts instead of embedding large report files.
-- Completed ResearchTasks bound to a thread should persist an assistant Message containing only a short summary and artifact link, then attach that message to the active conversation branch so automatic checkpoints still apply.
+- Research report PDF/DOCX exports are derived Core Artifact records. Keep Markdown as the primary report artifact, store derivatives through ArtifactStore bytes, and expose them through artifact APIs / task metadata instead of embedding files in messages.
+- Completed ResearchTasks bound to a thread should persist an assistant Message containing only a short summary and artifact link(s), then attach that message to the active conversation branch so automatic checkpoints still apply.
 - Desktop Markdown rendering must route Core artifact download links (`/runtime/artifacts/{artifact_id}/download` or `/desktop/artifacts/{artifact_id}/download`) through the authenticated desktop artifact download path. Do not leave report artifact links as unauthenticated ordinary navigation.
 - Project settings UI must edit Core Project title/description/instructions through project APIs. Do not store project instructions in frontend-only state or Workspace governance fields.
 - Project context injection is Core-owned. Ordinary turns in project threads should receive bounded Project title/description/instructions/source snapshots from Core; clients must not assemble hidden project prompts themselves.

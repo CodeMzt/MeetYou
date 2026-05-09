@@ -933,6 +933,7 @@ class RuntimeResearchTaskResponse(BaseModel):
     output_format: str = "markdown"
     summary: str = ""
     artifact: RuntimeArtifactResponse | None = None
+    derived_artifacts: list[RuntimeArtifactResponse] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""

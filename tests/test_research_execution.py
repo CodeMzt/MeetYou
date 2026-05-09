@@ -124,6 +124,50 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Readable V5 web source", Path(report_path).read_text(encoding="utf-8"))
 
+    def test_runner_creates_requested_pdf_and_docx_report_artifacts(self) -> None:
+        def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
+            del timeout
+            self.assertEqual(url, "https://example.test/exports")
+            return {
+                "url": url,
+                "title": "Export source",
+                "content_type": "text/plain",
+                "content": "Readable evidence for PDF and DOCX derived research reports.",
+            }
+
+        project = self.services.project.create_project(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="Export project",
+        )
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            project_id=project.id,
+            topic="derived report exports",
+            source_policy={
+                "source_adapters": ["web"],
+                "web_urls": ["https://example.test/exports"],
+                "limit": 1,
+                "derived_formats": ["pdf", "docx"],
+            },
+        )
+        result = ResearchExecutionService(self.services, web_fetcher=fake_web_fetch).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["derived_artifact_count"], 2)
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(completed.status, "completed")
+        derived = completed.meta["derived_artifacts"]
+        self.assertEqual([item["format"] for item in derived], ["pdf", "docx"])
+        pdf_artifact = self.services.artifact.get_by_artifact_id(derived[0]["artifact_id"])
+        docx_artifact = self.services.artifact.get_by_artifact_id(derived[1]["artifact_id"])
+        self.assertEqual(pdf_artifact.content_type, "application/pdf")
+        self.assertEqual(docx_artifact.content_type, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        self.assertTrue(Path(self.services.artifact.resolve_local_path(pdf_artifact)).read_bytes().startswith(b"%PDF-"))
+        self.assertTrue(Path(self.services.artifact.resolve_local_path(docx_artifact)).read_bytes().startswith(b"PK"))
+        project_artifacts = self.services.artifact.list_for_project(project_id=project.project_id)
+        self.assertEqual({row.artifact_id for row in project_artifacts}, {completed.meta["artifact_id"], derived[0]["artifact_id"], derived[1]["artifact_id"]})
+
     def test_runner_stops_when_cancelled_during_gather(self) -> None:
         def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
             del timeout
