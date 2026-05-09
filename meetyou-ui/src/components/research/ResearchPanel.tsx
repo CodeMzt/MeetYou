@@ -425,6 +425,7 @@ export default function ResearchPanel({
           <div className={styles.progressRow} data-research-progress="true">
             <span>来源 {evidenceItems.length}</span>
             <span>格式 {selectedTask.output_format || 'markdown'}</span>
+            {selectedTask.status === 'running' ? <span data-research-auto-refresh="true">自动刷新</span> : null}
             {selectedDerivedArtifacts.length ? <span data-research-derived-count="true">导出 {selectedDerivedArtifacts.length}</span> : null}
             {researchProgress?.errorCount ? <span data-research-progress-errors="true">错误 {researchProgress.errorCount}</span> : null}
             {selectedTask.artifact ? <span>{formatBytes(selectedTask.artifact.byte_size)}</span> : null}

@@ -116,4 +116,24 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('导出 1')
     expect(markup).toContain('report.pdf')
   })
+
+  it('marks running tasks as auto-refreshed', () => {
+    const markup = renderToStaticMarkup(
+      <ResearchPanel
+        tasks={[{ ...task, status: 'running' }]}
+        busy={false}
+        onCreateTask={vi.fn()}
+        onApproveTask={vi.fn()}
+        onStartTask={vi.fn()}
+        onCancelTask={vi.fn()}
+        onSavePlan={vi.fn()}
+        onDownloadArtifact={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('data-research-auto-refresh="true"')
+    expect(markup).toContain('自动刷新')
+    expect(markup).toContain('data-research-cancel="true"')
+  })
 })

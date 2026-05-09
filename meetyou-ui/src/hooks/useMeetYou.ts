@@ -27,6 +27,15 @@ import {
 import { parseEndpointWsPayload } from '../protocolClient'
 
 const STATUS_FEEDBACK_TTL_MS = 6000
+export const RESEARCH_TASK_POLL_INTERVAL_MS = 3000
+
+export function isResearchTaskRunning(task: Pick<RuntimeResearchTask, 'status'> | null | undefined): boolean {
+  return String(task?.status || '').trim().toLowerCase() === 'running'
+}
+
+export function hasRunningResearchTasks(tasks: Array<Pick<RuntimeResearchTask, 'status'>>): boolean {
+  return tasks.some((task) => isResearchTaskRunning(task))
+}
 
 export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const autoInitializeAttemptedRef = useRef(false)
@@ -307,6 +316,31 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   useEffect(() => {
     void refreshProjectArtifacts(activeProjectId)
   }, [activeProjectId, refreshProjectArtifacts])
+
+  const researchPollingActive = useMemo(() => hasRunningResearchTasks(researchTasks), [researchTasks])
+
+  useEffect(() => {
+    if (!researchPollingActive) {
+      return
+    }
+    let stopped = false
+    const poll = async () => {
+      const tasks = await refreshResearchTasks(activeProjectId)
+      if (stopped) {
+        return
+      }
+      if (!hasRunningResearchTasks(tasks)) {
+        void refreshProjectArtifacts(activeProjectId)
+      }
+    }
+    const timer = window.setInterval(() => {
+      void poll()
+    }, RESEARCH_TASK_POLL_INTERVAL_MS)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [activeProjectId, refreshProjectArtifacts, refreshResearchTasks, researchPollingActive])
 
   const effectiveConnectionState = useMemo(() => {
     if (!endpointContext || endpointConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
