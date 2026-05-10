@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from core.research.academic_sources import AcademicSourceRegistry, FetchAcademicSource
 from core.research.report_artifacts import create_research_report_derivatives
@@ -24,6 +26,138 @@ def _now_iso() -> str:
 def _excerpt(value: Any, *, limit: int = 700) -> str:
     text = " ".join(str(value or "").split())
     return text[:limit]
+
+
+def _compact_key(value: Any, *, limit: int = 180) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())[:limit]
+
+
+def _canonical_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    tracking_params = {"fbclid", "gclid", "mc_cid", "mc_eid"}
+    params = [
+        (key, param_value)
+        for key, param_value in parse_qsl(parsed.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_") and key.lower() not in tracking_params
+    ]
+    path = parsed.path.rstrip("/") or "/"
+    return urlunparse(
+        (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            path,
+            "",
+            urlencode(sorted(params), doseq=True),
+            "",
+        )
+    )
+
+
+def _dedupe_key(item: dict[str, Any], index: int) -> str:
+    checksum = _compact_key(item.get("checksum"), limit=128)
+    if checksum:
+        return f"checksum:{checksum}"
+    project_source_id = _compact_key(item.get("project_source_id"), limit=128)
+    if project_source_id:
+        return f"project_source:{project_source_id}"
+    url = _canonical_url(item.get("url") or item.get("href"))
+    if url:
+        return f"url:{url}"
+    title = _compact_key(item.get("title") or item.get("source_title") or item.get("name"), limit=120)
+    snippet = _compact_key(item.get("snippet") or item.get("summary") or item.get("content"), limit=180)
+    if title or snippet:
+        return f"text:{title}:{snippet}"
+    return f"source:{index}"
+
+
+def _quality_score(item: dict[str, Any]) -> float:
+    source_type = str(item.get("source_type") or "").strip().lower()
+    verification = str(item.get("verification_status") or "").strip().lower()
+    adapter = str(item.get("adapter") or "").strip().lower()
+    snippet = str(item.get("snippet") or "").strip()
+    score = 0.0
+    if verification in {"project_source_snapshot"}:
+        score += 45
+    elif verification in {"fetched", "read"}:
+        score += 40
+    elif verification in {"query_url", "search_result_only"}:
+        score -= 20
+    if source_type == "project_source":
+        score += 20
+    elif source_type == "web_page":
+        score += 15
+    elif source_type == "academic_index":
+        score += 12
+    if adapter in {"openalex", "semantic_scholar", "crossref", "arxiv"}:
+        score += 4
+    if item.get("url"):
+        score += 3
+    if item.get("title"):
+        score += 3
+    if item.get("authors"):
+        score += 2
+    if item.get("year") or item.get("published_at"):
+        score += 2
+    if snippet:
+        score += min(20, max(1, len(snippet) // 80))
+    else:
+        score -= 30
+    return score
+
+
+def _rank_and_dedupe_evidence(evidence: list[dict[str, Any]], *, max_sources: int) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for index, item in enumerate(evidence):
+        row = dict(item or {})
+        row["_input_index"] = index
+        row["_dedupe_key"] = _dedupe_key(row, index)
+        row["_quality_score"] = _quality_score(row)
+        groups.setdefault(row["_dedupe_key"], []).append(row)
+
+    winners: list[dict[str, Any]] = []
+    for key, rows in groups.items():
+        rows.sort(
+            key=lambda row: (
+                -float(row.get("_quality_score") or 0),
+                -len(str(row.get("snippet") or "")),
+                int(row.get("_input_index") or 0),
+            )
+        )
+        winner = dict(rows[0])
+        original_ids = [str(row.get("source_id") or "") for row in rows if str(row.get("source_id") or "").strip()]
+        winner["quality_score"] = round(float(winner.get("_quality_score") or 0), 2)
+        winner["dedupe_key"] = key
+        winner["duplicate_count"] = len(rows)
+        winner["merged_source_ids"] = original_ids
+        if len(rows) > 1:
+            winner["duplicate_source_ids"] = original_ids[1:]
+        winners.append(winner)
+
+    winners.sort(
+        key=lambda row: (
+            -float(row.get("quality_score") or 0),
+            int(row.get("_input_index") or 0),
+        )
+    )
+
+    ranked: list[dict[str, Any]] = []
+    for rank, item in enumerate(winners[: max(0, int(max_sources or 0))], start=1):
+        row = dict(item)
+        original_source_id = str(row.get("source_id") or "")
+        if original_source_id and original_source_id != str(rank):
+            row["original_source_id"] = original_source_id
+        row["source_id"] = str(rank)
+        row["rank"] = rank
+        row.pop("_input_index", None)
+        row.pop("_dedupe_key", None)
+        row.pop("_quality_score", None)
+        ranked.append(row)
+    return ranked
 
 
 def _source_limit(policy: dict[str, Any]) -> int:
@@ -295,6 +429,7 @@ class ResearchExecutionService:
             policy=policy,
             max_sources=max_sources,
         )
+        evidence = _rank_and_dedupe_evidence(evidence, max_sources=max_sources)
         evidence = _apply_evidence_safety(evidence)
         if self._is_cancelled(research_task_id):
             return self._cancelled_result(research_task_id, stage="gather")
@@ -322,12 +457,17 @@ class ResearchExecutionService:
         if str(getattr(refreshed, "status", "") or "").strip().lower() == "cancelled":
             return self._cancelled_result(research_task_id, stage="gather")
 
+        duplicate_count = sum(max(0, int(item.get("duplicate_count") or 1) - 1) for item in evidence)
         self._record_progress(
             research_task_id,
             stage="gather",
             status="completed",
             message=f"已收集 {len(evidence)} 条可读证据。",
-            metadata={"evidence_count": len(evidence), "gather_error_count": len(gather_errors)},
+            metadata={
+                "evidence_count": len(evidence),
+                "gather_error_count": len(gather_errors),
+                "deduplicated_source_count": duplicate_count,
+            },
         )
         if self._is_cancelled(research_task_id):
             return self._cancelled_result(research_task_id, stage="synthesize")
@@ -422,6 +562,7 @@ class ResearchExecutionService:
                     "runner": "core.research_execution.v1",
                     "completed_at": _now_iso(),
                     "gather_errors": gather_errors,
+                    "deduplicated_source_count": duplicate_count,
                     "citation_validation": citation_validation,
                     "derived_artifacts": derived_artifacts,
                     "derived_artifact_ids": [item["artifact_id"] for item in derived_artifacts],
@@ -451,6 +592,7 @@ class ResearchExecutionService:
             metadata={
                 "artifact_id": artifact.artifact_id,
                 "evidence_count": len(evidence),
+                "deduplicated_source_count": duplicate_count,
                 "derived_artifact_count": len(derived_artifacts),
             },
         )
@@ -849,6 +991,10 @@ class ResearchExecutionService:
             "",
             self._summary(task, evidence),
             "",
+            "## Method",
+            "",
+            "Sources were deduplicated, ranked by readable evidence quality, and then cited only by the final evidence ledger ids.",
+            "",
             "## Evidence-Based Notes",
             "",
         ]
@@ -864,9 +1010,14 @@ class ResearchExecutionService:
             url = str(item.get("url") or "")
             source_type = str(item.get("source_type") or "")
             adapter = str(item.get("adapter") or "")
+            rank = str(item.get("rank") or source_id)
+            score = str(item.get("quality_score") or "")
+            duplicates = int(item.get("duplicate_count") or 1)
             suffix = f" - {url}" if url else ""
             adapter_text = f", {adapter}" if adapter else ""
-            lines.append(f"- [{source_id}] {title} ({source_type}{adapter_text}){suffix}")
+            quality_text = f"; rank {rank}; score {score}" if score else f"; rank {rank}"
+            duplicate_text = f"; merged {duplicates} duplicate entries" if duplicates > 1 else ""
+            lines.append(f"- [{source_id}] {title} ({source_type}{adapter_text}{quality_text}{duplicate_text}){suffix}")
         lines.extend(["", "## Risks And Uncertainty", ""])
         lines.append(
             "Source safety: all gathered source text is treated as untrusted evidence only. "

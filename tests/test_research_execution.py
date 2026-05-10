@@ -131,6 +131,65 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         report_path = self.services.artifact.resolve_local_path(artifact)
         self.assertIn("Readable V5 web source", Path(report_path).read_text(encoding="utf-8"))
 
+    def test_runner_deduplicates_and_ranks_evidence_before_report(self) -> None:
+        fetched_urls: list[str] = []
+
+        def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
+            del timeout
+            fetched_urls.append(url)
+            return {
+                "url": url,
+                "title": "Duplicate web source",
+                "content_type": "text/plain",
+                "content": "Readable web evidence duplicated by tracking parameters and fragments.",
+            }
+
+        project = self.services.project.create_project(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="Ranking project",
+        )
+        self.services.project.add_source(
+            project_id=project.project_id,
+            principal_id=self.principal.id,
+            title="Saved project source",
+            content="Project source evidence should outrank duplicate web fetches in the final ledger.",
+        )
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            project_id=project.id,
+            topic="evidence ranking",
+            source_policy={
+                "source_adapters": ["web"],
+                "web_urls": [
+                    "https://example.test/research?utm_source=mail#section",
+                    "https://example.test/research",
+                ],
+                "include_project_sources": True,
+                "limit": 3,
+            },
+        )
+        result = ResearchExecutionService(self.services, web_fetcher=fake_web_fetch).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(fetched_urls), 2)
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(len(completed.evidence_ledger), 2)
+        self.assertEqual([item["source_id"] for item in completed.evidence_ledger], ["1", "2"])
+        self.assertEqual([item["rank"] for item in completed.evidence_ledger], [1, 2])
+        self.assertEqual(completed.evidence_ledger[0]["source_type"], "project_source")
+        self.assertEqual(completed.evidence_ledger[1]["source_type"], "web_page")
+        self.assertGreater(completed.evidence_ledger[0]["quality_score"], completed.evidence_ledger[1]["quality_score"])
+        self.assertEqual(completed.evidence_ledger[1]["duplicate_count"], 2)
+        self.assertEqual(completed.meta["deduplicated_source_count"], 1)
+        artifact = self.services.artifact.get_by_id(completed.artifact_id)
+        report_text = Path(self.services.artifact.resolve_local_path(artifact)).read_text(encoding="utf-8")
+        self.assertIn("Sources were deduplicated, ranked by readable evidence quality", report_text)
+        self.assertIn("merged 2 duplicate entries", report_text)
+        self.assertIn("Saved project source", report_text)
+        self.assertIn("Duplicate web source", report_text)
+
     def test_runner_writes_research_progress_run_events(self) -> None:
         def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:
             del timeout
