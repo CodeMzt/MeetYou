@@ -416,6 +416,162 @@
     {
       "type": "function",
       "function": {
+        "name": "search_academic_sources",
+        "description": "Build read-only academic source queries for V5 research across arXiv, OpenAlex, Crossref, and Semantic Scholar.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The academic search query."
+            },
+            "adapters": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "arxiv",
+                  "openalex",
+                  "crossref",
+                  "semantic_scholar"
+                ]
+              },
+              "description": "Optional adapter list. Defaults to all supported read-only academic adapters."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum query/result count per adapter."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "metadata": {
+          "action_risk": "read",
+          "safe_parallel": true,
+          "parallel_group": "academic_io",
+          "max_concurrency": 3
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "create_research_task",
+        "description": "Create a durable V5 ResearchTask with an editable plan, source policy, and optional project/thread binding. This creates task state only; start or run it with manage_research_tasks.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string",
+              "description": "Research topic or question."
+            },
+            "project_id": {
+              "type": "string",
+              "description": "Optional Project public id to bind the task and resulting artifacts."
+            },
+            "thread_id": {
+              "type": "string",
+              "description": "Optional Thread public id for task context and final artifact summary delivery."
+            },
+            "source_policy": {
+              "type": "object",
+              "description": "Read-only source policy, such as source_adapters, include_project_sources, web_search, web_queries, web_urls, limit, and derived_formats."
+            },
+            "output_format": {
+              "type": "string",
+              "description": "Canonical output format. Defaults to markdown; include pdf/docx through source_policy.derived_formats."
+            }
+          },
+          "required": [
+            "topic"
+          ]
+        },
+        "metadata": {
+          "action_risk": "write",
+          "safe_parallel": false,
+          "requires_order": true
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "manage_research_tasks",
+        "description": "Manage durable V5 ResearchTasks: list, update/edit the plan before start, approve, start, cancel, run the Core read-only runner, or complete with a citation-validated report artifact.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "list",
+                "update",
+                "approve",
+                "start",
+                "cancel",
+                "complete",
+                "fail",
+                "run",
+                "execute"
+              ],
+              "description": "Research task action."
+            },
+            "research_task_id": {
+              "type": "string",
+              "description": "ResearchTask public id. Required except for list."
+            },
+            "project_id": {
+              "type": "string",
+              "description": "Optional Project public id for list filtering."
+            },
+            "status": {
+              "type": "string",
+              "description": "Optional explicit status for update actions."
+            },
+            "plan": {
+              "type": "object",
+              "description": "Editable plan update, accepted only before the task starts."
+            },
+            "evidence_ledger": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "description": "Evidence records used for citation validation when completing a report."
+            },
+            "summary": {
+              "type": "string",
+              "description": "Short task/report summary."
+            },
+            "report_markdown": {
+              "type": "string",
+              "description": "Markdown report body. Citations such as [1] must refer to evidence_ledger source_id values."
+            },
+            "report_filename": {
+              "type": "string",
+              "description": "Optional artifact filename for report_markdown completion."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum rows for list."
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        "metadata": {
+          "action_risk": "write",
+          "safe_parallel": false,
+          "requires_order": true
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "manage_projects",
         "description": "Manage V5 Projects: list, create, inspect, update, archive, list project threads, and attach or detach a thread from a project. Project is a user work container; Workspace remains the governance boundary.",
         "parameters": {

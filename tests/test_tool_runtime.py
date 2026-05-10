@@ -458,6 +458,41 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("time-consuming", description)
         self.assertIn("May be called multiple times", description)
 
+    async def test_v5_research_task_tool_schemas_are_exposed_from_template(self):
+        manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
+        tools_path = Path(__file__).resolve().parent.parent / "user" / "tools.example.json"
+
+        await manager.init_tools(str(tools_path), {})
+
+        schemas = {
+            tool["function"]["name"]: tool["function"]
+            for tool in manager.get_all_tools(
+                route_context={
+                    "tool_bundle": [
+                        "search_academic_sources",
+                        "create_research_task",
+                        "manage_research_tasks",
+                    ],
+                    "mcp_servers": [],
+                    "current_mode": "research",
+                }
+            )
+        }
+
+        self.assertIn("search_academic_sources", schemas)
+        self.assertIn("create_research_task", schemas)
+        self.assertIn("manage_research_tasks", schemas)
+        academic_properties = schemas["search_academic_sources"]["parameters"]["properties"]
+        create_properties = schemas["create_research_task"]["parameters"]["properties"]
+        manage_properties = schemas["manage_research_tasks"]["parameters"]["properties"]
+        self.assertEqual(schemas["create_research_task"]["parameters"]["required"], ["topic"])
+        self.assertIn("source_policy", create_properties)
+        self.assertIn("derived_formats", create_properties["source_policy"]["description"])
+        self.assertIn("run", manage_properties["action"]["enum"])
+        self.assertIn("cancel", manage_properties["action"]["enum"])
+        self.assertIn("report_markdown", manage_properties)
+        self.assertIn("semantic_scholar", academic_properties["adapters"]["items"]["enum"])
+
     async def test_v4_scheduler_job_tool_hides_configured_tools_without_runtime_implementation(self):
         manager = self._build_manager_with_real_system_tools(mode_manager=_FakeModeManager([]))
         tools_path = Path(__file__).resolve().parent.parent / "user" / "tools.example.json"
