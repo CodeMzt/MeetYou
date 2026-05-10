@@ -1,6 +1,7 @@
 .projectPicker {
   position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
   min-width: 0;
   z-index: var(--z-island);
   pointer-events: auto;
@@ -309,8 +310,9 @@
 
 @media (max-width: 420px) {
   .trigger {
-    min-width: 40px;
-    width: 40px;
+    height: 32px;
+    min-width: 32px;
+    width: 32px;
     padding: 0;
   }
 

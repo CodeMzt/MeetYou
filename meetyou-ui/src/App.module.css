@@ -56,14 +56,20 @@
 }
 
 @media (max-width: 420px) {
+  .mainContent {
+    overflow: visible;
+  }
+
   .topDock {
-    left: 8px;
-    right: 8px;
+    top: -36px;
+    left: 58px;
+    right: 64px;
     transform: none;
     flex-wrap: nowrap;
     gap: 4px;
     max-width: none;
     align-items: center;
+    z-index: 110;
   }
 
   .statusIslandSlot {
@@ -78,7 +84,7 @@
   }
 
   .contentArea {
-    padding-top: 58px;
+    padding-top: 10px;
   }
 }
 

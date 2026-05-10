@@ -1,5 +1,6 @@
 .threadPicker {
   position: relative;
+  flex: 0 0 auto;
   z-index: var(--z-island);
   pointer-events: auto;
 }
@@ -215,9 +216,10 @@
 
 @media (max-width: 420px) {
   .trigger {
-    min-width: 88px;
-    width: clamp(88px, calc(100vw - 250px), 132px);
-    max-width: 132px;
+    height: 32px;
+    min-width: 96px;
+    width: clamp(96px, calc(100vw - 268px), 128px);
+    max-width: 128px;
     padding: 0 8px;
   }
 

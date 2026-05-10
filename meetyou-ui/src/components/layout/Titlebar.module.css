@@ -199,3 +199,17 @@
     min-width: 12px;
   }
 }
+
+@media (max-width: 420px) {
+  .tools {
+    display: none;
+  }
+
+  .dragRegion {
+    min-width: 0;
+  }
+
+  .windowControls {
+    margin-left: 4px;
+  }
+}
