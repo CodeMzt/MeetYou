@@ -5,7 +5,7 @@
 Deep research is represented by `ResearchTask`.
 
 1. Intake: store topic, optional project/thread, source policy, and output format.
-2. Plan: create an editable Chinese-first plan with explicit gather/synthesize/artifact steps.
+2. Plan: create an editable Chinese-first plan with research questions, source strategy, quality gates, deliverables, and explicit gather/synthesize/artifact steps.
 3. Approval/start: user or automation approves the editable plan, then starts the task. Status transitions are explicit: `planned -> approved -> running`; `planned -> running` remains allowed for single-step automation.
 4. Gather: use read-only web, academic, project-source, file-search, or MCP search/fetch tools.
 5. Synthesize: produce claims that map to evidence records.
@@ -18,6 +18,7 @@ The first executable runner is deliberately conservative:
 - `manage_research_tasks(action="run")` executes the same runner from assistant tools.
 - Assistant-facing V5 research tools are part of the public tool template: `search_academic_sources`, `create_research_task`, and `manage_research_tasks` must be present in `user/tools.example.json` with parameter schemas that match the registered Core tool implementations and research-mode prompts.
 - Assistant-facing ResearchTask tools share the Runtime binding contract: supplied `project_id` and `thread_id` must resolve to durable Core records. Unknown ids return structured `project_not_found` or `thread_not_found` errors rather than silently creating or listing unscoped tasks.
+- New ResearchTasks receive a Core-generated Chinese-first plan. The plan includes an explicit `plan_review` confirmation step, research questions, source strategy, quality gates, deliverables, `requires_approval=true`, and remains editable until the task starts.
 - Runtime `start` binds the ResearchTask to a Core `Run`, stores the public `run_id` on the task response/metadata, and emits durable `research.started` plus subsequent `research.*` RunEvents. `GET /runtime/research-tasks/{id}/events?after_seq=N` returns incremental task events so progress UIs can resume without depending only on current task metadata.
 - The runner gathers from implemented academic adapters, direct read-only web seed URLs, governed web-search discovery, and, when requested, ProjectSource snapshots. It does not mutate sources or send private data to write channels.
 - Unsupported adapters are recorded in `metadata.gather_errors`; they do not become citations.
@@ -47,6 +48,20 @@ Allowed verification statuses:
 Final research claims should cite only fetched or project-source evidence unless the report explicitly labels the gap. The current guard validates numeric inline citations such as `[1]` and `[2]`; every cited id must exist in the final ranked `evidence_ledger[].source_id`, or the API/tool request fails with `research_report_citation_invalid` before any report artifact is written.
 
 Generated reports also include a source-safety note in the risk section so exported Markdown/PDF/DOCX artifacts preserve the same boundary for human review.
+
+## Research Plan Contract
+
+Core owns the default plan structure for new ResearchTasks. Endpoint Providers and UI surfaces may display or edit the plan before start, but they should not invent a separate hidden plan state.
+
+The default plan includes:
+
+- `language=zh-CN` and the original `topic`;
+- ordered steps: intake, plan review, gather, evidence review, synthesize, artifact;
+- `research_questions` that frame conclusions, conflicts/uncertainty, and follow-up recommendations;
+- `source_strategy` with read-only status, adapters, project-source usage, web search/query hints, direct URL count, and max source count;
+- `quality_gates` for read-only gathering, evidence-required failure, citation-guard validation, and prompt-injection mitigation;
+- `deliverables` with Markdown primary output, requested PDF/DOCX derived formats, and summary-plus-artifact final message semantics;
+- `approval` metadata showing the plan is editable and should be confirmed or explicitly started before execution.
 
 ## Task State Guard
 

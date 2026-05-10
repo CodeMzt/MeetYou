@@ -638,19 +638,126 @@ class ResearchTaskService(ServiceBase):
         }
 
     @staticmethod
-    def build_default_plan(topic: str, source_policy: dict | None = None) -> dict[str, Any]:
+    def _policy_list(policy: dict[str, Any], *keys: str) -> list[str]:
+        values: list[Any] = []
+        for key in keys:
+            raw = policy.get(key)
+            if isinstance(raw, (list, tuple, set)):
+                values.extend(raw)
+            elif isinstance(raw, (str, bytes)) and str(raw).strip():
+                values.append(raw)
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        return result
+
+    @staticmethod
+    def _policy_bool(policy: dict[str, Any], *keys: str) -> bool:
+        for key in keys:
+            value = policy.get(key)
+            if isinstance(value, str):
+                if value.strip().lower() in {"1", "true", "yes", "on", "enabled"}:
+                    return True
+                continue
+            if bool(value):
+                return True
+        return False
+
+    @staticmethod
+    def _policy_limit(policy: dict[str, Any]) -> int:
+        raw = policy.get("max_sources", policy.get("limit", 8))
+        try:
+            return max(1, min(int(raw or 8), 24))
+        except (TypeError, ValueError):
+            return 8
+
+    @classmethod
+    def _derived_formats(cls, policy: dict[str, Any], output_format: str) -> list[str]:
+        formats = cls._policy_list(policy, "derived_formats", "artifact_formats", "report_formats")
+        if cls._policy_bool(policy, "include_pdf"):
+            formats.append("pdf")
+        if cls._policy_bool(policy, "include_docx"):
+            formats.append("docx")
+        normalized_output = str(output_format or "").strip().lower()
+        if normalized_output in {"all", "pdf"} or "pdf" in normalized_output:
+            formats.append("pdf")
+        if normalized_output in {"all", "docx", "word"} or "docx" in normalized_output:
+            formats.append("docx")
+        result: list[str] = []
+        for item in formats:
+            normalized = str(item or "").strip().lower()
+            if normalized in {"pdf", "docx"} and normalized not in result:
+                result.append(normalized)
+        return result
+
+    @classmethod
+    def build_default_plan(cls, topic: str, source_policy: dict | None = None, output_format: str = "markdown") -> dict[str, Any]:
         policy = dict(source_policy or {})
+        topic_text = str(topic or "").strip()
+        adapters = cls._policy_list(policy, "source_adapters") or ["web", "arxiv", "openalex", "crossref", "semantic_scholar"]
+        web_urls = cls._policy_list(policy, "web_urls", "seed_urls", "source_urls")
+        web_queries = cls._policy_list(policy, "web_queries", "web_search_queries", "search_queries", "queries")
+        derived_formats = cls._derived_formats(policy, output_format)
+        source_limit = cls._policy_limit(policy)
         return {
             "schema": "meetyou.research.plan.v1",
-            "topic": str(topic or "").strip(),
+            "language": "zh-CN",
+            "topic": topic_text,
             "steps": [
-                {"id": "intake", "title": "澄清范围与约束", "status": "planned"},
-                {"id": "gather", "title": "收集网页、学术与项目来源证据", "status": "planned"},
+                {
+                    "id": "intake",
+                    "title": "确认研究主题、范围与输出标准",
+                    "status": "planned",
+                    "editable_fields": ["topic", "constraints", "audience", "output_format"],
+                },
+                {
+                    "id": "plan_review",
+                    "title": "用户确认或编辑研究计划",
+                    "status": "planned",
+                    "requires_user_confirmation": True,
+                },
+                {"id": "gather", "title": "收集只读网页、学术与项目来源证据", "status": "planned"},
+                {"id": "evidence_review", "title": "去重、排序并校验证据账本", "status": "planned"},
                 {"id": "synthesize", "title": "综合带引用的研究结论", "status": "planned"},
                 {"id": "artifact", "title": "生成可下载报告产物", "status": "planned"},
             ],
-            "source_adapters": list(policy.get("source_adapters") or ["web", "arxiv", "openalex", "crossref", "semantic_scholar"]),
+            "research_questions": [
+                f"围绕「{topic_text}」梳理核心结论与关键背景。",
+                "识别证据之间的一致点、冲突点与不确定性。",
+                "给出可复核的来源清单、风险说明和后续研究建议。",
+            ],
+            "source_strategy": {
+                "read_only": policy.get("read_only", True) is not False,
+                "source_adapters": adapters,
+                "include_project_sources": cls._policy_bool(policy, "include_project_sources"),
+                "web_search": cls._policy_bool(policy, "web_search", "enable_web_search", "discover_urls", "search_discovery"),
+                "web_queries": web_queries,
+                "web_url_count": len(web_urls),
+                "max_sources": source_limit,
+            },
+            "quality_gates": [
+                {"id": "read_only", "title": "只读收集证据", "enforcement": "fail_if_write_policy_requested"},
+                {"id": "evidence_required", "title": "至少收集一条可读证据", "enforcement": "fail_without_evidence"},
+                {"id": "evidence_ledger", "title": "报告引用必须来自最终证据账本", "enforcement": "citation_guard"},
+                {"id": "prompt_injection", "title": "来源文本按不可信证据处理", "enforcement": "ignore_source_instructions"},
+            ],
+            "deliverables": {
+                "primary": "markdown",
+                "derived_formats": derived_formats,
+                "final_message": "summary_with_artifact_links",
+            },
+            "source_adapters": adapters,
             "requires_approval": True,
+            "approval": {
+                "required": True,
+                "editable": True,
+                "start_after": "approve_or_explicit_start",
+            },
         }
 
     def create_task(
@@ -674,7 +781,7 @@ class ResearchTaskService(ServiceBase):
                 project_id=project_id,
                 thread_id=thread_id,
                 topic=normalized_topic,
-                plan=self.build_default_plan(normalized_topic, source_policy),
+                plan=self.build_default_plan(normalized_topic, source_policy, output_format),
                 source_policy=source_policy,
                 output_format=str(output_format or "markdown").strip() or "markdown",
                 metadata=metadata,

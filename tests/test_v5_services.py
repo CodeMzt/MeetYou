@@ -251,8 +251,15 @@ class V5ServiceTests(unittest.TestCase):
             principal_id=self.principal_id,
             project_id=project.id,
             topic="checkpointing in agent runtimes",
-            source_policy={"source_adapters": ["arxiv", "openalex"]},
-            output_format="markdown",
+            source_policy={
+                "source_adapters": ["arxiv", "openalex"],
+                "include_project_sources": True,
+                "web_search": True,
+                "web_queries": ["agent checkpoints"],
+                "limit": 6,
+                "derived_formats": ["pdf"],
+            },
+            output_format="markdown+docx",
         )
         updated = self.research_service.transition_task(
             research_task_id=task.research_task_id,
@@ -264,12 +271,22 @@ class V5ServiceTests(unittest.TestCase):
 
         self.assertEqual(task.status, "planned")
         self.assertTrue(task.plan["requires_approval"])
+        self.assertEqual(task.plan["language"], "zh-CN")
         self.assertEqual(task.plan["source_adapters"], ["arxiv", "openalex"])
-        self.assertEqual([step["id"] for step in task.plan["steps"]], ["intake", "gather", "synthesize", "artifact"])
+        self.assertEqual([step["id"] for step in task.plan["steps"]], ["intake", "plan_review", "gather", "evidence_review", "synthesize", "artifact"])
         self.assertEqual(
             [step["title"] for step in task.plan["steps"]],
-            ["澄清范围与约束", "收集网页、学术与项目来源证据", "综合带引用的研究结论", "生成可下载报告产物"],
+            ["确认研究主题、范围与输出标准", "用户确认或编辑研究计划", "收集只读网页、学术与项目来源证据", "去重、排序并校验证据账本", "综合带引用的研究结论", "生成可下载报告产物"],
         )
+        self.assertTrue(task.plan["steps"][1]["requires_user_confirmation"])
+        self.assertEqual(len(task.plan["research_questions"]), 3)
+        self.assertEqual(task.plan["source_strategy"]["source_adapters"], ["arxiv", "openalex"])
+        self.assertTrue(task.plan["source_strategy"]["include_project_sources"])
+        self.assertTrue(task.plan["source_strategy"]["web_search"])
+        self.assertEqual(task.plan["source_strategy"]["web_queries"], ["agent checkpoints"])
+        self.assertEqual(task.plan["source_strategy"]["max_sources"], 6)
+        self.assertEqual(task.plan["deliverables"]["derived_formats"], ["pdf", "docx"])
+        self.assertIn("citation_guard", [gate["enforcement"] for gate in task.plan["quality_gates"]])
         self.assertEqual(updated.status, "running")
         self.assertEqual(updated.evidence_ledger[0]["source_id"], 1)
         self.assertEqual(updated.meta["events"][0]["action"], "start")

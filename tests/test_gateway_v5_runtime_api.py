@@ -155,6 +155,10 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(research_response.status_code, 200)
         self.assertEqual(research_response.json()["status"], "planned")
         self.assertEqual(research_response.json()["plan"]["source_adapters"], ["arxiv"])
+        self.assertEqual(research_response.json()["plan"]["language"], "zh-CN")
+        self.assertIn("plan_review", [step["id"] for step in research_response.json()["plan"]["steps"]])
+        self.assertEqual(research_response.json()["plan"]["deliverables"]["derived_formats"], ["pdf", "docx"])
+        self.assertIn("citation_guard", [gate["enforcement"] for gate in research_response.json()["plan"]["quality_gates"]])
         research_task_id = research_response.json()["research_task_id"]
 
         approve_response = self.client.patch(
