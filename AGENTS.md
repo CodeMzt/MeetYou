@@ -35,8 +35,10 @@
 - Historical edit retry may use the current active Runtime session as a same-thread fallback when the original user message lacks `session_id`; reject fallback sessions from other threads instead of queueing a replay into the wrong thread.
 - V5 visible thread history must be projected by Core from `Thread.current_leaf_message_id` through `Message.parent_message_id`. Frontend branch/checkpoint controls must reload Core history after restore/checkout instead of hiding messages locally.
 - V5 branch UI should derive active branch, compact tree, path, and sibling variants from Core branch records (`metadata.is_active`, `parent_branch_id`). Do not create separate frontend-only retry tree state.
+- V5 branch tree activation must call Core branch activation APIs, then reload Core history/version state. Do not switch branches by locally filtering message arrays.
 - V5 message-level restore/checkout must target the Core automatic checkpoint whose `message_id` matches the message. Do not implement message-level restore by local UI filtering.
 - V5 desktop UI text should be Chinese by default. At the 400x620 Electron size, the V5 Project / Thread / Branch / Source / Artifact dock must fit into the titlebar row as visible, non-overlapping, clickable controls; do not add controls that wrap into another row or steal chat vertical space.
+- Do not remove or hide the original titlebar tools when compacting the V5 dock. If there is not enough width at 400x620, keep those tools reachable through a Chinese compact tools menu in the same titlebar row.
 - Core-generated V5 titles that can surface in desktop UI, including default branch, automatic checkpoint, checkout branch, edit-retry branch, and project source snapshot titles, must use Chinese fallbacks unless an explicit user-provided title is passed.
 
 ## V4 Architecture Rules

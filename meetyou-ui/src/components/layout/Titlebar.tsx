@@ -1,4 +1,5 @@
-import { Database, Gauge, LayoutTemplate, MessageSquareMore, Minus, Pin, PinOff, Settings, Wrench, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Database, Gauge, LayoutTemplate, MessageSquareMore, Minus, MoreHorizontal, Pin, PinOff, Settings, Wrench, X } from 'lucide-react'
 import { RuntimeWorkspace, ConnectionState } from '../../types'
 import { getConnectionText } from '../../utils/statusFormatting'
 import { WINDOW_OPEN_CHANNEL } from '../../windowBridge'
@@ -20,6 +21,8 @@ export default function Titlebar({
   onTogglePin,
 }: TitlebarProps) {
   const connectionText = getConnectionText(connectionState)
+  const [compactToolsOpen, setCompactToolsOpen] = useState(false)
+  const compactToolsRef = useRef<HTMLDivElement | null>(null)
 
   const handleClose = () => window.ipcRenderer?.send('window-close')
   const handleMinimize = () => window.ipcRenderer?.send('window-minimize')
@@ -29,6 +32,44 @@ export default function Titlebar({
   const handleOpenDanxi = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.danxi)
   const handleOpenStats = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.context)
   const handleOpenDevtools = () => window.ipcRenderer?.send(WINDOW_OPEN_CHANNEL.runtimeDebug)
+  const toolItems = [
+    {
+      key: 'pin',
+      title: isPinned ? '取消置顶' : '置顶窗口',
+      icon: isPinned ? <Pin size={15} /> : <PinOff size={15} />,
+      action: onTogglePin,
+      active: isPinned,
+    },
+    { key: 'dashboard', title: '记忆图谱', icon: <Database size={15} />, action: handleOpenDashboard },
+    { key: 'workspace', title: '工作区', icon: <LayoutTemplate size={15} />, action: handleOpenWorkspacePanel },
+    { key: 'danxi', title: '旦夕', icon: <MessageSquareMore size={15} />, action: handleOpenDanxi },
+    { key: 'stats', title: '上下文与用量', icon: <Gauge size={15} />, action: handleOpenStats },
+    { key: 'devtools', title: '开发工具', icon: <Wrench size={15} />, action: handleOpenDevtools },
+    { key: 'settings', title: '设置', icon: <Settings size={15} />, action: handleOpenSettings },
+  ]
+
+  useEffect(() => {
+    if (!compactToolsOpen) {
+      return
+    }
+    const close = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (!compactToolsRef.current?.contains(target)) {
+        setCompactToolsOpen(false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setCompactToolsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [compactToolsOpen])
 
   return (
     <div className={styles.titlebar}>
@@ -47,32 +88,49 @@ export default function Titlebar({
 
         <div className={styles.dragRegion} />
 
-        <div className={styles.tools}>
+        <div className={styles.tools} ref={compactToolsRef}>
+          {toolItems.map((item) => (
+            <button
+              key={item.key}
+              className={`${styles.iconBtn} ${styles.fullTool} ${item.active ? styles.active : ''}`}
+              onClick={item.action}
+              title={item.title}
+              data-titlebar-tool={item.key}
+            >
+              {item.icon}
+            </button>
+          ))}
           <button
-            className={`${styles.iconBtn} ${isPinned ? styles.active : ''}`}
-            onClick={onTogglePin}
-            title={isPinned ? '取消置顶' : '置顶窗口'}
+            className={`${styles.iconBtn} ${styles.compactToolsTrigger} ${compactToolsOpen ? styles.active : ''}`}
+            onClick={() => setCompactToolsOpen((current) => !current)}
+            title="顶部工具"
+            aria-haspopup="menu"
+            aria-expanded={compactToolsOpen}
+            data-titlebar-tools-trigger="true"
           >
-            {isPinned ? <Pin size={15} /> : <PinOff size={15} />}
+            <MoreHorizontal size={15} />
           </button>
-          <button className={styles.iconBtn} onClick={handleOpenDashboard} title="记忆图谱">
-            <Database size={15} />
-          </button>
-          <button className={styles.iconBtn} onClick={handleOpenWorkspacePanel} title="工作区">
-            <LayoutTemplate size={15} />
-          </button>
-          <button className={styles.iconBtn} onClick={handleOpenDanxi} title="旦夕">
-            <MessageSquareMore size={15} />
-          </button>
-          <button className={styles.iconBtn} onClick={handleOpenStats} title="上下文与用量">
-            <Gauge size={15} />
-          </button>
-          <button className={styles.iconBtn} onClick={handleOpenDevtools} title="开发工具">
-            <Wrench size={15} />
-          </button>
-          <button className={styles.iconBtn} onClick={handleOpenSettings} title="设置">
-            <Settings size={15} />
-          </button>
+          {compactToolsOpen ? (
+            <div className={styles.compactToolsMenu} role="menu" aria-label="顶部工具" data-titlebar-tools-menu="true">
+              {toolItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`${styles.compactToolsItem} ${item.active ? styles.active : ''}`}
+                  title={item.title}
+                  role="menuitem"
+                  data-titlebar-tool-menu-item={item.key}
+                  onClick={() => {
+                    item.action()
+                    setCompactToolsOpen(false)
+                  }}
+                >
+                  {item.icon}
+                  <span>{item.title}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         <div className={styles.windowControls}>

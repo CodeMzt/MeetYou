@@ -1408,6 +1408,15 @@ def build_runtime_router(gateway) -> APIRouter:
             gateway._raise_http_error(status_code=404, code="checkpoint_not_found", message=f"Unknown checkpoint: {checkpoint_id}")
         return _branch_response(domain, branch)
 
+    @router.post("/threads/{thread_id}/branches/{branch_id}/activate", response_model=RuntimeThreadBranchResponse)
+    async def activate_thread_branch(thread_id: str, branch_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        branch = domain.services.conversation_version.activate_branch(thread_id=thread_id, branch_id=branch_id)
+        if branch is None:
+            gateway._raise_http_error(status_code=404, code="branch_not_found", message=f"Unknown branch: {branch_id}")
+        return _branch_response(domain, branch)
+
     @router.post("/endpoint-sessions/resolve", response_model=RuntimeEndpointSessionResolveResponse)
     async def resolve_endpoint_session(payload: RuntimeEndpointSessionResolveRequest, request: Request):
         gateway._require_http_auth(request)

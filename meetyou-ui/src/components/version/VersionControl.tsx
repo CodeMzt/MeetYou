@@ -11,6 +11,7 @@ interface VersionControlProps {
   onCreateCheckpoint: () => Promise<unknown>
   onRestoreCheckpoint: (checkpointId: string) => Promise<unknown>
   onCheckoutCheckpoint: (checkpointId: string) => Promise<unknown>
+  onActivateBranch: (branchId: string) => Promise<unknown>
 }
 
 function labelCheckpoint(checkpoint: RuntimeConversationCheckpoint): string {
@@ -115,6 +116,7 @@ export default function VersionControl({
   onCreateCheckpoint,
   onRestoreCheckpoint,
   onCheckoutCheckpoint,
+  onActivateBranch,
 }: VersionControlProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState('')
@@ -171,12 +173,13 @@ export default function VersionControl({
       }
       const rect = trigger.getBoundingClientRect()
       const gutter = 12
-      const width = Math.min(320, window.innerWidth - gutter * 2)
+      const width = Math.min(300, window.innerWidth - gutter * 2)
+      const top = Math.min(rect.bottom + 8, Math.max(gutter, window.innerHeight - 360))
       setMenuStyle({
         left: Math.min(Math.max(gutter, rect.right - width), Math.max(gutter, window.innerWidth - width - gutter)),
-        top: Math.min(rect.bottom + 10, Math.max(gutter, window.innerHeight - 300)),
+        top,
         width,
-        maxHeight: Math.max(260, window.innerHeight - rect.bottom - 22),
+        maxHeight: Math.min(420, Math.max(260, window.innerHeight - top - 88)),
       })
     }
     updatePosition()
@@ -249,17 +252,23 @@ export default function VersionControl({
           ) : (
             <div className={styles.branchTree} data-version-branch-tree="true">
               {branchTree.slice(0, 12).map((item) => (
-                <div
+                <button
+                  type="button"
                   className={`${styles.treeItem} ${item.active ? styles.activeTreeItem : ''}`}
                   key={item.branch.branch_id}
                   data-version-tree-branch={item.branch.branch_id}
                   data-version-tree-active={item.active ? 'true' : 'false'}
+                  data-version-tree-depth={item.depth}
+                  disabled={Boolean(busy) || item.active}
+                  aria-current={item.active ? 'true' : undefined}
+                  title={item.active ? '当前分支' : '切换到此分支'}
+                  onClick={() => void runAction(`activate-${item.branch.branch_id}`, () => onActivateBranch(item.branch.branch_id), true)}
                   style={{ paddingLeft: 8 + item.depth * 12 }}
                 >
                   <span className={styles.treeRail} aria-hidden="true" />
                   <strong>{labelBranch(item.branch)}</strong>
                   <small>{shortLeaf(item.branch)}</small>
-                </div>
+                </button>
               ))}
             </div>
           )}

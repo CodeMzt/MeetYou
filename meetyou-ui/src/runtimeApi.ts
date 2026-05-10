@@ -757,6 +757,17 @@ export async function checkoutRuntimeThreadCheckpoint(
   return readJsonOrThrow<RuntimeThreadBranch>(response, '签出检查点失败')
 }
 
+export async function activateRuntimeThreadBranch(
+  baseUrl: string,
+  threadId: string,
+  branchId: string,
+): Promise<RuntimeThreadBranch> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/threads/${encodeURIComponent(threadId)}/branches/${encodeURIComponent(branchId)}/activate`), {
+    method: 'POST',
+  })
+  return readJsonOrThrow<RuntimeThreadBranch>(response, '切换分支失败')
+}
+
 export async function listRuntimeResearchTasks(
   baseUrl: string,
   params: { project_id?: string; limit?: number } = {},

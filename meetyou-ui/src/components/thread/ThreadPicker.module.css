@@ -217,9 +217,9 @@
 @media (max-width: 420px) {
   .trigger {
     height: 32px;
-    min-width: 96px;
-    width: clamp(96px, calc(100vw - 268px), 128px);
-    max-width: 128px;
+    min-width: 84px;
+    width: clamp(84px, calc(100vw - 302px), 112px);
+    max-width: 112px;
     padding: 0 8px;
   }
 

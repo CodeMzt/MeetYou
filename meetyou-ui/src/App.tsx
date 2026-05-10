@@ -56,6 +56,7 @@ export default function App() {
     createCheckpoint,
     restoreCheckpoint,
     checkoutCheckpoint,
+    activateBranch,
     createResearchTask,
     approveResearchTask,
     startResearchTask,
@@ -197,13 +198,14 @@ export default function App() {
               onCreateThread={(title) => createThread(title, activeProjectId)}
               onDeleteThread={(nextThreadId) => deleteThread(nextThreadId)}
             />
-            <VersionControl
-              branches={branches}
-              checkpoints={checkpoints}
-              onCreateCheckpoint={() => createCheckpoint()}
-              onRestoreCheckpoint={(checkpointId) => restoreCheckpoint(checkpointId)}
-              onCheckoutCheckpoint={(checkpointId) => checkoutCheckpoint(checkpointId)}
-            />
+              <VersionControl
+                branches={branches}
+                checkpoints={checkpoints}
+                onCreateCheckpoint={() => createCheckpoint()}
+                onRestoreCheckpoint={(checkpointId) => restoreCheckpoint(checkpointId)}
+                onCheckoutCheckpoint={(checkpointId) => checkoutCheckpoint(checkpointId)}
+                onActivateBranch={(branchId) => activateBranch(branchId)}
+              />
             <ProjectSources
               activeProjectId={activeProjectId}
               sources={projectSources}

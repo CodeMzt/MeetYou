@@ -203,6 +203,11 @@ class V5ServiceTests(unittest.TestCase):
             title="",
         )
         edit_visible = self.message_service.list_messages_for_thread(thread.id)
+        activated = self.version_service.activate_branch(
+            thread_id=thread.thread_id,
+            branch_id=checkout.branch_id,
+        )
+        activated_visible = self.message_service.list_messages_for_thread(thread.id)
 
         self.assertEqual([row.title for row in branches], ["默认分支"])
         self.assertTrue(auto_checkpoint.title.startswith("自动检查点：助手消息 "))
@@ -217,6 +222,8 @@ class V5ServiceTests(unittest.TestCase):
         self.assertEqual(edit_result["message"].revision_of_message_id, first.id)
         self.assertEqual(edit_result["message"].variant_index, 1)
         self.assertEqual([row.message_id for row in edit_visible], [edit_result["message"].message_id])
+        self.assertEqual(activated.branch_id, checkout.branch_id)
+        self.assertEqual([row.message_id for row in activated_visible], [first.message_id, second.message_id])
 
         with self.Session() as session:
             stored_thread = session.query(Thread).filter_by(id=thread.id).one()
@@ -227,11 +234,12 @@ class V5ServiceTests(unittest.TestCase):
             edited = session.query(Message).filter_by(id=edit_result["message"].id).one()
 
         self.assertEqual({row.message_id for row in auto_checkpoints}, {first.id, second.id, third.id, edit_result["message"].id})
-        self.assertEqual(stored_thread.active_branch_id, edit_result["branch"].id)
-        self.assertEqual(stored_thread.current_leaf_message_id, edited.id)
+        self.assertEqual(stored_thread.active_branch_id, checkout.id)
+        self.assertEqual(stored_thread.current_leaf_message_id, second.id)
         self.assertEqual(old_first.content, "original question")
         self.assertEqual(old_second.content, "original answer")
         self.assertEqual(old_third.content, "follow-up")
+        self.assertEqual(edited.content, "edited question")
 
     def test_research_task_starts_as_editable_plan_with_read_only_source_adapters(self) -> None:
         project = self.project_service.create_project(

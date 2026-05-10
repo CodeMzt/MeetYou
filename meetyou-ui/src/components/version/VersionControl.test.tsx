@@ -38,6 +38,7 @@ describe('VersionControl', () => {
         onCreateCheckpoint={vi.fn()}
         onRestoreCheckpoint={vi.fn()}
         onCheckoutCheckpoint={vi.fn()}
+        onActivateBranch={vi.fn()}
       />,
     )
 

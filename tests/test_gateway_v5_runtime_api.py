@@ -323,6 +323,29 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         sibling_branch_ids = [row["branch_id"] for row in branches_after_retry if row["parent_branch_id"] == default_branch_id]
         self.assertEqual(set(sibling_branch_ids), {checkout_response.json()["branch_id"], edit_retry_response.json()["branch"]["branch_id"]})
 
+        activate_response = self.client.post(
+            f"/runtime/threads/{thread.thread_id}/branches/{checkout_response.json()['branch_id']}/activate",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(activate_response.status_code, 200)
+        self.assertEqual(activate_response.json()["branch_id"], checkout_response.json()["branch_id"])
+        self.assertTrue(activate_response.json()["metadata"]["is_active"])
+
+        activated_messages_response = self.client.get(
+            f"/runtime/threads/{thread.thread_id}/messages",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(activated_messages_response.status_code, 200)
+        self.assertEqual([row["content"] for row in activated_messages_response.json()], ["original prompt", "original answer"])
+
+        branches_after_activate_response = self.client.get(
+            f"/runtime/threads/{thread.thread_id}/branches",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(branches_after_activate_response.status_code, 200)
+        active_after_activate = [row for row in branches_after_activate_response.json() if row["metadata"]["is_active"]]
+        self.assertEqual([row["branch_id"] for row in active_after_activate], [checkout_response.json()["branch_id"]])
+
     def test_research_task_start_auto_executes_read_only_runner(self) -> None:
         project_response = self.client.post(
             "/runtime/projects",

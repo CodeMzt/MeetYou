@@ -172,6 +172,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("POST", "/desktop/threads/{thread_id}/checkpoints", lambda request: f"/runtime/threads/{request.match_info['thread_id']}/checkpoints"),
         DesktopApiRoute("POST", "/desktop/threads/{thread_id}/checkpoints/{checkpoint_id}/restore", lambda request: f"/runtime/threads/{request.match_info['thread_id']}/checkpoints/{request.match_info['checkpoint_id']}/restore"),
         DesktopApiRoute("POST", "/desktop/threads/{thread_id}/checkpoints/{checkpoint_id}/checkout", lambda request: f"/runtime/threads/{request.match_info['thread_id']}/checkpoints/{request.match_info['checkpoint_id']}/checkout"),
+        DesktopApiRoute("POST", "/desktop/threads/{thread_id}/branches/{branch_id}/activate", lambda request: f"/runtime/threads/{request.match_info['thread_id']}/branches/{request.match_info['branch_id']}/activate"),
         DesktopApiRoute("POST", "/desktop/sessions", lambda _request: "/runtime/sessions", starts_runtime=True),
         DesktopApiRoute("PATCH", "/desktop/sessions/{session_id}/active-workspace", lambda request: f"/runtime/sessions/{request.match_info['session_id']}/active-workspace"),
         DesktopApiRoute("POST", "/desktop/messages", lambda _request: "/runtime/messages"),

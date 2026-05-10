@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatTurn, StatusFeedback } from '../types'
 import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
 import {
+  activateRuntimeThreadBranch,
   checkoutRuntimeThreadCheckpoint,
   createRuntimeProjectSourceFromMessage,
   createRuntimeResearchTask,
@@ -529,6 +530,28 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return branch
   }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
 
+  const activateBranch = useCallback(async (branchId: string) => {
+    const threadId = String(endpointContext?.threadId || '').trim()
+    const nextBranchId = String(branchId || '').trim()
+    if (!threadId) {
+      throw new Error('没有可用会话')
+    }
+    if (!nextBranchId) {
+      throw new Error('没有可切换的分支')
+    }
+    const branch = await activateRuntimeThreadBranch(baseUrl, threadId, nextBranchId)
+    await loadThreadHistory(threadId)
+    await refreshRuntimeThreads(endpointContext?.workspace.workspace_id)
+    await refreshThreadVersionState(threadId)
+    setStatusFeedback({
+      id: `branch-activate-${Date.now()}`,
+      text: '已切换分支',
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+    return branch
+  }, [baseUrl, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshRuntimeThreads, refreshThreadVersionState])
+
   const createResearchTask = useCallback(async (topic: string, options?: { webSearch?: boolean; webQueries?: string[]; webUrls?: string[]; academicAdapters?: string[]; derivedFormats?: string[]; limit?: number }) => {
     const nextTopic = String(topic || '').trim()
     if (!nextTopic) {
@@ -728,6 +751,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     createCheckpoint,
     restoreCheckpoint,
     checkoutCheckpoint,
+    activateBranch,
     createResearchTask,
     approveResearchTask,
     startResearchTask,

@@ -59,6 +59,12 @@ class DesktopEndpointBridgeTests(unittest.TestCase):
 
         self.assertEqual(route.core_path_builder(request), "/operator/skills/mode:general")
 
+    def test_desktop_branch_activate_route_proxies_to_runtime(self):
+        route = next(item for item in _desktop_routes() if item.desktop_path == "/desktop/threads/{thread_id}/branches/{branch_id}/activate")
+        request = SimpleNamespace(match_info={"thread_id": "thr_1", "branch_id": "br_1"})
+
+        self.assertEqual(route.core_path_builder(request), "/runtime/threads/thr_1/branches/br_1/activate")
+
 
 class DesktopEndpointBackendTests(unittest.IsolatedAsyncioTestCase):
     async def test_backend_starts_endpoint_runtime_when_local_bridge_is_enabled(self):

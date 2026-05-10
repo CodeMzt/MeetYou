@@ -36,6 +36,20 @@
   font-weight: 600;
 }
 
+@media (max-width: 420px) {
+  .trigger {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+  }
+
+  .triggerTitle,
+  .chevron {
+    display: none;
+  }
+}
+
 .chevron {
   transition: transform 0.18s ease;
 }
@@ -49,7 +63,7 @@
   z-index: var(--z-dropdown);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding: 8px;
   overflow: auto;
   border: 1px solid var(--border-glass);
@@ -69,7 +83,7 @@
 }
 
 .primaryAction {
-  min-height: 34px;
+  min-height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -105,7 +119,7 @@
 .variantList {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .pathItem,
@@ -161,12 +175,20 @@
 }
 
 .treeItem {
-  min-height: 34px;
+  appearance: none;
+  min-height: 32px;
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  grid-template-columns: 14px minmax(0, 1fr) max-content;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.treeItem:disabled {
+  cursor: default;
 }
 
 .activeTreeItem {
@@ -175,11 +197,15 @@
 }
 
 .treeRail {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border-bottom: 1px solid var(--border-subtle);
   border-left: 1px solid var(--border-subtle);
   border-radius: 0 0 0 6px;
+}
+
+.treeItem[data-version-tree-depth="0"] .treeRail {
+  opacity: 0;
 }
 
 .activeTreeItem .treeRail {
@@ -195,12 +221,19 @@
 }
 
 .treeItem strong {
+  justify-self: start;
+  max-width: 100%;
+  text-align: left;
   font-size: 12px;
 }
 
 .treeItem small {
+  justify-self: end;
+  max-width: 86px;
   color: var(--text-secondary);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .variantItem {

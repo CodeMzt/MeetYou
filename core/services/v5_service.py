@@ -512,6 +512,20 @@ class ConversationVersionService(ServiceBase):
             )
             return branch
 
+    def activate_branch(self, *, thread_id: str, branch_id: str):
+        with self.session_scope() as session:
+            thread = ThreadRepository(session).get_by_thread_id(thread_id)
+            branch = ThreadBranchRepository(session).get_by_branch_id(branch_id)
+            if thread is None or branch is None or branch.thread_id != thread.id:
+                return None
+            update_thread_version_pointer(
+                session,
+                thread_id=thread.id,
+                active_branch_id=branch.id,
+                current_leaf_message_id=branch.current_leaf_message_id,
+            )
+            return branch
+
     def edit_retry(
         self,
         *,

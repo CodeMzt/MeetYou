@@ -12,16 +12,19 @@ describe('compact Electron layout CSS', () => {
     expect(css).toContain('@media (max-width: 420px)')
     expect(css).toContain('top: -36px;')
     expect(css).toContain('left: 58px;')
-    expect(css).toContain('right: 64px;')
+    expect(css).toContain('right: 92px;')
     expect(css).toContain('.mainContent {\n    overflow: visible;')
     expect(css).toContain('padding-top: 10px;')
   })
 
-  it('hides secondary titlebar tools on the compact width so the dock has room', () => {
+  it('keeps original titlebar tools reachable through a compact menu at 400px width', () => {
     const css = readCss('./components/layout/Titlebar.module.css')
 
     expect(css).toContain('@media (max-width: 420px)')
-    expect(css).toContain('.tools {\n    display: none;')
+    expect(css).toContain('.tools {\n    display: flex;')
+    expect(css).toContain('.fullTool {\n    display: none;')
+    expect(css).toContain('.compactToolsTrigger {\n    display: flex;')
+    expect(css).not.toContain('.tools {\n    display: none;')
   })
 
   it('uses 32px compact triggers for the V5 dock controls', () => {
