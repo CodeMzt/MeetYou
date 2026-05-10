@@ -32,6 +32,10 @@ function shortTime(value: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+function shortLeaf(branch: RuntimeThreadBranch): string {
+  return String(branch.current_leaf_message_id || branch.branch_id).slice(-12)
+}
+
 function isActiveBranch(branch: RuntimeThreadBranch): boolean {
   return branch.metadata?.is_active === true || branch.metadata?.active === true
 }
@@ -61,6 +65,50 @@ export function siblingBranches(branches: RuntimeThreadBranch[], activeBranchId:
   return branches.filter((branch) => branch.parent_branch_id === active.parent_branch_id)
 }
 
+export interface BranchTreeItem {
+  branch: RuntimeThreadBranch
+  depth: number
+  active: boolean
+}
+
+function branchSortKey(branch: RuntimeThreadBranch): string {
+  return `${branch.created_at || ''}:${branch.branch_id}`
+}
+
+export function buildBranchTree(branches: RuntimeThreadBranch[], activeBranchId = ''): BranchTreeItem[] {
+  const branchById = new Map(branches.map((branch) => [branch.branch_id, branch]))
+  const childrenByParent = new Map<string, RuntimeThreadBranch[]>()
+  for (const branch of branches) {
+    const parentId = branch.parent_branch_id && branchById.has(branch.parent_branch_id) ? branch.parent_branch_id : ''
+    const children = childrenByParent.get(parentId) || []
+    children.push(branch)
+    childrenByParent.set(parentId, children)
+  }
+  for (const children of childrenByParent.values()) {
+    children.sort((left, right) => branchSortKey(left).localeCompare(branchSortKey(right)))
+  }
+
+  const result: BranchTreeItem[] = []
+  const visited = new Set<string>()
+  const visit = (branch: RuntimeThreadBranch, depth: number) => {
+    if (visited.has(branch.branch_id)) {
+      return
+    }
+    visited.add(branch.branch_id)
+    result.push({ branch, depth: Math.min(depth, 6), active: branch.branch_id === activeBranchId })
+    for (const child of childrenByParent.get(branch.branch_id) || []) {
+      visit(child, depth + 1)
+    }
+  }
+  for (const root of childrenByParent.get('') || []) {
+    visit(root, 0)
+  }
+  for (const branch of branches) {
+    visit(branch, 0)
+  }
+  return result
+}
+
 export default function VersionControl({
   branches,
   checkpoints,
@@ -81,6 +129,10 @@ export default function VersionControl({
   )
   const siblings = useMemo(
     () => (activeBranch ? siblingBranches(branches, activeBranch.branch_id) : branches),
+    [activeBranch, branches],
+  )
+  const branchTree = useMemo(
+    () => buildBranchTree(branches, activeBranch?.branch_id || ''),
     [activeBranch, branches],
   )
   const title = useMemo(() => `${branches.length || 1} 个分支 / ${checkpoints.length} 个检查点`, [branches.length, checkpoints.length])
@@ -190,6 +242,27 @@ export default function VersionControl({
           </div>
 
           {error ? <div className={styles.error}>{error}</div> : null}
+
+          <div className={styles.sectionTitle}>分支树</div>
+          {branchTree.length === 0 ? (
+            <div className={styles.empty}>暂无分支</div>
+          ) : (
+            <div className={styles.branchTree} data-version-branch-tree="true">
+              {branchTree.slice(0, 12).map((item) => (
+                <div
+                  className={`${styles.treeItem} ${item.active ? styles.activeTreeItem : ''}`}
+                  key={item.branch.branch_id}
+                  data-version-tree-branch={item.branch.branch_id}
+                  data-version-tree-active={item.active ? 'true' : 'false'}
+                  style={{ paddingLeft: 8 + item.depth * 12 }}
+                >
+                  <span className={styles.treeRail} aria-hidden="true" />
+                  <strong>{labelBranch(item.branch)}</strong>
+                  <small>{shortLeaf(item.branch)}</small>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className={styles.sectionTitle}>当前路径</div>
           {currentPath.length === 0 ? (

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import VersionControl, { buildBranchPath, resolveActiveBranch, siblingBranches } from './VersionControl'
+import VersionControl, { buildBranchPath, buildBranchTree, resolveActiveBranch, siblingBranches } from './VersionControl'
 import type { RuntimeConversationCheckpoint, RuntimeThreadBranch } from '../../types'
 
 const branch: RuntimeThreadBranch = {
@@ -69,5 +69,42 @@ describe('VersionControl', () => {
     expect(resolveActiveBranch(branches)?.branch_id).toBe('br_2')
     expect(buildBranchPath(branches, 'br_2').map((item) => item.branch_id)).toEqual(['br_1', 'br_2'])
     expect(siblingBranches(branches, 'br_2').map((item) => item.branch_id)).toEqual(['br_2', 'br_3'])
+  })
+
+  it('builds a compact branch tree from public parent branch ids', () => {
+    const rootBranch: RuntimeThreadBranch = { ...branch, metadata: {} }
+    const checkoutBranch: RuntimeThreadBranch = {
+      ...branch,
+      branch_id: 'br_2',
+      parent_branch_id: 'br_1',
+      current_leaf_message_id: 'msg_2',
+      metadata: {},
+      created_at: '2026-05-09T00:01:00Z',
+    }
+    const retryBranch: RuntimeThreadBranch = {
+      ...branch,
+      branch_id: 'br_3',
+      parent_branch_id: 'br_2',
+      current_leaf_message_id: 'msg_3',
+      metadata: { is_active: true },
+      created_at: '2026-05-09T00:02:00Z',
+    }
+    const siblingBranch: RuntimeThreadBranch = {
+      ...branch,
+      branch_id: 'br_4',
+      parent_branch_id: 'br_1',
+      current_leaf_message_id: 'msg_4',
+      metadata: {},
+      created_at: '2026-05-09T00:03:00Z',
+    }
+
+    const tree = buildBranchTree([retryBranch, siblingBranch, rootBranch, checkoutBranch], 'br_3')
+
+    expect(tree.map((item) => [item.branch.branch_id, item.depth, item.active])).toEqual([
+      ['br_1', 0, false],
+      ['br_2', 1, false],
+      ['br_3', 2, true],
+      ['br_4', 1, false],
+    ])
   })
 })

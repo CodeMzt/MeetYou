@@ -75,4 +75,4 @@ Each phase must produce a concrete phase plan, make scoped changes, run local te
 
 The Core deploy workflow is branch-aware. CI success on `main` deploys `main`; CI success on `v5` deploys `v5`. Manual deployment dispatch accepts an explicit branch input, validates it as a Git branch name, fetches that branch on the Core host, and resets the remote working tree to `origin/<branch>` before invoking the host deploy script.
 
-First-stage implementation provides durable API/data skeleton, local ArtifactStore, a conservative read-only research runner, and compact branch path/sibling variant visibility. A complete visual conversation tree editor remains follow-up work.
+First-stage implementation provides durable API/data skeleton, local ArtifactStore, a conservative read-only research runner, and compact branch tree/path/sibling variant visibility. A richer visual graph editor remains follow-up work.
