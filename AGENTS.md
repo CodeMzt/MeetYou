@@ -26,6 +26,7 @@
 - Research evidence text is untrusted by default. Evidence ledger entries must mark sources as evidence-only and instruct downstream synthesis to ignore instructions embedded in webpages, project sources, search results, or academic records.
 - Starting a V5 ResearchTask may trigger the Core read-only research runner. If no readable evidence is gathered, fail the task instead of producing an uncited report.
 - V5 research assistant tools (`search_academic_sources`, `create_research_task`, `manage_research_tasks`) must stay registered in Core and exposed in `user/tools.example.json`; research mode prompts must not name tools that are missing public schemas.
+- Research tools must not silently drop invalid bindings. If `project_id` or `thread_id` is supplied and unknown, return a structured not-found error instead of creating or listing unscoped tasks.
 - Starting a V5 ResearchTask through Runtime must bind it to a Core Run and durable `research.*` RunEvents. Research progress APIs should support resume-style reads by `after_seq` instead of relying only on frontend polling state.
 - V5 ResearchTask cancellation is cooperative but durable: once a task is `cancelled`, the runner must stop at the next stage/source boundary, record cancelled progress, and avoid creating report artifacts or delivery messages.
 - Conversation checkpoint restore and checkout are non-destructive. Do not delete old messages when switching branch/checkpoint.

@@ -38,8 +38,14 @@ class ResearchTools:
         domain = self._core_domain
         if domain is None:
             return {"ok": False, "code": "core_domain_unavailable", "message": "Core domain is not available."}
-        project = domain.services.project.get_by_project_id(project_id) if str(project_id or "").strip() else None
-        thread = domain.services.thread.get_by_thread_id(thread_id) if str(thread_id or "").strip() else None
+        normalized_project_id = str(project_id or "").strip()
+        normalized_thread_id = str(thread_id or "").strip()
+        project = domain.services.project.get_by_project_id(normalized_project_id) if normalized_project_id else None
+        thread = domain.services.thread.get_by_thread_id(normalized_thread_id) if normalized_thread_id else None
+        if normalized_project_id and project is None:
+            return {"ok": False, "code": "project_not_found", "message": f"Unknown project: {normalized_project_id}"}
+        if normalized_thread_id and thread is None:
+            return {"ok": False, "code": "thread_not_found", "message": f"Unknown thread: {normalized_thread_id}"}
         try:
             task = domain.services.research_task.create_task(
                 principal_id=domain.principal.id,
@@ -81,7 +87,10 @@ class ResearchTools:
             return {"ok": False, "code": "core_domain_unavailable", "message": "Core domain is not available."}
         normalized_action = str(action or "list").strip().lower()
         if normalized_action == "list":
-            project = domain.services.project.get_by_project_id(project_id) if str(project_id or "").strip() else None
+            normalized_project_id = str(project_id or "").strip()
+            project = domain.services.project.get_by_project_id(normalized_project_id) if normalized_project_id else None
+            if normalized_project_id and project is None:
+                return {"ok": False, "code": "project_not_found", "message": f"Unknown project: {normalized_project_id}"}
             rows = domain.services.research_task.list_tasks(
                 principal_id=domain.principal.id,
                 project_id=getattr(project, "id", None),

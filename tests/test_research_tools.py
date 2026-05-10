@@ -87,6 +87,32 @@ class ResearchToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed["artifact"]["filename"], "evidence.md")
         self.assertEqual(completed["artifact"]["citation_validation"]["citation_ids"], ["1"])
 
+    async def test_create_research_task_rejects_unknown_project_or_thread(self) -> None:
+        unknown_project = await self.tools.create_research_task(
+            topic="must stay project-bound",
+            project_id="prj_missing",
+        )
+        unknown_thread = await self.tools.create_research_task(
+            topic="must stay thread-bound",
+            thread_id="thr_missing",
+        )
+
+        self.assertFalse(unknown_project["ok"])
+        self.assertEqual(unknown_project["code"], "project_not_found")
+        self.assertFalse(unknown_thread["ok"])
+        self.assertEqual(unknown_thread["code"], "thread_not_found")
+
+    async def test_manage_research_tasks_list_rejects_unknown_project_filter(self) -> None:
+        await self.tools.create_research_task(topic="existing task")
+
+        result = await self.tools.manage_research_tasks(
+            action="list",
+            project_id="prj_missing",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "project_not_found")
+
     async def test_manage_research_tasks_run_uses_core_runner(self) -> None:
         project = self.domain.services.project.create_project(
             principal_id=self.principal.id,
