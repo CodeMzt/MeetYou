@@ -43,6 +43,7 @@ export default function App() {
     projectSources,
     projectSourcesBusy,
     researchTasks,
+    researchTaskEvents,
     researchBusy,
     activeProjectId,
     threadId,
@@ -223,6 +224,7 @@ export default function App() {
           {preferredMode === 'research' ? (
             <ResearchPanel
               tasks={researchTasks}
+              taskEvents={researchTaskEvents}
               busy={researchBusy}
               onCreateTask={(topic, options) => createResearchTask(topic, options)}
               onApproveTask={(taskId) => approveResearchTask(taskId)}

@@ -7,6 +7,7 @@ const task: RuntimeResearchTask = {
   research_task_id: 'res_1',
   project_id: 'prj_1',
   thread_id: 'thr_1',
+  run_id: 'run_1234567890abcdef',
   artifact_id: 'art_1',
   topic: 'Durable conversation history',
   status: 'planned',
@@ -73,11 +74,39 @@ const task: RuntimeResearchTask = {
   updated_at: '2026-05-09T00:00:00Z',
 }
 
+const taskEvents = {
+  res_1: [
+    {
+      event_id: 'evt_1',
+      research_task_id: 'res_1',
+      run_id: 'run_1234567890abcdef',
+      thread_id: 'thr_1',
+      seq: 1,
+      type: 'research.started',
+      payload: { status: 'running' },
+      durable: true,
+      created_at: '2026-05-09T00:00:00Z',
+    },
+    {
+      event_id: 'evt_2',
+      research_task_id: 'res_1',
+      run_id: 'run_1234567890abcdef',
+      thread_id: 'thr_1',
+      seq: 2,
+      type: 'research.progress',
+      payload: { stage: 'gather', status: 'running', message: '正在收集研究证据。' },
+      durable: true,
+      created_at: '2026-05-09T00:00:01Z',
+    },
+  ],
+}
+
 describe('ResearchPanel', () => {
   it('renders task actions and download affordance', () => {
     const markup = renderToStaticMarkup(
       <ResearchPanel
         tasks={[task]}
+        taskEvents={taskEvents}
         busy={false}
         onCreateTask={vi.fn()}
         onApproveTask={vi.fn()}
@@ -115,12 +144,17 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('data-research-derived-format="docx"')
     expect(markup).toContain('导出 1')
     expect(markup).toContain('report.pdf')
+    expect(markup).toContain('data-research-event-stream="true"')
+    expect(markup).toContain('data-research-event-count="true"')
+    expect(markup).toContain('data-research-run-id="true"')
+    expect(markup).toContain('90abcdef')
   })
 
   it('marks running tasks as auto-refreshed', () => {
     const markup = renderToStaticMarkup(
       <ResearchPanel
         tasks={[{ ...task, status: 'running' }]}
+        taskEvents={taskEvents}
         busy={false}
         onCreateTask={vi.fn()}
         onApproveTask={vi.fn()}

@@ -10,13 +10,14 @@ import {
   editRetryRuntimeMessage,
   listRuntimeProjectArtifacts,
   listRuntimeProjectSources,
+  listRuntimeResearchTaskEvents,
   listRuntimeResearchTasks,
   listRuntimeThreadBranches,
   listRuntimeThreadCheckpoints,
   patchRuntimeResearchTask,
   restoreRuntimeThreadCheckpoint,
 } from '../runtimeApi'
-import type { RuntimeArtifact, RuntimeConversationCheckpoint, RuntimeProjectSource, RuntimeResearchTask, RuntimeThreadBranch } from '../types'
+import type { RuntimeArtifact, RuntimeConversationCheckpoint, RuntimeProjectSource, RuntimeResearchTask, RuntimeResearchTaskEvent, RuntimeThreadBranch } from '../types'
 import {
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
   useEndpointContext,
@@ -47,6 +48,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const [projectArtifacts, setProjectArtifacts] = useState<RuntimeArtifact[]>([])
   const [projectArtifactsBusy, setProjectArtifactsBusy] = useState(false)
   const [researchTasks, setResearchTasks] = useState<RuntimeResearchTask[]>([])
+  const [researchTaskEvents, setResearchTaskEvents] = useState<Record<string, RuntimeResearchTaskEvent[]>>({})
   const [researchBusy, setResearchBusy] = useState(false)
 
   const {
@@ -249,6 +251,28 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     void refreshThreadVersionState(endpointContext.threadId)
   }, [endpointContext?.threadId, refreshThreadVersionState])
 
+  const refreshResearchTaskEvents = useCallback(async (tasks: RuntimeResearchTask[]) => {
+    const candidates = tasks
+      .filter((task) => String(task.run_id || '').trim())
+      .slice(0, 8)
+    if (!candidates.length) {
+      setResearchTaskEvents({})
+      return {}
+    }
+    const entries = await Promise.all(candidates.map(async (task) => {
+      try {
+        const events = await listRuntimeResearchTaskEvents(baseUrl, task.research_task_id, { durable_only: true })
+        return [task.research_task_id, events] as const
+      } catch (error) {
+        console.warn('刷新研究事件失败:', error)
+        return [task.research_task_id, []] as const
+      }
+    }))
+    const next = Object.fromEntries(entries)
+    setResearchTaskEvents(next)
+    return next
+  }, [baseUrl])
+
   const refreshResearchTasks = useCallback(async (projectIdOverride?: string) => {
     const projectId = String(projectIdOverride ?? activeProjectId ?? '').trim()
     try {
@@ -257,13 +281,15 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
         limit: 50,
       })
       setResearchTasks(tasks)
+      await refreshResearchTaskEvents(tasks)
       return tasks
     } catch (error) {
       console.warn('刷新研究任务失败:', error)
       setResearchTasks([])
+      setResearchTaskEvents({})
       return []
     }
-  }, [activeProjectId, baseUrl])
+  }, [activeProjectId, baseUrl, refreshResearchTaskEvents])
 
   useEffect(() => {
     void refreshResearchTasks(activeProjectId)
@@ -671,6 +697,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     projectArtifacts,
     projectArtifactsBusy,
     researchTasks,
+    researchTaskEvents,
     researchBusy,
     activeProjectId,
     threadId: endpointContext?.threadId || '',

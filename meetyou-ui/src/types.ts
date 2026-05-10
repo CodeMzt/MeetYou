@@ -197,6 +197,7 @@ export interface RuntimeResearchTask {
   research_task_id: string
   project_id: string
   thread_id: string
+  run_id: string
   artifact_id: string
   topic: string
   status: string
@@ -210,6 +211,18 @@ export interface RuntimeResearchTask {
   metadata: Record<string, unknown>
   created_at: string
   updated_at: string
+}
+
+export interface RuntimeResearchTaskEvent {
+  event_id: string
+  research_task_id: string
+  run_id: string
+  thread_id: string
+  seq: number
+  type: string
+  payload: Record<string, unknown>
+  durable: boolean
+  created_at: string
 }
 
 export interface RuntimeThreadDeleteResult {

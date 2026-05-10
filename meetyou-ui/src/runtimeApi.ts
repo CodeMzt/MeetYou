@@ -20,6 +20,7 @@ import type {
   RuntimeOperation,
   RuntimeProject,
   RuntimeProjectSource,
+  RuntimeResearchTaskEvent,
   RuntimeResearchTask,
   OperatorSourceProfile,
   RuntimeSession,
@@ -769,6 +770,22 @@ export async function listRuntimeResearchTasks(
   }
   const response = await fetchWithAuth(url.toString())
   return readJsonOrThrow<RuntimeResearchTask[]>(response, '加载研究任务失败')
+}
+
+export async function listRuntimeResearchTaskEvents(
+  baseUrl: string,
+  researchTaskId: string,
+  params: { after_seq?: number; durable_only?: boolean } = {},
+): Promise<RuntimeResearchTaskEvent[]> {
+  const url = new URL(buildDesktopUrl(baseUrl, `/research-tasks/${encodeURIComponent(researchTaskId)}/events`))
+  if (typeof params.after_seq === 'number' && Number.isFinite(params.after_seq) && params.after_seq > 0) {
+    url.searchParams.set('after_seq', String(Math.floor(params.after_seq)))
+  }
+  if (params.durable_only) {
+    url.searchParams.set('durable_only', 'true')
+  }
+  const response = await fetchWithAuth(url.toString())
+  return readJsonOrThrow<RuntimeResearchTaskEvent[]>(response, '加载研究事件失败')
 }
 
 export async function createRuntimeResearchTask(

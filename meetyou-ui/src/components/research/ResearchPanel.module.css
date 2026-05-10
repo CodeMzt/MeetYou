@@ -256,7 +256,8 @@
 .detail,
 .steps,
 .planEditor,
-.evidenceList {
+.evidenceList,
+.eventStream {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -323,23 +324,27 @@
 }
 
 .summary {
-  order: 4;
+  order: 7;
 }
 
 .stageProgress {
   order: 5;
 }
 
-.evidenceList {
+.eventStream {
   order: 6;
 }
 
+.evidenceList {
+  order: 8;
+}
+
 .artifactMeta {
-  order: 7;
+  order: 9;
 }
 
 .planEditor {
-  order: 8;
+  order: 10;
 }
 
 .detailHeader span:first-child {
@@ -403,6 +408,53 @@
   padding: 8px;
   border-radius: 7px;
   background: var(--bg-input);
+}
+
+.eventStream {
+  max-height: 112px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 7px;
+  background: var(--bg-input);
+}
+
+.sectionLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sectionLabel small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.eventItem {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.eventItem span,
+.eventItem small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eventItem small {
+  color: var(--text-secondary);
 }
 
 .stageProgress div {

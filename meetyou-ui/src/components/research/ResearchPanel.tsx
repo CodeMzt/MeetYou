@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Check, Download, FileText, Play, RefreshCw, Save, Search, X } from 'lucide-react'
-import type { RuntimeResearchTask } from '../../types'
+import type { RuntimeResearchTask, RuntimeResearchTaskEvent } from '../../types'
 import styles from './ResearchPanel.module.css'
 
 interface ResearchPanelProps {
   tasks: RuntimeResearchTask[]
+  taskEvents: Record<string, RuntimeResearchTaskEvent[]>
   busy: boolean
   onCreateTask: (topic: string, options?: ResearchCreateOptions) => Promise<unknown>
   onApproveTask: (taskId: string) => Promise<unknown>
@@ -97,6 +98,32 @@ function stageLabel(stage: string): string {
   return stage || '进度'
 }
 
+function eventLabel(type: string): string {
+  const normalized = String(type || '').toLowerCase()
+  if (normalized === 'research.started') return '已开始'
+  if (normalized === 'research.progress') return '进度'
+  if (normalized === 'research.completed') return '已完成'
+  if (normalized === 'research.failed') return '失败'
+  if (normalized === 'research.cancelled') return '已取消'
+  return type || '事件'
+}
+
+function eventDetail(event: RuntimeResearchTaskEvent): string {
+  const payload = event.payload || {}
+  const stage = String(payload.stage || '')
+  const status = String(payload.status || '')
+  const message = String(payload.message || '')
+  const detail = [stage ? stageLabel(stage) : '', status ? statusLabel(status) : '', message]
+    .filter(Boolean)
+    .join(' / ')
+  return detail || eventLabel(event.type)
+}
+
+function shortId(value: string): string {
+  const text = String(value || '').trim()
+  return text ? text.slice(-8) : ''
+}
+
 function getResearchProgress(task: RuntimeResearchTask): { stage: string; status: string; message: string; at: string; errorCount: number } | null {
   const metadata = (task.metadata || {}) as Record<string, unknown>
   const rawProgress = metadata.progress
@@ -158,6 +185,7 @@ function parseQueryList(value: string): string[] {
 
 export default function ResearchPanel({
   tasks,
+  taskEvents,
   busy,
   onCreateTask,
   onApproveTask,
@@ -193,6 +221,8 @@ export default function ResearchPanel({
   const researchProgress = selectedTask ? getResearchProgress(selectedTask) : null
   const editablePlan = selectedTask?.status === 'planned'
   const selectedDerivedArtifacts = selectedTask?.derived_artifacts || []
+  const selectedEvents = selectedTask ? taskEvents[selectedTask.research_task_id] || [] : []
+  const latestEvent = selectedEvents[selectedEvents.length - 1] || null
 
   useEffect(() => {
     if (selectedTask) {
@@ -426,6 +456,8 @@ export default function ResearchPanel({
             <span>来源 {evidenceItems.length}</span>
             <span>格式 {selectedTask.output_format || 'markdown'}</span>
             {selectedTask.status === 'running' ? <span data-research-auto-refresh="true">自动刷新</span> : null}
+            {selectedTask.run_id ? <span data-research-run-id="true">运行 {shortId(selectedTask.run_id)}</span> : null}
+            {selectedEvents.length ? <span data-research-event-count="true">事件 {selectedEvents.length}</span> : null}
             {selectedDerivedArtifacts.length ? <span data-research-derived-count="true">导出 {selectedDerivedArtifacts.length}</span> : null}
             {researchProgress?.errorCount ? <span data-research-progress-errors="true">错误 {researchProgress.errorCount}</span> : null}
             {selectedTask.artifact ? <span>{formatBytes(selectedTask.artifact.byte_size)}</span> : null}
@@ -439,6 +471,21 @@ export default function ResearchPanel({
               </div>
               {researchProgress.message ? <p data-research-progress-message="true">{researchProgress.message}</p> : null}
               {researchProgress.at ? <small>更新 {formatProgressTime(researchProgress.at)}</small> : null}
+            </div>
+          ) : null}
+
+          {selectedEvents.length ? (
+            <div className={styles.eventStream} data-research-event-stream="true">
+              <div className={styles.sectionLabel}>
+                <span>事件流</span>
+                {latestEvent ? <small data-research-latest-event="true">最新 {eventLabel(latestEvent.type)}</small> : null}
+              </div>
+              {selectedEvents.slice(-4).map((event) => (
+                <div className={styles.eventItem} key={event.event_id || `${event.run_id}-${event.seq}`}>
+                  <span>{event.seq}. {eventLabel(event.type)}</span>
+                  <small>{eventDetail(event)}</small>
+                </div>
+              ))}
             </div>
           ) : null}
 
