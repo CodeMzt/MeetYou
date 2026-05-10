@@ -154,12 +154,26 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         )
         self.assertEqual(research_response.status_code, 200)
         self.assertEqual(research_response.json()["status"], "planned")
-        self.assertEqual(research_response.json()["plan"]["source_adapters"], ["arxiv"])
-        self.assertEqual(research_response.json()["plan"]["language"], "zh-CN")
-        self.assertIn("plan_review", [step["id"] for step in research_response.json()["plan"]["steps"]])
-        self.assertEqual(research_response.json()["plan"]["deliverables"]["derived_formats"], ["pdf", "docx"])
-        self.assertIn("citation_guard", [gate["enforcement"] for gate in research_response.json()["plan"]["quality_gates"]])
+        research_plan = research_response.json()["plan"]
+        self.assertEqual(research_plan["source_adapters"], ["arxiv"])
+        self.assertEqual(research_plan["language"], "zh-CN")
+        self.assertIn("plan_review", [step["id"] for step in research_plan["steps"]])
+        self.assertEqual(research_plan["deliverables"]["derived_formats"], ["pdf", "docx"])
+        self.assertTrue(research_plan["approval"]["editable_before_start"])
+        self.assertIn("citation_guard", [gate["id"] for gate in research_plan["quality_gates"]])
+        self.assertIn("citation_guard", [gate["enforcement"] for gate in research_plan["quality_gates"]])
         research_task_id = research_response.json()["research_task_id"]
+
+        edited_plan = dict(research_plan)
+        edited_plan["research_questions"] = ["计划编辑 API 验收"]
+        plan_edit_response = self.client.patch(
+            f"/runtime/research-tasks/{research_task_id}",
+            json={"plan": edited_plan},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(plan_edit_response.status_code, 200)
+        self.assertEqual(plan_edit_response.json()["status"], "planned")
+        self.assertEqual(plan_edit_response.json()["plan"]["research_questions"], ["计划编辑 API 验收"])
 
         approve_response = self.client.patch(
             f"/runtime/research-tasks/{research_task_id}",

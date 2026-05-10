@@ -59,9 +59,9 @@ The default plan includes:
 - ordered steps: intake, plan review, gather, evidence review, synthesize, artifact;
 - `research_questions` that frame conclusions, conflicts/uncertainty, and follow-up recommendations;
 - `source_strategy` with read-only status, adapters, project-source usage, web search/query hints, direct URL count, and max source count;
-- `quality_gates` for read-only gathering, evidence-required failure, citation-guard validation, and prompt-injection mitigation;
+- `quality_gates` with stable ids for read-only gathering, evidence-required failure, `citation_guard` validation, and prompt-injection mitigation;
 - `deliverables` with Markdown primary output, requested PDF/DOCX derived formats, and summary-plus-artifact final message semantics;
-- `approval` metadata showing the plan is editable and should be confirmed or explicitly started before execution.
+- `approval` metadata with `required=true` and `editable_before_start=true`, showing the plan should be confirmed or explicitly started before execution.
 
 ## Task State Guard
 

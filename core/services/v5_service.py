@@ -743,7 +743,7 @@ class ResearchTaskService(ServiceBase):
             "quality_gates": [
                 {"id": "read_only", "title": "只读收集证据", "enforcement": "fail_if_write_policy_requested"},
                 {"id": "evidence_required", "title": "至少收集一条可读证据", "enforcement": "fail_without_evidence"},
-                {"id": "evidence_ledger", "title": "报告引用必须来自最终证据账本", "enforcement": "citation_guard"},
+                {"id": "citation_guard", "title": "报告引用必须来自最终证据账本", "enforcement": "citation_guard"},
                 {"id": "prompt_injection", "title": "来源文本按不可信证据处理", "enforcement": "ignore_source_instructions"},
             ],
             "deliverables": {
@@ -756,6 +756,7 @@ class ResearchTaskService(ServiceBase):
             "approval": {
                 "required": True,
                 "editable": True,
+                "editable_before_start": True,
                 "start_after": "approve_or_explicit_start",
             },
         }

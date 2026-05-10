@@ -261,14 +261,6 @@ class V5ServiceTests(unittest.TestCase):
             },
             output_format="markdown+docx",
         )
-        updated = self.research_service.transition_task(
-            research_task_id=task.research_task_id,
-            action="start",
-            fields={
-                "evidence_ledger": [{"source_id": 1, "url": "https://example.test/paper"}],
-            },
-        )
-
         self.assertEqual(task.status, "planned")
         self.assertTrue(task.plan["requires_approval"])
         self.assertEqual(task.plan["language"], "zh-CN")
@@ -286,7 +278,24 @@ class V5ServiceTests(unittest.TestCase):
         self.assertEqual(task.plan["source_strategy"]["web_queries"], ["agent checkpoints"])
         self.assertEqual(task.plan["source_strategy"]["max_sources"], 6)
         self.assertEqual(task.plan["deliverables"]["derived_formats"], ["pdf", "docx"])
+        self.assertTrue(task.plan["approval"]["editable_before_start"])
+        self.assertIn("citation_guard", [gate["id"] for gate in task.plan["quality_gates"]])
         self.assertIn("citation_guard", [gate["enforcement"] for gate in task.plan["quality_gates"]])
+        edited_plan = dict(task.plan)
+        edited_plan["research_questions"] = ["计划编辑前置验收"]
+        edited = self.research_service.transition_task(
+            research_task_id=task.research_task_id,
+            fields={"plan": edited_plan},
+        )
+        self.assertEqual(edited.status, "planned")
+        self.assertEqual(edited.plan["research_questions"], ["计划编辑前置验收"])
+        updated = self.research_service.transition_task(
+            research_task_id=task.research_task_id,
+            action="start",
+            fields={
+                "evidence_ledger": [{"source_id": 1, "url": "https://example.test/paper"}],
+            },
+        )
         self.assertEqual(updated.status, "running")
         self.assertEqual(updated.evidence_ledger[0]["source_id"], 1)
         self.assertEqual(updated.meta["events"][0]["action"], "start")
