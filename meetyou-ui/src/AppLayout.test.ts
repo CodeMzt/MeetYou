@@ -6,24 +6,24 @@ function readCss(relativePath: string): string {
 }
 
 describe('compact Electron layout CSS', () => {
-  it('moves the V5 control dock into the titlebar row at 400px width', () => {
+  it('keeps the V5 control dock below the titlebar at 400px width', () => {
     const css = readCss('./App.module.css')
 
     expect(css).toContain('@media (max-width: 420px)')
-    expect(css).toContain('top: -36px;')
-    expect(css).toContain('left: 58px;')
-    expect(css).toContain('right: 92px;')
-    expect(css).toContain('.mainContent {\n    overflow: visible;')
-    expect(css).toContain('padding-top: 10px;')
+    expect(css).toContain('top: 8px;')
+    expect(css).toContain('left: 8px;')
+    expect(css).toContain('right: 8px;')
+    expect(css).toContain('flex-wrap: nowrap;')
+    expect(css).toContain('padding-top: 48px;')
+    expect(css).not.toContain('top: -36px;')
   })
 
-  it('keeps original titlebar tools reachable through a compact menu at 400px width', () => {
+  it('keeps original titlebar tools visible instead of replacing them with a compact menu', () => {
     const css = readCss('./components/layout/Titlebar.module.css')
 
-    expect(css).toContain('@media (max-width: 420px)')
-    expect(css).toContain('.tools {\n    display: flex;')
-    expect(css).toContain('.fullTool {\n    display: none;')
-    expect(css).toContain('.compactToolsTrigger {\n    display: flex;')
+    expect(css).toContain('.tools {\n  display: flex;')
+    expect(css).not.toContain('.fullTool')
+    expect(css).not.toContain('.compactToolsTrigger')
     expect(css).not.toContain('.tools {\n    display: none;')
   })
 

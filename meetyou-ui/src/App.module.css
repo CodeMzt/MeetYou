@@ -56,14 +56,10 @@
 }
 
 @media (max-width: 420px) {
-  .mainContent {
-    overflow: visible;
-  }
-
   .topDock {
-    top: -36px;
-    left: 58px;
-    right: 92px;
+    top: 8px;
+    left: 8px;
+    right: 8px;
     transform: none;
     flex-wrap: nowrap;
     gap: 4px;
@@ -84,7 +80,7 @@
   }
 
   .contentArea {
-    padding-top: 10px;
+    padding-top: 48px;
   }
 }
 

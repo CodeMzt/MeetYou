@@ -3,7 +3,7 @@ const fs = require('fs')
 const http = require('http')
 const os = require('os')
 const path = require('path')
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 const { app, BrowserWindow } = require('electron')
 
 const appRoot = path.resolve(__dirname, '..')
@@ -90,6 +90,32 @@ const thread = {
   title: '桌面聊天',
   status: 'active',
   summary: '',
+}
+
+const branch = {
+  branch_id: 'branch_visual_default',
+  thread_id: threadId,
+  parent_branch_id: '',
+  title: '主分支',
+  status: 'active',
+  current_leaf_message_id: '',
+  metadata: { is_active: true },
+  created_at: nowIso(),
+  updated_at: nowIso(),
+}
+
+const checkpoint = {
+  checkpoint_id: 'checkpoint_visual_auto',
+  thread_id: threadId,
+  branch_id: branch.branch_id,
+  message_id: '',
+  checkpoint_type: 'auto',
+  title: '自动检查点',
+  state: {},
+  status: 'active',
+  metadata: { automatic: true },
+  created_at: nowIso(),
+  updated_at: nowIso(),
 }
 
 const session = {
@@ -277,12 +303,32 @@ async function handleRequest(request, response) {
     writeJson(response, [workspace])
     return
   }
+  if (request.method === 'GET' && url.pathname === '/desktop/projects') {
+    writeJson(response, [])
+    return
+  }
   if (request.method === 'POST' && url.pathname === '/desktop/threads/default') {
     writeJson(response, thread)
     return
   }
   if (request.method === 'GET' && url.pathname === '/desktop/threads') {
     writeJson(response, [thread])
+    return
+  }
+  if (request.method === 'GET' && url.pathname === `/desktop/threads/${threadId}/branches`) {
+    writeJson(response, [branch])
+    return
+  }
+  if (request.method === 'GET' && url.pathname === `/desktop/threads/${threadId}/checkpoints`) {
+    writeJson(response, [checkpoint])
+    return
+  }
+  if (request.method === 'POST' && url.pathname === `/desktop/threads/${threadId}/checkpoints`) {
+    writeJson(response, checkpoint)
+    return
+  }
+  if (request.method === 'GET' && url.pathname === '/desktop/research-tasks') {
+    writeJson(response, [])
     return
   }
   if (request.method === 'POST' && url.pathname === '/desktop/sessions') {
@@ -448,6 +494,20 @@ function startVite() {
   return child
 }
 
+function stopProcessTree(child) {
+  if (!child || child.killed) {
+    return
+  }
+  if (process.platform === 'win32' && child.pid) {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    return
+  }
+  child.kill()
+}
+
 async function waitForCondition(win, expression, label, timeoutMs = 15000) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -575,6 +635,92 @@ async function collectChatReport(win) {
 `)
 }
 
+async function collectTopControlsReport(win) {
+  return win.webContents.executeJavaScript(`
+(() => {
+  const titlebar = document.querySelector('[class*="titlebar"]')
+  const topDock = document.querySelector('[class*="topDock"]')
+  const tools = Array.from(document.querySelectorAll('[data-titlebar-tool]')).map((element) => {
+    const rect = element.getBoundingClientRect()
+    const style = window.getComputedStyle(element)
+    return {
+      key: element.getAttribute('data-titlebar-tool'),
+      title: element.getAttribute('title'),
+      display: style.display,
+      visible: style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
+      rect: {
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        right: Math.round(rect.right),
+        bottom: Math.round(rect.bottom),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      },
+    }
+  })
+  const dockControls = [
+    '[data-project-picker-trigger="true"]',
+    '[data-thread-picker-trigger="true"]',
+    '[data-version-control-trigger="true"]',
+    '[data-project-sources-trigger="true"]',
+    '[data-project-artifacts-trigger="true"]',
+  ].map((selector) => {
+    const element = document.querySelector(selector)
+    if (!element) {
+      return { selector, visible: false, rect: null }
+    }
+    const rect = element.getBoundingClientRect()
+    const style = window.getComputedStyle(element)
+    return {
+      selector,
+      visible: style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
+      rect: {
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        right: Math.round(rect.right),
+        bottom: Math.round(rect.bottom),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      },
+    }
+  })
+  const titlebarRect = titlebar ? titlebar.getBoundingClientRect() : null
+  const topDockRect = topDock ? topDock.getBoundingClientRect() : null
+  const dockTops = dockControls
+    .filter((item) => item.visible && item.rect)
+    .map((item) => item.rect.top)
+  const uniqueDockTops = Array.from(new Set(dockTops))
+  return {
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    titlebar: titlebarRect ? {
+      left: Math.round(titlebarRect.left),
+      top: Math.round(titlebarRect.top),
+      right: Math.round(titlebarRect.right),
+      bottom: Math.round(titlebarRect.bottom),
+      width: Math.round(titlebarRect.width),
+      height: Math.round(titlebarRect.height),
+    } : null,
+    topDock: topDockRect ? {
+      left: Math.round(topDockRect.left),
+      top: Math.round(topDockRect.top),
+      right: Math.round(topDockRect.right),
+      bottom: Math.round(topDockRect.bottom),
+      width: Math.round(topDockRect.width),
+      height: Math.round(topDockRect.height),
+    } : null,
+    tools,
+    dockControls,
+    titlebarToolKeys: tools.map((item) => item.key),
+    visibleTitlebarToolKeys: tools.filter((item) => item.visible).map((item) => item.key),
+    dockOneRow: uniqueDockTops.length <= 1,
+    dockOverlapsTitlebar: Boolean(titlebarRect && topDockRect && topDockRect.top < titlebarRect.bottom),
+    compactToolsTriggerPresent: Boolean(document.querySelector('[data-titlebar-tools-trigger="true"]')),
+    bodyText: document.body.innerText,
+  }
+})()
+`)
+}
+
 async function runVisualCheck(apiBaseUrl) {
   fs.mkdirSync(outputDir, { recursive: true })
   app.commandLine.appendSwitch('disable-gpu')
@@ -599,12 +745,15 @@ async function runVisualCheck(apiBaseUrl) {
   await waitForCondition(win, "document.body.innerText.includes('个人工作区')", 'workspace shell')
   await waitForCondition(win, "document.body.innerText.includes('随时可以开始对话')", 'connected empty state')
   await waitForCondition(win, "document.querySelector('textarea') && !document.querySelector('textarea').disabled", 'enabled chat input')
+  await wait(500)
+  const topControlsReport = await collectTopControlsReport(win)
+  const topControlsScreenshot = await capture(win, 'main-top-controls-400x620')
 
-  win.setSize(360, 520)
+  win.setSize(540, 620)
   await wait(500)
   const islandReport = await collectIslandReport(win)
   await wait(1000)
-  const islandScreenshot = await capture(win, 'main-narrow-island-open-360x520')
+  const islandScreenshot = await capture(win, 'main-island-open-540x620')
 
   await win.webContents.executeJavaScript(`
 (() => {
@@ -624,9 +773,11 @@ async function runVisualCheck(apiBaseUrl) {
     visualUrl,
     apiBaseUrl,
     visualUsageReady,
+    topControlsReport,
     islandReport,
     chatReport,
     screenshots: {
+      topControls: topControlsScreenshot,
       island: islandScreenshot,
       chat: chatScreenshot,
     },
@@ -635,6 +786,26 @@ async function runVisualCheck(apiBaseUrl) {
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
 
   const failures = []
+  const expectedTitlebarTools = ['pin', 'dashboard', 'workspace', 'danxi', 'stats', 'devtools', 'settings']
+  for (const key of expectedTitlebarTools) {
+    if (!topControlsReport.visibleTitlebarToolKeys.includes(key)) {
+      failures.push(`titlebar tool ${key} is not visible at 400x620`)
+    }
+  }
+  if (topControlsReport.compactToolsTriggerPresent) {
+    failures.push('titlebar still uses compact tools trigger at 400x620')
+  }
+  if (topControlsReport.dockOverlapsTitlebar) {
+    failures.push('V5 top dock overlaps the original titlebar')
+  }
+  if (!topControlsReport.dockOneRow) {
+    failures.push('V5 top dock wrapped onto multiple rows')
+  }
+  for (const item of topControlsReport.dockControls) {
+    if (!item.visible) {
+      failures.push(`V5 dock control ${item.selector} is not visible at 400x620`)
+    }
+  }
   if (!islandReport.ok) {
     failures.push(`island dropdown failed: ${islandReport.reason}`)
   } else {
@@ -688,24 +859,21 @@ async function main() {
   try {
     await runVisualCheck(fixture.baseUrl)
   } finally {
-    if (viteProcess && !viteProcess.killed) {
-      viteProcess.kill()
-    }
+    stopProcessTree(viteProcess)
     if (fixtureServer) {
       fixtureServer.close()
     }
     for (const socket of wsClients) {
       socket.destroy()
     }
-    app.quit()
+    app.exit(0)
+    process.exit(0)
   }
 }
 
 main().catch((error) => {
   console.error(error)
-  if (viteProcess && !viteProcess.killed) {
-    viteProcess.kill()
-  }
+  stopProcessTree(viteProcess)
   if (fixtureServer) {
     fixtureServer.close()
   }
@@ -713,4 +881,5 @@ main().catch((error) => {
     socket.destroy()
   }
   app.exit(1)
+  process.exit(1)
 })

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import Titlebar from './Titlebar'
 
 describe('Titlebar', () => {
-  it('keeps original top tools available when compact controls are present', () => {
+  it('keeps the original top tools visible in the titlebar', () => {
     const markup = renderToStaticMarkup(
       <Titlebar
         connectionState="connected"
@@ -30,7 +30,7 @@ describe('Titlebar', () => {
       />,
     )
 
-    expect(markup).toContain('data-titlebar-tools-trigger="true"')
+    expect(markup).not.toContain('data-titlebar-tools-trigger="true"')
     for (const key of ['pin', 'dashboard', 'workspace', 'danxi', 'stats', 'devtools', 'settings']) {
       expect(markup).toContain(`data-titlebar-tool="${key}"`)
     }

@@ -39,8 +39,8 @@
 - V5 branch UI should derive active branch, compact tree, path, and sibling variants from Core branch records (`metadata.is_active`, `parent_branch_id`). Do not create separate frontend-only retry tree state.
 - V5 branch tree activation must call Core branch activation APIs, then reload Core history/version state. Do not switch branches by locally filtering message arrays.
 - V5 message-level restore/checkout must target the Core automatic checkpoint whose `message_id` matches the message. Do not implement message-level restore by local UI filtering.
-- V5 desktop UI text should be Chinese by default. At the 400x620 Electron size, the V5 Project / Thread / Branch / Source / Artifact dock must fit into the titlebar row as visible, non-overlapping, clickable controls; do not add controls that wrap into another row or steal chat vertical space.
-- Do not remove or hide the original titlebar tools when compacting the V5 dock. If there is not enough width at 400x620, keep those tools reachable through a Chinese compact tools menu in the same titlebar row.
+- V5 desktop UI text should be Chinese by default. At the 400x620 Electron size, preserve the original titlebar tools as visible, non-overlapping, clickable controls: pin, memory graph, workspace, Danxi, context/usage, developer tools, settings, minimize, and close.
+- The V5 Project / Thread / Branch / Source / Artifact dock must not cover or replace the original titlebar. Keep it to one compact row in the chat surface; do not add controls that wrap into another row or steal unnecessary chat vertical space.
 - Core-generated V5 titles that can surface in desktop UI, including default branch, automatic checkpoint, checkout branch, edit-retry branch, and project source snapshot titles, must use Chinese fallbacks unless an explicit user-provided title is passed.
 
 ## V4 Architecture Rules

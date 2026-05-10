@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
-import { Database, Gauge, LayoutTemplate, MessageSquareMore, Minus, MoreHorizontal, Pin, PinOff, Settings, Wrench, X } from 'lucide-react'
+import { Database, Gauge, LayoutTemplate, MessageSquareMore, Minus, Pin, PinOff, Settings, Wrench, X } from 'lucide-react'
 import { RuntimeWorkspace, ConnectionState } from '../../types'
 import { getConnectionText } from '../../utils/statusFormatting'
 import { WINDOW_OPEN_CHANNEL } from '../../windowBridge'
@@ -21,8 +20,6 @@ export default function Titlebar({
   onTogglePin,
 }: TitlebarProps) {
   const connectionText = getConnectionText(connectionState)
-  const [compactToolsOpen, setCompactToolsOpen] = useState(false)
-  const compactToolsRef = useRef<HTMLDivElement | null>(null)
 
   const handleClose = () => window.ipcRenderer?.send('window-close')
   const handleMinimize = () => window.ipcRenderer?.send('window-minimize')
@@ -48,29 +45,6 @@ export default function Titlebar({
     { key: 'settings', title: '设置', icon: <Settings size={15} />, action: handleOpenSettings },
   ]
 
-  useEffect(() => {
-    if (!compactToolsOpen) {
-      return
-    }
-    const close = (event: MouseEvent) => {
-      const target = event.target as Node
-      if (!compactToolsRef.current?.contains(target)) {
-        setCompactToolsOpen(false)
-      }
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setCompactToolsOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [compactToolsOpen])
-
   return (
     <div className={styles.titlebar}>
       <div className={styles.topRow}>
@@ -88,11 +62,11 @@ export default function Titlebar({
 
         <div className={styles.dragRegion} />
 
-        <div className={styles.tools} ref={compactToolsRef}>
+        <div className={styles.tools}>
           {toolItems.map((item) => (
             <button
               key={item.key}
-              className={`${styles.iconBtn} ${styles.fullTool} ${item.active ? styles.active : ''}`}
+              className={`${styles.iconBtn} ${item.active ? styles.active : ''}`}
               onClick={item.action}
               title={item.title}
               data-titlebar-tool={item.key}
@@ -100,37 +74,6 @@ export default function Titlebar({
               {item.icon}
             </button>
           ))}
-          <button
-            className={`${styles.iconBtn} ${styles.compactToolsTrigger} ${compactToolsOpen ? styles.active : ''}`}
-            onClick={() => setCompactToolsOpen((current) => !current)}
-            title="顶部工具"
-            aria-haspopup="menu"
-            aria-expanded={compactToolsOpen}
-            data-titlebar-tools-trigger="true"
-          >
-            <MoreHorizontal size={15} />
-          </button>
-          {compactToolsOpen ? (
-            <div className={styles.compactToolsMenu} role="menu" aria-label="顶部工具" data-titlebar-tools-menu="true">
-              {toolItems.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={`${styles.compactToolsItem} ${item.active ? styles.active : ''}`}
-                  title={item.title}
-                  role="menuitem"
-                  data-titlebar-tool-menu-item={item.key}
-                  onClick={() => {
-                    item.action()
-                    setCompactToolsOpen(false)
-                  }}
-                >
-                  {item.icon}
-                  <span>{item.title}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
 
         <div className={styles.windowControls}>
