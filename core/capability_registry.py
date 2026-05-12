@@ -59,7 +59,7 @@ def _tool_action_risk(tool_name: str) -> str:
         return "local_write"
     if any(token in lowered for token in ("draft", "schedule")):
         return "external_write"
-    if any(token in lowered for token in ("manage_tasks", "manage_scheduled_jobs", "track_mastery", "switch_workspace")):
+    if any(token in lowered for token in ("manage_tasks", "manage_projects", "manage_project_sources", "manage_scheduled_jobs", "track_mastery", "switch_workspace")):
         return "local_write"
     return "read"
 

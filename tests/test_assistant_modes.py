@@ -96,6 +96,8 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertEqual(route.current_mode, "general")
         self.assertEqual(route.requested_mode, "general")
         self.assertEqual(route.source_profile, "workspace_local")
+        self.assertIn("manage_projects", route.tool_bundle)
+        self.assertIn("manage_project_sources", route.tool_bundle)
 
     def test_routes_documents_for_local_paths(self):
         manager = AssistantModeManager(_FakeConfig())
@@ -299,6 +301,8 @@ class AssistantModeManagerTests(unittest.TestCase):
         self.assertIn("search_academic_sources", route.tool_bundle)
         self.assertIn("create_research_task", route.tool_bundle)
         self.assertIn("manage_research_tasks", route.tool_bundle)
+        self.assertIn("manage_projects", route.tool_bundle)
+        self.assertIn("manage_project_sources", route.tool_bundle)
         self.assertIn("list_skills", route.tool_bundle)
         self.assertIn("load_skill", route.tool_bundle)
         self.assertIn("create_skill", route.tool_bundle)
@@ -758,6 +762,8 @@ class AssistantModeManagerTests(unittest.TestCase):
                     "create_scheduled_delivery",
                     "manage_scheduled_deliveries",
                     "manage_scheduled_jobs",
+                    "manage_projects",
+                    "manage_project_sources",
                     "danxi_login",
                     "danxi_logout",
                     "danxi_get_session_status",
