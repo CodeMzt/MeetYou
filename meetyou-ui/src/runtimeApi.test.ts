@@ -3,6 +3,7 @@ import {
   clearDesktopMemory,
   createRuntimeResearchTask,
   createRuntimeProject,
+  createRuntimeProjectSource,
   createRuntimeProjectSourceFromMessage,
   createRuntimeThreadCheckpoint,
   createRuntimeThread,
@@ -649,6 +650,51 @@ describe('runtimeApi', () => {
           title: '论文项目',
           description: '跟踪材料和产物',
           instructions: '优先使用项目源。',
+        }),
+      }),
+    )
+  })
+
+  it('creates project note sources through desktop runtime APIs', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          source_id: 'src_note',
+          project_id: 'prj_1',
+          source_type: 'note',
+          title: 'Research note',
+          content: 'Shared project material',
+          content_type: 'text',
+          checksum: 'sha256:note',
+          status: 'active',
+          metadata: { created_from: 'desktop.project_sources' },
+          created_at: '2026-05-09T00:00:00Z',
+          updated_at: '2026-05-09T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+
+    const source = await createRuntimeProjectSource('http://127.0.0.1:8000', 'prj_1', {
+      source_type: 'note',
+      title: 'Research note',
+      content: 'Shared project material',
+      content_type: 'text',
+      metadata: { created_from: 'desktop.project_sources' },
+    })
+
+    expect(source.source_id).toBe('src_note')
+    expect(source.source_type).toBe('note')
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/desktop/projects/prj_1/sources',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          source_type: 'note',
+          title: 'Research note',
+          content: 'Shared project material',
+          content_type: 'text',
+          metadata: { created_from: 'desktop.project_sources' },
         }),
       }),
     )

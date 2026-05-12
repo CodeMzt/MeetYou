@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import ProjectSources from './ProjectSources'
+import ProjectSources, { ProjectSourceNoteForm } from './ProjectSources'
 import type { RuntimeProjectSource } from '../../types'
 
 const source: RuntimeProjectSource = {
@@ -45,5 +45,28 @@ describe('ProjectSources', () => {
     expect(markup).toContain('data-project-sources-trigger="true"')
     expect(markup).toContain('1')
     expect(markup).not.toContain('disabled=""')
+  })
+
+  it('renders the note source creation form with Chinese controls', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectSourceNoteForm
+        title="研究笔记"
+        content="项目共享材料"
+        creating={false}
+        error=""
+        onTitleChange={vi.fn()}
+        onContentChange={vi.fn()}
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('data-project-source-create-form="true"')
+    expect(markup).toContain('data-project-source-title-input="true"')
+    expect(markup).toContain('data-project-source-content-input="true"')
+    expect(markup).toContain('data-project-source-save="true"')
+    expect(markup).toContain('研究笔记')
+    expect(markup).toContain('项目共享材料')
+    expect(markup).toContain('保存')
   })
 })

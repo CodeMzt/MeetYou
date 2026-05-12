@@ -15,6 +15,7 @@ const wsClients = new Set()
 const threadId = 'thread_visual_chat'
 const sessionId = 'session_visual_chat'
 const workspaceId = 'personal'
+const projectId = 'project_visual_v5'
 const endpointId = 'desktop-app'
 const userPrompt = 'Danxi最近人们在哪些话题？'
 const assistantAnswer = '这是助手回复第一行。'
@@ -83,10 +84,40 @@ const workspace = {
   tool_routing_overrides: {},
 }
 
+const project = {
+  project_id: projectId,
+  workspace_id: workspaceId,
+  title: 'V5 可视项目',
+  description: '用于 400x620 项目源验收',
+  instructions: '项目源必须来自 Core。',
+  status: 'active',
+  memory_scope: {},
+  metadata: {},
+  created_at: nowIso(),
+  updated_at: nowIso(),
+}
+
+const projectSources = [
+  {
+    source_id: 'src_visual_existing',
+    project_id: projectId,
+    source_type: 'message_snapshot',
+    title: '已保存消息',
+    content: '这是一条已有项目源，用来验证列表和预览。',
+    content_type: 'text',
+    checksum: 'sha256:visual-existing',
+    status: 'active',
+    metadata: { message_id: 'msg_visual_existing' },
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  },
+]
+
 const thread = {
   thread_id: threadId,
   home_workspace_id: workspaceId,
   workspace_id: workspaceId,
+  project_id: projectId,
   title: '桌面聊天',
   status: 'active',
   summary: '',
@@ -120,7 +151,7 @@ const checkpoint = {
 
 const researchTask = {
   research_task_id: 'res_visual_audit',
-  project_id: '',
+  project_id: projectId,
   thread_id: threadId,
   run_id: '',
   artifact_id: '',
@@ -345,7 +376,32 @@ async function handleRequest(request, response) {
     return
   }
   if (request.method === 'GET' && url.pathname === '/desktop/projects') {
-    writeJson(response, [])
+    writeJson(response, [project])
+    return
+  }
+  if (request.method === 'GET' && url.pathname === `/desktop/projects/${projectId}/sources`) {
+    writeJson(response, projectSources)
+    return
+  }
+  if (request.method === 'POST' && url.pathname === `/desktop/projects/${projectId}/sources`) {
+    const body = await readBody(request)
+    const content = String(body.content || '').trim()
+    const title = String(body.title || '').trim() || `项目源 ${projectSources.length + 1}`
+    const source = {
+      source_id: `src_visual_note_${projectSources.length + 1}`,
+      project_id: projectId,
+      source_type: String(body.source_type || 'note'),
+      title,
+      content,
+      content_type: String(body.content_type || 'text'),
+      checksum: 'sha256:visual-note',
+      status: 'active',
+      metadata: body.metadata || {},
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    }
+    projectSources.unshift(source)
+    writeJson(response, source)
     return
   }
   if (request.method === 'POST' && url.pathname === '/desktop/threads/default') {
@@ -762,6 +818,115 @@ async function collectTopControlsReport(win) {
 `)
 }
 
+async function selectVisualProject(win) {
+  await win.webContents.executeJavaScript(`
+(() => {
+  const trigger = document.querySelector('[data-project-picker-trigger="true"]')
+  if (!trigger) throw new Error('project picker trigger missing')
+  trigger.click()
+})()
+`)
+  await waitForCondition(win, `document.querySelector('[data-project-option-id="${projectId}"]')`, 'visual project option')
+  await win.webContents.executeJavaScript(`
+(() => {
+  const option = document.querySelector('[data-project-option-id="${projectId}"]')
+  if (!option) throw new Error('visual project option missing')
+  option.click()
+})()
+`)
+  await waitForCondition(win, "!document.querySelector('[data-project-sources-trigger=\"true\"]')?.disabled", 'project sources trigger enabled')
+}
+
+async function createProjectSourceNote(win) {
+  const sourceTitle = '视觉项目笔记'
+  const sourceContent = '这是 400x620 验收中新建的项目源。'
+  await win.webContents.executeJavaScript(`
+(() => {
+  const trigger = document.querySelector('[data-project-sources-trigger="true"]')
+  if (!trigger) throw new Error('project sources trigger missing')
+  trigger.click()
+})()
+`)
+  await waitForCondition(win, "document.querySelector('[data-project-sources-menu=\"true\"]')", 'project sources menu')
+  await win.webContents.executeJavaScript(`
+(() => {
+  const button = document.querySelector('[data-project-source-create-toggle="true"]')
+  if (!button) throw new Error('project source create toggle missing')
+  button.click()
+})()
+`)
+  await waitForCondition(win, "document.querySelector('[data-project-source-create-form=\"true\"]')", 'project source create form')
+  await win.webContents.executeJavaScript(`
+(() => {
+  const setValue = (element, value) => {
+    const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')
+    if (descriptor?.set) descriptor.set.call(element, value)
+    else element.value = value
+    element.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  const title = document.querySelector('[data-project-source-title-input="true"]')
+  const content = document.querySelector('[data-project-source-content-input="true"]')
+  if (!title || !content) throw new Error('project source inputs missing')
+  setValue(title, ${JSON.stringify(sourceTitle)})
+  setValue(content, ${JSON.stringify(sourceContent)})
+})()
+`)
+  await waitForCondition(win, "!document.querySelector('[data-project-source-save=\"true\"]')?.disabled", 'project source save enabled')
+  await win.webContents.executeJavaScript(`
+(() => {
+  const save = document.querySelector('[data-project-source-save="true"]')
+  if (!save) throw new Error('project source save missing')
+  save.click()
+})()
+`)
+  await waitForCondition(win, `document.body.innerText.includes(${JSON.stringify(sourceTitle)})`, 'created project source title')
+  await waitForCondition(win, `document.body.innerText.includes(${JSON.stringify(sourceContent)})`, 'created project source content')
+}
+
+async function collectProjectSourceReport(win) {
+  return win.webContents.executeJavaScript(`
+(() => {
+  const menu = document.querySelector('[data-project-sources-menu="true"]')
+  const created = document.querySelector('[data-project-source-id="src_visual_note_2"]')
+  const content = document.querySelector('[data-project-source-content="true"]')
+  const menuRect = menu ? menu.getBoundingClientRect() : null
+  const createdRect = created ? created.getBoundingClientRect() : null
+  return {
+    ok: Boolean(menu && created && content),
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    menuRect: menuRect ? {
+      left: Math.round(menuRect.left),
+      top: Math.round(menuRect.top),
+      right: Math.round(menuRect.right),
+      bottom: Math.round(menuRect.bottom),
+      width: Math.round(menuRect.width),
+      height: Math.round(menuRect.height),
+    } : null,
+    createdRect: createdRect ? {
+      left: Math.round(createdRect.left),
+      top: Math.round(createdRect.top),
+      right: Math.round(createdRect.right),
+      bottom: Math.round(createdRect.bottom),
+      width: Math.round(createdRect.width),
+      height: Math.round(createdRect.height),
+    } : null,
+    contentText: String(content?.textContent || ''),
+    bodyText: document.body.innerText,
+    clipped: Boolean(menuRect && (menuRect.left < 0 || menuRect.right > window.innerWidth || menuRect.top < 0 || menuRect.bottom > window.innerHeight)),
+  }
+})()
+`)
+}
+
+async function closeProjectSources(win) {
+  await win.webContents.executeJavaScript(`
+(() => {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+})()
+`)
+  await wait(200)
+}
+
 async function switchToResearchMode(win) {
   await win.webContents.executeJavaScript(`
 (() => {
@@ -865,6 +1030,11 @@ async function runVisualCheck(apiBaseUrl) {
   await wait(500)
   const topControlsReport = await collectTopControlsReport(win)
   const topControlsScreenshot = await capture(win, 'main-top-controls-400x620')
+  await selectVisualProject(win)
+  await createProjectSourceNote(win)
+  const projectSourceReport = await collectProjectSourceReport(win)
+  const projectSourceScreenshot = await capture(win, 'main-project-source-note-created-400x620')
+  await closeProjectSources(win)
 
   win.setSize(540, 620)
   await wait(500)
@@ -894,11 +1064,13 @@ async function runVisualCheck(apiBaseUrl) {
     apiBaseUrl,
     visualUsageReady,
     topControlsReport,
+    projectSourceReport,
     islandReport,
     chatReport,
     researchAuditReport,
     screenshots: {
       topControls: topControlsScreenshot,
+      projectSource: projectSourceScreenshot,
       island: islandScreenshot,
       chat: chatScreenshot,
       research: researchScreenshot,
@@ -926,6 +1098,16 @@ async function runVisualCheck(apiBaseUrl) {
   for (const item of topControlsReport.dockControls) {
     if (!item.visible) {
       failures.push(`V5 dock control ${item.selector} is not visible at 400x620`)
+    }
+  }
+  if (!projectSourceReport.ok) {
+    failures.push('project source create flow did not render the created source')
+  } else {
+    if (projectSourceReport.clipped) {
+      failures.push('project source menu is clipped by the window')
+    }
+    if (!projectSourceReport.contentText.includes('400x620')) {
+      failures.push(`project source created content missing: ${projectSourceReport.contentText}`)
     }
   }
   if (!islandReport.ok) {

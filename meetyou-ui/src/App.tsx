@@ -68,6 +68,7 @@ export default function App() {
     createThread,
     createProject,
     updateProject,
+    createProjectSource,
     deleteThread,
     downloadProjectArtifact,
     refreshWorkspace,
@@ -211,6 +212,7 @@ export default function App() {
               sources={projectSources}
               busy={projectSourcesBusy}
               onRefresh={() => refreshProjectSources(activeProjectId)}
+              onCreateSource={(payload) => createProjectSource(payload)}
             />
             <ProjectArtifacts
               activeProjectId={activeProjectId}

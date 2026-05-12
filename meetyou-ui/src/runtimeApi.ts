@@ -579,6 +579,25 @@ export async function updateRuntimeProject(
   return readJsonOrThrow<RuntimeProject>(response, '更新项目失败')
 }
 
+export async function createRuntimeProjectSource(
+  baseUrl: string,
+  projectId: string,
+  payload: {
+    source_type?: string
+    title?: string
+    content: string
+    content_type?: string
+    metadata?: Record<string, unknown>
+  },
+): Promise<RuntimeProjectSource> {
+  const response = await fetchWithAuth(buildDesktopUrl(baseUrl, `/projects/${encodeURIComponent(projectId)}/sources`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return readJsonOrThrow<RuntimeProjectSource>(response, '创建项目源失败')
+}
+
 export async function createRuntimeProjectSourceFromMessage(
   baseUrl: string,
   projectId: string,

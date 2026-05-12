@@ -4,6 +4,7 @@ import { DEFAULT_BASE_URL, WINDOW_SYNC_CHANNEL } from '../windowBridge'
 import {
   activateRuntimeThreadBranch,
   checkoutRuntimeThreadCheckpoint,
+  createRuntimeProjectSource,
   createRuntimeProjectSourceFromMessage,
   createRuntimeResearchTask,
   createRuntimeThreadCheckpoint,
@@ -439,6 +440,45 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return source
   }, [activeProjectId, baseUrl, endpointContext?.threadId, refreshProjectSources])
 
+  const createProjectSource = useCallback(async (payload: {
+    title?: string
+    content: string
+    source_type?: string
+    content_type?: string
+    metadata?: Record<string, unknown>
+  }) => {
+    const projectId = String(activeProjectId || '').trim()
+    const title = String(payload.title || '').trim()
+    const content = String(payload.content || '').trim()
+    if (!projectId) {
+      throw new Error('请先选择项目')
+    }
+    if (!title) {
+      throw new Error('项目源标题不能为空')
+    }
+    if (!content) {
+      throw new Error('项目源内容不能为空')
+    }
+    const source = await createRuntimeProjectSource(baseUrl, projectId, {
+      source_type: payload.source_type || 'note',
+      title,
+      content,
+      content_type: payload.content_type || 'text',
+      metadata: {
+        created_from: 'desktop.project_sources',
+        ...(payload.metadata || {}),
+      },
+    })
+    await refreshProjectSources(projectId)
+    setStatusFeedback({
+      id: `project-source-note-${Date.now()}`,
+      text: '已创建项目源',
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+    return source
+  }, [activeProjectId, baseUrl, refreshProjectSources])
+
   const editRetryMessage = useCallback(async (message: ChatTurn, content: string) => {
     const messageId = String(message.id || '').trim()
     const nextContent = String(content || '').trim()
@@ -764,6 +804,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     createThread: createAndSelectRuntimeThread,
     createProject: createRuntimeProjectAndRemember,
     updateProject: updateRuntimeProjectAndRemember,
+    createProjectSource,
     deleteThread: deleteRuntimeThreadAndSelect,
     refreshHealth,
     refreshWorkspace,

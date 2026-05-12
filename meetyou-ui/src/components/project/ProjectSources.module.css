@@ -85,7 +85,16 @@
   font-weight: 700;
 }
 
-.header button {
+.headerActions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.header button,
+.secondaryButton,
+.primaryButton {
   width: 30px;
   height: 30px;
   display: inline-flex;
@@ -98,14 +107,88 @@
   cursor: pointer;
 }
 
-.header button:hover {
+.header button:hover,
+.secondaryButton:hover,
+.primaryButton:hover {
   color: var(--text-primary);
   border-color: var(--border-focus);
 }
 
-.header button:disabled {
+.header button:disabled,
+.secondaryButton:disabled,
+.primaryButton:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.sourceForm {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+
+.formField {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.textInput,
+.textarea {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.textInput {
+  height: 30px;
+  padding: 0 8px;
+}
+
+.textarea {
+  min-height: 74px;
+  max-height: 120px;
+  padding: 7px 8px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.textInput:focus,
+.textarea:focus {
+  border-color: var(--border-focus);
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.secondaryButton,
+.primaryButton {
+  width: auto;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.primaryButton {
+  border-color: var(--border-accent);
+  background: var(--bg-accent);
+  color: var(--text-accent);
 }
 
 .grid {

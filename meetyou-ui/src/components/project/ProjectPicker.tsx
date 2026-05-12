@@ -355,6 +355,7 @@ export default function ProjectPicker({
                 className={`${styles.menuItem} ${active ? styles.active : ''}`}
                 role="option"
                 aria-selected={active}
+                data-project-option-id={project.project_id}
                 onClick={() => handleSelect(project.project_id)}
                 title={projectTitle(project)}
               >
