@@ -8,6 +8,7 @@ Type=simple
 User={{MEETYOU_USER}}
 Group={{MEETYOU_GROUP}}
 WorkingDirectory={{WORKDIR}}
+EnvironmentFile=-/etc/meetyou/meetyou-core.env
 EnvironmentFile={{ENV_FILE}}
 Environment=PYTHONUNBUFFERED=1
 ExecStart={{PYTHON_BIN}} -m research_adapter
