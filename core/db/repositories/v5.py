@@ -101,6 +101,15 @@ class ProjectSourceRepository(RepositoryBase):
     def get_by_source_id(self, source_id: str) -> ProjectSource | None:
         return self.session.query(ProjectSource).filter_by(source_id=str(source_id or "").strip()).one_or_none()
 
+    def update_status(self, *, source_id: str, status: str) -> ProjectSource | None:
+        row = self.get_by_source_id(source_id)
+        if row is None:
+            return None
+        row.status = str(status or "active").strip() or "active"
+        row.updated_at = utcnow()
+        self.session.flush()
+        return row
+
     def list_for_project(self, *, project_id, include_archived: bool = False, limit: int = 100) -> list[ProjectSource]:
         query = self.session.query(ProjectSource).filter_by(project_id=project_id)
         if not include_archived:

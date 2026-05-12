@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from core.research.external_adapter import ResearchAdapterClient, ResearchAdapterConfig, ResearchAdapterError
 from core.research.academic_sources import AcademicSourceRegistry, FetchAcademicSource
 from core.research.report_artifacts import create_research_report_derivatives
 from core.research.web_sources import FetchWebSource, WebSourceRegistry
@@ -108,6 +109,59 @@ def _quality_score(item: dict[str, Any]) -> float:
     else:
         score -= 30
     return score
+
+
+def number_or_score(value: Any, *, default: float = 0.0) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if not numeric == numeric:
+        return float(default)
+    return round(numeric, 2)
+
+
+def _compact_adapter_result(result: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in ("run_id", "status", "error", "message", "provider", "metadata", "usage"):
+        value = result.get(key)
+        if value not in (None, "", [], {}):
+            compact[key] = value
+    for key in ("sources", "evidence", "evidence_ledger", "citations"):
+        value = result.get(key)
+        if isinstance(value, list):
+            compact[f"{key}_count"] = len(value)
+    return compact
+
+
+def _dedupe_external_evidence_preserving_ids(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in evidence:
+        url = str(item.get("url") or "").strip()
+        if url:
+            key = f"url:{_canonical_url(url)}"
+        else:
+            title = " ".join(str(item.get("title") or "").lower().split())
+            snippet = " ".join(str(item.get("snippet") or "").lower().split())[:180]
+            key = f"text:{title}:{snippet}"
+        groups.setdefault(key, []).append(item)
+    deduped: list[dict[str, Any]] = []
+    for key, rows in groups.items():
+        rows = sorted(rows, key=lambda row: _quality_score(row), reverse=True)
+        winner = dict(rows[0])
+        merged_ids = []
+        for row in rows:
+            source_id = str(row.get("source_id") or "").strip()
+            if source_id and source_id not in merged_ids:
+                merged_ids.append(source_id)
+        winner["dedupe_key"] = key
+        winner["duplicate_count"] = max(int(winner.get("duplicate_count") or 1), len(rows))
+        winner["merged_source_ids"] = merged_ids or [str(winner.get("source_id") or "")]
+        deduped.append(winner)
+    deduped.sort(key=lambda row: _quality_score(row), reverse=True)
+    for rank, item in enumerate(deduped, start=1):
+        item["rank"] = rank
+    return deduped
 
 
 def _rank_and_dedupe_evidence(evidence: list[dict[str, Any]], *, max_sources: int) -> list[dict[str, Any]]:
@@ -376,12 +430,16 @@ class ResearchExecutionService:
         fetcher: FetchAcademicSource | None = None,
         web_fetcher: FetchWebSource | None = None,
         web_searcher: FetchWebSearch | None = None,
+        adapter_config: ResearchAdapterConfig | None = None,
+        adapter_client: ResearchAdapterClient | None = None,
         fetch_timeout: float = 8.0,
     ) -> None:
         self.services = services
         self.fetcher = fetcher
         self.web_fetcher = web_fetcher
         self.web_searcher = web_searcher
+        self.adapter_config = adapter_config
+        self.adapter_client = adapter_client
         self.fetch_timeout = float(fetch_timeout or 8.0)
 
     def run_task(self, research_task_id: str) -> dict[str, Any]:
@@ -414,6 +472,9 @@ class ResearchExecutionService:
                 summary="Research source policy is not read-only.",
                 metadata={"runner_error": "read_only_policy_required"},
             )
+
+        if self.adapter_config is not None and (self.adapter_config.configured or self.adapter_config.require_external):
+            return self._run_external_adapter_task(task, research_task_id=research_task_id, policy=policy)
 
         max_sources = _source_limit(policy)
         self._record_progress(
@@ -616,6 +677,354 @@ class ResearchExecutionService:
             "evidence_count": len(evidence),
             "gather_error_count": len(gather_errors),
         }
+
+    def _run_external_adapter_task(self, task, *, research_task_id: str, policy: dict[str, Any]) -> dict[str, Any]:
+        config = self.adapter_config or ResearchAdapterConfig()
+        if not config.configured:
+            self._record_progress(
+                research_task_id,
+                stage="adapter",
+                status="failed",
+                message="外部深度研究服务未配置。",
+                metadata={"research_provider": config.provider, "adapter_status": "unconfigured"},
+            )
+            return self._fail_task(
+                research_task_id,
+                summary="Research adapter service is not configured.",
+                metadata={
+                    "runner": "research_adapter.v1",
+                    "runner_error": "research_adapter_unconfigured",
+                    "research_provider": config.provider,
+                    "adapter_status": "unconfigured",
+                    "adapter_error": "Research adapter service is not configured.",
+                },
+            )
+        client = self.adapter_client or ResearchAdapterClient(config)
+        self._record_progress(
+            research_task_id,
+            stage="adapter",
+            status="running",
+            message="正在调用外部深度研究服务。",
+            metadata={"research_provider": config.provider, "adapter_status": "running"},
+        )
+        payload = self._external_adapter_payload(task, policy=policy, provider=config.provider)
+        try:
+            result = client.run_to_completion(
+                payload,
+                cancel_checker=lambda: self._is_cancelled(research_task_id),
+            )
+        except ResearchAdapterError as exc:
+            self._record_progress(
+                research_task_id,
+                stage="adapter",
+                status="failed",
+                message=str(exc),
+                metadata={"research_provider": config.provider, "adapter_status": "failed", "adapter_error": exc.code},
+            )
+            return self._fail_task(
+                research_task_id,
+                summary=str(exc),
+                metadata={
+                    "runner": "research_adapter.v1",
+                    "runner_error": exc.code,
+                    "research_provider": config.provider,
+                    "adapter_status": "failed",
+                    "adapter_error": str(exc),
+                    "adapter_error_details": exc.details,
+                    "completed_at": _now_iso(),
+                },
+            )
+        status = str(result.get("status") or "").strip().lower()
+        external_run_id = str(result.get("run_id") or "").strip()
+        if status == "cancelled":
+            return self._cancelled_result(research_task_id, stage="adapter")
+        if status == "failed":
+            adapter_error = str(result.get("error") or result.get("message") or "External research adapter failed.")
+            self._record_progress(
+                research_task_id,
+                stage="adapter",
+                status="failed",
+                message=adapter_error,
+                metadata={"research_provider": config.provider, "external_run_id": external_run_id, "adapter_status": "failed"},
+            )
+            return self._fail_task(
+                research_task_id,
+                summary=adapter_error,
+                metadata={
+                    "runner": "research_adapter.v1",
+                    "runner_error": "research_adapter_failed",
+                    "research_provider": config.provider,
+                    "external_run_id": external_run_id,
+                    "adapter_status": "failed",
+                    "adapter_error": adapter_error,
+                    "adapter_payload": _compact_adapter_result(result),
+                    "completed_at": _now_iso(),
+                },
+            )
+
+        report_markdown = str(
+            result.get("report_markdown")
+            or result.get("report")
+            or result.get("markdown")
+            or result.get("content")
+            or ""
+        ).strip()
+        evidence = _apply_evidence_safety(
+            _dedupe_external_evidence_preserving_ids(self._external_evidence(result, provider=config.provider))
+        )
+        if not report_markdown:
+            return self._fail_task(
+                research_task_id,
+                summary="External research adapter completed without a report.",
+                metadata={
+                    "runner": "research_adapter.v1",
+                    "runner_error": "external_report_missing",
+                    "research_provider": config.provider,
+                    "external_run_id": external_run_id,
+                    "adapter_status": "failed",
+                    "completed_at": _now_iso(),
+                },
+            )
+        if not evidence:
+            return self._fail_task(
+                research_task_id,
+                summary="External research adapter completed without citeable sources.",
+                metadata={
+                    "runner": "research_adapter.v1",
+                    "runner_error": "external_sources_missing",
+                    "research_provider": config.provider,
+                    "external_run_id": external_run_id,
+                    "adapter_status": "failed",
+                    "completed_at": _now_iso(),
+                },
+            )
+        refreshed = self.services.research_task.get_by_research_task_id(research_task_id)
+        if refreshed is None:
+            return {"ok": False, "code": "research_task_not_found", "message": f"Unknown research task: {research_task_id}"}
+        if self._is_cancelled(research_task_id):
+            return self._cancelled_result(research_task_id, stage="artifact")
+        self._record_progress(
+            research_task_id,
+            stage="artifact",
+            status="running",
+            message="正在保存外部研究报告产物。",
+            metadata={"research_provider": config.provider, "external_run_id": external_run_id, "evidence_count": len(evidence)},
+        )
+        try:
+            citation_validation = self.services.research_task.validate_report_citations(report_markdown, evidence)
+        except ResearchTaskCitationError as exc:
+            return self._fail_task(
+                research_task_id,
+                summary="External research report citation validation failed.",
+                metadata={
+                    "runner": "research_adapter.v1",
+                    "runner_error": "citation_validation_failed",
+                    "research_provider": config.provider,
+                    "external_run_id": external_run_id,
+                    "missing_source_ids": exc.missing_source_ids,
+                    "citation_ids": exc.citation_ids,
+                    "evidence_source_ids": exc.evidence_source_ids,
+                },
+            )
+        artifact = self.services.artifact.create_text_artifact(
+            principal_id=getattr(refreshed, "principal_id", None),
+            project_id=getattr(refreshed, "project_id", None),
+            thread_id=getattr(refreshed, "thread_id", None),
+            created_by_run_id=getattr(refreshed, "run_id", None),
+            text=report_markdown,
+            filename=f"{research_task_id}.md",
+            artifact_type="research_report",
+            metadata={
+                "research_task_id": research_task_id,
+                "runner": "research_adapter.v1",
+                "research_provider": config.provider,
+                "external_run_id": external_run_id,
+                "citation_validation": citation_validation,
+            },
+        )
+        try:
+            derived_artifacts = create_research_report_derivatives(
+                self.services.artifact,
+                task=refreshed,
+                report_markdown=report_markdown,
+                source_artifact=artifact,
+                citation_validation=citation_validation,
+                runner="research_adapter.v1",
+            )
+        except Exception as exc:  # noqa: BLE001
+            return self._fail_task(
+                research_task_id,
+                summary="Research report derivative artifact creation failed.",
+                metadata={
+                    "runner": "research_adapter.v1",
+                    "runner_error": "derived_artifact_creation_failed",
+                    "runner_error_type": type(exc).__name__,
+                    "runner_error_message": str(exc),
+                    "artifact_id": artifact.artifact_id,
+                    "research_provider": config.provider,
+                    "external_run_id": external_run_id,
+                },
+            )
+        summary = str(result.get("summary") or "").strip() or f"External research report completed from {len(evidence)} recorded sources."
+        completed = self.services.research_task.transition_task(
+            research_task_id=research_task_id,
+            action="complete",
+            fields={
+                "summary": summary,
+                "evidence_ledger": evidence,
+                "artifact_id": artifact.id,
+                "metadata": {
+                    "artifact_id": artifact.artifact_id,
+                    "runner": "research_adapter.v1",
+                    "research_provider": config.provider,
+                    "external_run_id": external_run_id,
+                    "adapter_status": "completed",
+                    "adapter_metadata": dict(result.get("metadata") or {}),
+                    "adapter_usage": dict(result.get("usage") or {}),
+                    "completed_at": _now_iso(),
+                    "citation_validation": citation_validation,
+                    "derived_artifacts": derived_artifacts,
+                    "derived_artifact_ids": [item["artifact_id"] for item in derived_artifacts],
+                },
+            },
+        )
+        delivered_message = self._deliver_report_message(
+            completed or refreshed,
+            artifact=artifact,
+            derived_artifacts=derived_artifacts,
+            summary=summary,
+            evidence_count=len(evidence),
+        )
+        if delivered_message is not None:
+            completed_meta = dict(getattr(completed, "meta", {}) or {})
+            completed_meta["delivery_message_id"] = getattr(delivered_message, "message_id", "")
+            completed_meta["delivery_thread_message"] = True
+            completed = self.services.research_task.update_task(
+                research_task_id=research_task_id,
+                fields={"metadata": completed_meta},
+            ) or completed
+        self._record_progress(
+            research_task_id,
+            stage="completed",
+            status="completed",
+            message="外部研究报告已完成并保存为产物。",
+            metadata={
+                "artifact_id": artifact.artifact_id,
+                "evidence_count": len(evidence),
+                "research_provider": config.provider,
+                "external_run_id": external_run_id,
+                "derived_artifact_count": len(derived_artifacts),
+            },
+        )
+        self._mark_run_status(
+            research_task_id,
+            status="succeeded",
+            output={
+                "research_task_id": research_task_id,
+                "artifact_id": artifact.artifact_id,
+                "external_run_id": external_run_id,
+                "research_provider": config.provider,
+                "derived_artifact_count": len(derived_artifacts),
+                "evidence_count": len(evidence),
+            },
+        )
+        return {
+            "ok": True,
+            "research_task_id": research_task_id,
+            "status": getattr(completed, "status", "completed"),
+            "artifact_id": artifact.artifact_id,
+            "external_run_id": external_run_id,
+            "research_provider": config.provider,
+            "derived_artifacts": derived_artifacts,
+            "derived_artifact_count": len(derived_artifacts),
+            "evidence_count": len(evidence),
+        }
+
+    def _external_adapter_payload(self, task, *, policy: dict[str, Any], provider: str) -> dict[str, Any]:
+        project = self.services.project.get_by_id(getattr(task, "project_id", None)) if getattr(task, "project_id", None) else None
+        thread = self.services.thread.get_by_id(getattr(task, "thread_id", None)) if getattr(task, "thread_id", None) else None
+        project_sources: list[dict[str, Any]] = []
+        if policy.get("include_project_sources") and project is not None:
+            project_id = str(getattr(project, "project_id", "") or "")
+            for source in self.services.project.list_sources(project_id=project_id, limit=_source_limit(policy)) or []:
+                project_sources.append(
+                    {
+                        "source_id": str(getattr(source, "source_id", "") or ""),
+                        "source_type": str(getattr(source, "source_type", "") or "note"),
+                        "title": str(getattr(source, "title", "") or ""),
+                        "content": _excerpt(getattr(source, "content", ""), limit=4000),
+                        "content_type": str(getattr(source, "content_type", "") or "text"),
+                        "checksum": str(getattr(source, "checksum", "") or ""),
+                        "metadata": dict(getattr(source, "meta", {}) or {}),
+                    }
+                )
+        return {
+            "schema": "meetyou.research.adapter.run.v1",
+            "provider": provider,
+            "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+            "topic": str(getattr(task, "topic", "") or ""),
+            "source_policy": dict(policy or {}),
+            "output_format": str(getattr(task, "output_format", "") or "markdown"),
+            "project": {
+                "project_id": str(getattr(project, "project_id", "") or ""),
+                "title": str(getattr(project, "title", "") or ""),
+                "description": str(getattr(project, "description", "") or ""),
+                "instructions": str(getattr(project, "instructions", "") or ""),
+            } if project is not None else None,
+            "thread": {
+                "thread_id": str(getattr(thread, "thread_id", "") or ""),
+                "title": str(getattr(thread, "title", "") or ""),
+            } if thread is not None else None,
+            "project_sources": project_sources,
+        }
+
+    @staticmethod
+    def _external_evidence(result: dict[str, Any], *, provider: str) -> list[dict[str, Any]]:
+        raw_sources: list[Any] = []
+        for key in ("sources", "evidence", "evidence_ledger", "citations"):
+            value = result.get(key)
+            if isinstance(value, list):
+                raw_sources.extend(value)
+        evidence: list[dict[str, Any]] = []
+        used_ids: set[str] = set()
+        next_id = 1
+        for index, item in enumerate(raw_sources, start=1):
+            if not isinstance(item, dict):
+                continue
+            source_id = str(item.get("source_id") or item.get("id") or item.get("citation_id") or "").strip()
+            if not source_id.isdigit() or source_id in used_ids:
+                while str(next_id) in used_ids:
+                    next_id += 1
+                source_id = str(next_id)
+            used_ids.add(source_id)
+            next_id += 1
+            title = str(item.get("title") or item.get("name") or item.get("url") or f"Source {source_id}").strip()
+            snippet = _excerpt(
+                item.get("snippet")
+                or item.get("summary")
+                or item.get("content")
+                or item.get("description")
+                or title,
+                limit=1000,
+            )
+            evidence.append(
+                {
+                    "source_id": source_id,
+                    "rank": len(evidence) + 1,
+                    "quality_score": number_or_score(item.get("quality_score"), default=50.0),
+                    "duplicate_count": int(item.get("duplicate_count") or 1),
+                    "merged_source_ids": [source_id],
+                    "source_type": str(item.get("source_type") or item.get("kind") or "external_research_source"),
+                    "adapter": provider,
+                    "title": title,
+                    "url": str(item.get("url") or item.get("href") or ""),
+                    "snippet": snippet,
+                    "content_type": str(item.get("content_type") or "text/plain"),
+                    "verification_status": str(item.get("verification_status") or "external_agent_reported"),
+                    "fetched_at": str(item.get("fetched_at") or item.get("retrieved_at") or _now_iso()),
+                }
+            )
+        return evidence
 
     def _deliver_report_message(self, task, *, artifact, derived_artifacts: list[dict[str, Any]] | None = None, summary: str, evidence_count: int):
         thread_row_id = getattr(task, "thread_id", None)

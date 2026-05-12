@@ -11,6 +11,7 @@ from core.io_protocol import EventTarget, EventType, InboundEvent, SourceKind, T
 from core.public_contract import EXECUTION_TARGET_ENDPOINT, EXECUTION_TARGETS
 from core.research.report_artifacts import create_research_report_derivatives
 from core.services.endpoint_service import EndpointThreadBindingError
+from core.research.external_adapter import ResearchAdapterConfig
 from core.services.research_execution_service import ResearchExecutionService
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
 from core.services.workspace_service import WorkspaceService
@@ -858,6 +859,15 @@ def build_runtime_router(gateway) -> APIRouter:
             gateway._raise_http_error(status_code=404, code="project_or_message_not_found", message="Unknown project or message.")
         return _project_source_response(source, project_id=project_id)
 
+    @router.delete("/projects/{project_id}/sources/{source_id}", response_model=RuntimeProjectSourceResponse)
+    async def archive_project_source(project_id: str, source_id: str, request: Request):
+        gateway._require_http_auth(request)
+        domain = gateway._require_core_domain()
+        source = domain.services.project.archive_source(project_id=project_id, source_id=source_id)
+        if source is None:
+            gateway._raise_http_error(status_code=404, code="project_source_not_found", message=f"Unknown project source: {source_id}")
+        return _project_source_response(source, project_id=project_id)
+
     @router.get("/projects/{project_id}/threads", response_model=list[RuntimeThreadResponse])
     async def list_project_threads(project_id: str, request: Request, limit: int = 50):
         gateway._require_http_auth(request)
@@ -1040,6 +1050,7 @@ def build_runtime_router(gateway) -> APIRouter:
                     domain.services,
                     fetcher=fetcher,
                     web_searcher=web_searcher,
+                    adapter_config=ResearchAdapterConfig.from_env(),
                 ).run_task(research_task_id)
 
             await asyncio.to_thread(run_task)

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Database, FileText, Plus, RefreshCw, Save, X } from 'lucide-react'
+import { Database, FileText, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import type { RuntimeProjectSource } from '../../types'
 import styles from './ProjectSources.module.css'
 
@@ -19,6 +19,7 @@ interface ProjectSourcesProps {
   busy: boolean
   onRefresh: () => Promise<unknown>
   onCreateSource?: (payload: ProjectSourceCreatePayload) => RuntimeProjectSource | Promise<RuntimeProjectSource | null> | null
+  onDeleteSource?: (sourceId: string) => RuntimeProjectSource | Promise<RuntimeProjectSource | null> | null
 }
 
 function sourceTitle(source: RuntimeProjectSource): string {
@@ -143,6 +144,7 @@ export default function ProjectSources({
   busy,
   onRefresh,
   onCreateSource,
+  onDeleteSource,
 }: ProjectSourcesProps) {
   const [open, setOpen] = useState(false)
   const [selectedSourceId, setSelectedSourceId] = useState('')
@@ -152,6 +154,7 @@ export default function ProjectSources({
   const [createContent, setCreateContent] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
+  const [deletingSourceId, setDeletingSourceId] = useState('')
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({})
@@ -280,6 +283,29 @@ export default function ProjectSources({
     }
   }
 
+  const deleteSelectedSource = async () => {
+    if (!selectedSource || !onDeleteSource || deletingSourceId || busy) {
+      return
+    }
+    const confirmed = typeof window === 'undefined'
+      ? true
+      : window.confirm(`删除项目源「${sourceTitle(selectedSource)}」？该操作只会从项目源列表归档，不会删除原始消息或产物。`)
+    if (!confirmed) {
+      return
+    }
+    setDeletingSourceId(selectedSource.source_id)
+    setError('')
+    try {
+      await onDeleteSource(selectedSource.source_id)
+      const nextSource = sources.find((source) => source.source_id !== selectedSource.source_id)
+      setSelectedSourceId(nextSource?.source_id || '')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '删除项目源失败')
+    } finally {
+      setDeletingSourceId('')
+    }
+  }
+
   return (
     <div className={styles.projectSources}>
       <button
@@ -363,10 +389,25 @@ export default function ProjectSources({
               </div>
 
               <div className={styles.detail}>
-                <div className={styles.detailTitle}>{selectedSource ? sourceTitle(selectedSource) : '项目源'}</div>
+                <div className={styles.detailHeader}>
+                  <div className={styles.detailTitle}>{selectedSource ? sourceTitle(selectedSource) : '项目源'}</div>
+                  {selectedSource && onDeleteSource ? (
+                    <button
+                      type="button"
+                      className={styles.deleteButton}
+                      title="删除项目源"
+                      aria-label="删除项目源"
+                      disabled={busy || Boolean(deletingSourceId)}
+                      onClick={() => void deleteSelectedSource()}
+                      data-project-source-delete="true"
+                    >
+                      <Trash2 size={13} aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
                 <div className={styles.detailMeta}>
                   {selectedSource
-                    ? `${sourceTypeLabel(selectedSource.source_type)} / ${statusLabel(selectedSource.status)} / ${formatSavedAt(selectedSource)}`
+                    ? `${sourceTypeLabel(selectedSource.source_type)} / ${deletingSourceId === selectedSource.source_id ? '删除中' : statusLabel(selectedSource.status)} / ${formatSavedAt(selectedSource)}`
                     : ''}
                 </div>
                 <pre className={styles.content} data-project-source-content="true">{selectedSource ? sourcePreview(selectedSource) : ''}</pre>

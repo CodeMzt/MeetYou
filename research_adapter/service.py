@@ -1,0 +1,299 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import time
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
+
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
+
+
+app = FastAPI(title="MeetYou Research Adapter", version="v1")
+RUNS: dict[str, dict[str, Any]] = {}
+
+
+class ResearchRunRequest(BaseModel):
+    schema_name: str = Field(default="meetyou.research.adapter.run.v1", alias="schema")
+    provider: str = "gpt_researcher"
+    research_task_id: str
+    topic: str
+    source_policy: dict[str, Any] = Field(default_factory=dict)
+    output_format: str = "markdown"
+    project: dict[str, Any] | None = None
+    thread: dict[str, Any] | None = None
+    project_sources: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _token() -> str:
+    return str(os.environ.get("MEETYOU_RESEARCH_ADAPTER_TOKEN", "") or "").strip()
+
+
+def _require_auth(authorization: str = Header(default="")) -> None:
+    expected = _token()
+    if not expected:
+        return
+    if authorization != f"Bearer {expected}":
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Invalid research adapter token."})
+
+
+def _gpt_researcher_available() -> bool:
+    try:
+        __import__("gpt_researcher")
+        return True
+    except Exception:
+        return False
+
+
+def _fake_enabled() -> bool:
+    return str(os.environ.get("MEETYOU_RESEARCH_ADAPTER_FAKE", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _public_run(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": row["run_id"],
+        "status": row["status"],
+        "provider": row["provider"],
+        "progress": row.get("progress", {}),
+        "summary": row.get("summary", ""),
+        "report_markdown": row.get("report_markdown", ""),
+        "sources": row.get("sources", []),
+        "usage": row.get("usage", {}),
+        "metadata": row.get("metadata", {}),
+        "error": row.get("error", ""),
+        "created_at": row.get("created_at", ""),
+        "updated_at": row.get("updated_at", ""),
+    }
+
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    provider = str(os.environ.get("MEETYOU_RESEARCH_PROVIDER", "gpt_researcher") or "gpt_researcher")
+    available = _gpt_researcher_available()
+    fake = _fake_enabled()
+    ready = fake or available
+    return {
+        "status": "ready" if ready else "degraded",
+        "ready": ready,
+        "provider": provider,
+        "gpt_researcher_available": available,
+        "fake_enabled": fake,
+        "active_run_count": sum(1 for row in RUNS.values() if row.get("status") == "running"),
+        "updated_at": _now_iso(),
+    }
+
+
+@app.post("/v1/research/runs")
+async def create_run(payload: ResearchRunRequest, background_tasks: BackgroundTasks, authorization: str = Header(default="")) -> dict[str, Any]:
+    _require_auth(authorization)
+    run_id = f"rad_{uuid4().hex}"
+    row = {
+        "run_id": run_id,
+        "provider": payload.provider or "gpt_researcher",
+        "status": "running",
+        "progress": {"stage": "queued", "message": "Research adapter run queued.", "at": _now_iso()},
+        "request": payload.model_dump(by_alias=True),
+        "sources": [],
+        "report_markdown": "",
+        "summary": "",
+        "usage": {},
+        "metadata": {},
+        "error": "",
+        "cancel_requested": False,
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    RUNS[run_id] = row
+    background_tasks.add_task(_execute_run, run_id)
+    return _public_run(row)
+
+
+@app.get("/v1/research/runs/{run_id}")
+async def get_run(run_id: str, authorization: str = Header(default="")) -> dict[str, Any]:
+    _require_auth(authorization)
+    row = RUNS.get(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"code": "research_run_not_found", "message": f"Unknown run: {run_id}"})
+    return _public_run(row)
+
+
+@app.post("/v1/research/runs/{run_id}/cancel")
+async def cancel_run(run_id: str, authorization: str = Header(default="")) -> dict[str, Any]:
+    _require_auth(authorization)
+    row = RUNS.get(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"code": "research_run_not_found", "message": f"Unknown run: {run_id}"})
+    row["cancel_requested"] = True
+    if row.get("status") == "running":
+        row["status"] = "cancelled"
+        row["progress"] = {"stage": "cancelled", "message": "Research adapter run cancelled.", "at": _now_iso()}
+        row["updated_at"] = _now_iso()
+    return _public_run(row)
+
+
+async def _execute_run(run_id: str) -> None:
+    row = RUNS.get(run_id)
+    if row is None:
+        return
+    try:
+        if row.get("cancel_requested"):
+            row["status"] = "cancelled"
+            return
+        row["progress"] = {"stage": "research", "message": "Research adapter is gathering and synthesizing.", "at": _now_iso()}
+        row["updated_at"] = _now_iso()
+        request = dict(row.get("request") or {})
+        if _fake_enabled():
+            await asyncio.sleep(0.2)
+            result = _fake_result(request)
+        else:
+            result = await _run_gpt_researcher(request)
+        if row.get("cancel_requested"):
+            row["status"] = "cancelled"
+            row["progress"] = {"stage": "cancelled", "message": "Research adapter run cancelled.", "at": _now_iso()}
+            row["updated_at"] = _now_iso()
+            return
+        row.update(result)
+        row["status"] = "completed"
+        row["progress"] = {"stage": "completed", "message": "Research adapter report completed.", "at": _now_iso()}
+        row["updated_at"] = _now_iso()
+    except Exception as exc:  # noqa: BLE001 - service boundary returns structured failures.
+        row["status"] = "failed"
+        row["error"] = str(exc)
+        row["metadata"] = {"error_type": type(exc).__name__}
+        row["progress"] = {"stage": "failed", "message": str(exc), "at": _now_iso()}
+        row["updated_at"] = _now_iso()
+
+
+async def _run_gpt_researcher(request: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from gpt_researcher import GPTResearcher  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("gpt-researcher is not installed in the research adapter environment.") from exc
+    topic = str(request.get("topic") or "").strip()
+    if not topic:
+        raise ValueError("topic is required")
+    policy = dict(request.get("source_policy") or {})
+    query = _query_with_project_sources(topic, request.get("project_sources") or [])
+    source_urls = _string_list(policy.get("web_urls") or policy.get("seed_urls") or policy.get("source_urls"))
+    report_type = str(policy.get("report_type") or "research_report")
+    researcher = GPTResearcher(query=query, report_type=report_type, source_urls=source_urls or None)
+    started = time.monotonic()
+    await researcher.conduct_research()
+    report = await researcher.write_report()
+    sources = _extract_gpt_researcher_sources(researcher)
+    return {
+        "summary": f"GPT Researcher completed a report for {topic}.",
+        "report_markdown": str(report or "").strip(),
+        "sources": sources,
+        "usage": {"duration_seconds": round(time.monotonic() - started, 2)},
+        "metadata": {"provider": "gpt_researcher", "source_url_count": len(source_urls)},
+    }
+
+
+def _fake_result(request: dict[str, Any]) -> dict[str, Any]:
+    topic = str(request.get("topic") or "Research").strip()
+    project_sources = [item for item in request.get("project_sources") or [] if isinstance(item, dict)]
+    sources = []
+    for index, source in enumerate(project_sources[:3], start=1):
+        sources.append(
+            {
+                "source_id": str(index),
+                "source_type": "project_source",
+                "title": str(source.get("title") or f"Project source {index}"),
+                "snippet": str(source.get("content") or "")[:700],
+                "verification_status": "project_source_snapshot",
+            }
+        )
+    if not sources:
+        sources.append(
+            {
+                "source_id": "1",
+                "source_type": "adapter_fixture",
+                "title": "Adapter fixture source",
+                "snippet": f"Fixture evidence for {topic}.",
+                "verification_status": "adapter_fixture",
+            }
+        )
+    lines = [f"# {topic}", "", "## 摘要", ""]
+    lines.append(f"外部研究适配器已根据 {len(sources)} 个来源生成报告。[1]")
+    lines.extend(["", "## Sources", ""])
+    for source in sources:
+        lines.append(f"- [{source['source_id']}] {source['title']}")
+    return {
+        "summary": f"Fake research adapter completed a report for {topic}.",
+        "report_markdown": "\n".join(lines) + "\n",
+        "sources": sources,
+        "usage": {"duration_seconds": 0.2},
+        "metadata": {"provider": "fake"},
+    }
+
+
+def _query_with_project_sources(topic: str, project_sources: list[dict[str, Any]]) -> str:
+    if not project_sources:
+        return topic
+    excerpts = []
+    for source in project_sources[:5]:
+        title = str(source.get("title") or source.get("source_id") or "Project source")
+        content = " ".join(str(source.get("content") or "").split())[:1200]
+        if content:
+            excerpts.append(f"- {title}: {content}")
+    if not excerpts:
+        return topic
+    return f"{topic}\n\nUse these MeetYou project sources as local research context when relevant:\n" + "\n".join(excerpts)
+
+
+def _extract_gpt_researcher_sources(researcher: Any) -> list[dict[str, Any]]:
+    candidates = []
+    for attr in ("visited_urls", "source_urls", "all_urls", "context", "sources"):
+        value = getattr(researcher, attr, None)
+        if isinstance(value, list):
+            candidates.extend(value)
+    sources = []
+    seen = set()
+    for index, item in enumerate(candidates, start=1):
+        if isinstance(item, str):
+            url = item
+            title = item
+            snippet = item
+        elif isinstance(item, dict):
+            url = str(item.get("url") or item.get("href") or item.get("link") or "")
+            title = str(item.get("title") or item.get("name") or url or f"Source {index}")
+            snippet = str(item.get("summary") or item.get("snippet") or item.get("content") or title)
+        else:
+            continue
+        key = url or title
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        sources.append(
+            {
+                "source_id": str(len(sources) + 1),
+                "source_type": "web_page" if url else "external_research_source",
+                "title": title,
+                "url": url,
+                "snippet": snippet[:1000],
+                "verification_status": "external_agent_reported",
+            }
+        )
+    return sources
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            result.append(text)
+    return result[:12]

@@ -94,6 +94,35 @@ class V5ServiceTests(unittest.TestCase):
         self.assertEqual(source.meta["source_message_id"], message.message_id)
         self.assertEqual([row.source_id for row in sources], [source.source_id])
 
+    def test_project_sources_can_be_archived_without_deleting_origin(self) -> None:
+        project = self.project_service.create_project(
+            principal_id=self.principal_id,
+            workspace_id=self.workspace_id,
+            title="Research Project",
+        )
+        thread = self._create_thread()
+        message = self.message_service.create_message(
+            thread_id=thread.id,
+            role="assistant",
+            content="Keep the original message.",
+        )
+        source = self.project_service.save_message_source(
+            project_id=project.project_id,
+            principal_id=self.principal_id,
+            message_id=message.message_id,
+            title="Snapshot to archive",
+        )
+
+        archived = self.project_service.archive_source(project_id=project.project_id, source_id=source.source_id)
+        active_sources = self.project_service.list_sources(project_id=project.project_id)
+        all_sources = self.project_service.list_sources(project_id=project.project_id, include_archived=True)
+        original_message = self.message_service.get_by_message_id(message.message_id)
+
+        self.assertEqual(archived.status, "archived")
+        self.assertEqual(active_sources, [])
+        self.assertEqual([row.source_id for row in all_sources], [source.source_id])
+        self.assertEqual(original_message.content, "Keep the original message.")
+
     def test_project_visible_defaults_are_localized(self) -> None:
         project = self.project_service.create_project(
             principal_id=self.principal_id,

@@ -335,6 +335,10 @@
   order: 6;
 }
 
+.adapterNotice {
+  order: 6;
+}
+
 .evidenceList {
   order: 8;
 }
@@ -397,6 +401,16 @@
   border-radius: 7px;
   background: var(--bg-input);
   color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.adapterNotice {
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-error) 28%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-error) 10%, var(--bg-input));
+  color: var(--text-error);
   font-size: 12px;
   line-height: 1.45;
 }

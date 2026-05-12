@@ -155,6 +155,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("GET", "/desktop/projects/{project_id}/sources", lambda request: f"/runtime/projects/{request.match_info['project_id']}/sources?{request.query_string}" if request.query_string else f"/runtime/projects/{request.match_info['project_id']}/sources"),
         DesktopApiRoute("POST", "/desktop/projects/{project_id}/sources", lambda request: f"/runtime/projects/{request.match_info['project_id']}/sources"),
         DesktopApiRoute("POST", "/desktop/projects/{project_id}/sources/from-message", lambda request: f"/runtime/projects/{request.match_info['project_id']}/sources/from-message"),
+        DesktopApiRoute("DELETE", "/desktop/projects/{project_id}/sources/{source_id}", lambda request: f"/runtime/projects/{request.match_info['project_id']}/sources/{request.match_info['source_id']}"),
         DesktopApiRoute("GET", "/desktop/projects/{project_id}/threads", lambda request: f"/runtime/projects/{request.match_info['project_id']}/threads?{request.query_string}" if request.query_string else f"/runtime/projects/{request.match_info['project_id']}/threads"),
         DesktopApiRoute("GET", "/desktop/projects/{project_id}/artifacts", lambda request: f"/runtime/projects/{request.match_info['project_id']}/artifacts?{request.query_string}" if request.query_string else f"/runtime/projects/{request.match_info['project_id']}/artifacts"),
         DesktopApiRoute("GET", "/desktop/artifacts/{artifact_id}/download", lambda request: f"/runtime/artifacts/{request.match_info['artifact_id']}/download"),

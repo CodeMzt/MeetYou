@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -92,6 +93,20 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         )
         self.assertEqual(source_response.status_code, 200)
         self.assertEqual(source_response.json()["content"], "Evidence note")
+        source_id = source_response.json()["source_id"]
+
+        delete_source_response = self.client.delete(
+            f"/runtime/projects/{project_id}/sources/{source_id}",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(delete_source_response.status_code, 200)
+        self.assertEqual(delete_source_response.json()["status"], "archived")
+        active_sources_response = self.client.get(
+            f"/runtime/projects/{project_id}/sources",
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(active_sources_response.status_code, 200)
+        self.assertEqual(active_sources_response.json(), [])
 
         thread_response = self.client.post(
             "/runtime/threads",
@@ -364,7 +379,7 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         active_after_activate = [row for row in branches_after_activate_response.json() if row["metadata"]["is_active"]]
         self.assertEqual([row["branch_id"] for row in active_after_activate], [checkout_response.json()["branch_id"]])
 
-    def test_research_task_start_auto_executes_read_only_runner(self) -> None:
+    def test_research_task_start_requires_configured_external_adapter(self) -> None:
         project_response = self.client.post(
             "/runtime/projects",
             json={"workspace_id": "personal", "title": "Research Runner Project"},
@@ -394,11 +409,19 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(task_response.status_code, 200)
         research_task_id = task_response.json()["research_task_id"]
 
-        start_response = self.client.patch(
-            f"/runtime/research-tasks/{research_task_id}",
-            json={"action": "start"},
-            headers=self._auth_headers(),
-        )
+        with patch.dict(
+            "os.environ",
+            {
+                "MEETYOU_RESEARCH_ADAPTER_BASE_URL": "",
+                "MEETYOU_RESEARCH_ADAPTER_REQUIRED": "true",
+            },
+            clear=False,
+        ):
+            start_response = self.client.patch(
+                f"/runtime/research-tasks/{research_task_id}",
+                json={"action": "start"},
+                headers=self._auth_headers(),
+            )
         self.assertEqual(start_response.status_code, 200)
         self.assertEqual(start_response.json()["status"], "running")
 
@@ -408,12 +431,10 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         )
         self.assertEqual(completed_response.status_code, 200)
         completed = completed_response.json()
-        self.assertEqual(completed["status"], "completed")
-        self.assertEqual(completed["evidence_ledger"][0]["source_type"], "project_source")
-        self.assertTrue(completed["artifact_id"])
-        download_response = self.client.get(completed["artifact"]["download_url"], headers=self._auth_headers())
-        self.assertEqual(download_response.status_code, 200)
-        self.assertIn("Project evidence note", download_response.text)
+        self.assertEqual(completed["status"], "failed")
+        self.assertEqual(completed["metadata"]["runner_error"], "research_adapter_unconfigured")
+        self.assertEqual(completed["metadata"]["adapter_status"], "unconfigured")
+        self.assertFalse(completed["artifact_id"])
 
     def test_edit_retry_queues_runtime_event_when_message_has_session(self) -> None:
         thread_response = self.client.post(

@@ -69,13 +69,17 @@ const task: RuntimeResearchTask = {
   ],
   metadata: {
     progress: {
-      stage: 'gather',
-      status: 'running',
-      message: '正在收集研究证据。',
+      stage: 'adapter',
+      status: 'failed',
+      message: '外部深度研究服务未配置。',
       at: '2026-05-09T00:00:00Z',
       gather_error_count: 1,
     },
     gather_errors: [{ adapter: 'web', error_type: 'WebSeedUrlsRequired' }],
+    runner: 'research_adapter.v1',
+    research_provider: 'gpt_researcher',
+    adapter_status: 'unconfigured',
+    adapter_error: 'research_adapter_unconfigured',
   },
   created_at: '2026-05-09T00:00:00Z',
   updated_at: '2026-05-09T00:00:00Z',
@@ -141,7 +145,13 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('源 9,1')
     expect(markup).toContain('Conversation versions should be durable.')
     expect(markup).toContain('data-research-progress-stage="true"')
-    expect(markup).toContain('正在收集研究证据。')
+    expect(markup).toContain('外部深度研究服务未配置。')
+    expect(markup).toContain('data-research-adapter-provider="true"')
+    expect(markup).toContain('外部 gpt_researcher')
+    expect(markup).toContain('data-research-adapter-status="true"')
+    expect(markup).toContain('未配置')
+    expect(markup).toContain('data-research-adapter-error="true"')
+    expect(markup).toContain('MEETYOU_RESEARCH_ADAPTER_BASE_URL')
     expect(markup).toContain('data-research-progress-errors="true"')
     expect(markup).toContain('data-research-web-search-toggle="true"')
     expect(markup).toContain('data-research-web-query-input="true"')

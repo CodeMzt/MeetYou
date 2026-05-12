@@ -65,6 +65,16 @@ class ProjectToolsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(loaded_source["source"]["content"], "Durable project source content.")
 
+        archived_source = await self.tools.manage_project_sources(
+            action="delete",
+            project_id=project_id,
+            source_id=source_id,
+        )
+        self.assertTrue(archived_source["ok"])
+        self.assertEqual(archived_source["source"]["status"], "archived")
+        active_sources = await self.tools.manage_project_sources(action="list", project_id=project_id)
+        self.assertEqual(active_sources["sources"], [])
+
         thread = self.services.thread.create_thread(
             principal_id=self.principal.id,
             workspace_id=self.workspace.id,

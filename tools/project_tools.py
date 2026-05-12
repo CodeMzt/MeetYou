@@ -232,4 +232,10 @@ class ProjectTools:
                 return {"ok": False, "code": "project_or_message_not_found", "message": "Unknown project or message."}
             return {"ok": True, "source": self._source_payload(source, project_id=project_id)}
 
+        if normalized_action in {"archive", "delete"}:
+            source = domain.services.project.archive_source(project_id=project_id, source_id=source_id)
+            if source is None:
+                return {"ok": False, "code": "project_source_not_found", "message": f"Unknown project source: {source_id}"}
+            return {"ok": True, "source": self._source_payload(source, project_id=project_id)}
+
         return {"ok": False, "code": "project_source_action_invalid", "message": f"Unsupported project source action: {normalized_action}"}

@@ -12,6 +12,7 @@ from core.artifacts import LocalArtifactStore
 from core.db.base import Base
 from core.db.bootstrap import build_core_services
 from core.db.models import Principal, Workspace
+from core.research.external_adapter import ResearchAdapterConfig, ResearchAdapterError
 from core.services.research_execution_service import ResearchExecutionService
 from core.services.v5_service import ArtifactService
 
@@ -85,6 +86,154 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertIn("Durable conversation branches", Path(report_path).read_text(encoding="utf-8"))
         self.assertIn("[1]", Path(report_path).read_text(encoding="utf-8"))
         self.assertIn("Source safety", Path(report_path).read_text(encoding="utf-8"))
+
+    def test_external_adapter_runner_creates_artifact_from_cited_sources(self) -> None:
+        outer = self
+
+        class FakeAdapterClient:
+            def run_to_completion(self, payload, *, cancel_checker=None):
+                self_payloads.append(payload)
+                outer.assertFalse(cancel_checker())
+                return {
+                    "status": "completed",
+                    "run_id": "rad_test_success",
+                    "summary": "外部研究完成。",
+                    "report_markdown": "# 外部报告\n\n结论来自项目源。[1]\n",
+                    "sources": [
+                        {
+                            "source_id": "1",
+                            "source_type": "project_source",
+                            "title": "External cited source",
+                            "url": "https://example.test/external",
+                            "snippet": "Readable external evidence.",
+                            "quality_score": 70,
+                        },
+                        {
+                            "source_id": "2",
+                            "source_type": "project_source",
+                            "title": "External cited source duplicate",
+                            "url": "https://example.test/external?utm_source=adapter",
+                            "snippet": "Duplicate readable external evidence.",
+                            "quality_score": 10,
+                        }
+                    ],
+                    "usage": {"duration_seconds": 0.2},
+                    "metadata": {"provider": "fake"},
+                }
+
+        self_payloads: list[dict] = []
+        project = self.services.project.create_project(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="External research project",
+        )
+        self.services.project.add_source(
+            project_id=project.project_id,
+            principal_id=self.principal.id,
+            title="Project source passed to adapter",
+            content="External adapter should receive bounded project source content.",
+        )
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            project_id=project.id,
+            topic="external adapter",
+            source_policy={"source_adapters": [], "include_project_sources": True},
+        )
+
+        result = ResearchExecutionService(
+            self.services,
+            adapter_config=ResearchAdapterConfig(base_url="http://adapter.test", provider="fake", require_external=True),
+            adapter_client=FakeAdapterClient(),
+        ).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["external_run_id"], "rad_test_success")
+        self.assertEqual(self_payloads[0]["provider"], "fake")
+        self.assertEqual(self_payloads[0]["project_sources"][0]["title"], "Project source passed to adapter")
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(len(completed.evidence_ledger), 1)
+        self.assertEqual(completed.evidence_ledger[0]["adapter"], "fake")
+        self.assertEqual(completed.evidence_ledger[0]["duplicate_count"], 2)
+        self.assertEqual(completed.evidence_ledger[0]["merged_source_ids"], ["1", "2"])
+        self.assertEqual(completed.evidence_ledger[0]["source_trust"], "untrusted")
+        self.assertEqual(completed.meta["runner"], "research_adapter.v1")
+        self.assertEqual(completed.meta["adapter_status"], "completed")
+        artifact = self.services.artifact.get_by_id(completed.artifact_id)
+        report_text = Path(self.services.artifact.resolve_local_path(artifact)).read_text(encoding="utf-8")
+        self.assertIn("结论来自项目源。[1]", report_text)
+
+    def test_external_adapter_runner_fails_without_sources(self) -> None:
+        class FakeAdapterClient:
+            def run_to_completion(self, payload, *, cancel_checker=None):
+                del payload, cancel_checker
+                return {
+                    "status": "completed",
+                    "run_id": "rad_no_sources",
+                    "report_markdown": "# Empty\n\nNo cited source.\n",
+                    "sources": [],
+                }
+
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="external without sources",
+            source_policy={"source_adapters": []},
+        )
+
+        result = ResearchExecutionService(
+            self.services,
+            adapter_config=ResearchAdapterConfig(base_url="http://adapter.test", provider="fake", require_external=True),
+            adapter_client=FakeAdapterClient(),
+        ).run_task(task.research_task_id)
+
+        self.assertFalse(result["ok"])
+        failed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.meta["runner_error"], "external_sources_missing")
+        self.assertEqual(failed.meta["adapter_status"], "failed")
+        self.assertIsNone(failed.artifact_id)
+
+    def test_external_adapter_runner_reports_unconfigured_service(self) -> None:
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="external unconfigured",
+            source_policy={"source_adapters": []},
+        )
+
+        result = ResearchExecutionService(
+            self.services,
+            adapter_config=ResearchAdapterConfig(provider="gpt_researcher", require_external=True),
+        ).run_task(task.research_task_id)
+
+        self.assertFalse(result["ok"])
+        failed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.meta["runner_error"], "research_adapter_unconfigured")
+        self.assertEqual(failed.meta["adapter_status"], "unconfigured")
+
+    def test_external_adapter_runner_reports_adapter_error(self) -> None:
+        class FakeAdapterClient:
+            def run_to_completion(self, payload, *, cancel_checker=None):
+                del payload, cancel_checker
+                raise ResearchAdapterError("research_adapter_timeout", "Adapter timed out.", details={"run_id": "rad_slow"})
+
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="external timeout",
+            source_policy={"source_adapters": []},
+        )
+
+        result = ResearchExecutionService(
+            self.services,
+            adapter_config=ResearchAdapterConfig(base_url="http://adapter.test", provider="fake", require_external=True),
+            adapter_client=FakeAdapterClient(),
+        ).run_task(task.research_task_id)
+
+        self.assertFalse(result["ok"])
+        failed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.meta["runner_error"], "research_adapter_timeout")
+        self.assertEqual(failed.meta["adapter_error_details"], {"run_id": "rad_slow"})
 
     def test_runner_gathers_direct_web_evidence_and_creates_artifact(self) -> None:
         def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:

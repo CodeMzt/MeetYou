@@ -262,13 +262,47 @@
   background: var(--bg-input);
 }
 
+.detailHeader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
 .detailTitle {
+  min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.deleteButton {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.deleteButton:hover {
+  border-color: var(--border-focus);
+  color: var(--text-error);
+  background: var(--bg-card);
+}
+
+.deleteButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .content {

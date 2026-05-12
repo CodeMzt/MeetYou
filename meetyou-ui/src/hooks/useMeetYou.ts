@@ -8,6 +8,7 @@ import {
   createRuntimeProjectSourceFromMessage,
   createRuntimeResearchTask,
   createRuntimeThreadCheckpoint,
+  deleteRuntimeProjectSource,
   downloadRuntimeArtifact,
   editRetryRuntimeMessage,
   listRuntimeProjectArtifacts,
@@ -42,6 +43,7 @@ export function hasRunningResearchTasks(tasks: Array<Pick<RuntimeResearchTask, '
 
 export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   const autoInitializeAttemptedRef = useRef(false)
+  const versionRefreshTimerRef = useRef<number | null>(null)
   const [statusFeedback, setStatusFeedback] = useState<StatusFeedback | null>(null)
   const [threadBranches, setThreadBranches] = useState<RuntimeThreadBranch[]>([])
   const [threadCheckpoints, setThreadCheckpoints] = useState<RuntimeConversationCheckpoint[]>([])
@@ -243,6 +245,34 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       return { branches: [], checkpoints: [] }
     }
   }, [baseUrl, endpointContext?.threadId])
+
+  const persistedMessageFingerprint = useMemo(
+    () => chatState.messages
+      .filter((message) => !message.temporary && String(message.id || '').startsWith('msg_'))
+      .map((message) => message.id)
+      .join('|'),
+    [chatState.messages],
+  )
+
+  useEffect(() => {
+    const threadId = String(endpointContext?.threadId || '').trim()
+    if (!threadId || !persistedMessageFingerprint) {
+      return
+    }
+    if (versionRefreshTimerRef.current) {
+      window.clearTimeout(versionRefreshTimerRef.current)
+    }
+    versionRefreshTimerRef.current = window.setTimeout(() => {
+      versionRefreshTimerRef.current = null
+      void refreshThreadVersionState(threadId)
+    }, 250)
+    return () => {
+      if (versionRefreshTimerRef.current) {
+        window.clearTimeout(versionRefreshTimerRef.current)
+        versionRefreshTimerRef.current = null
+      }
+    }
+  }, [endpointContext?.threadId, persistedMessageFingerprint, refreshThreadVersionState])
 
   useEffect(() => {
     if (!endpointContext?.threadId) {
@@ -473,6 +503,26 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     setStatusFeedback({
       id: `project-source-note-${Date.now()}`,
       text: '已创建项目源',
+      tone: 'success',
+      createdAt: Date.now(),
+    })
+    return source
+  }, [activeProjectId, baseUrl, refreshProjectSources])
+
+  const deleteProjectSource = useCallback(async (sourceId: string) => {
+    const projectId = String(activeProjectId || '').trim()
+    const normalizedSourceId = String(sourceId || '').trim()
+    if (!projectId) {
+      throw new Error('请先选择项目')
+    }
+    if (!normalizedSourceId) {
+      throw new Error('项目源不可删除')
+    }
+    const source = await deleteRuntimeProjectSource(baseUrl, projectId, normalizedSourceId)
+    await refreshProjectSources(projectId)
+    setStatusFeedback({
+      id: `project-source-delete-${Date.now()}`,
+      text: '已删除项目源',
       tone: 'success',
       createdAt: Date.now(),
     })
@@ -805,6 +855,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     createProject: createRuntimeProjectAndRemember,
     updateProject: updateRuntimeProjectAndRemember,
     createProjectSource,
+    deleteProjectSource,
     deleteThread: deleteRuntimeThreadAndSelect,
     refreshHealth,
     refreshWorkspace,

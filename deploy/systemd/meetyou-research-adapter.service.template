@@ -1,0 +1,26 @@
+[Unit]
+Description=MeetYou Research Adapter Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{MEETYOU_USER}}
+Group={{MEETYOU_GROUP}}
+WorkingDirectory={{WORKDIR}}
+EnvironmentFile={{ENV_FILE}}
+Environment=PYTHONUNBUFFERED=1
+ExecStart={{PYTHON_BIN}} -m research_adapter
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths={{WORKDIR}} {{WORKDIR}}/user {{WORKDIR}}/logs
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

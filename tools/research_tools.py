@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.research.external_adapter import ResearchAdapterConfig
 from core.research.report_artifacts import create_research_report_derivatives
 from core.services.research_execution_service import ResearchExecutionService
 from core.services.v5_service import ResearchTaskCitationError, ResearchTaskStateError
@@ -115,7 +116,10 @@ class ResearchTools:
         if task is None:
             return {"ok": False, "code": "research_task_not_found", "message": f"Unknown research task: {research_task_id}"}
         if normalized_action in {"run", "execute"}:
-            result = ResearchExecutionService(domain.services).run_task(research_task_id)
+            result = ResearchExecutionService(
+                domain.services,
+                adapter_config=ResearchAdapterConfig.from_env(),
+            ).run_task(research_task_id)
             refreshed = domain.services.research_task.get_by_research_task_id(research_task_id) or task
             return {
                 **dict(result or {}),

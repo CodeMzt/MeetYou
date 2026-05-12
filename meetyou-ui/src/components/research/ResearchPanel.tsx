@@ -26,6 +26,14 @@ interface ResearchCreateOptions {
   limit?: number
 }
 
+interface ResearchAdapterInfo {
+  provider: string
+  status: string
+  externalRunId: string
+  error: string
+  message: string
+}
+
 const ACADEMIC_ADAPTER_OPTIONS = [
   { id: 'arxiv', label: 'arXiv', title: 'arXiv' },
   { id: 'openalex', label: 'OA', title: 'OpenAlex' },
@@ -122,11 +130,56 @@ function getEvidenceItems(task: RuntimeResearchTask): EvidenceAuditItem[] {
 
 function stageLabel(stage: string): string {
   const normalized = String(stage || '').toLowerCase()
+  if (normalized === 'adapter') return '外部研究服务'
   if (normalized === 'gather') return '收集证据'
   if (normalized === 'synthesize') return '综合报告'
   if (normalized === 'artifact') return '保存产物'
   if (normalized === 'completed') return '完成'
   return stage || '进度'
+}
+
+function adapterStatusLabel(status: string): string {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized === 'unconfigured') return '未配置'
+  if (normalized === 'running') return '运行中'
+  if (normalized === 'completed') return '已完成'
+  if (normalized === 'failed') return '失败'
+  if (normalized === 'cancelled') return '已取消'
+  return status || '等待'
+}
+
+function adapterErrorMessage(status: string, error: string): string {
+  const normalizedStatus = String(status || '').toLowerCase()
+  const normalizedError = String(error || '').toLowerCase()
+  if (normalizedStatus === 'unconfigured' || normalizedError.includes('unconfigured')) {
+    return '外部研究服务未配置：请启动 research_adapter，并在 Core 设置 MEETYOU_RESEARCH_ADAPTER_BASE_URL 与 token。'
+  }
+  if (normalizedError.includes('external_sources_missing')) {
+    return '外部研究服务没有返回可引用来源，Core 已拒绝生成无引用报告。'
+  }
+  if (normalizedError.includes('timeout')) {
+    return '外部研究服务超时：可检查 adapter 日志或调大 MEETYOU_RESEARCH_TIMEOUT_SECONDS。'
+  }
+  return error ? `外部研究服务失败：${error}` : ''
+}
+
+function getResearchAdapterInfo(task: RuntimeResearchTask): ResearchAdapterInfo | null {
+  const metadata = (task.metadata || {}) as Record<string, unknown>
+  const runner = String(metadata.runner || '')
+  const provider = String(metadata.research_provider || metadata.provider || '')
+  const status = String(metadata.adapter_status || '')
+  const externalRunId = String(metadata.external_run_id || '')
+  const error = String(metadata.adapter_error || metadata.runner_error || '')
+  if (!provider && !status && !externalRunId && !error && runner !== 'research_adapter.v1') {
+    return null
+  }
+  return {
+    provider: provider || 'gpt_researcher',
+    status: status || (task.status === 'running' ? 'running' : ''),
+    externalRunId,
+    error,
+    message: adapterErrorMessage(status, error),
+  }
 }
 
 function eventLabel(type: string): string {
@@ -257,6 +310,7 @@ export default function ResearchPanel({
   const planSteps = selectedTask ? getPlanSteps(selectedTask) : []
   const evidenceItems = selectedTask ? getEvidenceItems(selectedTask) : []
   const researchProgress = selectedTask ? getResearchProgress(selectedTask) : null
+  const adapterInfo = selectedTask ? getResearchAdapterInfo(selectedTask) : null
   const editablePlan = selectedTask?.status === 'planned'
   const selectedDerivedArtifacts = selectedTask?.derived_artifacts || []
   const selectedEvents = selectedTask ? taskEvents[selectedTask.research_task_id] || [] : []
@@ -493,6 +547,9 @@ export default function ResearchPanel({
           <div className={styles.progressRow} data-research-progress="true">
             <span>来源 {evidenceItems.length}</span>
             <span>格式 {selectedTask.output_format || 'markdown'}</span>
+            {adapterInfo ? <span data-research-adapter-provider="true">外部 {adapterInfo.provider}</span> : null}
+            {adapterInfo ? <span data-research-adapter-status="true">{adapterStatusLabel(adapterInfo.status)}</span> : null}
+            {adapterInfo?.externalRunId ? <span data-research-external-run-id="true">外部 {shortId(adapterInfo.externalRunId)}</span> : null}
             {selectedTask.status === 'running' ? <span data-research-auto-refresh="true">自动刷新</span> : null}
             {selectedTask.run_id ? <span data-research-run-id="true">运行 {shortId(selectedTask.run_id)}</span> : null}
             {selectedEvents.length ? <span data-research-event-count="true">事件 {selectedEvents.length}</span> : null}
@@ -509,6 +566,12 @@ export default function ResearchPanel({
               </div>
               {researchProgress.message ? <p data-research-progress-message="true">{researchProgress.message}</p> : null}
               {researchProgress.at ? <small>更新 {formatProgressTime(researchProgress.at)}</small> : null}
+            </div>
+          ) : null}
+
+          {adapterInfo?.message ? (
+            <div className={styles.adapterNotice} data-research-adapter-error="true">
+              {adapterInfo.message}
             </div>
           ) : null}
 

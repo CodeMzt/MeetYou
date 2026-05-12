@@ -135,18 +135,26 @@ const branch = {
   updated_at: nowIso(),
 }
 
-const checkpoint = {
-  checkpoint_id: 'checkpoint_visual_auto',
-  thread_id: threadId,
-  branch_id: branch.branch_id,
-  message_id: '',
-  checkpoint_type: 'auto',
-  title: '自动检查点',
-  state: {},
-  status: 'active',
-  metadata: { automatic: true },
-  created_at: nowIso(),
-  updated_at: nowIso(),
+const checkpoints = []
+
+function ensureCheckpoint(messageId, title) {
+  if (!messageId || checkpoints.some((item) => item.message_id === messageId)) {
+    return
+  }
+  branch.current_leaf_message_id = messageId
+  checkpoints.push({
+    checkpoint_id: `checkpoint_visual_${messageId}`,
+    thread_id: threadId,
+    branch_id: branch.branch_id,
+    message_id: messageId,
+    checkpoint_type: 'auto',
+    title,
+    state: { message_id: messageId },
+    status: 'active',
+    metadata: { automatic: true },
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  })
 }
 
 const researchTask = {
@@ -280,6 +288,7 @@ function sendAssistantRaceFrames() {
   const streamId = 'stream_visual_chat'
   const turnId = 'turn_visual_chat'
   setTimeout(() => {
+    ensureCheckpoint('msg_visual_assistant', '自动检查点：助手消息')
     sendWs({
       kind: 'event',
       event: {
@@ -380,7 +389,8 @@ async function handleRequest(request, response) {
     return
   }
   if (request.method === 'GET' && url.pathname === `/desktop/projects/${projectId}/sources`) {
-    writeJson(response, projectSources)
+    const includeArchived = url.searchParams.get('include_archived') === 'true'
+    writeJson(response, includeArchived ? projectSources : projectSources.filter((source) => source.status !== 'archived'))
     return
   }
   if (request.method === 'POST' && url.pathname === `/desktop/projects/${projectId}/sources`) {
@@ -404,6 +414,18 @@ async function handleRequest(request, response) {
     writeJson(response, source)
     return
   }
+  if (request.method === 'DELETE' && url.pathname.startsWith(`/desktop/projects/${projectId}/sources/`)) {
+    const sourceId = decodeURIComponent(url.pathname.slice(`/desktop/projects/${projectId}/sources/`.length))
+    const source = projectSources.find((item) => item.source_id === sourceId)
+    if (!source) {
+      writeJson(response, { kind: 'error', error: { code: 'project_source_not_found', message: sourceId } }, 404)
+      return
+    }
+    source.status = 'archived'
+    source.updated_at = nowIso()
+    writeJson(response, source)
+    return
+  }
   if (request.method === 'POST' && url.pathname === '/desktop/threads/default') {
     writeJson(response, thread)
     return
@@ -417,11 +439,12 @@ async function handleRequest(request, response) {
     return
   }
   if (request.method === 'GET' && url.pathname === `/desktop/threads/${threadId}/checkpoints`) {
-    writeJson(response, [checkpoint])
+    writeJson(response, checkpoints)
     return
   }
   if (request.method === 'POST' && url.pathname === `/desktop/threads/${threadId}/checkpoints`) {
-    writeJson(response, checkpoint)
+    ensureCheckpoint(branch.current_leaf_message_id || 'msg_visual_manual', '手动检查点')
+    writeJson(response, checkpoints[checkpoints.length - 1])
     return
   }
   if (request.method === 'GET' && url.pathname === '/desktop/research-tasks') {
@@ -486,6 +509,7 @@ async function handleRequest(request, response) {
     const payload = await readBody(request)
     sendAssistantRaceFrames()
     setTimeout(() => {
+      ensureCheckpoint('msg_visual_user', '自动检查点：用户消息')
       writeJson(response, {
         message_id: 'msg_visual_user',
         thread_id: threadId,
@@ -848,6 +872,7 @@ async function createProjectSourceNote(win) {
 })()
 `)
   await waitForCondition(win, "document.querySelector('[data-project-sources-menu=\"true\"]')", 'project sources menu')
+  await waitForCondition(win, "!document.querySelector('[data-project-source-create-toggle=\"true\"]')?.disabled", 'project source create toggle enabled')
   await win.webContents.executeJavaScript(`
 (() => {
   const button = document.querySelector('[data-project-source-create-toggle="true"]')
@@ -918,6 +943,45 @@ async function collectProjectSourceReport(win) {
 `)
 }
 
+async function deleteCreatedProjectSource(win) {
+  await win.webContents.executeJavaScript(`
+(() => {
+  window.confirm = () => true
+  const created = document.querySelector('[data-project-source-id="src_visual_note_2"]')
+  if (!created) throw new Error('created project source missing before delete')
+  created.click()
+})()
+`)
+  await waitForCondition(win, "document.querySelector('[data-project-source-delete=\"true\"]')", 'project source delete button')
+  await waitForCondition(win, "!document.querySelector('[data-project-source-delete=\"true\"]')?.disabled", 'project source delete button enabled')
+  await win.webContents.executeJavaScript(`
+(() => {
+  const deleteButton = document.querySelector('[data-project-source-delete="true"]')
+  if (!deleteButton) throw new Error('project source delete button missing')
+  deleteButton.click()
+})()
+`)
+  await waitForCondition(win, "!document.querySelector('[data-project-source-id=\"src_visual_note_2\"]')", 'deleted project source removed from active list')
+}
+
+async function collectProjectSourceDeleteReport(win) {
+  return win.webContents.executeJavaScript(`
+(() => {
+  const menu = document.querySelector('[data-project-sources-menu="true"]')
+  const deleted = document.querySelector('[data-project-source-id="src_visual_note_2"]')
+  const existing = document.querySelector('[data-project-source-id="src_visual_existing"]')
+  const detail = document.querySelector('[data-project-source-content="true"]')
+  return {
+    ok: Boolean(menu && !deleted && existing && detail),
+    deletedPresent: Boolean(deleted),
+    existingPresent: Boolean(existing),
+    detailText: String(detail?.textContent || ''),
+    bodyText: document.body.innerText,
+  }
+})()
+`)
+}
+
 async function closeProjectSources(win) {
   await win.webContents.executeJavaScript(`
 (() => {
@@ -925,6 +989,45 @@ async function closeProjectSources(win) {
 })()
 `)
   await wait(200)
+}
+
+async function openMessageActionMenu(win, messageId = 'msg_visual_user') {
+  await waitForCondition(win, `document.querySelector('[data-message-action-trigger="${messageId}"]')`, 'message action trigger')
+  await win.webContents.executeJavaScript(`
+(() => {
+  const trigger = document.querySelector('[data-message-action-trigger="${messageId}"]')
+  if (!trigger) throw new Error('message action trigger missing')
+  trigger.click()
+})()
+`)
+  await waitForCondition(win, "document.querySelector('[class*=\"messageActionMenu\"]')", 'message action menu opened')
+}
+
+async function collectMessageActionMenuReport(win) {
+  return win.webContents.executeJavaScript(`
+(() => {
+  const menu = document.querySelector('[class*="messageActionMenu"]')
+  return {
+    open: Boolean(menu),
+    text: String(menu?.innerText || ''),
+    hasSaveSource: Boolean(document.querySelector('[data-message-action="save-source"]')),
+    hasEditRetry: Boolean(document.querySelector('[data-message-action="edit-retry"]')),
+    hasRestoreCheckpoint: Boolean(document.querySelector('[data-message-action="restore-checkpoint"]')),
+    hasCheckoutCheckpoint: Boolean(document.querySelector('[data-message-action="checkout-checkpoint"]')),
+  }
+})()
+`)
+}
+
+async function closeMessageActionMenuOutside(win) {
+  await win.webContents.executeJavaScript(`
+(() => {
+  const target = document.body
+  target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 2, clientY: 2 }))
+  target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 2, clientY: 2 }))
+})()
+`)
+  await waitForCondition(win, "!document.querySelector('[class*=\"messageActionMenu\"]')", 'message action menu closed by outside click')
 }
 
 async function switchToResearchMode(win) {
@@ -1034,6 +1137,9 @@ async function runVisualCheck(apiBaseUrl) {
   await createProjectSourceNote(win)
   const projectSourceReport = await collectProjectSourceReport(win)
   const projectSourceScreenshot = await capture(win, 'main-project-source-note-created-400x620')
+  await deleteCreatedProjectSource(win)
+  const projectSourceDeleteReport = await collectProjectSourceDeleteReport(win)
+  const projectSourceDeleteScreenshot = await capture(win, 'main-project-source-note-deleted-400x620')
   await closeProjectSources(win)
 
   win.setSize(540, 620)
@@ -1053,6 +1159,11 @@ async function runVisualCheck(apiBaseUrl) {
   await sendChatPrompt(win)
   await waitForCondition(win, `document.body.innerText.includes(${JSON.stringify(assistantAnswer)})`, 'assistant answer')
   await wait(500)
+  await openMessageActionMenu(win)
+  const messageActionOpenReport = await collectMessageActionMenuReport(win)
+  const messageActionScreenshot = await capture(win, 'main-message-action-menu-400x620')
+  await closeMessageActionMenuOutside(win)
+  const messageActionClosedReport = await collectMessageActionMenuReport(win)
   const chatReport = await collectChatReport(win)
   const chatScreenshot = await capture(win, 'main-chat-after-send-400x620')
   await switchToResearchMode(win)
@@ -1065,13 +1176,18 @@ async function runVisualCheck(apiBaseUrl) {
     visualUsageReady,
     topControlsReport,
     projectSourceReport,
+    projectSourceDeleteReport,
     islandReport,
+    messageActionOpenReport,
+    messageActionClosedReport,
     chatReport,
     researchAuditReport,
     screenshots: {
       topControls: topControlsScreenshot,
       projectSource: projectSourceScreenshot,
+      projectSourceDelete: projectSourceDeleteScreenshot,
       island: islandScreenshot,
+      messageAction: messageActionScreenshot,
       chat: chatScreenshot,
       research: researchScreenshot,
     },
@@ -1110,6 +1226,9 @@ async function runVisualCheck(apiBaseUrl) {
       failures.push(`project source created content missing: ${projectSourceReport.contentText}`)
     }
   }
+  if (!projectSourceDeleteReport.ok) {
+    failures.push(`project source delete flow did not archive/remove active source; deletedPresent=${projectSourceDeleteReport.deletedPresent} existingPresent=${projectSourceDeleteReport.existingPresent}`)
+  }
   if (!islandReport.ok) {
     failures.push(`island dropdown failed: ${islandReport.reason}`)
   } else {
@@ -1137,6 +1256,18 @@ async function runVisualCheck(apiBaseUrl) {
   }
   if (chatReport.assistantBottomGap < 0 || chatReport.assistantBottomGap > 22) {
     failures.push(`assistant reply bottom gap is ${chatReport.assistantBottomGap}px, expected padding-only spacing`)
+  }
+  if (!messageActionOpenReport.open) {
+    failures.push('message action menu did not open')
+  }
+  if (!messageActionOpenReport.hasRestoreCheckpoint || !messageActionOpenReport.hasCheckoutCheckpoint) {
+    failures.push(`message action menu did not expose immediate checkpoint actions: ${JSON.stringify(messageActionOpenReport)}`)
+  }
+  if (!messageActionOpenReport.hasEditRetry || !messageActionOpenReport.hasSaveSource) {
+    failures.push(`message action menu missing expected V5 actions: ${JSON.stringify(messageActionOpenReport)}`)
+  }
+  if (messageActionClosedReport.open) {
+    failures.push('message action menu stayed open after outside pointer/mouse click')
   }
   if (!researchAuditReport.ok) {
     failures.push('research evidence audit metadata did not render')

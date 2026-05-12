@@ -88,6 +88,40 @@ export default function MessageList({
     }
   }, [openMenuMessageId, menuStyle.left, menuStyle.top])
 
+  useEffect(() => {
+    if (!openMenuMessageId || typeof document === 'undefined') {
+      return
+    }
+    const close = (event: MouseEvent | PointerEvent) => {
+      const target = event.target as Element | null
+      if (!target) {
+        return
+      }
+      if (menuRef.current?.contains(target)) {
+        return
+      }
+      if (target.closest(`[data-message-action-trigger="${openMenuMessageId}"]`)) {
+        return
+      }
+      setOpenMenuMessageId('')
+      setActionError('')
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenMenuMessageId('')
+        setActionError('')
+      }
+    }
+    document.addEventListener('pointerdown', close, true)
+    document.addEventListener('mousedown', close, true)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', close, true)
+      document.removeEventListener('mousedown', close, true)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [openMenuMessageId])
+
   const isNearBottom = () => {
     const container = containerRef.current
     if (!container) {

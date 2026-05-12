@@ -67,6 +67,21 @@ def as_list(payload: Any) -> list[Any]:
     return [payload]
 
 
+def is_acceptance_project(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    title = str(item.get("title") or "")
+    return metadata.get("acceptance") == "v5_real_acceptance" or "V5 real acceptance" in title
+
+
+def is_acceptance_thread(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    title = str(item.get("title") or "")
+    return "V5 acceptance thread" in title
+
+
 class AcceptanceError(RuntimeError):
     pass
 
@@ -139,6 +154,52 @@ class V5Acceptance:
                 self.ok("project archived", {"project_id": project_id, "status": archived.get("status")})
             except Exception as exc:  # noqa: BLE001
                 print(f"[WARN] project archive failed for {project_id}: {exc}")
+        await self.assert_no_acceptance_resources()
+
+    async def cleanup_leaked_resources(self) -> None:
+        removed_threads: set[str] = set()
+        archived_projects: set[str] = set()
+        projects = as_list(await self.request("GET", "/runtime/projects", params={"include_archived": "true", "limit": "500"}))
+        for project in projects:
+            if not is_acceptance_project(project):
+                continue
+            project_id = str(project.get("project_id") or "").strip()
+            if not project_id:
+                continue
+            try:
+                project_threads = as_list(await self.request("GET", f"/runtime/projects/{project_id}/threads"))
+                for thread in project_threads:
+                    thread_id = str(thread.get("thread_id") or "").strip() if isinstance(thread, dict) else ""
+                    if thread_id and thread_id not in removed_threads:
+                        await self.request("DELETE", f"/runtime/threads/{thread_id}", params={"force": "true"})
+                        removed_threads.add(thread_id)
+                await self.request("PATCH", f"/runtime/projects/{project_id}", json_body={"status": "archived"})
+                archived_projects.add(project_id)
+            except Exception as exc:  # noqa: BLE001 - cleanup-only should continue across stale rows.
+                print(f"[WARN] leaked project cleanup failed for {project_id}: {exc}")
+        threads = as_list(await self.request("GET", "/runtime/threads", params={"limit": "500"}))
+        for thread in threads:
+            if not is_acceptance_thread(thread):
+                continue
+            thread_id = str(thread.get("thread_id") or "").strip()
+            if not thread_id or thread_id in removed_threads:
+                continue
+            try:
+                await self.request("DELETE", f"/runtime/threads/{thread_id}", params={"force": "true"})
+                removed_threads.add(thread_id)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[WARN] leaked thread cleanup failed for {thread_id}: {exc}")
+        self.ok("acceptance leaked resources cleaned", {"threads": len(removed_threads), "projects": len(archived_projects)})
+        await self.assert_no_acceptance_resources()
+
+    async def assert_no_acceptance_resources(self) -> None:
+        active_projects = as_list(await self.request("GET", "/runtime/projects", params={"include_archived": "false", "limit": "500"}))
+        leaked_projects = [str(item.get("project_id") or "") for item in active_projects if is_acceptance_project(item)]
+        active_threads = as_list(await self.request("GET", "/runtime/threads", params={"limit": "500"}))
+        leaked_threads = [str(item.get("thread_id") or "") for item in active_threads if is_acceptance_thread(item)]
+        if leaked_projects or leaked_threads:
+            self.fail("acceptance cleanup assertion", f"leaked_projects={leaked_projects} leaked_threads={leaked_threads}")
+        self.ok("acceptance cleanup assertion", {"active_projects": 0, "active_threads": 0})
 
     async def check_health(self) -> None:
         health = await self.request("GET", "/health")
@@ -206,6 +267,31 @@ class V5Acceptance:
         if not any(item.get("source_id") == note.get("source_id") for item in sources if isinstance(item, dict)):
             self.fail("project source note", "created source was not listed")
         self.ok("project source note", {"source_id": note.get("source_id"), "source_count": len(sources)})
+
+        delete_note = await self.request(
+            "POST",
+            f"/runtime/projects/{project_id}/sources",
+            json_body={
+                "source_type": "note",
+                "title": "V5 acceptance delete source",
+                "content": "Temporary source that must be archived during acceptance.",
+                "content_type": "text",
+                "metadata": {"marker": self.marker, "created_from": "v5_real_acceptance"},
+            },
+        )
+        archived_source = await self.request(
+            "DELETE",
+            f"/runtime/projects/{project_id}/sources/{delete_note['source_id']}",
+        )
+        active_sources = as_list(await self.request("GET", f"/runtime/projects/{project_id}/sources"))
+        archived_sources = as_list(await self.request("GET", f"/runtime/projects/{project_id}/sources", params={"include_archived": "true"}))
+        if archived_source.get("status") != "archived":
+            self.fail("project source delete", f"unexpected archived status={archived_source.get('status')}")
+        if any(item.get("source_id") == delete_note.get("source_id") for item in active_sources if isinstance(item, dict)):
+            self.fail("project source delete", "archived source remained in active source list")
+        if not any(item.get("source_id") == delete_note.get("source_id") and item.get("status") == "archived" for item in archived_sources if isinstance(item, dict)):
+            self.fail("project source delete", "archived source was not visible in include_archived list")
+        self.ok("project source delete", {"source_id": delete_note.get("source_id")})
 
         thread = await self.request(
             "POST",
@@ -447,6 +533,7 @@ class V5Acceptance:
 
     async def run(self) -> dict[str, Any]:
         await self.check_health()
+        await self.cleanup_leaked_resources()
         project, thread = await self.create_project_and_thread()
         await self.check_versioning_and_sources(project, thread)
         await self.check_research_cancel(project)
@@ -461,6 +548,7 @@ async def async_main() -> int:
     parser.add_argument("--workspace-id", default=os.environ.get("MEETYOU_ACCEPTANCE_WORKSPACE_ID", ""))
     parser.add_argument("--wait-timeout", type=float, default=float(os.environ.get("MEETYOU_V5_ACCEPTANCE_TIMEOUT", "120")))
     parser.add_argument("--keep-resources", action="store_true")
+    parser.add_argument("--cleanup-only", action="store_true", help="Only remove leaked V5 acceptance projects/threads and assert they are gone.")
     args = parser.parse_args()
 
     acceptance = V5Acceptance(
@@ -471,7 +559,12 @@ async def async_main() -> int:
         keep_resources=args.keep_resources,
     )
     try:
-        results = await acceptance.run()
+        if args.cleanup_only:
+            await acceptance.check_health()
+            await acceptance.cleanup_leaked_resources()
+            results = acceptance.results
+        else:
+            results = await acceptance.run()
         print(json_dumps(results))
         return 0
     except AcceptanceError as exc:

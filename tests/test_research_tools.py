@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -131,14 +132,31 @@ class ResearchToolsTests(unittest.IsolatedAsyncioTestCase):
             source_policy={"source_adapters": [], "include_project_sources": True},
         )
 
-        result = await self.tools.manage_research_tasks(
-            action="run",
-            research_task_id=created["research_task_id"],
-        )
+        with patch.dict("os.environ", {"MEETYOU_RESEARCH_ADAPTER_REQUIRED": "false", "MEETYOU_RESEARCH_ADAPTER_BASE_URL": ""}, clear=False):
+            result = await self.tools.manage_research_tasks(
+                action="run",
+                research_task_id=created["research_task_id"],
+            )
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["evidence_ledger"][0]["source_type"], "project_source")
+
+    async def test_manage_research_tasks_run_reports_missing_external_adapter_by_default(self) -> None:
+        created = await self.tools.create_research_task(
+            topic="external adapter required",
+            source_policy={"source_adapters": []},
+        )
+
+        with patch.dict("os.environ", {"MEETYOU_RESEARCH_ADAPTER_REQUIRED": "true", "MEETYOU_RESEARCH_ADAPTER_BASE_URL": ""}, clear=False):
+            result = await self.tools.manage_research_tasks(
+                action="run",
+                research_task_id=created["research_task_id"],
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["summary"], "Research adapter service is not configured.")
 
 
 if __name__ == "__main__":

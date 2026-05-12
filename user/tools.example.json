@@ -642,7 +642,7 @@
       "type": "function",
       "function": {
         "name": "manage_project_sources",
-        "description": "Manage V5 Project Sources: list, view content, create a note source, or save a message snapshot as a project source.",
+        "description": "Manage V5 Project Sources: list, view content, create a note source, save a message snapshot, or archive/delete a project source.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -652,7 +652,9 @@
                 "list",
                 "get",
                 "create",
-                "save_message"
+                "save_message",
+                "archive",
+                "delete"
               ],
               "description": "Project source action to perform."
             },
@@ -662,7 +664,7 @@
             },
             "source_id": {
               "type": "string",
-              "description": "Project source public id for get."
+              "description": "Project source public id for get/archive/delete."
             },
             "source_type": {
               "type": "string",

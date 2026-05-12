@@ -1,0 +1,3 @@
+# Optional external Deep Research adapter service dependencies.
+-r requirements-core.txt
+gpt-researcher

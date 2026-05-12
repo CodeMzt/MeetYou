@@ -8,6 +8,9 @@
 - Core owns Project / ProjectSource / Artifact / ResearchTask / ThreadBranch / ConversationCheckpoint.
 - Endpoint Providers may expose local research/file/search capabilities, but they must not own project source truth, artifact metadata, conversation branches, or checkpoints.
 - Deep research must use read-only evidence gathering unless the user explicitly asks for a separate write action.
+- V5 Deep Research execution is externalized through the `research_adapter` HTTP service by default. Runtime and assistant `manage_research_tasks(action="run")` should call Core `ResearchExecutionService` with `ResearchAdapterConfig.from_env()`; Core still owns `ResearchTask`, evidence ledger normalization/safety, Artifact records, delivery messages, and checkpoints.
+- External research providers, including GPT Researcher and future Open Deep Research adapters, must not write MeetYou DB rows or own ProjectSource/Artifact truth. They only return a report, sources, progress/status, and provider metadata through the adapter contract.
+- If the external research adapter is required but not configured or returns no citeable sources, Core must fail the ResearchTask with structured metadata instead of falling back to a low-quality uncited internal report. Internal read-only gathering is only a deliberate development/test fallback when external adapter requirement is disabled.
 - Research reports must persist as Artifacts; final assistant messages should summarize and link to artifacts instead of embedding large report files.
 - Research report PDF/DOCX exports are derived Core Artifact records. Keep Markdown as the primary report artifact, store derivatives through ArtifactStore bytes, and expose them through artifact APIs / task metadata instead of embedding files in messages.
 - Completed ResearchTasks bound to a thread should persist an assistant Message containing only a short summary and artifact link(s), then attach that message to the active conversation branch so automatic checkpoints still apply.
@@ -15,8 +18,9 @@
 - Project settings UI must edit Core Project title/description/instructions through project APIs. Do not store project instructions in frontend-only state or Workspace governance fields.
 - Project context injection is Core-owned. Ordinary turns in project threads should receive bounded Project title/description/instructions/source snapshots from Core; clients must not assemble hidden project prompts themselves.
 - Research panel source/progress UI must display Core `ResearchTask` evidence, summary, and artifact metadata. Do not fabricate source lists from frontend-only plan state.
+- Research panel external-service UI must display Core `ResearchTask.metadata.research_provider`, `external_run_id`, `adapter_status`, and `adapter_error` when present. Do not hide adapter failures behind a generic failed state.
 - Research evidence audit UI must expose Core ledger rank, quality score, duplicate merge count/source ids, verification status, and source trust when those fields are present; do not hide ranking/dedupe/safety metadata behind artifact downloads only.
-- Project source UI may create user note sources through Core `/projects/{project_id}/sources` and save message snapshots through `/sources/from-message`; both paths must reload Core source records after mutation instead of keeping frontend-only source truth.
+- Project source UI may create user note sources through Core `/projects/{project_id}/sources`, save message snapshots through `/sources/from-message`, and delete sources through `DELETE /projects/{project_id}/sources/{source_id}`. Delete means archive the ProjectSource record; never delete the original message or artifact. All mutation paths must reload Core source records instead of keeping frontend-only source truth.
 - Research runner stage UI must read Core state: compact `ResearchTask.metadata.progress` / `progress_events` plus durable ResearchTask RunEvents when available. Do not model research stage progress as frontend-only state.
 - Core-generated ResearchTask plans must be Chinese-first and editable before start. Plans should expose research questions, source strategy, quality gates, deliverables, and an explicit user-confirmation step rather than only a minimal step list. Use `quality_gates[].id="citation_guard"` for citation validation and `approval.editable_before_start=true` for pre-start editing.
 - Desktop Research UI must auto-refresh visible `running` ResearchTask state on a short bounded interval and refresh project artifacts when running tasks leave the active state. Do not require users to manually click refresh to track ordinary research progress.
@@ -28,7 +32,7 @@
 - Evidence-ledger citations must refer to recorded sources. Do not invent citations or cite unread sources as verified.
 - Core research runner must deduplicate and rank gathered evidence before report synthesis. Final citation ids must come from the final ranked evidence ledger, not from pre-dedup gather order.
 - Research evidence text is untrusted by default. Evidence ledger entries must mark sources as evidence-only and instruct downstream synthesis to ignore instructions embedded in webpages, project sources, search results, or academic records.
-- Starting a V5 ResearchTask may trigger the Core read-only research runner. If no readable evidence is gathered, fail the task instead of producing an uncited report.
+- Starting a V5 ResearchTask may trigger the external research adapter through Core. If no readable/citeable evidence is returned, fail the task instead of producing an uncited report.
 - V5 research assistant tools (`search_academic_sources`, `create_research_task`, `manage_research_tasks`) must stay registered in Core and exposed in `user/tools.example.json`; research mode prompts must not name tools that are missing public schemas.
 - V5 project assistant tools (`manage_projects`, `manage_project_sources`) must stay registered in Core, exposed in `user/tools.example.json`, and included in assistant mode tool bundles where project/thread/source context can be managed. Do not leave Project capabilities available only through direct Runtime UI/API paths.
 - Research tools must not silently drop invalid bindings. If `project_id` or `thread_id` is supplied and unknown, return a structured not-found error instead of creating or listing unscoped tasks.
@@ -81,6 +85,7 @@
 - Development entrypoints remain `python main.py service`, `python main.py cil`, `python main.py desktop-client`, and `python main.py edge-client`; `python main.py` / `python main.py launcher` opens the launcher.
 - Production entrypoints remain `python -m service_runtime`, `python -m desktop_client`, and `python -m edge_client`.
 - Dependencies remain split across `requirements-core.txt`, `requirements-desktop-client.txt`, and `requirements-edge-client.txt`.
+- The optional external Deep Research service uses `research_adapter/` and `requirements-research-adapter.txt`; it runs as `python -m research_adapter` and talks to Core only through the HTTP adapter contract.
 - V4/V5 implementation source of truth is the necessary design material in `docs/v4/`, `docs/v5/`, plus this file. Development plans, subplans, historical V3 notes, and phase reports are local/ignored artifacts, not part of the public project body.
 
 ## Repository Workflow
@@ -104,6 +109,7 @@
 - Frontend Core access path: `meetyou-ui/src/hooks/useMeetYou.ts` and `meetyou-ui/src/windowBridge.ts`.
 - V5 desktop version UI: `meetyou-ui/src/components/version/`, with branch/checkpoint state wired through `meetyou-ui/src/hooks/useMeetYou.ts`.
 - Persistence and migrations: `core/db/*` and `alembic/versions/*`.
+- External research adapter service: `research_adapter/`, `core/research/external_adapter.py`, `requirements-research-adapter.txt`, and `deploy/systemd/meetyou-research-adapter.service.template`.
 - Do not move local file, general Shell, local MCP lifecycle, or workspace-local execution back into Core. The only Core shell exception is `exec_core_cmd`, fixed to the Core process working directory and constrained by the Core whitelist policy; all other local execution capabilities must be exposed as endpoint execution capabilities and routed through ToolRouter / ExecutionTarget.
 
 ## Protocol Rules
@@ -134,6 +140,7 @@
 - `user/core_cmd_policy.json` is the optional Core-host command whitelist policy for `exec_core_cmd`; if missing or invalid, Core must use the built-in whitelist rather than falling back to allow-all.
 - Desktop Provider defaults to `user/desktop_client.json`; local capability boundaries are `read_roots`, `trusted_write_roots`, `cmd_policy_path`, `mcp_servers_path`, and local bridge settings.
 - Edge Provider defaults to `user/edge_client.json`; edge boundaries are `workspace_ids`, provider identity/type, `transport_profile`, and endpoint capabilities.
+- V5 research adapter configuration lives in environment variables: `MEETYOU_RESEARCH_ADAPTER_BASE_URL`, `MEETYOU_RESEARCH_ADAPTER_TOKEN`, `MEETYOU_RESEARCH_PROVIDER`, `MEETYOU_RESEARCH_TIMEOUT_SECONDS`, and `MEETYOU_RESEARCH_ADAPTER_REQUIRED`. Adapter service process settings use `MEETYOU_RESEARCH_ADAPTER_HOST`, `MEETYOU_RESEARCH_ADAPTER_PORT`, and provider-specific keys such as `OPENAI_API_KEY` / `TAVILY_API_KEY`.
 - Core / providers should use `MEETYOU_CLIENT_ACCESS_TOKEN` or Gateway/Core access tokens unless a V4 rename is intentionally implemented across config, docs, and deployment. Do not reintroduce `MEETYOU_AGENT_*`.
 - PostgreSQL is the formal persistence layer. `bootstrap_core_domain()` runs Alembic migration on service startup. Do not treat `user/*.json` as the only source of truth.
 - Danxi credential and WebVPN cookie updates accept encrypted transport only. Never expose plaintext email, password, cookie, or token in logs, error objects, debug output, snapshots, tests, or docs examples.
@@ -180,6 +187,7 @@
 - CIL: `python main.py cil`
 - Desktop Provider: `python main.py desktop-client` or `python -m desktop_client`
 - Edge Provider: `python main.py edge-client` or `python -m edge_client`
+- Research Adapter: `python -m research_adapter`
 - Frontend development: run `npm install`, `npm run dev` under `meetyou-ui/`
 - Frontend verification: run `npm run typecheck`, `npm run test` under `meetyou-ui/`
 - Frontend build: run `npm run build` under `meetyou-ui/`

@@ -7,28 +7,57 @@ Deep research is represented by `ResearchTask`.
 1. Intake: store topic, optional project/thread, source policy, and output format.
 2. Plan: create an editable Chinese-first plan with research questions, source strategy, quality gates, deliverables, and explicit gather/synthesize/artifact steps.
 3. Approval/start: user or automation approves the editable plan, then starts the task. Status transitions are explicit: `planned -> approved -> running`; `planned -> running` remains allowed for single-step automation.
-4. Gather: use read-only web, academic, project-source, file-search, or MCP search/fetch tools.
-5. Synthesize: produce claims that map to evidence records.
-6. Artifact: validate report citations against the evidence ledger, save a Markdown report through `ArtifactStore`, and optionally create PDF/DOCX derived artifacts when requested by `source_policy.derived_formats`, `artifact_formats`, `report_formats`, output format, or the `include_pdf` / `include_docx` flags.
+4. Execute: Core calls the external `research_adapter` HTTP service. The adapter may use GPT Researcher in the first implementation and future providers such as Open Deep Research under the same contract.
+5. Gather/synthesize outside Core: the external provider performs read-only search, reading, and synthesis, then returns Markdown report text plus source records.
+6. Artifact: Core normalizes/safety-marks the returned sources into the evidence ledger, validates report citations against that ledger, saves a Markdown report through `ArtifactStore`, and optionally creates PDF/DOCX derived artifacts when requested by `source_policy.derived_formats`, `artifact_formats`, `report_formats`, output format, or the `include_pdf` / `include_docx` flags.
 7. Deliver: assistant final message contains a short summary and artifact link, not the full large report body.
 
-The first executable runner is deliberately conservative:
+The default executable runner is now externalized:
 
-- `PATCH /runtime/research-tasks/{id}` with `action=start` transitions the task to `running`; unless `source_policy.auto_execute=false`, Runtime schedules the Core read-only runner.
-- `manage_research_tasks(action="run")` executes the same runner from assistant tools.
+- `PATCH /runtime/research-tasks/{id}` with `action=start` transitions the task to `running`; unless `source_policy.auto_execute=false`, Runtime schedules Core to call the external research adapter.
+- `manage_research_tasks(action="run")` uses the same Core adapter path from assistant tools.
 - Assistant-facing V5 research tools are part of the public tool template: `search_academic_sources`, `create_research_task`, and `manage_research_tasks` must be present in `user/tools.example.json` with parameter schemas that match the registered Core tool implementations and research-mode prompts.
 - Assistant-facing ResearchTask tools share the Runtime binding contract: supplied `project_id` and `thread_id` must resolve to durable Core records. Unknown ids return structured `project_not_found` or `thread_not_found` errors rather than silently creating or listing unscoped tasks.
 - New ResearchTasks receive a Core-generated Chinese-first plan. The plan includes an explicit `plan_review` confirmation step, research questions, source strategy, quality gates, deliverables, `requires_approval=true`, and remains editable until the task starts.
 - Runtime `start` binds the ResearchTask to a Core `Run`, stores the public `run_id` on the task response/metadata, and emits durable `research.started` plus subsequent `research.*` RunEvents. `GET /runtime/research-tasks/{id}/events?after_seq=N` returns incremental task events so progress UIs can resume without depending only on current task metadata.
-- The runner gathers from implemented academic adapters, direct read-only web seed URLs, governed web-search discovery, and, when requested, ProjectSource snapshots. It does not mutate sources or send private data to write channels.
-- Unsupported adapters are recorded in `metadata.gather_errors`; they do not become citations.
-- `web` supports direct page gathering from `source_policy.web_urls`, `seed_urls`, or `source_urls`. If `source_policy.web_search=true` or explicit `web_queries` / `web_search_queries` / `search_queries` are present, Core first uses the governed `search_web` path to discover sources. Sources already read by the search tool can enter the evidence ledger; search-result-only URLs must be fetched by the direct web reader before they become citeable evidence. If a task requests `web` without seed URLs or search discovery, the runner records `WebSeedUrlsRequired` and continues with other configured sources.
-- The runner persists lightweight progress into `ResearchTask.metadata.progress`, keeps recent `metadata.progress_events`, and mirrors each progress transition as durable `research.progress` RunEvents when a task has a Run binding. Current stages are `gather`, `synthesize`, `artifact`, and `completed`; metadata remains the compact task snapshot while RunEvents provide the resumable progress stream.
-- Cancellation is cooperative and durable. Once a task reaches `cancelled`, the runner stops at the next stage/source boundary, records cancelled progress, and must not create a report artifact or thread delivery message after cancellation is observed.
-- If no readable evidence is gathered, the task transitions to `failed` and no report artifact is created.
-- If evidence is gathered, the runner deduplicates and ranks evidence, builds a Markdown report from the final ranked ledger, validates bracket citations against `evidence_ledger`, creates a primary `research_report` Artifact, creates requested PDF/DOCX `research_report_derivative` Artifacts, and completes the task.
+- Core sends bounded project/thread/source context to the adapter according to `source_policy`, including active ProjectSource snapshots only when requested. The adapter must treat that data as read-only research context.
+- Adapter metadata is copied into `ResearchTask.metadata` as `research_provider`, `external_run_id`, `adapter_status`, `adapter_error`, `adapter_metadata`, and `adapter_usage` when available.
+- If the adapter is required but `MEETYOU_RESEARCH_ADAPTER_BASE_URL` is not configured, the task transitions to `failed` with `runner_error=research_adapter_unconfigured` and no artifact is created.
+- If the adapter returns no report text or no citeable sources, the task transitions to `failed`. Core must not generate an uncited fallback report.
+- The runner persists lightweight progress into `ResearchTask.metadata.progress`, keeps recent `metadata.progress_events`, and mirrors each progress transition as durable `research.progress` RunEvents when a task has a Run binding. Current stages include `adapter`, `artifact`, and `completed`; metadata remains the compact task snapshot while RunEvents provide the resumable progress stream.
+- Cancellation is cooperative and durable. Core requests adapter cancellation when possible and, once the task reaches `cancelled`, avoids creating report artifacts or thread delivery messages after cancellation is observed.
+- If citeable evidence is returned, Core safety-marks evidence, validates bracket citations against `evidence_ledger`, creates a primary `research_report` Artifact, creates requested PDF/DOCX `research_report_derivative` Artifacts, and completes the task.
 - Derived artifacts are recorded in `ResearchTask.metadata.derived_artifacts`, exposed in `RuntimeResearchTaskResponse.derived_artifacts`, and visible through the project artifact list API. The primary Markdown artifact remains the task's `artifact_id`.
 - If the task is bound to a thread, the runner also persists an assistant Message with a short summary, primary artifact download link, derivative artifact links, ResearchTask id, and evidence count. It then attaches the message to the active conversation branch so the ordinary automatic checkpoint path still applies.
+
+## Research Adapter Contract
+
+The adapter is an independent FastAPI service, not a Core module with database privileges. First-stage provider support defaults to GPT Researcher because it already supports service-style autonomous web/local research, citations, Markdown/PDF/DOCX output patterns, and parallel research work. Open Deep Research remains a future provider under the same contract because its LangGraph/MCP configuration surface is larger.
+
+Core calls:
+
+- `GET /health`
+- `POST /v1/research/runs`
+- `GET /v1/research/runs/{run_id}`
+- `POST /v1/research/runs/{run_id}/cancel`
+
+The run request schema is `meetyou.research.adapter.run.v1` and includes provider, ResearchTask id, topic, source policy, output format, optional project/thread metadata, and bounded `project_sources[]`. The response must include:
+
+- `run_id`
+- `status`: running, completed, failed, or cancelled
+- `progress`
+- `report_markdown`
+- `sources[]`
+- optional `summary`, `usage`, and `metadata`
+
+Core is the only component that creates Artifact records, PDF/DOCX derivatives, evidence-ledger safety metadata, final thread messages, and automatic checkpoints. The external adapter must not write MeetYou tables or assume artifact ids.
+
+Configuration:
+
+- Core: `MEETYOU_RESEARCH_ADAPTER_BASE_URL`, `MEETYOU_RESEARCH_ADAPTER_TOKEN`, `MEETYOU_RESEARCH_PROVIDER`, `MEETYOU_RESEARCH_TIMEOUT_SECONDS`, `MEETYOU_RESEARCH_ADAPTER_REQUIRED`.
+- Adapter process: `MEETYOU_RESEARCH_ADAPTER_HOST`, `MEETYOU_RESEARCH_ADAPTER_PORT`, `MEETYOU_RESEARCH_ADAPTER_TOKEN`, `MEETYOU_RESEARCH_PROVIDER`, provider-specific model/search keys, and optional `MEETYOU_RESEARCH_ADAPTER_FAKE=true` for local acceptance tests.
+
+Development fallback: direct `ResearchExecutionService` tests may run the older Core read-only gatherer by constructing the service without an adapter config, or by setting `MEETYOU_RESEARCH_ADAPTER_REQUIRED=false` for explicit local fallback. Runtime and assistant tools should not silently use that fallback in normal V5 operation.
 
 ## Evidence Ledger
 
@@ -113,12 +142,12 @@ The desktop UI exposes `research` as a composer mode and shows a compact Researc
 - inspect generated plan steps;
 - edit and save the plan while status is `planned`;
 - approve, start, cancel, and refresh task state;
-- inspect durable progress context from the selected task, including current runner stage, stage message, evidence count, gather error count, output format, summary, the first evidence ledger entries, evidence audit fields, and completed artifact filename/size;
+- inspect durable progress context from the selected task, including current runner/adapter stage, adapter provider/status/error, stage message, evidence count, gather error count, output format, summary, the first evidence ledger entries, evidence audit fields, and completed artifact filename/size;
 - inspect the durable RunEvent stream for selected tasks when `run_id` is present, including event count, latest event, recent `research.started` / `research.progress` / terminal `research.*` events, and short run id;
 - auto-refresh visible `running` tasks on a short bounded interval so stage progress and cancellation/completion state are trackable without manual refresh;
 - download a completed report artifact through the authenticated `/desktop/artifacts/{artifact_id}/download` proxy.
 
-This UI is a task shell over the durable API and runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; stage progress must be derived from `ResearchTask.metadata.progress`; event stream details must be derived from `/runtime/research-tasks/{id}/events`; artifact labels and downloads must be derived from the Core artifact records attached to the task. Evidence preview rows expose the Core audit fields that explain synthesis safety and source ordering: `rank`, `quality_score`, `duplicate_count`, `merged_source_ids`, `verification_status`, and `source_trust`. The web controls write `source_policy.web_search=true`, optional `source_policy.web_queries`, and optional `source_policy.web_urls` into task creation; when neither web search nor seed URLs are enabled, the UI omits the `web` adapter. The academic source controls write the selected academic adapters into `source_policy.source_adapters` and write `source_policy.limit` as a bounded source count. The export controls write optional `source_policy.derived_formats=["pdf","docx"]` and completed tasks show derived artifact count/filenames from Core response records. Markdown report links in assistant messages that point at `/runtime/artifacts/{artifact_id}/download` or `/desktop/artifacts/{artifact_id}/download` are intercepted by the desktop renderer and downloaded through the authenticated desktop artifact proxy. Derived PDF/DOCX artifacts are Core artifact records and can be downloaded through artifact APIs. Advanced capabilities such as editable multi-agent research plans, source comparison views, and broader provider controls remain later V5 stages.
+This UI is a task shell over the durable API and external adapter runner. Evidence and source previews must be derived from `ResearchTask.evidence_ledger`; adapter status must be derived from `ResearchTask.metadata.research_provider`, `external_run_id`, `adapter_status`, and `adapter_error`; stage progress must be derived from `ResearchTask.metadata.progress`; event stream details must be derived from `/runtime/research-tasks/{id}/events`; artifact labels and downloads must be derived from the Core artifact records attached to the task. Evidence preview rows expose the Core audit fields that explain synthesis safety and source ordering: `rank`, `quality_score`, `duplicate_count`, `merged_source_ids`, `verification_status`, and `source_trust`. The web controls write `source_policy.web_search=true`, optional `source_policy.web_queries`, and optional `source_policy.web_urls` into task creation; when neither web search nor seed URLs are enabled, the UI omits the `web` adapter. The academic source controls write the selected academic adapters into `source_policy.source_adapters` and write `source_policy.limit` as a bounded source count for the adapter request. The export controls write optional `source_policy.derived_formats=["pdf","docx"]` and completed tasks show derived artifact count/filenames from Core response records. Markdown report links in assistant messages that point at `/runtime/artifacts/{artifact_id}/download` or `/desktop/artifacts/{artifact_id}/download` are intercepted by the desktop renderer and downloaded through the authenticated desktop artifact proxy. Derived PDF/DOCX artifacts are Core artifact records and can be downloaded through artifact APIs. Advanced capabilities such as editable multi-agent research plans, source comparison views, and broader provider controls remain later V5 stages.
 
 ## Project Artifacts UI
 
@@ -130,7 +159,7 @@ This view is intentionally project-scoped rather than research-panel-scoped. A p
 
 Message snapshots saved from the desktop message menu are persisted through Core as ProjectSource records. The UI only sends the source request for already-persisted messages (`msg_*`) and a currently active project; Core owns the source content, checksum, metadata, and project membership.
 
-The desktop top control dock includes a Project Sources popover for the active project. It calls the Core source list API through the desktop proxy, shows the current active-source count, allows manual refresh, and previews source title, type, status, saved timestamp, content, and selected metadata. Saving a message snapshot triggers a source refresh so research users can immediately confirm material that will be available to project-scoped research tasks.
+The desktop top control dock includes a Project Sources popover for the active project. It calls the Core source list API through the desktop proxy, shows the current active-source count, allows manual refresh, and previews source title, type, status, saved timestamp, content, and selected metadata. Saving a message snapshot triggers a source refresh so research users can immediately confirm material that will be available to project-scoped research tasks. Deleting a source calls `DELETE /runtime/projects/{project_id}/sources/{source_id}` through the desktop proxy; Core archives the ProjectSource so it disappears from active lists and future project-context injection, but original messages and artifacts remain intact.
 
 ## Web Sources
 

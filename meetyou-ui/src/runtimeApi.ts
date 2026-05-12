@@ -631,6 +631,18 @@ export async function listRuntimeProjectSources(
   return readJsonOrThrow<RuntimeProjectSource[]>(response, '加载项目源失败')
 }
 
+export async function deleteRuntimeProjectSource(
+  baseUrl: string,
+  projectId: string,
+  sourceId: string,
+): Promise<RuntimeProjectSource> {
+  const response = await fetchWithAuth(
+    buildDesktopUrl(baseUrl, `/projects/${encodeURIComponent(projectId)}/sources/${encodeURIComponent(sourceId)}`),
+    { method: 'DELETE' },
+  )
+  return readJsonOrThrow<RuntimeProjectSource>(response, '删除项目源失败')
+}
+
 export async function listRuntimeProjectArtifacts(
   baseUrl: string,
   projectId: string,
