@@ -55,6 +55,14 @@ def _fake_enabled() -> bool:
     return str(os.environ.get("MEETYOU_RESEARCH_ADAPTER_FAKE", "") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _bridge_provider_env() -> None:
+    """Expose Core-owned provider credentials under names used by external SDKs."""
+    if not str(os.environ.get("OPENAI_API_KEY") or "").strip():
+        core_key = str(os.environ.get("MEETYOU_API_KEY") or "").strip()
+        if core_key:
+            os.environ["OPENAI_API_KEY"] = core_key
+
+
 def _public_run(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "run_id": row["run_id"],
@@ -171,6 +179,7 @@ async def _execute_run(run_id: str) -> None:
 
 
 async def _run_gpt_researcher(request: dict[str, Any]) -> dict[str, Any]:
+    _bridge_provider_env()
     try:
         from gpt_researcher import GPTResearcher  # type: ignore
     except Exception as exc:  # noqa: BLE001

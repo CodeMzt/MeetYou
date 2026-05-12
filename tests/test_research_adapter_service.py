@@ -68,6 +68,15 @@ class ResearchAdapterServiceTests(unittest.TestCase):
             self.assertEqual(completed["sources"][0]["title"], "Adapter source")
             self.assertIn("[1]", completed["report_markdown"])
 
+    def test_provider_env_bridges_core_api_key_without_overwriting_openai_key(self) -> None:
+        with patch.dict("os.environ", {"MEETYOU_API_KEY": "core-key"}, clear=True):
+            service._bridge_provider_env()
+            self.assertEqual(service.os.environ.get("OPENAI_API_KEY"), "core-key")
+
+        with patch.dict("os.environ", {"MEETYOU_API_KEY": "core-key", "OPENAI_API_KEY": "openai-key"}, clear=True):
+            service._bridge_provider_env()
+            self.assertEqual(service.os.environ.get("OPENAI_API_KEY"), "openai-key")
+
 
 if __name__ == "__main__":
     unittest.main()
