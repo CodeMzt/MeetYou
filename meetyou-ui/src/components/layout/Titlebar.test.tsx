@@ -43,8 +43,8 @@ describe('Titlebar', () => {
   it('keeps tools and window controls from shrinking behind the drag region', () => {
     const css = readFileSync(resolve(__dirname, 'Titlebar.module.css'), 'utf8')
 
-    expect(css).toContain('flex: 0 1 0;')
-    expect(css).toContain('max-width: 4px;')
+    expect(css).toContain('flex: 1 1 auto;')
+    expect(css).toContain('min-width: 8px;')
     expect(css).toContain('flex: 0 0 auto;')
   })
 })

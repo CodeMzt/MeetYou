@@ -17,7 +17,7 @@
   display: flex;
   align-items: center;
   min-height: 24px;
-  gap: 4px;
+  gap: 6px;
 }
 
 .mainControls {
@@ -93,16 +93,15 @@
 }
 
 .dragRegion {
-  flex: 0 1 0;
+  flex: 1 1 auto;
   height: 24px;
-  min-width: 0;
-  max-width: 4px;
+  min-width: 8px;
 }
 
 .tools {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   flex-wrap: nowrap;
   flex: 0 0 auto;
   -webkit-app-region: no-drag;
@@ -112,7 +111,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
+  width: 22px;
   height: 24px;
   padding: 0;
   border-radius: 4px;
@@ -138,7 +137,7 @@
 .windowControls {
   display: flex;
   align-items: center;
-  margin-left: 2px;
+  margin-left: 4px;
   gap: 2px;
   flex: 0 0 auto;
   -webkit-app-region: no-drag;
@@ -148,7 +147,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
+  width: 22px;
   height: 24px;
   padding: 0;
   border: none;
@@ -189,11 +188,11 @@
   }
 
   .tools {
-    gap: 2px;
+    gap: 3px;
   }
 
   .windowControls {
-    margin-left: 2px;
+    margin-left: 4px;
   }
 }
 
@@ -208,6 +207,19 @@
   }
 
   .dragRegion {
-    min-width: 0;
+    min-width: 4px;
+  }
+
+  .tools {
+    gap: 2px;
+  }
+
+  .iconBtn,
+  .winBtn {
+    width: 20px;
+  }
+
+  .windowControls {
+    margin-left: 2px;
   }
 }
