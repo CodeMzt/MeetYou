@@ -10,4 +10,4 @@ ENV_TEMPLATE="deploy/systemd/research-adapter.env.example"
 
 export SERVICE_NAME UNIT_TEMPLATE ENV_TEMPLATE
 
-"${SCRIPT_DIR}/install-systemd-unit.sh"
+bash "${SCRIPT_DIR}/install-systemd-unit.sh"
