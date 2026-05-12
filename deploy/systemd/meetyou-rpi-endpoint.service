@@ -1,0 +1,24 @@
+[Unit]
+Description=MeetYou Raspberry Pi Endpoint Provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meetyou-rpi
+Group=meetyou-rpi
+WorkingDirectory=/opt/meetyou/MeetYou
+EnvironmentFile=/etc/meetyou/rpi-endpoint.env
+Environment=PYTHONPATH=/opt/meetyou/MeetYou
+ExecStart=/opt/meetyou/MeetYou/.venv-rpi/bin/python -m meetyou_rpi_endpoint.main --config /etc/meetyou/rpi-endpoint.json
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/meetyou-rpi
+
+[Install]
+WantedBy=multi-user.target
+

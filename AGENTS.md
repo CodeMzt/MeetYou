@@ -79,6 +79,16 @@
 - Procedure is removed in V4. Do not reintroduce Procedure API, table, tool, prompt layer, pinned Procedure fields, or UI. Reusable workflow guidance must use SKILL.
 - SKILL is the only reusable workflow guide layer. Public workflow discovery and authoring go through `list_skills`, `load_skill`, and `create_skill`; skill lookup must match titles, summaries, scenarios, and recommended tools; capability exposure flows through `CapabilityRegistry`, semantic routing, ToolRouter, and ExecutionTarget.
 
+## Raspberry Pi Endpoint Provider Rules
+
+- Raspberry Pi 5 / Linux ARM64 support is an Endpoint Provider only. Do not turn it into Core and do not let it own Thread, Message, Run, Scheduler, `system.heartbeat`, Memory, Delivery, Operation records, ToolRouter, or persistence.
+- Raspberry Pi provider work lives under `endpoint_providers/raspberry_pi/`, with docs in `docs/endpoints/raspberry-pi.md`, `docs/endpoints/rpi-capabilities.md`, and `docs/endpoints/rpi-security.md`.
+- The Pi must actively connect to Core through `GET /endpoint/ws` using `meetyou.endpoint.ws.v4`; do not add an inbound Pi server or revive `/client/ws`.
+- Pi executable tools must be advertised as EndpointCapability snapshots and executed only from Core-routed `tool.call.request` frames. Results must return through `tool.call.accepted` / `tool.call.progress` / `tool.call.result` / `tool.call.error`.
+- `endpoint.heartbeat` from the Pi is connection keepalive only and must not trigger Scheduler-owned `system.heartbeat`.
+- GPIO and shell capabilities must be deny-by-default: no GPIO outside `security.gpio_allowed_pins`, no arbitrary shell strings, no `shell=True`, and `rpi.shell.safe_exec` must not be advertised unless enabled with an allowlist.
+- The Pi endpoint may emit operation progress/result/error, but final assistant replies must still be persisted by Core MessageService.
+
 ## Runtime Shape
 
 - The target architecture is `Core-owned Runtime + Endpoint Routing`.
