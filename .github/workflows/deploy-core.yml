@@ -56,6 +56,26 @@ jobs:
               sed -E 's/((password|passwd|token|secret|cookie|authorization|api[-_]?key|access[-_]?token|refresh[-_]?token)[^:=]{0,40}[:=][[:space:]]*)[^[:space:],;)}]+/\1[REDACTED]/Ig'
             }
 
+            dump_research_adapter_diagnostics() {
+              RESEARCH_HEALTH_URL="${MEETYOU_RESEARCH_ADAPTER_HEALTH_URL:-http://127.0.0.1:8011/health}"
+              echo "::group::Research adapter diagnostics"
+              echo "[diagnostics] systemctl show"
+              sudo -n systemctl show meetyou-research-adapter.service \
+                -p ActiveState \
+                -p SubState \
+                -p ExecMainCode \
+                -p ExecMainStatus \
+                -p NRestarts \
+                -p MainPID 2>&1 | sanitize_diagnostics || true
+              echo "[diagnostics] systemctl status"
+              sudo -n systemctl --no-pager --full status meetyou-research-adapter.service 2>&1 | sanitize_diagnostics || true
+              echo "[diagnostics] recent research adapter journal"
+              sudo -n journalctl -u meetyou-research-adapter.service -n 240 --no-pager 2>&1 | sanitize_diagnostics || true
+              echo "[diagnostics] local research adapter health probe: ${RESEARCH_HEALTH_URL}"
+              curl -fsS "${RESEARCH_HEALTH_URL}" 2>&1 | sanitize_diagnostics || true
+              echo "::endgroup::"
+            }
+
             dump_core_diagnostics() {
               CORE_HEALTH_URL="${MEETYOU_CORE_HEALTH_URL:-http://127.0.0.1:8000/health}"
               echo "::group::Core diagnostics"
@@ -103,6 +123,165 @@ jobs:
               fi
             done
 
+            prepare_research_adapter() {
+              if [ -z "${MEETYOU_REPO}" ] || [ ! -d "${MEETYOU_REPO}" ]; then
+                echo "Research adapter deploy skipped: MeetYou repository path was not found"
+                return 0
+              fi
+
+              CORE_ENV_FILE="/etc/meetyou/meetyou-core.env"
+              RESEARCH_ENV_FILE="/etc/meetyou/meetyou-research-adapter.env"
+              RESEARCH_VENV="${MEETYOU_REPO}/.venv-research-adapter"
+              RESEARCH_HEALTH_URL="${MEETYOU_RESEARCH_ADAPTER_HEALTH_URL:-http://127.0.0.1:8011/health}"
+
+              echo "Prepare research adapter env"
+              sudo -n install -d -m 0750 /etc/meetyou
+              sudo -n touch "${CORE_ENV_FILE}" "${RESEARCH_ENV_FILE}"
+              sudo -n chmod 0640 "${CORE_ENV_FILE}" "${RESEARCH_ENV_FILE}"
+              sudo -n python3 - "${CORE_ENV_FILE}" "${RESEARCH_ENV_FILE}" <<'PY'
+            import os
+            import secrets
+            import sys
+            from pathlib import Path
+
+            core_path = Path(sys.argv[1])
+            adapter_path = Path(sys.argv[2])
+            placeholder_values = {"", "replace_with_a_long_random_token", "replace_with_the_research_adapter_token"}
+
+
+            def read_env(path):
+                lines = path.read_text(encoding="utf-8", errors="ignore").splitlines() if path.exists() else []
+                values = {}
+                for raw in lines:
+                    stripped = raw.strip()
+                    if not stripped or stripped.startswith("#") or "=" not in raw:
+                        continue
+                    key, value = raw.split("=", 1)
+                    values[key.strip()] = value.strip().strip('"').strip("'")
+                return lines, values
+
+
+            def upsert(lines, key, value, force=False):
+                next_lines = []
+                found = False
+                for raw in lines:
+                    if raw.strip().startswith("#") or "=" not in raw:
+                        next_lines.append(raw)
+                        continue
+                    raw_key, raw_value = raw.split("=", 1)
+                    if raw_key.strip() != key:
+                        next_lines.append(raw)
+                        continue
+                    found = True
+                    current = raw_value.strip().strip('"').strip("'")
+                    if force or current in placeholder_values:
+                        next_lines.append(f"{key}={value}")
+                    else:
+                        next_lines.append(raw)
+                if not found:
+                    next_lines.append(f"{key}={value}")
+                return next_lines
+
+
+            def remove_blank_provider_keys(lines):
+                removable = {"OPENAI_API_KEY", "TAVILY_API_KEY"}
+                next_lines = []
+                for raw in lines:
+                    if raw.strip().startswith("#") or "=" not in raw:
+                        next_lines.append(raw)
+                        continue
+                    key, value = raw.split("=", 1)
+                    if key.strip() in removable and not value.strip().strip('"').strip("'"):
+                        continue
+                    next_lines.append(raw)
+                return next_lines
+
+
+            core_lines, core_values = read_env(core_path)
+            adapter_lines, adapter_values = read_env(adapter_path)
+            token = core_values.get("MEETYOU_RESEARCH_ADAPTER_TOKEN", "").strip()
+            if token in placeholder_values:
+                token = adapter_values.get("MEETYOU_RESEARCH_ADAPTER_TOKEN", "").strip()
+            if token in placeholder_values:
+                token = secrets.token_hex(32)
+
+            provider = (
+                core_values.get("MEETYOU_RESEARCH_PROVIDER", "").strip()
+                or adapter_values.get("MEETYOU_RESEARCH_PROVIDER", "").strip()
+                or "gpt_researcher"
+            )
+            core_defaults = {
+                "MEETYOU_RESEARCH_ADAPTER_BASE_URL": "http://127.0.0.1:8011",
+                "MEETYOU_RESEARCH_ADAPTER_TOKEN": token,
+                "MEETYOU_RESEARCH_PROVIDER": provider,
+                "MEETYOU_RESEARCH_TIMEOUT_SECONDS": "900",
+                "MEETYOU_RESEARCH_ADAPTER_REQUIRED": "true",
+            }
+            for key, value in core_defaults.items():
+                core_lines = upsert(core_lines, key, value)
+
+            adapter_lines = remove_blank_provider_keys(adapter_lines)
+            adapter_defaults = {
+                "MEETYOU_RESEARCH_ADAPTER_HOST": "127.0.0.1",
+                "MEETYOU_RESEARCH_ADAPTER_PORT": "8011",
+                "MEETYOU_RESEARCH_ADAPTER_TOKEN": token,
+                "MEETYOU_RESEARCH_PROVIDER": provider,
+                "MEETYOU_RESEARCH_ADAPTER_FAKE": "false",
+            }
+            for key, value in adapter_defaults.items():
+                adapter_lines = upsert(adapter_lines, key, value, force=(key == "MEETYOU_RESEARCH_ADAPTER_TOKEN"))
+
+            core_path.write_text("\n".join(core_lines).rstrip() + "\n", encoding="utf-8")
+            adapter_path.write_text("\n".join(adapter_lines).rstrip() + "\n", encoding="utf-8")
+            os.chmod(core_path, 0o640)
+            os.chmod(adapter_path, 0o640)
+            PY
+
+              echo "Install research adapter dependencies"
+              if [ ! -x "${RESEARCH_VENV}/bin/python" ]; then
+                python3 -m venv "${RESEARCH_VENV}"
+              fi
+              "${RESEARCH_VENV}/bin/python" -m pip install --upgrade pip
+              "${RESEARCH_VENV}/bin/python" -m pip install -r "${MEETYOU_REPO}/requirements-research-adapter.txt"
+
+              CORE_SERVICE_USER="$(sudo -n systemctl show meetyou-core.service -p User --value 2>/dev/null || true)"
+              CORE_SERVICE_GROUP="$(sudo -n systemctl show meetyou-core.service -p Group --value 2>/dev/null || true)"
+              if [ -z "${CORE_SERVICE_USER}" ]; then
+                CORE_SERVICE_USER="root"
+              fi
+              if [ -z "${CORE_SERVICE_GROUP}" ]; then
+                CORE_SERVICE_GROUP="${CORE_SERVICE_USER}"
+              fi
+
+              echo "Install/restart research adapter service"
+              sudo -n env \
+                SERVICE_NAME="meetyou-research-adapter" \
+                MEETYOU_USER="${CORE_SERVICE_USER}" \
+                MEETYOU_GROUP="${CORE_SERVICE_GROUP}" \
+                WORKDIR="${MEETYOU_REPO}" \
+                VENV_DIR="${RESEARCH_VENV}" \
+                ENV_FILE="${RESEARCH_ENV_FILE}" \
+                bash "${MEETYOU_REPO}/scripts/linux/install-research-adapter-systemd.sh"
+              sudo -n systemctl enable meetyou-research-adapter.service
+              sudo -n systemctl restart meetyou-research-adapter.service
+
+              echo "Waiting for research adapter health: ${RESEARCH_HEALTH_URL}"
+              for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                if curl -fsS "${RESEARCH_HEALTH_URL}" >/tmp/meetyou-research-adapter-health.json; then
+                  cat /tmp/meetyou-research-adapter-health.json
+                  return 0
+                fi
+                if [ "${attempt}" = "10" ]; then
+                  echo "Research adapter health check failed after deploy"
+                  dump_research_adapter_diagnostics
+                  return 1
+                fi
+                sleep 3
+              done
+            }
+
+            prepare_research_adapter
+
             /opt/meetyou/scripts/deploy-core.sh || {
               status="$?"
               echo "Remote deploy-core.sh failed with exit code ${status}"
@@ -124,6 +303,15 @@ jobs:
               fi
               sleep 3
             done
+
+            RESEARCH_HEALTH_URL="${MEETYOU_RESEARCH_ADAPTER_HEALTH_URL:-http://127.0.0.1:8011/health}"
+            echo "Confirming research adapter health after Core deploy: ${RESEARCH_HEALTH_URL}"
+            if ! curl -fsS "${RESEARCH_HEALTH_URL}" >/tmp/meetyou-research-adapter-health.json; then
+              echo "Research adapter health check failed after Core deploy"
+              dump_research_adapter_diagnostics
+              exit 1
+            fi
+            cat /tmp/meetyou-research-adapter-health.json
 
             if [ -n "${MEETYOU_REPO}" ] && [ -d "${MEETYOU_REPO}" ]; then
               PROVIDER_ENV_FILE="/etc/meetyou/meetyou-core.env"
