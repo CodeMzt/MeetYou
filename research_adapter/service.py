@@ -159,6 +159,8 @@ async def _execute_run(run_id: str) -> None:
         if _fake_enabled():
             await asyncio.sleep(0.2)
             result = _fake_result(request)
+        elif _project_source_only_requested(request):
+            result = _project_source_result(request)
         else:
             result = await _run_gpt_researcher(request)
         if row.get("cancel_requested"):
@@ -240,6 +242,57 @@ def _fake_result(request: dict[str, Any]) -> dict[str, Any]:
         "sources": sources,
         "usage": {"duration_seconds": 0.2},
         "metadata": {"provider": "fake"},
+    }
+
+
+def _project_source_only_requested(request: dict[str, Any]) -> bool:
+    project_sources = [item for item in request.get("project_sources") or [] if isinstance(item, dict)]
+    if not project_sources:
+        return False
+    policy = dict(request.get("source_policy") or {})
+    if not policy.get("include_project_sources"):
+        return False
+    source_adapters = policy.get("source_adapters")
+    if isinstance(source_adapters, str):
+        source_adapters = [source_adapters]
+    if source_adapters:
+        return False
+    web_keys = ("web_search", "web_queries", "web_urls", "seed_urls", "source_urls")
+    return not any(policy.get(key) for key in web_keys)
+
+
+def _project_source_result(request: dict[str, Any]) -> dict[str, Any]:
+    topic = str(request.get("topic") or "Project source research").strip()
+    project_sources = [item for item in request.get("project_sources") or [] if isinstance(item, dict)]
+    sources = []
+    lines = [f"# {topic}", "", "## 摘要", ""]
+    lines.append(f"本报告基于 {len(project_sources)} 条 MeetYou 项目源生成，所有结论仅引用已记录的项目源证据。")
+    lines.extend(["", "## 关键发现", ""])
+    for index, source in enumerate(project_sources, start=1):
+        title = str(source.get("title") or f"项目源 {index}").strip()
+        content = " ".join(str(source.get("content") or "").split())
+        snippet = content[:700]
+        lines.append(f"- {title}: {snippet or '该项目源未提供正文摘要。'} [{index}]")
+        sources.append(
+            {
+                "source_id": str(index),
+                "project_source_id": str(source.get("source_id") or ""),
+                "source_type": "project_source",
+                "title": title,
+                "snippet": snippet,
+                "content_type": str(source.get("content_type") or "text"),
+                "verification_status": "project_source_snapshot",
+            }
+        )
+    lines.extend(["", "## 来源", ""])
+    for source in sources:
+        lines.append(f"- [{source['source_id']}] {source['title']}")
+    return {
+        "summary": f"Project-source research adapter completed a report for {topic}.",
+        "report_markdown": "\n".join(lines).strip() + "\n",
+        "sources": sources,
+        "usage": {"duration_seconds": 0.0},
+        "metadata": {"provider": "project_sources", "source_count": len(sources)},
     }
 
 

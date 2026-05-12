@@ -52,6 +52,8 @@ The run request schema is `meetyou.research.adapter.run.v1` and includes provide
 
 Core is the only component that creates Artifact records, PDF/DOCX derivatives, evidence-ledger safety metadata, final thread messages, and automatic checkpoints. The external adapter must not write MeetYou tables or assume artifact ids.
 
+When `source_policy.include_project_sources=true`, `source_policy.source_adapters=[]`, and no web/search seed policy is supplied, the adapter may use its project-source-only execution path instead of launching GPT Researcher. This path still runs outside Core, returns citeable `project_source_snapshot` sources, and is intended for fast bounded local/project research and acceptance checks. Web or academic research requests continue to use the configured provider, currently GPT Researcher.
+
 Configuration:
 
 - Core: `MEETYOU_RESEARCH_ADAPTER_BASE_URL`, `MEETYOU_RESEARCH_ADAPTER_TOKEN`, `MEETYOU_RESEARCH_PROVIDER`, `MEETYOU_RESEARCH_TIMEOUT_SECONDS`, `MEETYOU_RESEARCH_ADAPTER_REQUIRED`.
