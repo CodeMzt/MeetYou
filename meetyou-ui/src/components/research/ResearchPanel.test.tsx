@@ -80,6 +80,7 @@ const task: RuntimeResearchTask = {
     research_provider: 'gpt_researcher',
     adapter_status: 'unconfigured',
     adapter_error: 'research_adapter_unconfigured',
+    last_adapter_poll_at: '2026-05-09T00:00:02Z',
   },
   created_at: '2026-05-09T00:00:00Z',
   updated_at: '2026-05-09T00:00:00Z',
@@ -160,12 +161,10 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('搜索查询，留空使用主题')
     expect(markup).toContain('网页 URL，可逗号分隔')
     expect(markup).toContain('data-research-source-scope="true"')
-    expect(markup).toContain('data-research-academic-adapter="arxiv"')
-    expect(markup).toContain('data-research-academic-adapter="openalex"')
-    expect(markup).toContain('data-research-academic-adapter="crossref"')
-    expect(markup).toContain('data-research-academic-adapter="semantic_scholar"')
     expect(markup).toContain('data-research-source-limit="true"')
-    expect(markup).toContain('学术源')
+    expect(markup).toContain('来源上限')
+    expect(markup).not.toContain('data-research-academic-adapter=')
+    expect(markup).not.toContain('学术源')
     expect(markup).toContain('data-research-export-scope="true"')
     expect(markup).toContain('data-research-derived-format="pdf"')
     expect(markup).toContain('data-research-derived-format="docx"')
@@ -174,6 +173,7 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('data-research-event-stream="true"')
     expect(markup).toContain('data-research-event-count="true"')
     expect(markup).toContain('data-research-run-id="true"')
+    expect(markup).toContain('data-research-last-poll="true"')
     expect(markup).toContain('90abcdef')
   })
 
@@ -196,5 +196,7 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('data-research-auto-refresh="true"')
     expect(markup).toContain('自动刷新')
     expect(markup).toContain('data-research-cancel="true"')
+    expect(markup).toContain('data-research-elapsed="true"')
+    expect(markup).not.toContain('data-research-plan-steps="true"')
   })
 })

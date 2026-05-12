@@ -80,6 +80,20 @@ def _public_run(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _set_progress(row: dict[str, Any], stage: str, message: str, *, status: str | None = None, **metadata: Any) -> None:
+    progress = {
+        "stage": stage,
+        "message": message,
+        "at": _now_iso(),
+    }
+    if status:
+        progress["status"] = status
+    if metadata:
+        progress.update(metadata)
+    row["progress"] = progress
+    row["updated_at"] = _now_iso()
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     provider = str(os.environ.get("MEETYOU_RESEARCH_PROVIDER", "gpt_researcher") or "gpt_researcher")
@@ -105,7 +119,7 @@ async def create_run(payload: ResearchRunRequest, background_tasks: BackgroundTa
         "run_id": run_id,
         "provider": payload.provider or "gpt_researcher",
         "status": "running",
-        "progress": {"stage": "queued", "message": "Research adapter run queued.", "at": _now_iso()},
+        "progress": {"stage": "queued", "status": "running", "message": "研究任务已进入外部服务队列。", "at": _now_iso()},
         "request": payload.model_dump(by_alias=True),
         "sources": [],
         "report_markdown": "",
@@ -152,35 +166,36 @@ async def _execute_run(run_id: str) -> None:
     try:
         if row.get("cancel_requested"):
             row["status"] = "cancelled"
+            _set_progress(row, "cancelled", "研究任务已取消。", status="cancelled")
             return
-        row["progress"] = {"stage": "research", "message": "Research adapter is gathering and synthesizing.", "at": _now_iso()}
-        row["updated_at"] = _now_iso()
         request = dict(row.get("request") or {})
+        _set_progress(row, "starting", "正在启动外部深度研究服务。", status="running")
         if _fake_enabled():
+            _set_progress(row, "research", "正在使用测试研究服务生成报告。", status="running")
             await asyncio.sleep(0.2)
             result = _fake_result(request)
         elif _project_source_only_requested(request):
+            _set_progress(row, "project_sources", "正在整理项目源并生成引用报告。", status="running", source_count=len(request.get("project_sources") or []))
             result = _project_source_result(request)
         else:
-            result = await _run_gpt_researcher(request)
+            _set_progress(row, "research", "正在调用 GPT Researcher 收集和综合资料。", status="running")
+            result = await _run_gpt_researcher(request, row=row)
         if row.get("cancel_requested"):
             row["status"] = "cancelled"
-            row["progress"] = {"stage": "cancelled", "message": "Research adapter run cancelled.", "at": _now_iso()}
-            row["updated_at"] = _now_iso()
+            _set_progress(row, "cancelled", "研究任务已取消。", status="cancelled")
             return
+        _set_progress(row, "sources", "正在整理来源和引用。", status="running", source_count=len(result.get("sources") or []))
         row.update(result)
         row["status"] = "completed"
-        row["progress"] = {"stage": "completed", "message": "Research adapter report completed.", "at": _now_iso()}
-        row["updated_at"] = _now_iso()
+        _set_progress(row, "completed", "外部研究报告已完成。", status="completed", source_count=len(row.get("sources") or []))
     except Exception as exc:  # noqa: BLE001 - service boundary returns structured failures.
         row["status"] = "failed"
         row["error"] = str(exc)
         row["metadata"] = {"error_type": type(exc).__name__}
-        row["progress"] = {"stage": "failed", "message": str(exc), "at": _now_iso()}
-        row["updated_at"] = _now_iso()
+        _set_progress(row, "failed", str(exc), status="failed")
 
 
-async def _run_gpt_researcher(request: dict[str, Any]) -> dict[str, Any]:
+async def _run_gpt_researcher(request: dict[str, Any], *, row: dict[str, Any] | None = None) -> dict[str, Any]:
     _bridge_provider_env()
     try:
         from gpt_researcher import GPTResearcher  # type: ignore
@@ -195,8 +210,14 @@ async def _run_gpt_researcher(request: dict[str, Any]) -> dict[str, Any]:
     report_type = str(policy.get("report_type") or "research_report")
     researcher = GPTResearcher(query=query, report_type=report_type, source_urls=source_urls or None)
     started = time.monotonic()
+    if row is not None:
+        _set_progress(row, "gather", "GPT Researcher 正在搜索和阅读资料。", status="running", source_url_count=len(source_urls))
     await researcher.conduct_research()
+    if row is not None:
+        _set_progress(row, "write", "GPT Researcher 正在撰写研究报告。", status="running")
     report = await researcher.write_report()
+    if row is not None:
+        _set_progress(row, "sources", "正在提取 GPT Researcher 来源列表。", status="running")
     sources = _extract_gpt_researcher_sources(researcher)
     return {
         "summary": f"GPT Researcher completed a report for {topic}.",

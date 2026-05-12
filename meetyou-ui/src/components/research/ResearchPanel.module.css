@@ -131,36 +131,12 @@
   white-space: nowrap;
 }
 
-.adapterScroller {
-  grid-column: 1 / -1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  overflow: hidden;
-}
-
 .formatScroller {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 5px;
   overflow: hidden;
-}
-
-.adapterChip {
-  min-height: 30px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 7px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 7px;
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 11px;
-  white-space: nowrap;
 }
 
 .formatChip {
@@ -176,13 +152,6 @@
   color: var(--text-primary);
   font-size: 11px;
   white-space: nowrap;
-}
-
-.adapterChip input {
-  width: 13px;
-  height: 13px;
-  margin: 0;
-  accent-color: var(--text-accent);
 }
 
 .formatChip input {
@@ -204,7 +173,6 @@
   outline: none;
 }
 
-.adapterChip:has(input:disabled),
 .formatChip:has(input:disabled),
 .sourceScope select:disabled {
   opacity: 0.6;

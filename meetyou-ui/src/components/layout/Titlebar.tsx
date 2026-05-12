@@ -49,7 +49,7 @@ export default function Titlebar({
     <div className={styles.titlebar}>
       <div className={styles.topRow}>
         <div className={styles.titleContent}>
-          <div 
+          <div
             className={styles.envPill}
             title={`服务端：${connectionText} | 本地工具：${desktopToolsAvailable ? '在线' : '离线'}`}
           >

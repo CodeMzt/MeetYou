@@ -52,6 +52,9 @@ class ThreadRepository(RepositoryBase):
             return None
         if "title" in fields and fields["title"] is not None:
             thread.title = str(fields["title"] or "").strip()
+            metadata = dict(thread.meta or {})
+            metadata["manual_title"] = True
+            thread.meta = metadata
         if "status" in fields and fields["status"] is not None:
             thread.status = str(fields["status"] or "").strip() or "active"
         if "project_id" in fields:

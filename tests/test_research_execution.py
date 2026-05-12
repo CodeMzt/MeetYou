@@ -91,12 +91,22 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         outer = self
 
         class FakeAdapterClient:
-            def run_to_completion(self, payload, *, cancel_checker=None):
+            def create_run(self, payload):
                 self_payloads.append(payload)
-                outer.assertFalse(cancel_checker())
+                return {
+                    "status": "running",
+                    "run_id": "rad_test_success",
+                    "provider": "fake",
+                    "progress": {"stage": "queued", "status": "running", "message": "queued"},
+                }
+
+            def get_run(self, run_id):
+                outer.assertEqual(run_id, "rad_test_success")
                 return {
                     "status": "completed",
                     "run_id": "rad_test_success",
+                    "provider": "fake",
+                    "progress": {"stage": "completed", "status": "completed", "message": "done"},
                     "summary": "外部研究完成。",
                     "report_markdown": "# 外部报告\n\n结论来自项目源。[1]\n",
                     "sources": [
@@ -121,6 +131,9 @@ class ResearchExecutionServiceTests(unittest.TestCase):
                     "metadata": {"provider": "fake"},
                 }
 
+            def cancel(self, run_id):
+                raise AssertionError(f"should not cancel {run_id}")
+
         self_payloads: list[dict] = []
         project = self.services.project.create_project(
             principal_id=self.principal.id,
@@ -142,7 +155,12 @@ class ResearchExecutionServiceTests(unittest.TestCase):
 
         result = ResearchExecutionService(
             self.services,
-            adapter_config=ResearchAdapterConfig(base_url="http://adapter.test", provider="fake", require_external=True),
+            adapter_config=ResearchAdapterConfig(
+                base_url="http://adapter.test",
+                provider="fake",
+                poll_interval_seconds=0.25,
+                require_external=True,
+            ),
             adapter_client=FakeAdapterClient(),
         ).run_task(task.research_task_id)
 
@@ -164,15 +182,25 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertIn("结论来自项目源。[1]", report_text)
 
     def test_external_adapter_runner_fails_without_sources(self) -> None:
+        outer = self
+
         class FakeAdapterClient:
-            def run_to_completion(self, payload, *, cancel_checker=None):
-                del payload, cancel_checker
+            def create_run(self, payload):
+                del payload
+                return {"status": "running", "run_id": "rad_no_sources", "provider": "fake"}
+
+            def get_run(self, run_id):
+                outer.assertEqual(run_id, "rad_no_sources")
                 return {
                     "status": "completed",
                     "run_id": "rad_no_sources",
+                    "provider": "fake",
                     "report_markdown": "# Empty\n\nNo cited source.\n",
                     "sources": [],
                 }
+
+            def cancel(self, run_id):
+                raise AssertionError(f"should not cancel {run_id}")
 
         task = self.services.research_task.create_task(
             principal_id=self.principal.id,
@@ -182,7 +210,12 @@ class ResearchExecutionServiceTests(unittest.TestCase):
 
         result = ResearchExecutionService(
             self.services,
-            adapter_config=ResearchAdapterConfig(base_url="http://adapter.test", provider="fake", require_external=True),
+            adapter_config=ResearchAdapterConfig(
+                base_url="http://adapter.test",
+                provider="fake",
+                poll_interval_seconds=0.25,
+                require_external=True,
+            ),
             adapter_client=FakeAdapterClient(),
         ).run_task(task.research_task_id)
 
@@ -211,11 +244,48 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(failed.meta["runner_error"], "research_adapter_unconfigured")
         self.assertEqual(failed.meta["adapter_status"], "unconfigured")
 
+    def test_research_task_listing_can_be_scoped_to_thread(self) -> None:
+        first_thread = self.services.thread.create_thread(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="First thread",
+        )
+        second_thread = self.services.thread.create_thread(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="Second thread",
+        )
+        first_task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            thread_id=first_thread.id,
+            topic="first scoped research",
+            source_policy={"source_adapters": []},
+        )
+        self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            thread_id=second_thread.id,
+            topic="second scoped research",
+            source_policy={"source_adapters": []},
+        )
+
+        rows = self.services.research_task.list_tasks(
+            principal_id=self.principal.id,
+            thread_id=first_thread.id,
+        )
+
+        self.assertEqual([row.research_task_id for row in rows], [first_task.research_task_id])
+
     def test_external_adapter_runner_reports_adapter_error(self) -> None:
         class FakeAdapterClient:
-            def run_to_completion(self, payload, *, cancel_checker=None):
-                del payload, cancel_checker
-                raise ResearchAdapterError("research_adapter_timeout", "Adapter timed out.", details={"run_id": "rad_slow"})
+            def create_run(self, payload):
+                del payload
+                return {"status": "running", "run_id": "rad_slow", "provider": "fake"}
+
+            def get_run(self, run_id):
+                raise ResearchAdapterError("research_adapter_request_failed", "Adapter poll failed.", details={"run_id": run_id})
+
+            def cancel(self, run_id):
+                raise AssertionError(f"should not cancel {run_id}")
 
         task = self.services.research_task.create_task(
             principal_id=self.principal.id,
@@ -232,8 +302,75 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         failed = self.services.research_task.get_by_research_task_id(task.research_task_id)
         self.assertEqual(failed.status, "failed")
-        self.assertEqual(failed.meta["runner_error"], "research_adapter_timeout")
+        self.assertEqual(failed.meta["runner_error"], "research_adapter_request_failed")
         self.assertEqual(failed.meta["adapter_error_details"], {"run_id": "rad_slow"})
+
+    def test_external_adapter_runner_polls_long_running_run_without_total_timeout(self) -> None:
+        outer = self
+
+        class FakeAdapterClient:
+            def __init__(self) -> None:
+                self.poll_count = 0
+                self.cancelled = False
+
+            def create_run(self, payload):
+                del payload
+                return {
+                    "status": "running",
+                    "run_id": "rad_long",
+                    "provider": "fake",
+                    "progress": {"stage": "gather", "status": "running", "message": "gathering"},
+                }
+
+            def get_run(self, run_id):
+                outer.assertEqual(run_id, "rad_long")
+                self.poll_count += 1
+                if self.poll_count < 3:
+                    return {
+                        "status": "running",
+                        "run_id": "rad_long",
+                        "provider": "fake",
+                        "progress": {"stage": "gather", "status": "running", "message": f"poll {self.poll_count}"},
+                    }
+                return {
+                    "status": "completed",
+                    "run_id": "rad_long",
+                    "provider": "fake",
+                    "progress": {"stage": "completed", "status": "completed", "message": "done"},
+                    "summary": "Long adapter run completed.",
+                    "report_markdown": "# Long run\n\nLong research used source one.[1]\n",
+                    "sources": [{"source_id": "1", "title": "Long source", "snippet": "Readable source."}],
+                }
+
+            def cancel(self, run_id):
+                self.cancelled = True
+                raise AssertionError(f"should not cancel {run_id}")
+
+        client = FakeAdapterClient()
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="long external run",
+            source_policy={"source_adapters": []},
+        )
+
+        result = ResearchExecutionService(
+            self.services,
+            adapter_config=ResearchAdapterConfig(
+                base_url="http://adapter.test",
+                provider="fake",
+                poll_interval_seconds=0.25,
+                timeout_seconds=0.25,
+                require_external=True,
+            ),
+            adapter_client=client,
+        ).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(client.poll_count, 3)
+        self.assertFalse(client.cancelled)
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.meta["external_run_id"], "rad_long")
 
     def test_runner_gathers_direct_web_evidence_and_creates_artifact(self) -> None:
         def fake_web_fetch(url: str, timeout: float = 8.0) -> dict:

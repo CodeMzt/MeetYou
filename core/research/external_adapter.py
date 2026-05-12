@@ -50,7 +50,7 @@ class ResearchAdapterClient:
     def __init__(self, config: ResearchAdapterConfig) -> None:
         self.config = config
 
-    def run_to_completion(self, payload: dict[str, Any], *, cancel_checker=None) -> dict[str, Any]:
+    def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.config.configured:
             raise ResearchAdapterError(
                 "research_adapter_unconfigured",
@@ -61,22 +61,30 @@ class ResearchAdapterClient:
         run_id = str(created.get("run_id") or created.get("id") or "").strip()
         if not run_id:
             raise ResearchAdapterError("research_adapter_run_invalid", "Research adapter did not return a run_id.")
+        created["run_id"] = run_id
+        created["status"] = _normalize_status(created.get("status"))
+        return created
+
+    def get_run(self, run_id: str) -> dict[str, Any]:
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            raise ResearchAdapterError("research_adapter_run_invalid", "Research adapter run_id is required.")
+        current = self._request_json("GET", f"/v1/research/runs/{normalized_run_id}", None)
+        current["run_id"] = str(current.get("run_id") or normalized_run_id)
+        current["status"] = _normalize_status(current.get("status"))
+        return current
+
+    def run_to_completion(self, payload: dict[str, Any], *, cancel_checker=None) -> dict[str, Any]:
+        created = self.create_run(payload)
+        run_id = str(created.get("run_id") or "").strip()
         current = dict(created)
-        deadline = time.monotonic() + max(1.0, float(self.config.timeout_seconds or 900.0))
         while _normalize_status(current.get("status")) not in TERMINAL_STATUSES:
             if callable(cancel_checker) and cancel_checker():
                 self.cancel(run_id)
                 current["status"] = "cancelled"
                 break
-            if time.monotonic() >= deadline:
-                self.cancel(run_id)
-                raise ResearchAdapterError(
-                    "research_adapter_timeout",
-                    "Research adapter run timed out.",
-                    details={"run_id": run_id, "timeout_seconds": self.config.timeout_seconds},
-                )
             time.sleep(max(0.25, float(self.config.poll_interval_seconds or 2.0)))
-            current = self._request_json("GET", f"/v1/research/runs/{run_id}", None)
+            current = self.get_run(run_id)
         current["run_id"] = run_id
         current["status"] = _normalize_status(current.get("status"))
         return current

@@ -989,7 +989,7 @@ describe('runtimeApi', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...task, status: 'running' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response('report body', { status: 200, headers: { 'Content-Type': 'text/markdown' } })) as typeof fetch
 
-    const tasks = await listRuntimeResearchTasks('http://127.0.0.1:8000', { project_id: 'prj_1', limit: 50 })
+    const tasks = await listRuntimeResearchTasks('http://127.0.0.1:8000', { project_id: 'prj_1', thread_id: 'thr_1', limit: 50 })
     const events = await listRuntimeResearchTaskEvents('http://127.0.0.1:8000', 'res_1', { after_seq: 1, durable_only: true })
     const created = await createRuntimeResearchTask('http://127.0.0.1:8000', { topic: 'Deep research', project_id: 'prj_1' })
     const patched = await patchRuntimeResearchTask('http://127.0.0.1:8000', 'res_1', { action: 'start' })
@@ -1000,7 +1000,7 @@ describe('runtimeApi', () => {
     expect(created.research_task_id).toBe('res_2')
     expect(patched.status).toBe('running')
     expect(await artifact.text()).toBe('report body')
-    expect(globalThis.fetch).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:8000/desktop/research-tasks?project_id=prj_1&limit=50', expect.any(Object))
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:8000/desktop/research-tasks?project_id=prj_1&thread_id=thr_1&limit=50', expect.any(Object))
     expect(globalThis.fetch).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:8000/desktop/research-tasks/res_1/events?after_seq=1&durable_only=true', expect.any(Object))
     expect(globalThis.fetch).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:8000/desktop/research-tasks', expect.objectContaining({ method: 'POST' }))
     expect(globalThis.fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:8000/desktop/research-tasks/res_1', expect.objectContaining({ method: 'PATCH' }))

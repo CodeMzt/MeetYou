@@ -910,9 +910,14 @@ class ResearchTaskService(ServiceBase):
         with self.session_scope() as session:
             return ResearchTaskRepository(session).get_by_research_task_id(research_task_id)
 
-    def list_tasks(self, *, principal_id, project_id=None, limit: int = 100):
+    def list_tasks(self, *, principal_id, project_id=None, thread_id=None, limit: int = 100):
         with self.session_scope() as session:
-            return ResearchTaskRepository(session).list_for_principal(principal_id=principal_id, project_id=project_id, limit=limit)
+            return ResearchTaskRepository(session).list_for_principal(
+                principal_id=principal_id,
+                project_id=project_id,
+                thread_id=thread_id,
+                limit=limit,
+            )
 
     def update_task(self, *, research_task_id: str, fields: dict[str, Any]):
         with self.session_scope() as session:

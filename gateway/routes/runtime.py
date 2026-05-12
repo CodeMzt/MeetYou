@@ -1072,13 +1072,19 @@ def build_runtime_router(gateway) -> APIRouter:
                 pass
 
     @router.get("/research-tasks", response_model=list[RuntimeResearchTaskResponse])
-    async def list_research_tasks(request: Request, project_id: str = "", limit: int = 100):
+    async def list_research_tasks(request: Request, project_id: str = "", thread_id: str = "", limit: int = 100):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         project = domain.services.project.get_by_project_id(project_id) if str(project_id or "").strip() else None
+        thread = domain.services.thread.get_by_thread_id(thread_id) if str(thread_id or "").strip() else None
+        if project_id and project is None:
+            gateway._raise_http_error(status_code=404, code="project_not_found", message=f"Unknown project: {project_id}")
+        if thread_id and thread is None:
+            gateway._raise_http_error(status_code=404, code="thread_not_found", message=f"Unknown thread: {thread_id}")
         rows = domain.services.research_task.list_tasks(
             principal_id=domain.principal.id,
             project_id=getattr(project, "id", None),
+            thread_id=getattr(thread, "id", None),
             limit=limit,
         )
         return [_research_task_response(domain, row) for row in rows]

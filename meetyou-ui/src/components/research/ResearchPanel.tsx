@@ -21,7 +21,6 @@ interface ResearchCreateOptions {
   webSearch?: boolean
   webQueries?: string[]
   webUrls?: string[]
-  academicAdapters?: string[]
   derivedFormats?: string[]
   limit?: number
 }
@@ -32,16 +31,8 @@ interface ResearchAdapterInfo {
   externalRunId: string
   error: string
   message: string
+  lastPollAt: string
 }
-
-const ACADEMIC_ADAPTER_OPTIONS = [
-  { id: 'arxiv', label: 'arXiv', title: 'arXiv' },
-  { id: 'openalex', label: 'OA', title: 'OpenAlex' },
-  { id: 'crossref', label: 'DOI', title: 'Crossref' },
-  { id: 'semantic_scholar', label: 'S2', title: 'Semantic Scholar' },
-] as const
-
-const DEFAULT_ACADEMIC_ADAPTERS = ACADEMIC_ADAPTER_OPTIONS.map((option) => option.id)
 
 const REPORT_FORMAT_OPTIONS = [
   { id: 'pdf', label: 'PDF', title: '同时生成 PDF 报告' },
@@ -131,7 +122,13 @@ function getEvidenceItems(task: RuntimeResearchTask): EvidenceAuditItem[] {
 function stageLabel(stage: string): string {
   const normalized = String(stage || '').toLowerCase()
   if (normalized === 'adapter') return '外部研究服务'
+  if (normalized === 'queued') return '排队'
+  if (normalized === 'starting') return '启动服务'
+  if (normalized === 'project_sources') return '整理项目源'
+  if (normalized === 'research') return '外部研究'
   if (normalized === 'gather') return '收集证据'
+  if (normalized === 'write') return '撰写报告'
+  if (normalized === 'sources') return '整理来源'
   if (normalized === 'synthesize') return '综合报告'
   if (normalized === 'artifact') return '保存产物'
   if (normalized === 'completed') return '完成'
@@ -157,8 +154,8 @@ function adapterErrorMessage(status: string, error: string): string {
   if (normalizedError.includes('external_sources_missing')) {
     return '外部研究服务没有返回可引用来源，Core 已拒绝生成无引用报告。'
   }
-  if (normalizedError.includes('timeout')) {
-    return '外部研究服务超时：可检查 adapter 日志或调大 MEETYOU_RESEARCH_TIMEOUT_SECONDS。'
+  if (normalizedError.includes('timeout') || normalizedError.includes('request_failed') || normalizedError.includes('poll')) {
+    return '外部研究服务暂时无响应：任务不会因为固定总时长自动失败，请检查 adapter 日志或稍后刷新。'
   }
   return error ? `外部研究服务失败：${error}` : ''
 }
@@ -170,6 +167,7 @@ function getResearchAdapterInfo(task: RuntimeResearchTask): ResearchAdapterInfo 
   const status = String(metadata.adapter_status || '')
   const externalRunId = String(metadata.external_run_id || '')
   const error = String(metadata.adapter_error || metadata.runner_error || '')
+  const lastPollAt = String(metadata.last_adapter_poll_at || '')
   if (!provider && !status && !externalRunId && !error && runner !== 'research_adapter.v1') {
     return null
   }
@@ -179,6 +177,7 @@ function getResearchAdapterInfo(task: RuntimeResearchTask): ResearchAdapterInfo 
     externalRunId,
     error,
     message: adapterErrorMessage(status, error),
+    lastPollAt,
   }
 }
 
@@ -238,6 +237,26 @@ function formatProgressTime(value: string): string {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+function formatElapsedSince(value: string): string {
+  if (!value) {
+    return ''
+  }
+  const startedAt = new Date(value).getTime()
+  if (!Number.isFinite(startedAt)) {
+    return ''
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+  if (seconds < 60) {
+    return `${seconds} 秒`
+  }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) {
+    return `${minutes} 分 ${seconds % 60} 秒`
+  }
+  const hours = Math.floor(minutes / 60)
+  return `${hours} 小时 ${minutes % 60} 分`
+}
+
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
     return '0 B'
@@ -293,13 +312,11 @@ export default function ResearchPanel({
   const [webSearchEnabled, setWebSearchEnabled] = useState(true)
   const [webQueryText, setWebQueryText] = useState('')
   const [webUrlText, setWebUrlText] = useState('')
-  const [academicAdapters, setAcademicAdapters] = useState<string[]>(DEFAULT_ACADEMIC_ADAPTERS)
   const [derivedFormats, setDerivedFormats] = useState<string[]>([])
   const [sourceLimit, setSourceLimit] = useState('3')
   const webSearchInputRef = useRef<HTMLInputElement | null>(null)
   const webQueryInputRef = useRef<HTMLInputElement | null>(null)
   const webUrlInputRef = useRef<HTMLInputElement | null>(null)
-  const academicInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const formatInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const sourceLimitRef = useRef<HTMLSelectElement | null>(null)
 
@@ -312,9 +329,11 @@ export default function ResearchPanel({
   const researchProgress = selectedTask ? getResearchProgress(selectedTask) : null
   const adapterInfo = selectedTask ? getResearchAdapterInfo(selectedTask) : null
   const editablePlan = selectedTask?.status === 'planned'
+  const showPlanSteps = selectedTask ? ['planned', 'approved'].includes(String(selectedTask.status || '').toLowerCase()) : false
   const selectedDerivedArtifacts = selectedTask?.derived_artifacts || []
   const selectedEvents = selectedTask ? taskEvents[selectedTask.research_task_id] || [] : []
   const latestEvent = selectedEvents[selectedEvents.length - 1] || null
+  const runningElapsed = selectedTask?.status === 'running' ? formatElapsedSince(selectedTask.created_at) : ''
 
   useEffect(() => {
     if (selectedTask) {
@@ -326,17 +345,6 @@ export default function ResearchPanel({
     setSelectedTaskId(task.research_task_id)
     setPlanText(formatPlan(task.plan))
     setLocalError('')
-  }
-
-  const updateAcademicAdapter = (adapter: string, checked: boolean) => {
-    setAcademicAdapters((current) => {
-      const next = checked
-        ? Array.from(new Set([...current, adapter]))
-        : current.filter((item) => item !== adapter)
-      return ACADEMIC_ADAPTER_OPTIONS
-        .map((option) => option.id)
-        .filter((item) => next.includes(item))
-    })
   }
 
   const updateDerivedFormat = (format: string, checked: boolean) => {
@@ -359,9 +367,6 @@ export default function ResearchPanel({
     const currentWebSearchEnabled = webSearchInputRef.current?.checked ?? webSearchEnabled
     const currentWebQueryText = webQueryInputRef.current?.value ?? webQueryText
     const currentWebUrlText = webUrlInputRef.current?.value ?? webUrlText
-    const currentAcademicAdapters = ACADEMIC_ADAPTER_OPTIONS
-      .filter((option) => academicInputRefs.current[option.id]?.checked ?? academicAdapters.includes(option.id))
-      .map((option) => option.id)
     const currentDerivedFormats = REPORT_FORMAT_OPTIONS
       .filter((option) => formatInputRefs.current[option.id]?.checked ?? derivedFormats.includes(option.id))
       .map((option) => option.id)
@@ -371,7 +376,6 @@ export default function ResearchPanel({
       webSearch: currentWebSearchEnabled,
       webQueries: parseQueryList(currentWebQueryText),
       webUrls: parseQueryList(currentWebUrlText),
-      academicAdapters: currentAcademicAdapters,
       derivedFormats: currentDerivedFormats,
       limit: Number.isFinite(currentLimit) ? currentLimit : 3,
     })
@@ -451,7 +455,7 @@ export default function ResearchPanel({
       />
 
       <div className={styles.sourceScope} data-research-source-scope="true">
-        <span className={styles.scopeLabel}>学术源</span>
+        <span className={styles.scopeLabel}>来源上限</span>
         <select
           ref={sourceLimitRef}
           value={sourceLimit}
@@ -465,23 +469,6 @@ export default function ResearchPanel({
           <option value="5">5 条</option>
           <option value="8">8 条</option>
         </select>
-        <div className={styles.adapterScroller}>
-          {ACADEMIC_ADAPTER_OPTIONS.map((option) => (
-            <label className={styles.adapterChip} key={option.id} title={option.title}>
-              <input
-                ref={(element) => {
-                  academicInputRefs.current[option.id] = element
-                }}
-                type="checkbox"
-                checked={academicAdapters.includes(option.id)}
-                onChange={(event) => updateAcademicAdapter(option.id, event.target.checked)}
-                disabled={busy}
-                data-research-academic-adapter={option.id}
-              />
-              <span>{option.label}</span>
-            </label>
-          ))}
-        </div>
       </div>
 
       <div className={styles.exportScope} data-research-export-scope="true">
@@ -523,7 +510,7 @@ export default function ResearchPanel({
           ))}
         </div>
       ) : (
-        <div className={styles.empty}>暂无研究任务</div>
+        <div className={styles.empty}>此会话暂无研究任务</div>
       )}
 
       {selectedTask ? (
@@ -533,12 +520,13 @@ export default function ResearchPanel({
             <span>{statusLabel(selectedTask.status)}</span>
           </div>
 
-          {planSteps.length ? (
-            <div className={styles.steps}>
-              {planSteps.slice(0, 4).map((step) => (
+          {showPlanSteps && planSteps.length ? (
+            <div className={styles.steps} data-research-plan-steps="true">
+              <div className={styles.sectionLabel}>计划草案</div>
+              {planSteps.slice(0, 4).map((step, index) => (
                 <div className={styles.step} key={step.id}>
                   <span>{step.title}</span>
-                  <span>{statusLabel(step.status || 'planned')}</span>
+                  <span>步骤 {index + 1}</span>
                 </div>
               ))}
             </div>
@@ -550,6 +538,8 @@ export default function ResearchPanel({
             {adapterInfo ? <span data-research-adapter-provider="true">外部 {adapterInfo.provider}</span> : null}
             {adapterInfo ? <span data-research-adapter-status="true">{adapterStatusLabel(adapterInfo.status)}</span> : null}
             {adapterInfo?.externalRunId ? <span data-research-external-run-id="true">外部 {shortId(adapterInfo.externalRunId)}</span> : null}
+            {adapterInfo?.lastPollAt ? <span data-research-last-poll="true">轮询 {formatProgressTime(adapterInfo.lastPollAt)}</span> : null}
+            {runningElapsed ? <span data-research-elapsed="true">已运行 {runningElapsed}</span> : null}
             {selectedTask.status === 'running' ? <span data-research-auto-refresh="true">自动刷新</span> : null}
             {selectedTask.run_id ? <span data-research-run-id="true">运行 {shortId(selectedTask.run_id)}</span> : null}
             {selectedEvents.length ? <span data-research-event-count="true">事件 {selectedEvents.length}</span> : null}

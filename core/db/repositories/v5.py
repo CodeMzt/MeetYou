@@ -291,10 +291,12 @@ class ResearchTaskRepository(RepositoryBase):
     def get_by_research_task_id(self, research_task_id: str) -> ResearchTask | None:
         return self.session.query(ResearchTask).filter_by(research_task_id=str(research_task_id or "").strip()).one_or_none()
 
-    def list_for_principal(self, *, principal_id, project_id=None, limit: int = 100) -> list[ResearchTask]:
+    def list_for_principal(self, *, principal_id, project_id=None, thread_id=None, limit: int = 100) -> list[ResearchTask]:
         query = self.session.query(ResearchTask).filter_by(principal_id=principal_id)
         if project_id is not None:
             query = query.filter_by(project_id=project_id)
+        if thread_id is not None:
+            query = query.filter_by(thread_id=thread_id)
         return list(query.order_by(ResearchTask.updated_at.desc(), ResearchTask.created_at.desc()).limit(max(1, min(int(limit or 100), 500))).all())
 
     def update(self, *, research_task_id: str, fields: dict) -> ResearchTask | None:

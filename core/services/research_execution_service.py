@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -709,33 +710,50 @@ class ResearchExecutionService:
         )
         payload = self._external_adapter_payload(task, policy=policy, provider=config.provider)
         try:
-            result = client.run_to_completion(
-                payload,
-                cancel_checker=lambda: self._is_cancelled(research_task_id),
-            )
+            result = client.create_run(payload)
         except ResearchAdapterError as exc:
-            self._record_progress(
-                research_task_id,
-                stage="adapter",
-                status="failed",
-                message=str(exc),
-                metadata={"research_provider": config.provider, "adapter_status": "failed", "adapter_error": exc.code},
-            )
-            return self._fail_task(
-                research_task_id,
-                summary=str(exc),
-                metadata={
-                    "runner": "research_adapter.v1",
-                    "runner_error": exc.code,
-                    "research_provider": config.provider,
-                    "adapter_status": "failed",
-                    "adapter_error": str(exc),
-                    "adapter_error_details": exc.details,
-                    "completed_at": _now_iso(),
-                },
-            )
-        status = str(result.get("status") or "").strip().lower()
+            return self._fail_external_adapter_error(research_task_id, config=config, exc=exc)
         external_run_id = str(result.get("run_id") or "").strip()
+        self._record_external_adapter_progress(research_task_id, config=config, result=result)
+
+        consecutive_poll_errors = 0
+        while str(result.get("status") or "").strip().lower() not in {"completed", "failed", "cancelled"}:
+            if self._is_cancelled(research_task_id):
+                if external_run_id:
+                    client.cancel(external_run_id)
+                return self._cancelled_result(research_task_id, stage="adapter")
+            time.sleep(max(0.25, float(config.poll_interval_seconds or 2.0)))
+            try:
+                result = client.get_run(external_run_id)
+                consecutive_poll_errors = 0
+            except ResearchAdapterError as exc:
+                consecutive_poll_errors += 1
+                self._record_progress(
+                    research_task_id,
+                    stage="adapter",
+                    status="running" if consecutive_poll_errors < 3 else "failed",
+                    message=f"外部研究服务轮询失败：{exc}",
+                    metadata={
+                        "research_provider": config.provider,
+                        "external_run_id": external_run_id,
+                        "adapter_status": "poll_error",
+                        "adapter_error": exc.code,
+                        "adapter_poll_error_count": consecutive_poll_errors,
+                        "adapter_error_details": exc.details,
+                        "last_adapter_poll_at": _now_iso(),
+                    },
+                )
+                if consecutive_poll_errors >= 3:
+                    return self._fail_external_adapter_error(
+                        research_task_id,
+                        config=config,
+                        exc=exc,
+                        external_run_id=external_run_id,
+                    )
+                continue
+            self._record_external_adapter_progress(research_task_id, config=config, result=result)
+        status = str(result.get("status") or "").strip().lower()
+        external_run_id = str(result.get("run_id") or external_run_id).strip()
         if status == "cancelled":
             return self._cancelled_result(research_task_id, stage="adapter")
         if status == "failed":
@@ -939,6 +957,81 @@ class ResearchExecutionService:
             "derived_artifact_count": len(derived_artifacts),
             "evidence_count": len(evidence),
         }
+
+    def _record_external_adapter_progress(
+        self,
+        research_task_id: str,
+        *,
+        config: ResearchAdapterConfig,
+        result: dict[str, Any],
+    ) -> None:
+        progress = result.get("progress") if isinstance(result.get("progress"), dict) else {}
+        status = str(result.get("status") or "").strip().lower() or "running"
+        external_run_id = str(result.get("run_id") or "").strip()
+        stage = str(progress.get("stage") or "adapter").strip() or "adapter"
+        message = str(progress.get("message") or "").strip()
+        if not message:
+            message = "外部深度研究服务正在运行。" if status == "running" else f"外部深度研究服务状态：{status}"
+        metadata = {
+            "research_provider": str(result.get("provider") or config.provider or "gpt_researcher"),
+            "external_run_id": external_run_id,
+            "adapter_status": status,
+            "last_adapter_poll_at": _now_iso(),
+        }
+        if progress.get("at"):
+            metadata["adapter_progress_at"] = str(progress.get("at") or "")
+        if isinstance(result.get("metadata"), dict):
+            metadata["adapter_metadata"] = dict(result.get("metadata") or {})
+        if isinstance(result.get("usage"), dict):
+            metadata["adapter_usage"] = dict(result.get("usage") or {})
+        sources = result.get("sources")
+        if isinstance(sources, list):
+            metadata["adapter_source_count"] = len(sources)
+        if result.get("error"):
+            metadata["adapter_error"] = str(result.get("error") or "")
+        self._record_progress(
+            research_task_id,
+            stage=stage,
+            status=status,
+            message=message,
+            metadata=metadata,
+        )
+
+    def _fail_external_adapter_error(
+        self,
+        research_task_id: str,
+        *,
+        config: ResearchAdapterConfig,
+        exc: ResearchAdapterError,
+        external_run_id: str = "",
+    ) -> dict[str, Any]:
+        self._record_progress(
+            research_task_id,
+            stage="adapter",
+            status="failed",
+            message=str(exc),
+            metadata={
+                "research_provider": config.provider,
+                "external_run_id": str(external_run_id or ""),
+                "adapter_status": "failed",
+                "adapter_error": exc.code,
+                "adapter_error_details": exc.details,
+            },
+        )
+        return self._fail_task(
+            research_task_id,
+            summary=str(exc),
+            metadata={
+                "runner": "research_adapter.v1",
+                "runner_error": exc.code,
+                "research_provider": config.provider,
+                "external_run_id": str(external_run_id or ""),
+                "adapter_status": "failed",
+                "adapter_error": str(exc),
+                "adapter_error_details": exc.details,
+                "completed_at": _now_iso(),
+            },
+        )
 
     def _external_adapter_payload(self, task, *, policy: dict[str, Any], provider: str) -> dict[str, Any]:
         project = self.services.project.get_by_id(getattr(task, "project_id", None)) if getattr(task, "project_id", None) else None

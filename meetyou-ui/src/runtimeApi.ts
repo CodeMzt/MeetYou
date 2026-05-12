@@ -801,11 +801,14 @@ export async function activateRuntimeThreadBranch(
 
 export async function listRuntimeResearchTasks(
   baseUrl: string,
-  params: { project_id?: string; limit?: number } = {},
+  params: { project_id?: string; thread_id?: string; limit?: number } = {},
 ): Promise<RuntimeResearchTask[]> {
   const url = new URL(buildDesktopUrl(baseUrl, '/research-tasks'))
   if (params.project_id) {
     url.searchParams.set('project_id', params.project_id)
+  }
+  if (params.thread_id) {
+    url.searchParams.set('thread_id', params.thread_id)
   }
   if (params.limit) {
     url.searchParams.set('limit', String(params.limit))

@@ -160,6 +160,42 @@ class ThreadServiceTests(unittest.TestCase):
         self.assertNotIn("current user", {row.content for row in endpoint_excluded["messages"]})
         self.assertEqual(endpoint_excluded["older_count"], 0)
 
+    def test_first_user_message_auto_titles_default_thread_without_overwriting_manual_title(self) -> None:
+        thread_service = ThreadService(self.Session)
+        message_service = MessageService(self.Session)
+        default_thread = thread_service.create_thread(
+            principal_id=self.principal_id,
+            workspace_id=self.workspace_id,
+            title="新会话",
+        )
+        manual_thread = thread_service.create_thread(
+            principal_id=self.principal_id,
+            workspace_id=self.workspace_id,
+            title="人工标题",
+        )
+
+        message_service.create_message(
+            thread_id=default_thread.id,
+            role="user",
+            content="请帮我研究救国会在近代史中的作用，并给出引用。",
+        )
+        message_service.create_message(
+            thread_id=manual_thread.id,
+            role="user",
+            content="这条消息不应该覆盖人工标题。",
+        )
+        message_service.create_message(
+            thread_id=default_thread.id,
+            role="user",
+            content="第二条消息不应该再次改名。",
+        )
+
+        renamed = thread_service.get_by_thread_id(default_thread.thread_id)
+        preserved = thread_service.get_by_thread_id(manual_thread.thread_id)
+        self.assertEqual(renamed.title, "请帮我研究救国会在近代史中的作用，并给出引用")
+        self.assertTrue(renamed.meta["auto_title"])
+        self.assertEqual(preserved.title, "人工标题")
+
 
 if __name__ == "__main__":
     unittest.main()

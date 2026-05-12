@@ -173,6 +173,10 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     processWsUpdateForChat(update)
     processWsUpdateForOperations(update)
 
+    if (update.kind === 'message_created' && update.message.thread_id === endpointContext?.threadId) {
+      void refreshRuntimeThreads(endpointContext?.workspace.workspace_id)
+    }
+
     if (update.kind === 'workspace_changed') {
       void refreshWorkspace(update.workspaceId || update.activeWorkspaceId)
       void refreshDesktopToolEndpoint()
@@ -188,6 +192,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   }, [
     dispatchTransport,
     endpointContext?.threadId,
+    endpointContext?.workspace.workspace_id,
     initializeEndpointContext,
     processWsUpdateForChat,
     processWsUpdateForOperations,
@@ -305,11 +310,18 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     return next
   }, [baseUrl])
 
-  const refreshResearchTasks = useCallback(async (projectIdOverride?: string) => {
+  const refreshResearchTasks = useCallback(async (projectIdOverride?: string, threadIdOverride?: string) => {
     const projectId = String(projectIdOverride ?? activeProjectId ?? '').trim()
+    const threadId = String(threadIdOverride ?? endpointContext?.threadId ?? '').trim()
+    if (!threadId) {
+      setResearchTasks([])
+      setResearchTaskEvents({})
+      return []
+    }
     try {
       const tasks = await listRuntimeResearchTasks(baseUrl, {
         project_id: projectId || undefined,
+        thread_id: threadId,
         limit: 50,
       })
       setResearchTasks(tasks)
@@ -321,11 +333,11 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       setResearchTaskEvents({})
       return []
     }
-  }, [activeProjectId, baseUrl, refreshResearchTaskEvents])
+  }, [activeProjectId, baseUrl, endpointContext?.threadId, refreshResearchTaskEvents])
 
   useEffect(() => {
-    void refreshResearchTasks(activeProjectId)
-  }, [activeProjectId, refreshResearchTasks])
+    void refreshResearchTasks(activeProjectId, endpointContext?.threadId)
+  }, [activeProjectId, endpointContext?.threadId, refreshResearchTasks])
 
   const refreshProjectSources = useCallback(async (projectIdOverride?: string) => {
     const projectId = String(projectIdOverride ?? activeProjectId ?? '').trim()
@@ -383,7 +395,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     }
     let stopped = false
     const poll = async () => {
-      const tasks = await refreshResearchTasks(activeProjectId)
+      const tasks = await refreshResearchTasks(activeProjectId, endpointContext?.threadId)
       if (stopped) {
         return
       }
@@ -398,7 +410,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       stopped = true
       window.clearInterval(timer)
     }
-  }, [activeProjectId, refreshProjectArtifacts, refreshResearchTasks, researchPollingActive])
+  }, [activeProjectId, endpointContext?.threadId, refreshProjectArtifacts, refreshResearchTasks, researchPollingActive])
 
   const effectiveConnectionState = useMemo(() => {
     if (!endpointContext || endpointConnectionState === 'connecting' || transportState.connectionState === 'connecting') {
@@ -647,6 +659,10 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     if (!nextTopic) {
       throw new Error('研究主题不能为空')
     }
+    const threadId = String(endpointContext?.threadId || '').trim()
+    if (!threadId) {
+      throw new Error('没有可绑定研究任务的当前会话')
+    }
     const webSearchEnabled = options?.webSearch !== false
     const webQueries = (options?.webQueries || [])
       .map((item) => String(item || '').trim())
@@ -658,7 +674,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       .slice(0, 8)
     const includeWebAdapter = webSearchEnabled || webUrls.length > 0
     const supportedAcademicAdapters = ['arxiv', 'openalex', 'crossref', 'semantic_scholar']
-    const selectedAcademicAdapters = (options?.academicAdapters || supportedAcademicAdapters)
+    const selectedAcademicAdapters = (options?.academicAdapters || [])
       .map((item) => String(item || '').trim())
       .filter((item, index, all) => supportedAcademicAdapters.includes(item) && all.indexOf(item) === index)
     const supportedDerivedFormats = ['pdf', 'docx']
@@ -675,7 +691,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       const task = await createRuntimeResearchTask(baseUrl, {
         topic: nextTopic,
         project_id: activeProjectId || undefined,
-        thread_id: endpointContext?.threadId || undefined,
+        thread_id: threadId,
         source_policy: {
           source_adapters: sourceAdapters,
           include_project_sources: Boolean(activeProjectId),
@@ -797,6 +813,11 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     }
   }, [downloadArtifactFile])
 
+  const sendMessageAndRefreshThreads = useCallback(async (...args: Parameters<typeof sendMessage>) => {
+    await sendMessage(...args)
+    void refreshRuntimeThreads(endpointContext?.workspace.workspace_id)
+  }, [endpointContext?.workspace.workspace_id, refreshRuntimeThreads, sendMessage])
+
   return {
     messages: chatState.messages,
     operations,
@@ -831,7 +852,7 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
     lastError: transportState.lastError,
     archivedTurnCount: chatState.archivedTurnCount,
     statusFeedback,
-    sendMessage,
+    sendMessage: sendMessageAndRefreshThreads,
     decideOperationApproval,
     sendConfirmResponse,
     sendHumanInputResponse,
