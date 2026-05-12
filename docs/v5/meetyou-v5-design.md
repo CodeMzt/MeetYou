@@ -73,6 +73,8 @@ V5 development uses `v5` as the integration branch until the full V5 target is r
 
 Each phase must produce a concrete phase plan, make scoped changes, run local tests, commit, push `v5`, wait for GitHub Actions CI, wait for the Core deploy workflow to deploy `v5`, then run real runtime/API validation against the deployed Core. Frontend changes additionally require a real browser or Electron screenshot acceptance run.
 
+Full deployed V5 main-chain validation is captured by `scripts/v5_real_acceptance.py`. Run it as `python scripts/v5_real_acceptance.py --base-url <core-url> --expected-branch v5` after `v5` deploys when a phase touches Project, ProjectSource, Artifact, ResearchTask, checkpoint, branch, or edit-retry behavior. The runner creates temporary Core records, validates Project/thread/source APIs, automatic checkpoints, restore/checkout, edit-retry branching, project-source research execution, durable research events, report/derived artifact downloads, thread delivery messages, and archives its temporary project afterward.
+
 The Core deploy workflow is branch-aware. CI success on `main` deploys `main`; CI success on `v5` deploys `v5`. Manual deployment dispatch accepts an explicit branch input, validates it as a Git branch name, fetches that branch on the Core host, and resets the remote working tree to `origin/<branch>` before invoking the host deploy script.
 
 First-stage implementation provides durable API/data skeleton, local ArtifactStore, a conservative read-only research runner, and compact branch tree activation/path/sibling variant visibility. A richer visual graph editor remains follow-up work.
