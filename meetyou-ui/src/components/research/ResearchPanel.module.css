@@ -497,13 +497,39 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 5px;
   padding: 7px 8px;
   border-radius: 7px;
   background: var(--bg-input);
 }
 
-.evidenceItem span,
+.evidenceTitleRow,
+.evidenceBadges {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.evidenceTitleRow span {
+  flex: 0 0 auto;
+  min-width: 26px;
+  color: var(--text-accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.evidenceTitleRow strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .evidenceItem small,
 .artifactMeta span {
   min-width: 0;
@@ -512,15 +538,26 @@
   white-space: nowrap;
 }
 
-.evidenceItem span {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .evidenceItem small {
   color: var(--text-secondary);
   font-size: 11px;
+}
+
+.evidenceBadges {
+  flex-wrap: wrap;
+}
+
+.evidenceBadges span {
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .artifactMeta {

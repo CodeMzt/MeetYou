@@ -118,6 +118,47 @@ const checkpoint = {
   updated_at: nowIso(),
 }
 
+const researchTask = {
+  research_task_id: 'res_visual_audit',
+  project_id: '',
+  thread_id: threadId,
+  run_id: '',
+  artifact_id: '',
+  topic: '证据审计可视化',
+  status: 'completed',
+  plan: {
+    schema: 'meetyou.research.plan.v1',
+    language: 'zh-CN',
+    steps: [
+      { id: 'plan_review', title: '确认研究计划', status: 'completed', requires_user_confirmation: true },
+      { id: 'gather', title: '收集证据', status: 'completed' },
+      { id: 'synthesize', title: '综合报告', status: 'completed' },
+    ],
+  },
+  source_policy: {},
+  evidence_ledger: [
+    {
+      source_id: '1',
+      rank: 1,
+      quality_score: 88.5,
+      duplicate_count: 2,
+      merged_source_ids: ['4', '1'],
+      title: 'Conversation branch evidence',
+      source_type: 'project_source',
+      url: 'https://example.test/evidence',
+      verification_status: 'project_source_snapshot',
+      source_trust: 'untrusted',
+    },
+  ],
+  output_format: 'markdown',
+  summary: '证据审计信息已经记录到 evidence ledger。',
+  artifact: null,
+  derived_artifacts: [],
+  metadata: {},
+  created_at: nowIso(),
+  updated_at: nowIso(),
+}
+
 const session = {
   session_id: sessionId,
   thread_id: threadId,
@@ -328,7 +369,7 @@ async function handleRequest(request, response) {
     return
   }
   if (request.method === 'GET' && url.pathname === '/desktop/research-tasks') {
-    writeJson(response, [])
+    writeJson(response, [researchTask])
     return
   }
   if (request.method === 'POST' && url.pathname === '/desktop/sessions') {
@@ -721,6 +762,82 @@ async function collectTopControlsReport(win) {
 `)
 }
 
+async function switchToResearchMode(win) {
+  await win.webContents.executeJavaScript(`
+(() => {
+  const settings = document.querySelector('[data-chat-settings="true"]')
+  if (!settings) throw new Error('chat settings button missing')
+  settings.click()
+})()
+`)
+  await waitForCondition(win, "document.querySelector('[data-mode-value=\"research\"]')", 'research mode option')
+  await win.webContents.executeJavaScript(`
+(() => {
+  const research = document.querySelector('[data-mode-value="research"]')
+  if (!research) throw new Error('research mode option missing')
+  research.click()
+  const content = document.querySelector('[class*="contentArea"]')
+  if (content) content.scrollTop = 0
+})()
+`)
+  await waitForCondition(win, "document.querySelector('[data-research-panel=\"true\"]')", 'research panel')
+  await waitForCondition(win, "document.querySelector('[data-research-evidence-id=\"1\"]')", 'research evidence audit row')
+  await win.webContents.executeJavaScript(`
+(() => {
+  const panel = document.querySelector('[data-research-panel="true"]')
+  const evidence = document.querySelector('[data-research-evidence-id="1"]')
+  if (!panel || !evidence) return
+  const panelRect = panel.getBoundingClientRect()
+  const evidenceRect = evidence.getBoundingClientRect()
+  panel.scrollTop += evidenceRect.top - panelRect.top - Math.max(24, (panelRect.height - evidenceRect.height) / 2)
+})()
+`)
+  await wait(300)
+}
+
+async function collectResearchAuditReport(win) {
+  return win.webContents.executeJavaScript(`
+(() => {
+  const panel = document.querySelector('[data-research-panel="true"]')
+  const evidence = document.querySelector('[data-research-evidence-id="1"]')
+  const rank = document.querySelector('[data-research-evidence-rank="true"]')
+  const quality = document.querySelector('[data-research-evidence-quality="true"]')
+  const duplicates = document.querySelector('[data-research-evidence-duplicates="true"]')
+  const trust = document.querySelector('[data-research-evidence-trust="true"]')
+  const merged = document.querySelector('[data-research-evidence-merged="true"]')
+  const panelRect = panel ? panel.getBoundingClientRect() : null
+  const evidenceRect = evidence ? evidence.getBoundingClientRect() : null
+  return {
+    ok: Boolean(panel && evidence && rank && quality && duplicates && trust && merged),
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    panelRect: panelRect ? {
+      left: Math.round(panelRect.left),
+      top: Math.round(panelRect.top),
+      right: Math.round(panelRect.right),
+      bottom: Math.round(panelRect.bottom),
+      width: Math.round(panelRect.width),
+      height: Math.round(panelRect.height),
+    } : null,
+    evidenceRect: evidenceRect ? {
+      left: Math.round(evidenceRect.left),
+      top: Math.round(evidenceRect.top),
+      right: Math.round(evidenceRect.right),
+      bottom: Math.round(evidenceRect.bottom),
+      width: Math.round(evidenceRect.width),
+      height: Math.round(evidenceRect.height),
+    } : null,
+    rankText: String(rank?.textContent || ''),
+    qualityText: String(quality?.textContent || ''),
+    duplicatesText: String(duplicates?.textContent || ''),
+    trustText: String(trust?.textContent || ''),
+    mergedText: String(merged?.textContent || ''),
+    clipped: Boolean(evidenceRect && (evidenceRect.left < 0 || evidenceRect.right > window.innerWidth || evidenceRect.top < 0 || evidenceRect.bottom > window.innerHeight)),
+    bodyText: document.body.innerText,
+  }
+})()
+`)
+}
+
 async function runVisualCheck(apiBaseUrl) {
   fs.mkdirSync(outputDir, { recursive: true })
   app.commandLine.appendSwitch('disable-gpu')
@@ -768,6 +885,9 @@ async function runVisualCheck(apiBaseUrl) {
   await wait(500)
   const chatReport = await collectChatReport(win)
   const chatScreenshot = await capture(win, 'main-chat-after-send-400x620')
+  await switchToResearchMode(win)
+  const researchAuditReport = await collectResearchAuditReport(win)
+  const researchScreenshot = await capture(win, 'main-research-evidence-audit-400x620')
 
   const report = {
     visualUrl,
@@ -776,10 +896,12 @@ async function runVisualCheck(apiBaseUrl) {
     topControlsReport,
     islandReport,
     chatReport,
+    researchAuditReport,
     screenshots: {
       topControls: topControlsScreenshot,
       island: islandScreenshot,
       chat: chatScreenshot,
+      research: researchScreenshot,
     },
   }
   const reportPath = path.join(outputDir, 'chat-ui-visual-report.json')
@@ -833,6 +955,25 @@ async function runVisualCheck(apiBaseUrl) {
   }
   if (chatReport.assistantBottomGap < 0 || chatReport.assistantBottomGap > 22) {
     failures.push(`assistant reply bottom gap is ${chatReport.assistantBottomGap}px, expected padding-only spacing`)
+  }
+  if (!researchAuditReport.ok) {
+    failures.push('research evidence audit metadata did not render')
+  } else {
+    if (researchAuditReport.clipped) {
+      failures.push('research evidence audit row is clipped by the window')
+    }
+    if (researchAuditReport.rankText !== '#1') {
+      failures.push(`research evidence rank text is ${researchAuditReport.rankText}`)
+    }
+    if (!researchAuditReport.qualityText.includes('88.5')) {
+      failures.push(`research evidence quality text is ${researchAuditReport.qualityText}`)
+    }
+    if (!researchAuditReport.duplicatesText.includes('2')) {
+      failures.push(`research evidence duplicate text is ${researchAuditReport.duplicatesText}`)
+    }
+    if (!researchAuditReport.trustText.includes('untrusted')) {
+      failures.push(`research evidence trust text is ${researchAuditReport.trustText}`)
+    }
   }
 
   console.log(JSON.stringify({ ok: failures.length === 0, reportPath, report }, null, 2))

@@ -71,7 +71,26 @@ function getPlanSteps(task: RuntimeResearchTask): Array<{ id: string; title: str
     .filter((item): item is { id: string; title: string; status: string } => Boolean(item))
 }
 
-function getEvidenceItems(task: RuntimeResearchTask): Array<{ id: string; title: string; source: string; url: string }> {
+interface EvidenceAuditItem {
+  id: string
+  sourceId: string
+  title: string
+  source: string
+  url: string
+  rank: number | null
+  qualityScore: number | null
+  duplicateCount: number
+  mergedSourceIds: string[]
+  trust: string
+  verificationStatus: string
+}
+
+function numberOrNull(value: unknown): number | null {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function getEvidenceItems(task: RuntimeResearchTask): EvidenceAuditItem[] {
   return (Array.isArray(task.evidence_ledger) ? task.evidence_ledger : [])
     .map((item, index) => {
       if (!item || typeof item !== 'object') {
@@ -79,14 +98,26 @@ function getEvidenceItems(task: RuntimeResearchTask): Array<{ id: string; title:
       }
       const evidence = item as Record<string, unknown>
       const title = String(evidence.title || evidence.source_title || evidence.name || evidence.url || evidence.source_id || `来源 ${index + 1}`)
+      const sourceId = String(evidence.source_id || evidence.evidence_id || index + 1)
+      const duplicateCount = Math.max(1, Number(evidence.duplicate_count || 1) || 1)
+      const mergedSourceIds = Array.isArray(evidence.merged_source_ids)
+        ? evidence.merged_source_ids.map((value) => String(value || '').trim()).filter(Boolean)
+        : []
       return {
         id: String(evidence.evidence_id || evidence.source_id || evidence.url || index),
+        sourceId,
         title,
         source: String(evidence.source_type || evidence.adapter || evidence.kind || '来源'),
         url: String(evidence.url || evidence.href || ''),
+        rank: numberOrNull(evidence.rank),
+        qualityScore: numberOrNull(evidence.quality_score),
+        duplicateCount,
+        mergedSourceIds,
+        trust: String(evidence.source_trust || evidence.trusted_for || ''),
+        verificationStatus: String(evidence.verification_status || ''),
       }
     })
-    .filter((item): item is { id: string; title: string; source: string; url: string } => Boolean(item))
+    .filter((item): item is EvidenceAuditItem => Boolean(item))
 }
 
 function stageLabel(stage: string): string {
@@ -165,6 +196,13 @@ function formatBytes(value: number): string {
     return `${(value / 1024).toFixed(1)} KB`
   }
   return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatQualityScore(value: number | null): string {
+  if (value === null) {
+    return ''
+  }
+  return Number.isInteger(value) ? String(value) : value.toFixed(1)
 }
 
 function formatPlan(plan: Record<string, unknown>): string {
@@ -497,9 +535,19 @@ export default function ResearchPanel({
             <div className={styles.evidenceList} data-research-evidence-list="true">
               <div className={styles.sectionLabel}>来源</div>
               {evidenceItems.slice(0, 5).map((item) => (
-                <div className={styles.evidenceItem} key={item.id}>
-                  <span>{item.title}</span>
+                <div className={styles.evidenceItem} key={item.id} data-research-evidence-id={item.sourceId}>
+                  <div className={styles.evidenceTitleRow}>
+                    <span data-research-evidence-rank="true">{item.rank ? `#${item.rank}` : `[${item.sourceId}]`}</span>
+                    <strong>{item.title}</strong>
+                  </div>
                   <small>{item.source}{item.url ? ` · ${item.url}` : ''}</small>
+                  <div className={styles.evidenceBadges}>
+                    {item.qualityScore !== null ? <span data-research-evidence-quality="true">质量 {formatQualityScore(item.qualityScore)}</span> : null}
+                    {item.duplicateCount > 1 ? <span data-research-evidence-duplicates="true">合并 {item.duplicateCount}</span> : null}
+                    {item.verificationStatus ? <span data-research-evidence-status="true">{item.verificationStatus}</span> : null}
+                    {item.trust ? <span data-research-evidence-trust="true">{item.trust}</span> : null}
+                    {item.mergedSourceIds.length > 1 ? <span data-research-evidence-merged="true">源 {item.mergedSourceIds.join(',')}</span> : null}
+                  </div>
                 </div>
               ))}
             </div>

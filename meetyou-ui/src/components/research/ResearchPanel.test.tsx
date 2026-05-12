@@ -21,9 +21,16 @@ const task: RuntimeResearchTask = {
   evidence_ledger: [
     {
       evidence_id: 'ev_1',
+      source_id: '1',
+      rank: 1,
+      quality_score: 82.5,
+      duplicate_count: 2,
+      merged_source_ids: ['9', '1'],
       title: 'Conversation trees',
       source_type: 'project_source',
       url: 'https://example.test/source',
+      verification_status: 'project_source_snapshot',
+      source_trust: 'untrusted',
     },
   ],
   output_format: 'markdown',
@@ -122,6 +129,16 @@ describe('ResearchPanel', () => {
     expect(markup).toContain('Durable conversation history')
     expect(markup).toContain('data-research-download="true"')
     expect(markup).toContain('data-research-evidence-list="true"')
+    expect(markup).toContain('data-research-evidence-rank="true"')
+    expect(markup).toContain('#1')
+    expect(markup).toContain('data-research-evidence-quality="true"')
+    expect(markup).toContain('质量 82.5')
+    expect(markup).toContain('data-research-evidence-duplicates="true"')
+    expect(markup).toContain('合并 2')
+    expect(markup).toContain('data-research-evidence-trust="true"')
+    expect(markup).toContain('untrusted')
+    expect(markup).toContain('data-research-evidence-merged="true"')
+    expect(markup).toContain('源 9,1')
     expect(markup).toContain('Conversation versions should be durable.')
     expect(markup).toContain('data-research-progress-stage="true"')
     expect(markup).toContain('正在收集研究证据。')
