@@ -82,6 +82,35 @@ def _compact_endpoint_payload(endpoint: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _endpoint_inventory_summary(compact: list[dict[str, Any]]) -> dict[str, Any]:
+    ordered = sorted(
+        compact,
+        key=lambda item: (
+            0 if item.get("executable_tools") else 1,
+            str(item.get("provider_type") or "").lower(),
+            str(item.get("endpoint_id") or "").lower(),
+        ),
+    )
+    lines: list[str] = []
+    tools_by_endpoint: dict[str, list[str]] = {}
+    for item in ordered:
+        endpoint_id = str(item.get("endpoint_id") or "")
+        if not endpoint_id:
+            continue
+        tools = _string_list(item.get("executable_tools") or [])
+        tools_by_endpoint[endpoint_id] = tools
+        tool_text = ", ".join(tools) if tools else "(none)"
+        lines.append(
+            f"{endpoint_id} | provider={item.get('provider_type') or ''} | status={item.get('status') or ''} | tools={tool_text}"
+        )
+    return {
+        "tool_target_lines": lines,
+        "executable_tools_by_endpoint": tools_by_endpoint,
+        "endpoint_ids": [item["endpoint_id"] for item in ordered if item.get("endpoint_id")],
+        "compact_endpoints": ordered,
+    }
+
+
 def _address_payload(address, *, endpoint=None, preference=None) -> dict[str, Any]:
     endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
     return {
@@ -320,13 +349,19 @@ class EndpointTools:
                 include_capabilities=include_tools,
             )
             results.append(payload)
-        results.sort(key=lambda item: (str(item.get("display_name") or "").lower(), str(item.get("endpoint_id") or "")))
+        results.sort(
+            key=lambda item: (
+                0 if (item.get("executable_tools") or item.get("tool_keys")) else 1,
+                str(item.get("display_name") or "").lower(),
+                str(item.get("endpoint_id") or ""),
+            )
+        )
         compact = [_compact_endpoint_payload(item) for item in results]
+        summary = _endpoint_inventory_summary(compact)
         return {
             "ok": True,
             "count": len(results),
-            "endpoint_ids": [item["endpoint_id"] for item in compact if item["endpoint_id"]],
-            "compact_endpoints": compact,
+            **summary,
             "endpoints": results,
         }
 
@@ -377,13 +412,13 @@ class EndpointTools:
             )
         )
         compact = [_compact_endpoint_payload(item) for item in targets]
+        summary = _endpoint_inventory_summary(compact)
         return {
             "ok": True,
             "count": len(targets),
             "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or ""),
             "tool_key": normalized_tool_key,
-            "endpoint_ids": [item["endpoint_id"] for item in compact if item["endpoint_id"]],
-            "compact_endpoints": compact,
+            **summary,
             "endpoints": targets,
         }
 

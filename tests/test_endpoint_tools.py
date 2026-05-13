@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
 
@@ -232,6 +233,14 @@ class EndpointToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("desktop.main.executor", endpoint_ids)
         self.assertIn("raspberry.pi.executor", endpoint_ids)
         self.assertIn("raspberry.pi.executor", payload["endpoint_ids"])
+        self.assertIn(
+            "raspberry.pi.executor | provider=raspberry_pi | status=online | tools=sensor.read",
+            payload["tool_target_lines"],
+        )
+        self.assertEqual(payload["executable_tools_by_endpoint"]["raspberry.pi.executor"], ["sensor.read"])
+        rendered = json.dumps(payload, ensure_ascii=False)
+        self.assertLess(rendered.index("tool_target_lines"), rendered.index("compact_endpoints"))
+        self.assertLess(rendered.index("raspberry.pi.executor | provider=raspberry_pi"), 512)
         compact_raspberry = next(item for item in payload["compact_endpoints"] if item["endpoint_id"] == "raspberry.pi.executor")
         self.assertEqual(compact_raspberry["executable_tools"], ["sensor.read"])
         raspberry_payload = next(item for item in payload["endpoints"] if item["endpoint_id"] == "raspberry.pi.executor")
