@@ -231,6 +231,9 @@ class EndpointToolsTests(unittest.IsolatedAsyncioTestCase):
         endpoint_ids = {item["endpoint_id"] for item in payload["endpoints"]}
         self.assertIn("desktop.main.executor", endpoint_ids)
         self.assertIn("raspberry.pi.executor", endpoint_ids)
+        self.assertIn("raspberry.pi.executor", payload["endpoint_ids"])
+        compact_raspberry = next(item for item in payload["compact_endpoints"] if item["endpoint_id"] == "raspberry.pi.executor")
+        self.assertEqual(compact_raspberry["executable_tools"], ["sensor.read"])
         raspberry_payload = next(item for item in payload["endpoints"] if item["endpoint_id"] == "raspberry.pi.executor")
         self.assertEqual(raspberry_payload["workspace_ids"], ["personal", "legacy-lab"])
         self.assertEqual(raspberry_payload["status"], "online")
@@ -238,6 +241,7 @@ class EndpointToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raspberry_payload["capability_count"], 1)
 
         active_payload = await tools.list_active_endpoints(workspace_id="personal", include_tools=True)
+        self.assertIn("raspberry.pi.executor", active_payload["endpoint_ids"])
         active_endpoint_ids = {item["endpoint_id"] for item in active_payload["endpoints"]}
         self.assertIn("raspberry.pi.executor", active_endpoint_ids)
 

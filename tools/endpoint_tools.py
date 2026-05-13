@@ -70,6 +70,18 @@ def _workspace_matches(workspace_key: str, workspace_ids: list[str]) -> bool:
     return normalized in workspace_ids or "*" in workspace_ids
 
 
+def _compact_endpoint_payload(endpoint: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "endpoint_id": str(endpoint.get("endpoint_id") or ""),
+        "display_name": str(endpoint.get("display_name") or ""),
+        "provider_type": str(endpoint.get("provider_type") or ""),
+        "status": str(endpoint.get("status") or ""),
+        "connected": bool(endpoint.get("connected")),
+        "workspace_ids": _string_list(endpoint.get("workspace_ids") or []),
+        "executable_tools": _string_list(endpoint.get("executable_tools") or endpoint.get("tool_keys") or []),
+    }
+
+
 def _address_payload(address, *, endpoint=None, preference=None) -> dict[str, Any]:
     endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
     return {
@@ -309,7 +321,14 @@ class EndpointTools:
             )
             results.append(payload)
         results.sort(key=lambda item: (str(item.get("display_name") or "").lower(), str(item.get("endpoint_id") or "")))
-        return {"ok": True, "count": len(results), "endpoints": results}
+        compact = [_compact_endpoint_payload(item) for item in results]
+        return {
+            "ok": True,
+            "count": len(results),
+            "endpoint_ids": [item["endpoint_id"] for item in compact if item["endpoint_id"]],
+            "compact_endpoints": compact,
+            "endpoints": results,
+        }
 
     async def list_endpoint_tool_targets(
         self,
@@ -357,11 +376,14 @@ class EndpointTools:
                 str(item.get("endpoint_id") or ""),
             )
         )
+        compact = [_compact_endpoint_payload(item) for item in targets]
         return {
             "ok": True,
             "count": len(targets),
             "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or ""),
             "tool_key": normalized_tool_key,
+            "endpoint_ids": [item["endpoint_id"] for item in compact if item["endpoint_id"]],
+            "compact_endpoints": compact,
             "endpoints": targets,
         }
 
