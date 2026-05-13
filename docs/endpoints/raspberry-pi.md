@@ -97,7 +97,7 @@ python -m endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.main --config use
 Install the package for CLI use:
 
 ```bash
-python -m pip install -e endpoint_providers/raspberry_pi
+python -m pip install -e 'endpoint_providers/raspberry_pi[gpio]'
 meetyou-rpi-endpoint --config user/rpi_endpoint.json
 ```
 
@@ -126,12 +126,14 @@ Environment overrides:
 - `MEETYOU_RPI_ENDPOINT_TOKEN`
 - `MEETYOU_RPI_SAFE_SHELL_ENABLED`
 - `MEETYOU_RPI_FAKE_GPIO`
+- `MEETYOU_RPI_GPIO_PIN_FACTORY`, defaults to `lgpio` on Raspberry Pi hardware
 
 ## Raspberry Pi Deployment
 
 On Raspberry Pi OS / Linux ARM64:
 
 ```bash
+sudo apt install -y python3-gpiozero python3-lgpio
 sudo REPO_DIR=/opt/meetyou/MeetYou bash scripts/rpi/install-systemd.sh
 sudo nano /etc/meetyou/rpi-endpoint.json
 sudo nano /etc/meetyou/rpi-endpoint.env
@@ -146,6 +148,14 @@ Smoke test before starting systemd:
 bash scripts/rpi/smoke-test.sh
 ```
 
+Raspberry Pi 5 GPIO must use the `lgpio` pin factory. `/etc/meetyou/rpi-endpoint.env` should include:
+
+```bash
+MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio
+```
+
+If an existing deployment reports `Cannot determine SOC peripheral base address`, the process is using a legacy GPIO backend. Install `python3-lgpio` / `lgpio`, ensure the venv can import it, then restart `meetyou-rpi-endpoint`.
+
 Remove the systemd unit without deleting config/state:
 
 ```bash
@@ -154,7 +164,7 @@ sudo bash scripts/rpi/uninstall-systemd.sh
 
 ## Known Limitations
 
-- Real Raspberry Pi GPIO has not been validated on physical hardware in this local Windows worktree.
+- Real Raspberry Pi GPIO has not been validated on physical hardware in this local Windows worktree. Pi 5 deployments should verify `lgpio` access with the dedicated service user.
 - `rpi.shell.safe_exec` is disabled by default and only supports exact allowlisted argv templates.
 - Camera, audio, display, sensor streaming, and provider-owned human-visible delivery surfaces are intentionally not implemented in this MVP.
 - Operation idempotency is process-memory only; reconnect or process restart loses the cache.

@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
+from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.capabilities.base import CapabilityError
+from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.capabilities.gpio import (
+    UnavailableGPIOBackend,
+    _select_gpio_pin_factory_name,
+)
 from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.config import (
     RpiEndpointConfig,
     SecurityConfig,
@@ -61,7 +67,26 @@ class GPIOTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(write_result.payload["backend"], "fake")
         self.assertTrue(read_result.payload["value"])
 
+    async def test_unavailable_backend_preserves_reason(self):
+        backend = UnavailableGPIOBackend(code="gpio_lgpio_unavailable", message="install lgpio")
+
+        with self.assertRaises(CapabilityError) as raised:
+            await backend.write(17, True)
+
+        self.assertEqual(raised.exception.code, "gpio_lgpio_unavailable")
+        self.assertIn("install lgpio", raised.exception.message)
+
+    def test_gpio_pin_factory_env_override(self):
+        with patch.dict("os.environ", {"MEETYOU_RPI_GPIO_PIN_FACTORY": "lgpio"}, clear=True):
+            self.assertEqual(_select_gpio_pin_factory_name(), "lgpio")
+
+    def test_gpio_pin_factory_defaults_to_lgpio_on_raspberry_pi(self):
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.capabilities.gpio._looks_like_raspberry_pi",
+            return_value=True,
+        ):
+            self.assertEqual(_select_gpio_pin_factory_name(), "lgpio")
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -70,3 +70,30 @@ Remaining manual Raspberry Pi validation:
 - Connect to a real Core `/endpoint/ws` with a real token.
 - Confirm Core records the `rpi.<endpoint_id>.executor` EndpointCapability snapshot and routes a real Operation through ToolRouter/ExecutionTarget.
 - Review systemd journal redaction with real deployment logs.
+
+## 2026-05-13 Raspberry Pi 5 GPIO Backend Fix
+
+Issue observed on hardware:
+
+- `Cannot determine SOC peripheral base address` during `rpi.gpio.write`.
+
+Resolution:
+
+- Default GPIO backend selection now uses gpiozero `lgpio` on Raspberry Pi hardware.
+- Added `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio` deployment guidance and systemd env template comment.
+- Updated install script to create the venv with `--system-site-packages` and install the package with GPIO extras.
+- GPIO backend failures now return an explicit `gpio_backend_error` / `gpio_lgpio_*` error with remediation guidance instead of surfacing only the low-level SOC message.
+
+Validation:
+
+```bash
+python -m pytest endpoint_providers/raspberry_pi/tests -q
+```
+
+Result: `21 passed`.
+
+```bash
+python -m pytest tests/test_rpi_core_integration.py -q
+```
+
+Result: `6 passed`.

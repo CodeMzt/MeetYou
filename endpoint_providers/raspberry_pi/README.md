@@ -22,7 +22,7 @@ python -m endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.main --config use
 Installable CLI form after editable install:
 
 ```bash
-python -m pip install -e endpoint_providers/raspberry_pi
+python -m pip install -e 'endpoint_providers/raspberry_pi[gpio]'
 meetyou-rpi-endpoint --config user/rpi_endpoint.json
 ```
 
@@ -34,7 +34,7 @@ meetyou-rpi-endpoint --config user/rpi_endpoint.json
 - `rpi.gpio.write`
 - `rpi.shell.safe_exec`, disabled unless `security.safe_shell_enabled=true` and `security.safe_shell_allowlist` is non-empty
 
-GPIO uses `gpiozero` on Raspberry Pi OS when available. Local tests and simulation can use the fake GPIO backend.
+GPIO uses `gpiozero` with `lgpio` on Raspberry Pi OS. Raspberry Pi 5 must not use the legacy `RPi.GPIO`/native backend; if you see `Cannot determine SOC peripheral base address`, install `lgpio` and set `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio` in `/etc/meetyou/rpi-endpoint.env`. Local tests and simulation can use the fake GPIO backend.
 
 ## Safety
 

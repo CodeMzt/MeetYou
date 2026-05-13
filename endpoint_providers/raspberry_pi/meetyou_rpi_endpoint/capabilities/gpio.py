@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 from typing import Any
 
 from .base import (
@@ -38,45 +39,55 @@ class FakeGPIOBackend:
 
 
 class UnavailableGPIOBackend:
+    def __init__(
+        self,
+        *,
+        code: str = "gpio_unavailable",
+        message: str = "GPIO backend unavailable; install gpiozero/lgpio on Raspberry Pi OS or run with fake GPIO for tests",
+    ):
+        self.code = code
+        self.message = message
+
     async def read(self, pin: int) -> bool:
         del pin
         raise CapabilityError(
-            "gpio_unavailable",
-            "GPIO backend unavailable; install gpiozero on Raspberry Pi OS or run with fake GPIO for tests",
+            self.code,
+            self.message,
             retryable=False,
         )
 
     async def write(self, pin: int, value: bool, *, duration_ms: int | None = None) -> dict[str, Any]:
         del pin, value, duration_ms
         raise CapabilityError(
-            "gpio_unavailable",
-            "GPIO backend unavailable; install gpiozero on Raspberry Pi OS or run with fake GPIO for tests",
+            self.code,
+            self.message,
             retryable=False,
         )
 
 
 class GpioZeroBackend:
-    def __init__(self):
+    def __init__(self, *, pin_factory_name: str | None = None):
         try:
-            from gpiozero import DigitalInputDevice, DigitalOutputDevice
+            from gpiozero import Device, DigitalInputDevice, DigitalOutputDevice
         except Exception as exc:
             raise CapabilityError(
                 "gpio_backend_import_failed",
-                "gpiozero is not available in this environment",
+                "gpiozero is not available in this environment; install gpiozero and lgpio on Raspberry Pi OS",
                 retryable=False,
             ) from exc
+        self._pin_factory_name = _configure_gpiozero_pin_factory(Device, pin_factory_name)
         self._input_cls = DigitalInputDevice
         self._output_cls = DigitalOutputDevice
 
     async def read(self, pin: int) -> bool:
-        device = self._input_cls(int(pin))
+        device = self._open_input(pin)
         try:
             return bool(device.value)
         finally:
             device.close()
 
     async def write(self, pin: int, value: bool, *, duration_ms: int | None = None) -> dict[str, Any]:
-        device = self._output_cls(int(pin))
+        device = self._open_output(pin)
         normalized_value = bool(value)
         reset_performed = False
         try:
@@ -90,19 +101,31 @@ class GpioZeroBackend:
                 "value": normalized_value,
                 "duration_ms": duration_ms,
                 "reset_performed": reset_performed,
-                "backend": "gpiozero",
+                "backend": f"gpiozero:{self._pin_factory_name}",
             }
         finally:
             device.close()
+
+    def _open_input(self, pin: int):
+        try:
+            return self._input_cls(int(pin))
+        except Exception as exc:
+            raise _gpiozero_runtime_error(exc, pin=pin, factory_name=self._pin_factory_name) from exc
+
+    def _open_output(self, pin: int):
+        try:
+            return self._output_cls(int(pin))
+        except Exception as exc:
+            raise _gpiozero_runtime_error(exc, pin=pin, factory_name=self._pin_factory_name) from exc
 
 
 def build_gpio_backend(*, force_fake: bool = False):
     if force_fake or _env_truthy("MEETYOU_RPI_FAKE_GPIO"):
         return FakeGPIOBackend()
     try:
-        return GpioZeroBackend()
-    except CapabilityError:
-        return UnavailableGPIOBackend()
+        return GpioZeroBackend(pin_factory_name=_select_gpio_pin_factory_name())
+    except CapabilityError as exc:
+        return UnavailableGPIOBackend(code=exc.code, message=exc.message)
 
 
 async def handle_gpio_read(arguments: dict[str, Any], context: CapabilityContext) -> dict[str, Any]:
@@ -195,3 +218,77 @@ def build_gpio_write_capability() -> CapabilityDefinition:
 
 def _env_truthy(name: str) -> bool:
     return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _select_gpio_pin_factory_name() -> str:
+    configured = str(
+        os.environ.get("MEETYOU_RPI_GPIO_PIN_FACTORY")
+        or os.environ.get("GPIOZERO_PIN_FACTORY")
+        or ""
+    ).strip().lower()
+    if configured:
+        return configured
+    if _looks_like_raspberry_pi():
+        return "lgpio"
+    return "default"
+
+
+def _configure_gpiozero_pin_factory(Device, pin_factory_name: str | None) -> str:
+    name = str(pin_factory_name or "default").strip().lower() or "default"
+    if name in {"default", "auto"}:
+        return _pin_factory_label(getattr(Device, "pin_factory", None))
+    if name == "lgpio":
+        try:
+            from gpiozero.pins.lgpio import LGPIOFactory
+        except Exception as exc:
+            raise CapabilityError(
+                "gpio_lgpio_unavailable",
+                (
+                    "GPIO lgpio backend is unavailable; on Raspberry Pi 5 install python3-lgpio "
+                    "or pip package lgpio, then set MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio"
+                ),
+                retryable=False,
+            ) from exc
+        try:
+            Device.pin_factory = LGPIOFactory()
+        except Exception as exc:
+            raise CapabilityError(
+                "gpio_lgpio_init_failed",
+                f"GPIO lgpio backend failed to initialize: {exc}",
+                retryable=False,
+            ) from exc
+        return "lgpio"
+    raise CapabilityError(
+        "gpio_pin_factory_unsupported",
+        f"Unsupported GPIO pin factory: {name}",
+        retryable=False,
+    )
+
+
+def _gpiozero_runtime_error(exc: Exception, *, pin: int, factory_name: str) -> CapabilityError:
+    return CapabilityError(
+        "gpio_backend_error",
+        (
+            f"GPIO backend gpiozero:{factory_name} failed for BCM pin {int(pin)}: {exc}. "
+            "On Raspberry Pi 5 use lgpio: install python3-lgpio or pip package lgpio, "
+            "and set MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio."
+        ),
+        retryable=False,
+    )
+
+
+def _pin_factory_label(pin_factory) -> str:
+    if pin_factory is None:
+        return "default"
+    return pin_factory.__class__.__name__
+
+
+def _looks_like_raspberry_pi() -> bool:
+    for path in (Path("/proc/device-tree/model"), Path("/sys/firmware/devicetree/base/model")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            continue
+        if "raspberry pi" in text:
+            return True
+    return False

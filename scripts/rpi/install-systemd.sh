@@ -39,6 +39,8 @@ if [[ ! -f "${CONFIG_DIR}/rpi-endpoint.env" ]]; then
   cat >"${CONFIG_DIR}/rpi-endpoint.env" <<'ENV'
 # Set the real token before starting:
 # MEETYOU_RPI_ENDPOINT_TOKEN=
+# Raspberry Pi 5 GPIO should use lgpio instead of legacy RPi.GPIO/native backends:
+MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio
 ENV
   chown root:"${SERVICE_USER}" "${CONFIG_DIR}/rpi-endpoint.env"
   echo "Created ${CONFIG_DIR}/rpi-endpoint.env without secrets. Add MEETYOU_RPI_ENDPOINT_TOKEN manually."
@@ -47,10 +49,10 @@ else
 fi
 
 if [[ ! -d "${VENV_DIR}" ]]; then
-  python3 -m venv "${VENV_DIR}"
+  python3 -m venv --system-site-packages "${VENV_DIR}"
 fi
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-"${VENV_DIR}/bin/python" -m pip install -e "${REPO_DIR}/endpoint_providers/raspberry_pi"
+"${VENV_DIR}/bin/python" -m pip install -e "${REPO_DIR}/endpoint_providers/raspberry_pi[gpio]"
 
 cp "${REPO_DIR}/deploy/systemd/meetyou-rpi-endpoint.service" "${SERVICE_FILE}"
 systemctl daemon-reload

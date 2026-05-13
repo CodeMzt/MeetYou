@@ -37,6 +37,7 @@ This capability is still high risk. Keep it disabled until a specific Pi deploym
 - GPIO read/write validate the pin against `security.gpio_allowed_pins` before touching the backend.
 - GPIO write requires confirmation in the advertised EndpointCapability.
 - On non-Pi development machines, use fake GPIO. Do not treat fake GPIO success as hardware validation.
+- Raspberry Pi 5 must use the `lgpio` backend. Set `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`; otherwise legacy backends can fail with `Cannot determine SOC peripheral base address`.
 - GPIO may require Linux group/device permissions depending on Raspberry Pi OS setup; avoid running the endpoint as root unless a deployment explicitly justifies it.
 
 ## Filesystem And Process Policy
@@ -54,4 +55,3 @@ This capability is still high risk. Keep it disabled until a specific Pi deploym
 - Do not route through `ClientToolDispatchService`.
 - Do not treat `short_reply` as a final reply path.
 - Do not move local shell, GPIO, file, or hardware execution into Core.
-

@@ -28,6 +28,7 @@ Raspberry Pi capabilities are endpoint-local executable tools advertised through
 - Output: `{ "pin": integer, "value": boolean }`
 - Policy: rejects any pin not listed in `security.gpio_allowed_pins`.
 - Local dev: fake backend is available through `--fake-gpio` or `MEETYOU_RPI_FAKE_GPIO=1`.
+- Raspberry Pi 5: uses the `lgpio` gpiozero pin factory. Set `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`; `Cannot determine SOC peripheral base address` means a legacy GPIO backend was selected.
 
 ### `rpi.gpio.write`
 
@@ -37,6 +38,7 @@ Raspberry Pi capabilities are endpoint-local executable tools advertised through
 - Output: pin, value, duration, backend, and whether reset was performed.
 - Policy: rejects any pin not listed in `security.gpio_allowed_pins`.
 - Duration: if `duration_ms` is omitted, `security.gpio_write_default_duration_ms` is used. A duration of `0` leaves the value set until a later call changes it.
+- Raspberry Pi 5: requires `lgpio`; install `python3-lgpio` or pip package `lgpio` and keep the service env set to `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`.
 
 ## Disabled By Default
 
@@ -78,4 +80,3 @@ These are intentionally not implemented in the MVP:
 - provider-owned human-visible delivery surfaces
 
 Add future capabilities only through EndpointCapability snapshots and Core ToolRouter/ExecutionTarget routing.
-
