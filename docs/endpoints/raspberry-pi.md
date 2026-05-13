@@ -142,6 +142,8 @@ sudo systemctl status meetyou-rpi-endpoint
 journalctl -u meetyou-rpi-endpoint -f
 ```
 
+A healthy startup shows `hello acknowledged` followed by `ready: {'registered_capability_count': 4}`. That confirms Core accepted the endpoint and capability snapshot.
+
 Smoke test before starting systemd:
 
 ```bash
@@ -207,7 +209,7 @@ sudo bash scripts/rpi/uninstall-systemd.sh
 
 ## Known Limitations
 
-- Real Raspberry Pi GPIO has not been validated on physical hardware in this local Windows worktree. Pi 5 deployments should verify `lgpio` access with the dedicated service user.
+- Real Raspberry Pi 5 endpoint connection and GPIO write have been manually validated once. Each new circuit, pin allowlist, OS image, and Core deployment still needs local smoke validation.
 - `rpi.shell.safe_exec` is disabled by default and only supports exact allowlisted argv templates.
 - Camera, audio, display, sensor streaming, and provider-owned human-visible delivery surfaces are intentionally not implemented in this MVP.
 - Operation idempotency is process-memory only; reconnect or process restart loses the cache.

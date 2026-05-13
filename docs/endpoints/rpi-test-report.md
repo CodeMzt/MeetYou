@@ -30,6 +30,23 @@ python -m pytest tests/test_rpi_core_integration.py -q
 
 Result: `6 passed`.
 
+## 2026-05-13 Manual Raspberry Pi 5 Deployment Success
+
+Manual hardware deployment reached a working state on Raspberry Pi 5:
+
+- Pi endpoint connected outward to Core `/endpoint/ws`.
+- Core acknowledged `rpi.raspberry-pi-dev.executor`.
+- Core accepted the capability snapshot with 4 registered capabilities.
+- `rpi.gpio.write` progressed through the deployment blockers and completed after `lgpio`, working directory, and `/dev/gpiochip*` permissions were fixed.
+
+Operational lessons now captured in docs and `AGENTS.md`:
+
+- Token key on the Pi is `MEETYOU_RPI_ENDPOINT_TOKEN`.
+- Pi 5 GPIO requires `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`.
+- `lgpio` creates `.lgd-*` files in the process working directory; use `/var/lib/meetyou-rpi`, not `/opt/meetyou/MeetYou`.
+- The service user must have `gpio` group access for `/dev/gpiochip*`.
+- GPIO capability pins are BCM numbers.
+
 ## 2026-05-13 Raspberry Pi GPIO Device Permission Fix
 
 Issue observed on hardware:

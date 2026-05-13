@@ -29,6 +29,7 @@ Raspberry Pi capabilities are endpoint-local executable tools advertised through
 - Policy: rejects any pin not listed in `security.gpio_allowed_pins`.
 - Local dev: fake backend is available through `--fake-gpio` or `MEETYOU_RPI_FAKE_GPIO=1`.
 - Raspberry Pi 5: uses the `lgpio` gpiozero pin factory. Set `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`; `Cannot determine SOC peripheral base address` means a legacy GPIO backend was selected.
+- Pin numbering: all GPIO capability arguments use BCM numbers, not physical header pin numbers. Physical pin 21 is BCM 9; BCM 21 is physical pin 40.
 
 ### `rpi.gpio.write`
 
@@ -39,6 +40,7 @@ Raspberry Pi capabilities are endpoint-local executable tools advertised through
 - Policy: rejects any pin not listed in `security.gpio_allowed_pins`.
 - Duration: if `duration_ms` is omitted, `security.gpio_write_default_duration_ms` is used. A duration of `0` leaves the value set until a later call changes it.
 - Raspberry Pi 5: requires `lgpio`; install `python3-lgpio` or pip package `lgpio` and keep the service env set to `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`.
+- Device access: `can not open gpiochip` means the service user lacks `/dev/gpiochip*` permission. The deployment path adds `meetyou-rpi` to the `gpio` group and the systemd unit uses `SupplementaryGroups=gpio`.
 
 ## Disabled By Default
 

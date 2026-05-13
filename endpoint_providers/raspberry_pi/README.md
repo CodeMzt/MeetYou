@@ -36,6 +36,14 @@ meetyou-rpi-endpoint --config user/rpi_endpoint.json
 
 GPIO uses `gpiozero` with `lgpio` on Raspberry Pi OS. Raspberry Pi 5 must not use the legacy `RPi.GPIO`/native backend; if you see `Cannot determine SOC peripheral base address`, install `lgpio` and set `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio` in `/etc/meetyou/rpi-endpoint.env`. Local tests and simulation can use the fake GPIO backend.
 
+## Raspberry Pi 5 deployment notes
+
+- Token env key on the Pi: `MEETYOU_RPI_ENDPOINT_TOKEN`.
+- GPIO env key on the Pi: `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`.
+- systemd runs as `meetyou-rpi` with `SupplementaryGroups=gpio`.
+- `WorkingDirectory` and `TMPDIR` must stay under `/var/lib/meetyou-rpi`; `lgpio` creates `.lgd-*` runtime files and should not write into `/opt/meetyou/MeetYou`.
+- GPIO pins are BCM numbers. Physical header pin 21 is BCM 9; BCM 21 is physical pin 40.
+
 ## Safety
 
 The safe shell capability never accepts an arbitrary shell string and never uses `shell=True`. It runs only exact allowlisted argv templates inside the configured sandbox directory. GPIO read/write rejects pins outside `security.gpio_allowed_pins`.
