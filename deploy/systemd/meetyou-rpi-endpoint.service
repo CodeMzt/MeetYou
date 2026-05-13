@@ -7,9 +7,10 @@ Wants=network-online.target
 Type=simple
 User=meetyou-rpi
 Group=meetyou-rpi
-WorkingDirectory=/opt/meetyou/MeetYou
+WorkingDirectory=/var/lib/meetyou-rpi
 EnvironmentFile=/etc/meetyou/rpi-endpoint.env
 Environment=PYTHONPATH=/opt/meetyou/MeetYou
+Environment=TMPDIR=/var/lib/meetyou-rpi
 ExecStart=/opt/meetyou/MeetYou/.venv-rpi/bin/python -m meetyou_rpi_endpoint.main --config /etc/meetyou/rpi-endpoint.json
 Restart=always
 RestartSec=5
@@ -21,4 +22,3 @@ ReadWritePaths=/var/lib/meetyou-rpi
 
 [Install]
 WantedBy=multi-user.target
-

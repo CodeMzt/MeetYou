@@ -30,6 +30,17 @@ python -m pytest tests/test_rpi_core_integration.py -q
 
 Result: `6 passed`.
 
+## 2026-05-13 Raspberry Pi 5 lgpio Working Directory Fix
+
+Issue observed on hardware:
+
+- `xCreatePipe: Can't set permissions ... /opt/meetyou/MeetYou/.lgd-nfy0` at service startup.
+
+Resolution:
+
+- The systemd unit now uses `WorkingDirectory=/var/lib/meetyou-rpi` and `TMPDIR=/var/lib/meetyou-rpi`.
+- This keeps `lgpio` notification pipe files in the writable state directory instead of the protected application checkout under `/opt/meetyou/MeetYou`.
+
 ```bash
 python -m pytest tests/test_endpoint_tool_protocol.py tests/test_endpoint_provider_protocols.py tests/test_endpoint_protocol_v4.py tests/test_tool_router_v4.py tests/test_rpi_core_integration.py -q
 ```

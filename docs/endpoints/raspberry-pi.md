@@ -156,6 +156,8 @@ MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio
 
 If an existing deployment reports `Cannot determine SOC peripheral base address`, the process is using a legacy GPIO backend. Install `python3-lgpio` / `lgpio`, ensure the venv can import it, then restart `meetyou-rpi-endpoint`.
 
+The systemd unit runs with `WorkingDirectory=/var/lib/meetyou-rpi` and `TMPDIR=/var/lib/meetyou-rpi` because `lgpio` creates short-lived `.lgd-*` notification files in the process working directory. Keep runtime files out of `/opt/meetyou/MeetYou`, which is treated as application code and protected read-only by systemd.
+
 Remove the systemd unit without deleting config/state:
 
 ```bash
