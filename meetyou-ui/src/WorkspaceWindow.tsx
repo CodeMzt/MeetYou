@@ -1299,8 +1299,8 @@ function EndpointInspector({
         ))}
       </NodeList>
 
-      <NodeList title="Capabilities" empty="这个 Endpoint 没有上报可执行工具">
-        {endpoint.executable_tools.slice(0, 18).map((tool) => (
+      <NodeList title={`Capabilities (${endpoint.executable_tools.length})`} empty="这个 Endpoint 没有上报可执行工具">
+        {endpoint.executable_tools.map((tool) => (
           <span key={tool} className={styles.capabilityChip}>{tool}</span>
         ))}
       </NodeList>

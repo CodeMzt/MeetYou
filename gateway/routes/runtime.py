@@ -169,6 +169,43 @@ def _project_public_id(domain, project_row_id) -> str:
     return str(getattr(project, "project_id", "") or "") if project is not None else ""
 
 
+def _workspace_ids_for_endpoint(domain, endpoint) -> list[str]:
+    workspace_ids: list[str] = []
+    membership_service = getattr(domain.services, "endpoint_workspace_membership", None)
+    workspace_service = getattr(domain.services, "workspace", None)
+    if membership_service is not None and workspace_service is not None:
+        try:
+            memberships = membership_service.list_for_endpoint(endpoint_row_id=getattr(endpoint, "id", None))
+        except Exception:
+            memberships = []
+        for membership in memberships or []:
+            try:
+                workspace = workspace_service.get_by_id(getattr(membership, "workspace_id", None))
+            except Exception:
+                workspace = None
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+            if workspace_id and workspace_id not in workspace_ids:
+                workspace_ids.append(workspace_id)
+    for item in (getattr(endpoint, "workspace_scope", []) or []):
+        workspace_id = str(item or "").strip()
+        if workspace_id and workspace_id not in workspace_ids:
+            workspace_ids.append(workspace_id)
+    return workspace_ids
+
+
+def _workspace_matches_endpoint(workspace_id: str, workspace_ids: list[str]) -> bool:
+    normalized = str(workspace_id or "").strip()
+    if not normalized:
+        return True
+    return normalized in workspace_ids or "*" in workspace_ids
+
+
+def _capability_field(capability, key: str, default: Any = "") -> Any:
+    if isinstance(capability, dict):
+        return capability.get(key, default)
+    return getattr(capability, key, default)
+
+
 def _thread_response(thread, workspace_id: str, project_id: str = "") -> RuntimeThreadResponse:
     return RuntimeThreadResponse(
         thread_id=thread.thread_id,
@@ -720,17 +757,21 @@ def build_runtime_router(gateway) -> APIRouter:
 
     @router.get("/workspaces/{workspace_id}/endpoints", response_model=list[EndpointAvailableResponse])
     async def list_workspace_endpoints(workspace_id: str, request: Request, include_tools: bool = True):
-        del include_tools
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         endpoints = []
         connected = await gateway.endpoint_ws_manager.connected_endpoint_ids()
         for endpoint in domain.services.endpoint.list_all():
-            scope = [str(item) for item in (getattr(endpoint, "workspace_scope", []) or [])]
-            if workspace_id not in scope and "*" not in scope:
+            scope = _workspace_ids_for_endpoint(domain, endpoint)
+            if not _workspace_matches_endpoint(workspace_id, scope):
                 continue
             meta = dict(getattr(endpoint, "meta", {}) or {})
             is_connected = endpoint.endpoint_id in connected
+            executable_tools = [
+                str(_capability_field(capability, "tool_key", "") or "")
+                for capability in domain.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)
+                if _capability_field(capability, "enabled", True) and str(_capability_field(capability, "tool_key", "") or "").strip()
+            ] if include_tools else []
             endpoints.append(
                 EndpointAvailableResponse(
                     endpoint_id=endpoint.endpoint_id,
@@ -741,11 +782,7 @@ def build_runtime_router(gateway) -> APIRouter:
                     workspace_ids=scope,
                     transport_profile=endpoint.transport_type,
                     available_tools=[],
-                    executable_tools=[
-                        capability.tool_key
-                        for capability in domain.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)
-                        if getattr(capability, "enabled", True)
-                    ],
+                    executable_tools=executable_tools,
                 )
             )
         return endpoints

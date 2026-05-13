@@ -170,7 +170,9 @@ export default function ChatInput({
         <textarea
           ref={textareaRef}
           className={styles.textarea}
-          placeholder={inputPlaceholder}
+          placeholder={preferredMode === 'research' && connected && !confirmRequest && !pendingHumanInput && !isBusy && runtimeSnapshot?.status !== 'tool_calling'
+            ? '输入研究题目，助手会先生成计划供你确认...'
+            : inputPlaceholder}
           value={inputVal}
           onChange={(e) => setInputVal(e.target.value)}
           onKeyDown={handleKeyDown}

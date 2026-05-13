@@ -526,6 +526,10 @@
               "type": "string",
               "description": "Optional Project public id for list filtering."
             },
+            "thread_id": {
+              "type": "string",
+              "description": "Optional Thread public id for list filtering. Defaults to the current routed thread when available."
+            },
             "status": {
               "type": "string",
               "description": "Optional explicit status for update actions."

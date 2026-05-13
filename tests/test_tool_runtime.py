@@ -488,6 +488,7 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(schemas["create_research_task"]["parameters"]["required"], ["topic"])
         self.assertIn("source_policy", create_properties)
         self.assertIn("derived_formats", create_properties["source_policy"]["description"])
+        self.assertIn("thread_id", manage_properties)
         self.assertIn("run", manage_properties["action"]["enum"])
         self.assertIn("cancel", manage_properties["action"]["enum"])
         self.assertIn("report_markdown", manage_properties)

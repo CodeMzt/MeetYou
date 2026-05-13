@@ -18,6 +18,7 @@ class _FakeEndpointWsManager:
                 "updated_at": "2026-04-26T00:00:01Z",
             }
         ]
+        self._connected_ids = {"desktop.main.executor"}
 
     async def snapshot(self, **filters):
         rows = [dict(item) for item in self._snapshots]
@@ -28,7 +29,7 @@ class _FakeEndpointWsManager:
         return rows
 
     async def connected_endpoint_ids(self):
-        return {str(item["endpoint_id"]) for item in self._snapshots}
+        return set(self._connected_ids)
 
     async def publish_notice(self, *, target_endpoint_id: str, payload: dict) -> int:
         self.notices.append({"target_endpoint_id": target_endpoint_id, "payload": dict(payload)})
@@ -44,26 +45,55 @@ class _FakeEndpointService:
             endpoint_type="desktop_executor",
             provider_type="desktop",
             transport_type="websocket",
-            status="online",
+            status="registered",
             workspace_scope=["personal", "desktop-main"],
             meta={"display_name": "Desktop Main"},
             updated_at=None,
         )
-        self.capabilities = [
+        self.endpoints = [self.endpoint]
+        self.capabilities_by_endpoint = {
+            self.endpoint.id: [
+                SimpleNamespace(
+                    capability_id="endpoint.desktop.main.executor.shell.exec",
+                    tool_key="shell.exec",
+                    risk_level="system",
+                    requires_confirmation=True,
+                    enabled=True,
+                )
+            ]
+        }
+        self.memberships_by_endpoint = {self.endpoint.id: [SimpleNamespace(workspace_id=self.workspace.id)]}
+
+    def get_by_endpoint_id(self, endpoint_id: str):
+        return next((endpoint for endpoint in self.endpoints if endpoint.endpoint_id == endpoint_id), None)
+
+    def list_all(self):
+        return list(self.endpoints)
+
+    def add_raspberry_endpoint_with_membership_only_scope(self):
+        endpoint = SimpleNamespace(
+            id="endpoint-row-rpi",
+            endpoint_id="raspberry.pi.executor",
+            endpoint_type="edge_executor",
+            provider_type="raspberry_pi",
+            transport_type="websocket",
+            status="registered",
+            workspace_scope=["legacy-lab"],
+            meta={"display_name": "Raspberry Pi"},
+            updated_at=None,
+        )
+        self.endpoints.append(endpoint)
+        self.capabilities_by_endpoint[endpoint.id] = [
             SimpleNamespace(
-                capability_id="endpoint.desktop.main.executor.shell.exec",
-                tool_key="shell.exec",
-                risk_level="system",
-                requires_confirmation=True,
+                capability_id="endpoint.raspberry.pi.executor.sensor.read",
+                tool_key="sensor.read",
+                risk_level="read",
+                requires_confirmation=False,
                 enabled=True,
             )
         ]
-
-    def get_by_endpoint_id(self, endpoint_id: str):
-        return self.endpoint if endpoint_id == self.endpoint.endpoint_id else None
-
-    def list_all(self):
-        return [self.endpoint]
+        self.memberships_by_endpoint[endpoint.id] = [SimpleNamespace(workspace_id=self.workspace.id)]
+        return endpoint
 
 
 class _FakeToolRouter:
@@ -87,9 +117,10 @@ class EndpointToolsTests(unittest.IsolatedAsyncioTestCase):
                 services=SimpleNamespace(
                     endpoint=endpoint_service,
                     endpoint_capability=SimpleNamespace(
-                        list_for_endpoint=lambda endpoint_row_id: endpoint_service.capabilities
-                        if endpoint_row_id == endpoint_service.endpoint.id
-                        else []
+                        list_for_endpoint=lambda endpoint_row_id: endpoint_service.capabilities_by_endpoint.get(endpoint_row_id, [])
+                    ),
+                    endpoint_workspace_membership=SimpleNamespace(
+                        list_for_endpoint=lambda endpoint_row_id: endpoint_service.memberships_by_endpoint.get(endpoint_row_id, [])
                     ),
                     workspace=SimpleNamespace(
                         get_by_workspace_id=lambda workspace_id: endpoint_service.workspace
@@ -187,6 +218,28 @@ class EndpointToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["endpoints"][0]["endpoint_id"], "desktop.main.executor")
         self.assertEqual(payload["endpoints"][0]["matched_tool_key"], "shell.exec")
+
+    async def test_list_endpoint_tools_uses_workspace_membership_like_operator_topology(self):
+        tools, _, manager = self._tools()
+        endpoint_service = tools._core_domain.services.endpoint
+        raspberry = endpoint_service.add_raspberry_endpoint_with_membership_only_scope()
+        manager._connected_ids.add(raspberry.endpoint_id)
+
+        payload = await tools.list_endpoint_tool_targets(workspace_id="personal", include_tools=True)
+
+        self.assertTrue(payload["ok"])
+        endpoint_ids = {item["endpoint_id"] for item in payload["endpoints"]}
+        self.assertIn("desktop.main.executor", endpoint_ids)
+        self.assertIn("raspberry.pi.executor", endpoint_ids)
+        raspberry_payload = next(item for item in payload["endpoints"] if item["endpoint_id"] == "raspberry.pi.executor")
+        self.assertEqual(raspberry_payload["workspace_ids"], ["personal", "legacy-lab"])
+        self.assertEqual(raspberry_payload["status"], "online")
+        self.assertEqual(raspberry_payload["tool_keys"], ["sensor.read"])
+        self.assertEqual(raspberry_payload["capability_count"], 1)
+
+        active_payload = await tools.list_active_endpoints(workspace_id="personal", include_tools=True)
+        active_endpoint_ids = {item["endpoint_id"] for item in active_payload["endpoints"]}
+        self.assertIn("raspberry.pi.executor", active_endpoint_ids)
 
 
 if __name__ == "__main__":

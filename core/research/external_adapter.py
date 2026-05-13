@@ -19,6 +19,8 @@ class ResearchAdapterConfig:
     provider: str = "gpt_researcher"
     timeout_seconds: float = 900.0
     poll_interval_seconds: float = 2.0
+    poll_max_errors: int = 60
+    poll_error_grace_seconds: float = 300.0
     require_external: bool = False
 
     @property
@@ -35,6 +37,8 @@ class ResearchAdapterConfig:
             provider=str(os.environ.get("MEETYOU_RESEARCH_PROVIDER", "gpt_researcher") or "gpt_researcher").strip() or "gpt_researcher",
             timeout_seconds=_float_env("MEETYOU_RESEARCH_TIMEOUT_SECONDS", 900.0),
             poll_interval_seconds=_float_env("MEETYOU_RESEARCH_POLL_SECONDS", 2.0),
+            poll_max_errors=_int_env("MEETYOU_RESEARCH_POLL_MAX_ERRORS", 60),
+            poll_error_grace_seconds=_float_env("MEETYOU_RESEARCH_POLL_ERROR_GRACE_SECONDS", 300.0),
             require_external=required_raw not in {"0", "false", "no", "off", "disabled"},
         )
 
@@ -142,6 +146,13 @@ def _float_env(key: str, default: float) -> float:
         return max(0.25, float(os.environ.get(key, default) or default))
     except (TypeError, ValueError):
         return float(default)
+
+
+def _int_env(key: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(key, default) or default))
+    except (TypeError, ValueError):
+        return int(default)
 
 
 def _normalize_status(value: Any) -> str:

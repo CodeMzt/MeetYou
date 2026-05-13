@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.runtime_context import get_event_context
 from core.research.external_adapter import ResearchAdapterConfig
 from core.research.report_artifacts import create_research_report_derivatives
 from core.services.research_execution_service import ResearchExecutionService
@@ -15,6 +16,23 @@ class ResearchTools:
 
     def set_core_domain(self, core_domain) -> None:
         self._core_domain = core_domain
+
+    @staticmethod
+    def _route_value(route_context: dict[str, Any] | None, *keys: str) -> str:
+        context = dict(route_context or {})
+        event_context = get_event_context()
+        for key in keys:
+            value = str(context.get(key) or event_context.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    @staticmethod
+    def _route_project_id(route_context: dict[str, Any] | None) -> str:
+        context = dict(route_context or {})
+        event_context = get_event_context()
+        project = context.get("project") if isinstance(context.get("project"), dict) else {}
+        return str(context.get("project_id") or project.get("project_id") or event_context.get("project_id") or "").strip()
 
     async def search_academic_sources(
         self,
@@ -35,12 +53,11 @@ class ResearchTools:
         output_format: str = "markdown",
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del route_context
         domain = self._core_domain
         if domain is None:
             return {"ok": False, "code": "core_domain_unavailable", "message": "Core domain is not available."}
-        normalized_project_id = str(project_id or "").strip()
-        normalized_thread_id = str(thread_id or "").strip()
+        normalized_project_id = str(project_id or "").strip() or self._route_project_id(route_context)
+        normalized_thread_id = str(thread_id or "").strip() or self._route_value(route_context, "thread_id")
         project = domain.services.project.get_by_project_id(normalized_project_id) if normalized_project_id else None
         thread = domain.services.thread.get_by_thread_id(normalized_thread_id) if normalized_thread_id else None
         if normalized_project_id and project is None:
@@ -62,6 +79,8 @@ class ResearchTools:
         return {
             "ok": True,
             "research_task_id": task.research_task_id,
+            "project_id": str(getattr(project, "project_id", "") or ""),
+            "thread_id": str(getattr(thread, "thread_id", "") or ""),
             "status": task.status,
             "topic": task.topic,
             "plan": dict(task.plan or {}),
@@ -73,6 +92,7 @@ class ResearchTools:
         action: str = "list",
         research_task_id: str = "",
         project_id: str = "",
+        thread_id: str = "",
         status: str = "",
         plan: dict[str, Any] | None = None,
         evidence_ledger: list[dict[str, Any]] | None = None,
@@ -82,19 +102,23 @@ class ResearchTools:
         limit: int = 50,
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del route_context
         domain = self._core_domain
         if domain is None:
             return {"ok": False, "code": "core_domain_unavailable", "message": "Core domain is not available."}
         normalized_action = str(action or "list").strip().lower()
         if normalized_action == "list":
-            normalized_project_id = str(project_id or "").strip()
+            normalized_project_id = str(project_id or "").strip() or self._route_project_id(route_context)
+            normalized_thread_id = str(thread_id or "").strip() or self._route_value(route_context, "thread_id")
             project = domain.services.project.get_by_project_id(normalized_project_id) if normalized_project_id else None
+            thread = domain.services.thread.get_by_thread_id(normalized_thread_id) if normalized_thread_id else None
             if normalized_project_id and project is None:
                 return {"ok": False, "code": "project_not_found", "message": f"Unknown project: {normalized_project_id}"}
+            if normalized_thread_id and thread is None:
+                return {"ok": False, "code": "thread_not_found", "message": f"Unknown thread: {normalized_thread_id}"}
             rows = domain.services.research_task.list_tasks(
                 principal_id=domain.principal.id,
                 project_id=getattr(project, "id", None),
+                thread_id=getattr(thread, "id", None),
                 limit=limit,
             )
             return {

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { User, Bot, FolderPlus, GitFork, MoreHorizontal, PencilLine, RotateCcw, X } from 'lucide-react'
-import { ChatTurn, HumanInputRequestPayload, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel, RuntimeConversationCheckpoint } from '../../types'
+import { User, Bot, Clock, Download, FolderPlus, GitFork, MoreHorizontal, PencilLine, Play, RefreshCw, RotateCcw, Square, X } from 'lucide-react'
+import { ChatTurn, HumanInputRequestPayload, RuntimeHealthSnapshot, RuntimeStateSnapshot, RuntimeErrorPayload, ApprovalDisplayModel, RuntimeConversationCheckpoint, RuntimeResearchTask, RuntimeResearchTaskEvent } from '../../types'
 import TurnBody from './TurnBody'
 import ActionCard from './ActionCard'
 import styles from './MessageList.module.css'
@@ -19,6 +19,9 @@ interface MessageListProps {
   pendingHumanInput: HumanInputRequestPayload | null
   activeProjectId?: string
   checkpoints?: RuntimeConversationCheckpoint[]
+  researchTasks?: RuntimeResearchTask[]
+  researchTaskEvents?: Record<string, RuntimeResearchTaskEvent[]>
+  researchBusy?: boolean
   sendConfirmResponse: (requestId: string, accepted: boolean, approvalId?: string) => void
   sendHumanInputResponse: (requestId: string, val: string, option?: string) => void
   sendControlCommand?: (action: 'stop' | 'append_guidance' | 'regenerate' | 'rollback', params?: { guidance?: string; checkpoint_id?: string; turn_id?: string; stream_id?: string }) => void
@@ -27,6 +30,10 @@ interface MessageListProps {
   onArtifactDownload?: (artifactId: string) => Promise<unknown> | unknown
   onRestoreCheckpoint?: (checkpointId: string) => Promise<unknown>
   onCheckoutCheckpoint?: (checkpointId: string) => Promise<unknown>
+  onStartResearchTask?: (taskId: string) => Promise<unknown>
+  onCancelResearchTask?: (taskId: string) => Promise<unknown>
+  onDownloadResearchTaskArtifact?: (task: RuntimeResearchTask) => Promise<unknown>
+  onRefreshResearchTasks?: () => Promise<unknown> | unknown
 }
 
 export default function MessageList({
@@ -40,6 +47,9 @@ export default function MessageList({
   pendingHumanInput,
   activeProjectId = '',
   checkpoints = [],
+  researchTasks = [],
+  researchTaskEvents = {},
+  researchBusy = false,
   sendConfirmResponse,
   sendHumanInputResponse,
   sendControlCommand,
@@ -48,6 +58,10 @@ export default function MessageList({
   onArtifactDownload,
   onRestoreCheckpoint,
   onCheckoutCheckpoint,
+  onStartResearchTask,
+  onCancelResearchTask,
+  onDownloadResearchTaskArtifact,
+  onRefreshResearchTasks,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -68,6 +82,46 @@ export default function MessageList({
     [checkpoints],
   )
   const isStreaming = ['thinking', 'tool_calling', 'answering'].includes(runtimeSnapshot?.status || '')
+  const visibleResearchTask = useMemo(() => {
+    const candidates = researchTasks
+      .filter((task) => {
+        const status = String(task.status || '').toLowerCase()
+        const metadata = task.metadata || {}
+        return ['planned', 'approved', 'running', 'failed', 'cancelled'].includes(status)
+          || (status === 'completed' && !String(metadata.delivery_message_id || '').trim())
+      })
+      .sort((a, b) => {
+        const activeWeight = (task: RuntimeResearchTask) => String(task.status || '').toLowerCase() === 'running' ? 0 : 1
+        return activeWeight(a) - activeWeight(b)
+          || Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || '')
+      })
+    return candidates[0] || null
+  }, [researchTasks])
+  const runResearchTaskAction = async (
+    task: RuntimeResearchTask,
+    action: 'start' | 'cancel' | 'download' | 'refresh',
+  ) => {
+    if (researchBusy || busyMessageId) {
+      return
+    }
+    setBusyMessageId(`research:${task.research_task_id}:${action}`)
+    setActionError('')
+    try {
+      if (action === 'start') {
+        await onStartResearchTask?.(task.research_task_id)
+      } else if (action === 'cancel') {
+        await onCancelResearchTask?.(task.research_task_id)
+      } else if (action === 'download') {
+        await onDownloadResearchTaskArtifact?.(task)
+      } else {
+        await onRefreshResearchTasks?.()
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '研究任务操作失败')
+    } finally {
+      setBusyMessageId('')
+    }
+  }
 
   useLayoutEffect(() => {
     if (!openMenuMessageId) {
@@ -234,6 +288,105 @@ export default function MessageList({
     } finally {
       setBusyMessageId('')
     }
+  }
+
+  const renderResearchStatusBubble = () => {
+    const task = visibleResearchTask
+    if (!task) {
+      return null
+    }
+    const metadata = task.metadata || {}
+    const progress = (metadata.progress && typeof metadata.progress === 'object' ? metadata.progress : {}) as Record<string, unknown>
+    const events = researchTaskEvents[task.research_task_id] || []
+    const latestEvent = events[events.length - 1]
+    const latestPayload = (latestEvent?.payload && typeof latestEvent.payload === 'object' ? latestEvent.payload : {}) as Record<string, unknown>
+    const status = String(task.status || '').toLowerCase()
+    const provider = String(metadata.research_provider || progress.research_provider || latestPayload.research_provider || 'gpt_researcher')
+    const adapterStatus = String(metadata.adapter_status || progress.adapter_status || latestPayload.adapter_status || status || 'running')
+    const stage = String(progress.stage || latestPayload.stage || adapterStatus || 'adapter')
+    const progressMessage = String(progress.message || latestPayload.message || task.summary || '外部研究服务正在运行')
+    const sourceCount = Number(
+      metadata.adapter_source_count
+      || progress.adapter_source_count
+      || latestPayload.adapter_source_count
+      || task.evidence_ledger?.length
+      || 0,
+    )
+    const artifactId = String(task.artifact?.artifact_id || task.artifact_id || metadata.artifact_id || '')
+    const externalRunId = String(metadata.external_run_id || progress.external_run_id || latestPayload.external_run_id || '')
+    const adapterError = String(metadata.adapter_error || progress.adapter_error || latestPayload.adapter_error || '')
+    const updatedAt = String(progress.at || latestPayload.at || task.updated_at || task.created_at || '')
+    const elapsedMs = Math.max(0, Date.now() - (Date.parse(task.created_at || '') || Date.now()))
+    const elapsedMinutes = Math.floor(elapsedMs / 60000)
+    const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000)
+    const statusLabel = ({
+      planned: '计划待确认',
+      approved: '计划已确认',
+      running: '研究运行中',
+      completed: '研究已完成',
+      failed: '研究失败',
+      cancelled: '研究已取消',
+    } as Record<string, string>)[status] || task.status || '研究任务'
+    const canStart = ['planned', 'approved'].includes(status) && Boolean(onStartResearchTask)
+    const canCancel = status === 'running' && Boolean(onCancelResearchTask)
+    const canDownload = Boolean(artifactId && onDownloadResearchTaskArtifact)
+
+    return (
+      <motion.div
+        key={`research-status-${task.research_task_id}`}
+        className={`${styles.messageWrapper} ${styles.assistant} ${styles.researchStatusWrapper}`}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+        data-research-status-bubble="true"
+      >
+        <div className={styles.avatar}>
+          <Bot size={16} />
+        </div>
+        <div className={styles.message}>
+          <div className={`${styles.messageInner} ${styles.researchStatusInner}`}>
+            <div className={styles.researchHeader}>
+              <div className={styles.researchTitle}>{task.topic || '深度研究'}</div>
+              <span className={`${styles.researchBadge} ${styles[`research_${status}`] || ''}`}>{statusLabel}</span>
+            </div>
+            <div className={styles.researchProgressLine}>{progressMessage}</div>
+            <div className={styles.researchMetaGrid}>
+              <span>服务：{provider}</span>
+              <span>阶段：{stage}</span>
+              <span>状态：{adapterStatus}</span>
+              <span>来源：{sourceCount || 0}</span>
+              <span><Clock size={12} aria-hidden="true" /> {elapsedMinutes > 0 ? `${elapsedMinutes}分${elapsedSeconds}秒` : `${elapsedSeconds}秒`}</span>
+              {updatedAt ? <span>更新：{new Date(updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span> : null}
+            </div>
+            {externalRunId ? <div className={styles.researchRunId}>运行：{externalRunId}</div> : null}
+            {adapterError ? <div className={styles.researchError}>错误：{adapterError}</div> : null}
+            <div className={styles.researchActions}>
+              {canStart ? (
+                <button type="button" className={styles.researchActionButton} disabled={researchBusy || Boolean(busyMessageId)} onClick={() => void runResearchTaskAction(task, 'start')}>
+                  <Play size={13} aria-hidden="true" /> 开始
+                </button>
+              ) : null}
+              {canCancel ? (
+                <button type="button" className={styles.researchActionButton} disabled={researchBusy || Boolean(busyMessageId)} onClick={() => void runResearchTaskAction(task, 'cancel')}>
+                  <Square size={12} aria-hidden="true" /> 取消
+                </button>
+              ) : null}
+              {canDownload ? (
+                <button type="button" className={styles.researchActionButton} disabled={researchBusy || Boolean(busyMessageId)} onClick={() => void runResearchTaskAction(task, 'download')}>
+                  <Download size={13} aria-hidden="true" /> 下载报告
+                </button>
+              ) : null}
+              {onRefreshResearchTasks ? (
+                <button type="button" className={styles.researchIconButton} disabled={researchBusy || Boolean(busyMessageId)} onClick={() => void runResearchTaskAction(task, 'refresh')} title="刷新研究状态" aria-label="刷新研究状态">
+                  <RefreshCw size={13} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+            {actionError && !openMenuMessageId && !editingMessage ? <div className={styles.inlineActionError}>{actionError}</div> : null}
+          </div>
+        </div>
+      </motion.div>
+    )
   }
 
   const renderMessageActionMenu = (message: ChatTurn) => {
@@ -449,6 +602,8 @@ export default function MessageList({
             </motion.div>
           )
         })}
+
+        {renderResearchStatusBubble()}
 
       </AnimatePresence>
       {!autoFollowEnabled && isStreaming && (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import asyncio
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -72,6 +73,17 @@ class _EndpointCapabilityService:
             if snapshot.get("endpoint_row_id") == endpoint_row_id:
                 return list(snapshot.get("capabilities") or [])
         return []
+
+
+class _EndpointWorkspaceMembershipService:
+    def __init__(self):
+        self.rows: dict[str, list[SimpleNamespace]] = {}
+
+    def seed(self, endpoint_row_id: str, workspace_row_id: str):
+        self.rows.setdefault(endpoint_row_id, []).append(SimpleNamespace(workspace_id=workspace_row_id))
+
+    def list_for_endpoint(self, *, endpoint_row_id):
+        return list(self.rows.get(endpoint_row_id, []))
 
 
 class _WorkspaceService:
@@ -256,6 +268,7 @@ class _FakeDomain:
             endpoint=_EndpointService(),
             endpoint_connection=_EndpointConnectionService(),
             endpoint_capability=_EndpointCapabilityService(),
+            endpoint_workspace_membership=_EndpointWorkspaceMembershipService(),
             workspace=_WorkspaceService(),
             scheduler=_SchedulerService(),
             thread=thread,
@@ -270,6 +283,39 @@ class _FakeDomain:
 
 
 class GatewaySurfaceRouteTests(unittest.TestCase):
+    def test_runtime_workspace_endpoints_uses_managed_membership_scope(self):
+        domain = _FakeDomain()
+        gateway = FastAPIGateway(EventBus(), SessionManager(), core_domain=domain, access_token="surface-token")
+        endpoint = domain.services.endpoint.ensure_endpoint(
+            endpoint_id="raspberry.pi.executor",
+            endpoint_type="edge_executor",
+            provider_type="raspberry_pi",
+            transport_type="websocket",
+            workspace_scope=["legacy-lab"],
+            status="online",
+            metadata={"display_name": "Raspberry Pi"},
+        )
+        domain.services.endpoint_workspace_membership.seed(endpoint.id, "workspace-row")
+        domain.services.endpoint_capability.snapshots.append(
+            {
+                "endpoint_row_id": endpoint.id,
+                "capabilities": [{"tool_key": "sensor.read", "enabled": True}],
+            }
+        )
+        asyncio.run(gateway.endpoint_ws_manager.connect(object()))
+
+        with TestClient(gateway.app) as client:
+            response = client.get(
+                "/runtime/workspaces/desktop-main/endpoints?include_tools=true",
+                headers={"Authorization": "Bearer surface-token"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual([item["endpoint_id"] for item in payload], ["raspberry.pi.executor"])
+        self.assertEqual(payload[0]["workspace_ids"], ["desktop-main", "legacy-lab"])
+        self.assertEqual(payload[0]["executable_tools"], ["sensor.read"])
+
     def test_endpoint_ws_hello_requires_protocol_offer(self):
         domain = _FakeDomain()
         gateway = FastAPIGateway(EventBus(), SessionManager(), core_domain=domain, access_token="surface-token")

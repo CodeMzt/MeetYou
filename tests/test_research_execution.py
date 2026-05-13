@@ -295,7 +295,14 @@ class ResearchExecutionServiceTests(unittest.TestCase):
 
         result = ResearchExecutionService(
             self.services,
-            adapter_config=ResearchAdapterConfig(base_url="http://adapter.test", provider="fake", require_external=True),
+            adapter_config=ResearchAdapterConfig(
+                base_url="http://adapter.test",
+                provider="fake",
+                poll_interval_seconds=0.01,
+                poll_max_errors=2,
+                poll_error_grace_seconds=0.25,
+                require_external=True,
+            ),
             adapter_client=FakeAdapterClient(),
         ).run_task(task.research_task_id)
 
@@ -304,6 +311,60 @@ class ResearchExecutionServiceTests(unittest.TestCase):
         self.assertEqual(failed.status, "failed")
         self.assertEqual(failed.meta["runner_error"], "research_adapter_request_failed")
         self.assertEqual(failed.meta["adapter_error_details"], {"run_id": "rad_slow"})
+
+    def test_external_adapter_poll_errors_are_transient_until_budget_expires(self) -> None:
+        outer = self
+
+        class FakeAdapterClient:
+            def __init__(self) -> None:
+                self.poll_count = 0
+
+            def create_run(self, payload):
+                del payload
+                return {"status": "running", "run_id": "rad_transient", "provider": "fake"}
+
+            def get_run(self, run_id):
+                outer.assertEqual(run_id, "rad_transient")
+                self.poll_count += 1
+                if self.poll_count <= 3:
+                    raise ResearchAdapterError("research_adapter_request_failed", "Temporary adapter connection error.", details={"run_id": run_id})
+                return {
+                    "status": "completed",
+                    "run_id": "rad_transient",
+                    "provider": "fake",
+                    "summary": "Recovered adapter run completed.",
+                    "report_markdown": "# Recovered\n\nRecovered research used source one.[1]\n",
+                    "sources": [{"source_id": "1", "title": "Recovered source", "snippet": "Readable recovered source."}],
+                }
+
+            def cancel(self, run_id):
+                raise AssertionError(f"should not cancel {run_id}")
+
+        client = FakeAdapterClient()
+        task = self.services.research_task.create_task(
+            principal_id=self.principal.id,
+            topic="external transient poll errors",
+            source_policy={"source_adapters": []},
+        )
+
+        result = ResearchExecutionService(
+            self.services,
+            adapter_config=ResearchAdapterConfig(
+                base_url="http://adapter.test",
+                provider="fake",
+                poll_interval_seconds=0.01,
+                poll_max_errors=10,
+                poll_error_grace_seconds=60,
+                require_external=True,
+            ),
+            adapter_client=client,
+        ).run_task(task.research_task_id)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(client.poll_count, 4)
+        completed = self.services.research_task.get_by_research_task_id(task.research_task_id)
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.meta["external_run_id"], "rad_transient")
 
     def test_external_adapter_runner_polls_long_running_run_without_total_timeout(self) -> None:
         outer = self

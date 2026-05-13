@@ -717,6 +717,7 @@ class ResearchExecutionService:
         self._record_external_adapter_progress(research_task_id, config=config, result=result)
 
         consecutive_poll_errors = 0
+        poll_error_started_at: float | None = None
         while str(result.get("status") or "").strip().lower() not in {"completed", "failed", "cancelled"}:
             if self._is_cancelled(research_task_id):
                 if external_run_id:
@@ -726,12 +727,20 @@ class ResearchExecutionService:
             try:
                 result = client.get_run(external_run_id)
                 consecutive_poll_errors = 0
+                poll_error_started_at = None
             except ResearchAdapterError as exc:
                 consecutive_poll_errors += 1
+                if poll_error_started_at is None:
+                    poll_error_started_at = time.monotonic()
+                poll_error_elapsed = max(0.0, time.monotonic() - poll_error_started_at)
+                should_fail_polling = (
+                    consecutive_poll_errors >= max(1, int(config.poll_max_errors or 60))
+                    or poll_error_elapsed >= max(0.25, float(config.poll_error_grace_seconds or 300.0))
+                )
                 self._record_progress(
                     research_task_id,
                     stage="adapter",
-                    status="running" if consecutive_poll_errors < 3 else "failed",
+                    status="failed" if should_fail_polling else "running",
                     message=f"外部研究服务轮询失败：{exc}",
                     metadata={
                         "research_provider": config.provider,
@@ -739,11 +748,14 @@ class ResearchExecutionService:
                         "adapter_status": "poll_error",
                         "adapter_error": exc.code,
                         "adapter_poll_error_count": consecutive_poll_errors,
+                        "adapter_poll_error_elapsed_seconds": round(poll_error_elapsed, 2),
+                        "adapter_poll_max_errors": max(1, int(config.poll_max_errors or 60)),
+                        "adapter_poll_error_grace_seconds": max(0.25, float(config.poll_error_grace_seconds or 300.0)),
                         "adapter_error_details": exc.details,
                         "last_adapter_poll_at": _now_iso(),
                     },
                 )
-                if consecutive_poll_errors >= 3:
+                if should_fail_polling:
                     return self._fail_external_adapter_error(
                         research_task_id,
                         config=config,

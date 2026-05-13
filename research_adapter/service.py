@@ -61,6 +61,33 @@ def _bridge_provider_env() -> None:
         core_key = str(os.environ.get("MEETYOU_API_KEY") or "").strip()
         if core_key:
             os.environ["OPENAI_API_KEY"] = core_key
+    if not str(os.environ.get("OPENAI_BASE_URL") or "").strip():
+        for key in ("MEETYOU_OPENAI_BASE_URL", "MEETYOU_API_BASE_URL", "MEETYOU_LLM_BASE_URL", "OPENAI_API_BASE"):
+            base_url = str(os.environ.get(key) or "").strip()
+            if base_url:
+                os.environ["OPENAI_BASE_URL"] = base_url
+                break
+    if not str(os.environ.get("TAVILY_API_KEY") or "").strip():
+        tavily_key = str(os.environ.get("MEETYOU_TAVILY_API_KEY") or "").strip()
+        if tavily_key:
+            os.environ["TAVILY_API_KEY"] = tavily_key
+
+
+def _provider_env_status() -> dict[str, bool]:
+    return {
+        "openai_api_key_present": bool(str(os.environ.get("OPENAI_API_KEY") or os.environ.get("MEETYOU_API_KEY") or "").strip()),
+        "openai_base_url_present": bool(
+            str(
+                os.environ.get("OPENAI_BASE_URL")
+                or os.environ.get("MEETYOU_OPENAI_BASE_URL")
+                or os.environ.get("MEETYOU_API_BASE_URL")
+                or os.environ.get("MEETYOU_LLM_BASE_URL")
+                or os.environ.get("OPENAI_API_BASE")
+                or ""
+            ).strip()
+        ),
+        "tavily_api_key_present": bool(str(os.environ.get("TAVILY_API_KEY") or os.environ.get("MEETYOU_TAVILY_API_KEY") or "").strip()),
+    }
 
 
 def _public_run(row: dict[str, Any]) -> dict[str, Any]:
@@ -106,6 +133,7 @@ async def health() -> dict[str, Any]:
         "provider": provider,
         "gpt_researcher_available": available,
         "fake_enabled": fake,
+        "provider_env": _provider_env_status(),
         "active_run_count": sum(1 for row in RUNS.values() if row.get("status") == "running"),
         "updated_at": _now_iso(),
     }
@@ -191,8 +219,12 @@ async def _execute_run(run_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 - service boundary returns structured failures.
         row["status"] = "failed"
         row["error"] = str(exc)
-        row["metadata"] = {"error_type": type(exc).__name__}
-        _set_progress(row, "failed", str(exc), status="failed")
+        row["metadata"] = {
+            **dict(row.get("metadata") or {}),
+            "error_type": type(exc).__name__,
+            "provider_env": _provider_env_status(),
+        }
+        _set_progress(row, "failed", str(exc), status="failed", error_type=type(exc).__name__)
 
 
 async def _run_gpt_researcher(request: dict[str, Any], *, row: dict[str, Any] | None = None) -> dict[str, Any]:

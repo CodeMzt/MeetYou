@@ -127,6 +127,40 @@ class ResearchAdapterServiceTests(unittest.TestCase):
             service._bridge_provider_env()
             self.assertEqual(service.os.environ.get("OPENAI_API_KEY"), "openai-key")
 
+        with patch.dict("os.environ", {"MEETYOU_OPENAI_BASE_URL": "https://llm.example.test/v1"}, clear=True):
+            service._bridge_provider_env()
+            self.assertEqual(service.os.environ.get("OPENAI_BASE_URL"), "https://llm.example.test/v1")
+
+        with patch.dict("os.environ", {"OPENAI_BASE_URL": "https://existing.example.test/v1", "MEETYOU_OPENAI_BASE_URL": "https://ignored.example.test/v1"}, clear=True):
+            service._bridge_provider_env()
+            self.assertEqual(service.os.environ.get("OPENAI_BASE_URL"), "https://existing.example.test/v1")
+
+    def test_health_exposes_safe_provider_env_diagnostics(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MEETYOU_RESEARCH_ADAPTER_FAKE": "true",
+                "MEETYOU_API_KEY": "core-key",
+                "MEETYOU_OPENAI_BASE_URL": "https://llm.example.test/v1",
+                "MEETYOU_TAVILY_API_KEY": "tavily-key",
+            },
+            clear=True,
+        ):
+            service.RUNS.clear()
+            client = TestClient(service.app)
+            self.addCleanup(client.close)
+            health = client.get("/health").json()
+
+        self.assertTrue(health["ready"])
+        self.assertEqual(
+            health["provider_env"],
+            {
+                "openai_api_key_present": True,
+                "openai_base_url_present": True,
+                "tavily_api_key_present": True,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

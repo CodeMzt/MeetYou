@@ -172,6 +172,142 @@
   border: 1px solid var(--glass-border);
 }
 
+.researchStatusWrapper {
+  max-width: min(92%, 560px);
+}
+
+.researchStatusInner {
+  width: min(100%, 520px);
+  padding: 11px 13px;
+}
+
+.researchHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.researchTitle {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.researchBadge {
+  flex: 0 0 auto;
+  max-width: 92px;
+  padding: 2px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.research_running {
+  color: var(--text-accent);
+  border-color: color-mix(in srgb, var(--text-accent) 35%, transparent);
+}
+
+.research_failed {
+  color: var(--text-error);
+  border-color: color-mix(in srgb, var(--text-error) 35%, transparent);
+}
+
+.research_completed {
+  color: var(--text-success, #188038);
+  border-color: color-mix(in srgb, var(--text-success, #188038) 35%, transparent);
+}
+
+.researchProgressLine {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.researchMetaGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.researchMetaGrid span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.researchRunId,
+.researchError {
+  margin-top: 7px;
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.researchError {
+  color: var(--text-error);
+}
+
+.researchActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.researchActionButton,
+.researchIconButton {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.researchActionButton {
+  padding: 0 9px;
+}
+
+.researchIconButton {
+  width: 28px;
+  padding: 0;
+}
+
+.researchActionButton:hover,
+.researchIconButton:hover {
+  border-color: var(--border-focus);
+  background: var(--surface-hover);
+}
+
+.researchActionButton:disabled,
+.researchIconButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .systemMessage {
   align-self: stretch;
   max-width: 100%;

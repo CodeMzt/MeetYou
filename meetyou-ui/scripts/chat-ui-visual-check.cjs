@@ -164,7 +164,7 @@ const researchTask = {
   run_id: '',
   artifact_id: '',
   topic: '证据审计可视化',
-  status: 'completed',
+  status: 'running',
   plan: {
     schema: 'meetyou.research.plan.v1',
     language: 'zh-CN',
@@ -190,10 +190,29 @@ const researchTask = {
     },
   ],
   output_format: 'markdown',
-  summary: '证据审计信息已经记录到 evidence ledger。',
+  summary: 'GPT Researcher 正在搜索和阅读资料。',
   artifact: null,
   derived_artifacts: [],
-  metadata: {},
+  metadata: {
+    research_provider: 'gpt_researcher',
+    external_run_id: 'rad_visual_research',
+    adapter_status: 'running',
+    adapter_source_count: 1,
+    progress: {
+      stage: 'gather',
+      status: 'running',
+      message: 'GPT Researcher 正在搜索和阅读资料。',
+      at: nowIso(),
+      research_provider: 'gpt_researcher',
+      external_run_id: 'rad_visual_research',
+      adapter_status: 'running',
+      adapter_source_count: 1,
+    },
+    progress_events: [
+      { stage: 'queued', status: 'running', message: '研究任务已进入外部服务队列。', at: nowIso() },
+      { stage: 'gather', status: 'running', message: 'GPT Researcher 正在搜索和阅读资料。', at: nowIso() },
+    ],
+  },
   created_at: nowIso(),
   updated_at: nowIso(),
 }
@@ -1048,16 +1067,11 @@ async function switchToResearchMode(win) {
   if (content) content.scrollTop = 0
 })()
 `)
-  await waitForCondition(win, "document.querySelector('[data-research-panel=\"true\"]')", 'research panel')
-  await waitForCondition(win, "document.querySelector('[data-research-evidence-id=\"1\"]')", 'research evidence audit row')
+  await waitForCondition(win, "document.querySelector('[data-research-status-bubble=\"true\"]')", 'research status bubble')
   await win.webContents.executeJavaScript(`
 (() => {
-  const panel = document.querySelector('[data-research-panel="true"]')
-  const evidence = document.querySelector('[data-research-evidence-id="1"]')
-  if (!panel || !evidence) return
-  const panelRect = panel.getBoundingClientRect()
-  const evidenceRect = evidence.getBoundingClientRect()
-  panel.scrollTop += evidenceRect.top - panelRect.top - Math.max(24, (panelRect.height - evidenceRect.height) / 2)
+  const bubble = document.querySelector('[data-research-status-bubble="true"]')
+  if (bubble) bubble.scrollIntoView({ block: 'center' })
 })()
 `)
   await wait(300)
@@ -1066,40 +1080,27 @@ async function switchToResearchMode(win) {
 async function collectResearchAuditReport(win) {
   return win.webContents.executeJavaScript(`
 (() => {
-  const panel = document.querySelector('[data-research-panel="true"]')
-  const evidence = document.querySelector('[data-research-evidence-id="1"]')
-  const rank = document.querySelector('[data-research-evidence-rank="true"]')
-  const quality = document.querySelector('[data-research-evidence-quality="true"]')
-  const duplicates = document.querySelector('[data-research-evidence-duplicates="true"]')
-  const trust = document.querySelector('[data-research-evidence-trust="true"]')
-  const merged = document.querySelector('[data-research-evidence-merged="true"]')
-  const panelRect = panel ? panel.getBoundingClientRect() : null
-  const evidenceRect = evidence ? evidence.getBoundingClientRect() : null
+  const bubble = document.querySelector('[data-research-status-bubble="true"]')
+  const stalePanel = document.querySelector('[data-research-panel="true"]')
+  const bubbleRect = bubble ? bubble.getBoundingClientRect() : null
+  const text = String(bubble?.innerText || bubble?.textContent || '')
   return {
-    ok: Boolean(panel && evidence && rank && quality && duplicates && trust && merged),
+    ok: Boolean(bubble && !stalePanel && text.includes('gpt_researcher') && text.includes('gather') && text.includes('rad_visual_research')),
     viewport: { width: window.innerWidth, height: window.innerHeight },
-    panelRect: panelRect ? {
-      left: Math.round(panelRect.left),
-      top: Math.round(panelRect.top),
-      right: Math.round(panelRect.right),
-      bottom: Math.round(panelRect.bottom),
-      width: Math.round(panelRect.width),
-      height: Math.round(panelRect.height),
+    bubbleRect: bubbleRect ? {
+      left: Math.round(bubbleRect.left),
+      top: Math.round(bubbleRect.top),
+      right: Math.round(bubbleRect.right),
+      bottom: Math.round(bubbleRect.bottom),
+      width: Math.round(bubbleRect.width),
+      height: Math.round(bubbleRect.height),
     } : null,
-    evidenceRect: evidenceRect ? {
-      left: Math.round(evidenceRect.left),
-      top: Math.round(evidenceRect.top),
-      right: Math.round(evidenceRect.right),
-      bottom: Math.round(evidenceRect.bottom),
-      width: Math.round(evidenceRect.width),
-      height: Math.round(evidenceRect.height),
-    } : null,
-    rankText: String(rank?.textContent || ''),
-    qualityText: String(quality?.textContent || ''),
-    duplicatesText: String(duplicates?.textContent || ''),
-    trustText: String(trust?.textContent || ''),
-    mergedText: String(merged?.textContent || ''),
-    clipped: Boolean(evidenceRect && (evidenceRect.left < 0 || evidenceRect.right > window.innerWidth || evidenceRect.top < 0 || evidenceRect.bottom > window.innerHeight)),
+    text,
+    hasStalePanel: Boolean(stalePanel),
+    hasProvider: text.includes('gpt_researcher'),
+    hasStage: text.includes('gather'),
+    hasRunId: text.includes('rad_visual_research'),
+    clipped: Boolean(bubbleRect && (bubbleRect.left < 0 || bubbleRect.right > window.innerWidth || bubbleRect.top < 0 || bubbleRect.bottom > window.innerHeight)),
     bodyText: document.body.innerText,
   }
 })()
@@ -1168,7 +1169,7 @@ async function runVisualCheck(apiBaseUrl) {
   const chatScreenshot = await capture(win, 'main-chat-after-send-400x620')
   await switchToResearchMode(win)
   const researchAuditReport = await collectResearchAuditReport(win)
-  const researchScreenshot = await capture(win, 'main-research-evidence-audit-400x620')
+  const researchScreenshot = await capture(win, 'main-research-status-bubble-400x620')
 
   const report = {
     visualUrl,
@@ -1270,22 +1271,22 @@ async function runVisualCheck(apiBaseUrl) {
     failures.push('message action menu stayed open after outside pointer/mouse click')
   }
   if (!researchAuditReport.ok) {
-    failures.push('research evidence audit metadata did not render')
+    failures.push(`research status bubble did not render expected adapter state: ${JSON.stringify(researchAuditReport)}`)
   } else {
     if (researchAuditReport.clipped) {
-      failures.push('research evidence audit row is clipped by the window')
+      failures.push('research status bubble is clipped by the window')
     }
-    if (researchAuditReport.rankText !== '#1') {
-      failures.push(`research evidence rank text is ${researchAuditReport.rankText}`)
+    if (researchAuditReport.hasStalePanel) {
+      failures.push('stale standalone research panel is still mounted')
     }
-    if (!researchAuditReport.qualityText.includes('88.5')) {
-      failures.push(`research evidence quality text is ${researchAuditReport.qualityText}`)
+    if (!researchAuditReport.hasProvider) {
+      failures.push(`research status bubble missing provider: ${researchAuditReport.text}`)
     }
-    if (!researchAuditReport.duplicatesText.includes('2')) {
-      failures.push(`research evidence duplicate text is ${researchAuditReport.duplicatesText}`)
+    if (!researchAuditReport.hasStage) {
+      failures.push(`research status bubble missing stage: ${researchAuditReport.text}`)
     }
-    if (!researchAuditReport.trustText.includes('untrusted')) {
-      failures.push(`research evidence trust text is ${researchAuditReport.trustText}`)
+    if (!researchAuditReport.hasRunId) {
+      failures.push(`research status bubble missing external run id: ${researchAuditReport.text}`)
     }
   }
 

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import MessageList from './MessageList'
 import type { ComponentProps } from 'react'
-import type { ChatTurn, RuntimeConversationCheckpoint } from '../../types'
+import type { ChatTurn, RuntimeConversationCheckpoint, RuntimeResearchTask } from '../../types'
 
 function turn(id: string, role: ChatTurn['role'], content: string, temporary = false): ChatTurn {
   return {
@@ -32,6 +32,31 @@ function checkpoint(messageId: string): RuntimeConversationCheckpoint {
     metadata: {},
     created_at: '2026-05-09T00:00:00Z',
     updated_at: '2026-05-09T00:00:00Z',
+  }
+}
+
+function researchTask(status = 'running'): RuntimeResearchTask {
+  return {
+    research_task_id: 'rst_1',
+    project_id: 'prj_1',
+    thread_id: 'thr_1',
+    run_id: 'run_1',
+    artifact_id: '',
+    topic: '深度研究测试',
+    status,
+    plan: {},
+    source_policy: {},
+    evidence_ledger: [],
+    output_format: 'markdown',
+    summary: '',
+    artifact: null,
+    metadata: {
+      research_provider: 'gpt_researcher',
+      adapter_status: 'running',
+      progress: { stage: 'gather', status: 'running', message: '正在搜索和阅读资料' },
+    },
+    created_at: '2026-05-09T00:00:00Z',
+    updated_at: '2026-05-09T00:00:01Z',
   }
 }
 
@@ -80,5 +105,15 @@ describe('MessageList', () => {
     const markup = renderMessageList()
 
     expect(markup).not.toContain('aria-label="消息操作"')
+  })
+
+  it('renders current-thread research progress as an inline assistant status bubble', () => {
+    const markup = renderMessageList({
+      researchTasks: [researchTask()],
+      researchTaskEvents: {},
+    })
+
+    expect(markup).toContain('data-research-status-bubble="true"')
+    expect(markup).not.toContain('data-research-panel')
   })
 })

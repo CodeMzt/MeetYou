@@ -13,6 +13,7 @@ from core.artifacts import LocalArtifactStore
 from core.db.base import Base
 from core.db.bootstrap import build_core_services
 from core.db.models import Principal, Workspace
+from core.runtime_context import bind_event_context, reset_event_context
 from core.services.v5_service import ArtifactService
 from tools.research_tools import ResearchTools
 
@@ -113,6 +114,59 @@ class ResearchToolsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["code"], "project_not_found")
+
+    async def test_research_tools_infer_current_thread_from_route_context(self) -> None:
+        first_thread = self.domain.services.thread.create_thread(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="First routed thread",
+        )
+        second_thread = self.domain.services.thread.create_thread(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="Second routed thread",
+        )
+        created = await self.tools.create_research_task(
+            topic="route bound task",
+            route_context={"thread_id": first_thread.thread_id},
+        )
+        await self.tools.create_research_task(topic="other task", thread_id=second_thread.thread_id)
+
+        result = await self.tools.manage_research_tasks(
+            action="list",
+            route_context={"thread_id": first_thread.thread_id},
+        )
+
+        self.assertTrue(created["ok"])
+        self.assertEqual(created["thread_id"], first_thread.thread_id)
+        self.assertTrue(result["ok"])
+        self.assertEqual([row["research_task_id"] for row in result["tasks"]], [created["research_task_id"]])
+
+    async def test_research_tools_infer_current_thread_from_event_context(self) -> None:
+        thread = self.domain.services.thread.create_thread(
+            principal_id=self.principal.id,
+            workspace_id=self.workspace.id,
+            title="Event routed thread",
+        )
+        token = bind_event_context(thread_id=thread.thread_id)
+        try:
+            created = await self.tools.create_research_task(topic="event context task")
+            listed = await self.tools.manage_research_tasks(action="list")
+        finally:
+            reset_event_context(token)
+
+        self.assertTrue(created["ok"])
+        self.assertEqual(created["thread_id"], thread.thread_id)
+        self.assertEqual([row["research_task_id"] for row in listed["tasks"]], [created["research_task_id"]])
+
+    async def test_manage_research_tasks_list_rejects_unknown_thread_filter(self) -> None:
+        result = await self.tools.manage_research_tasks(
+            action="list",
+            thread_id="thr_missing",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "thread_not_found")
 
     async def test_manage_research_tasks_run_uses_core_runner(self) -> None:
         project = self.domain.services.project.create_project(

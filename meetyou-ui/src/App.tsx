@@ -10,7 +10,6 @@ import ProjectPicker from './components/project/ProjectPicker'
 import ProjectSources from './components/project/ProjectSources'
 import ThreadPicker from './components/thread/ThreadPicker'
 import VersionControl from './components/version/VersionControl'
-import ResearchPanel from './components/research/ResearchPanel'
 import { AssistantMode, ThinkingOverride } from './types'
 import { getVisibleRuntimeThreadItems } from './threadPresentation'
 import { DEFAULT_BASE_URL, WINDOW_EVENT_CHANNEL, WINDOW_SYNC_CHANNEL } from './windowBridge'
@@ -57,11 +56,8 @@ export default function App() {
     restoreCheckpoint,
     checkoutCheckpoint,
     activateBranch,
-    createResearchTask,
-    approveResearchTask,
     startResearchTask,
     cancelResearchTask,
-    saveResearchTaskPlan,
     downloadResearchTaskArtifact,
     downloadArtifactById,
     refreshResearchTasks,
@@ -227,21 +223,6 @@ export default function App() {
         </div>
 
         <div className={styles.contentArea}>
-          {preferredMode === 'research' ? (
-            <ResearchPanel
-              tasks={researchTasks}
-              taskEvents={researchTaskEvents}
-              busy={researchBusy}
-              onCreateTask={(topic, options) => createResearchTask(topic, options)}
-              onApproveTask={(taskId) => approveResearchTask(taskId)}
-              onStartTask={(taskId) => startResearchTask(taskId)}
-              onCancelTask={(taskId) => cancelResearchTask(taskId)}
-              onSavePlan={(taskId, plan) => saveResearchTaskPlan(taskId, plan)}
-              onDownloadArtifact={(task) => downloadResearchTaskArtifact(task)}
-              onRefresh={() => refreshResearchTasks(activeProjectId)}
-            />
-          ) : null}
-
           <MessageList
             connected={connected}
             messages={messages}
@@ -256,11 +237,18 @@ export default function App() {
             sendControlCommand={sendControlCommand}
             activeProjectId={activeProjectId}
             checkpoints={checkpoints}
+            researchTasks={researchTasks}
+            researchTaskEvents={researchTaskEvents}
+            researchBusy={researchBusy}
             onSaveMessageAsProjectSource={saveMessageAsProjectSource}
             onEditRetryMessage={editRetryMessage}
             onArtifactDownload={downloadArtifactById}
             onRestoreCheckpoint={restoreCheckpoint}
             onCheckoutCheckpoint={checkoutCheckpoint}
+            onStartResearchTask={(taskId) => startResearchTask(taskId)}
+            onCancelResearchTask={(taskId) => cancelResearchTask(taskId)}
+            onDownloadResearchTaskArtifact={(task) => downloadResearchTaskArtifact(task)}
+            onRefreshResearchTasks={() => refreshResearchTasks(activeProjectId, threadId)}
           />
         </div>
       </div>

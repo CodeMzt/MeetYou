@@ -1224,6 +1224,9 @@ class Brain:
             route_dict["endpoint"] = endpoint_context
         if workspace_id:
             route_dict["workspace_id"] = workspace_id
+        thread_id = str(metadata.get("thread_id") or "").strip()
+        if thread_id:
+            route_dict["thread_id"] = thread_id
         project_id = str(metadata.get("project_id") or "").strip()
         project_title = str(metadata.get("project_title") or "").strip()
         project_description = str(metadata.get("project_description") or "").strip()

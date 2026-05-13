@@ -966,10 +966,12 @@
 }
 
 .nodeListBody {
+  max-height: min(280px, 38vh);
   display: flex;
   flex-direction: column;
   gap: 0;
   padding: 6px;
+  overflow: auto;
 }
 
 .relatedRow,

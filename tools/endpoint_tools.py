@@ -36,6 +36,40 @@ def _string_list(values) -> list[str]:
     return result
 
 
+def _workspace_ids_for_endpoint(domain, endpoint) -> list[str]:
+    """Return the same workspace ids used by the operator topology UI."""
+    endpoint_row_id = getattr(endpoint, "id", None)
+    membership_service = getattr(getattr(domain, "services", None), "endpoint_workspace_membership", None)
+    workspace_service = getattr(getattr(domain, "services", None), "workspace", None)
+    workspace_ids: list[str] = []
+    if membership_service is not None and workspace_service is not None and endpoint_row_id is not None:
+        try:
+            rows = membership_service.list_for_endpoint(endpoint_row_id=endpoint_row_id)
+        except Exception:
+            rows = []
+        for row in rows or []:
+            workspace = None
+            try:
+                workspace = workspace_service.get_by_id(getattr(row, "workspace_id", None))
+            except Exception:
+                workspace = None
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+            if workspace_id and workspace_id not in workspace_ids:
+                workspace_ids.append(workspace_id)
+    fallback = _string_list(getattr(endpoint, "workspace_scope", []) or [])
+    for workspace_id in fallback:
+        if workspace_id and workspace_id not in workspace_ids:
+            workspace_ids.append(workspace_id)
+    return workspace_ids
+
+
+def _workspace_matches(workspace_key: str, workspace_ids: list[str]) -> bool:
+    normalized = str(workspace_key or "").strip()
+    if not normalized:
+        return True
+    return normalized in workspace_ids or "*" in workspace_ids
+
+
 def _address_payload(address, *, endpoint=None, preference=None) -> dict[str, Any]:
     endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
     return {
@@ -187,8 +221,13 @@ class EndpointTools:
         provider = first.get("provider") if isinstance(first.get("provider"), dict) else {}
         endpoint_id = str(getattr(endpoint, "endpoint_id", "") or first.get("endpoint_id") or "")
         capabilities: list[dict[str, Any]] = []
+        tool_keys: list[str] = []
         if include_capabilities:
             for capability in self._domain().services.endpoint_capability.list_for_endpoint(endpoint_row_id=getattr(endpoint, "id", None)):
+                if bool(getattr(capability, "enabled", True)):
+                    tool_key = str(getattr(capability, "tool_key", "") or "").strip()
+                    if tool_key and tool_key not in tool_keys:
+                        tool_keys.append(tool_key)
                 capabilities.append(
                     {
                         "capability_id": str(getattr(capability, "capability_id", "") or ""),
@@ -198,16 +237,28 @@ class EndpointTools:
                         "enabled": bool(getattr(capability, "enabled", True)),
                     }
                 )
+        else:
+            tool_keys = _string_list(
+                getattr(capability, "tool_key", "")
+                for capability in self._domain().services.endpoint_capability.list_for_endpoint(endpoint_row_id=getattr(endpoint, "id", None))
+                if getattr(capability, "enabled", True)
+            )
+        workspace_ids = _workspace_ids_for_endpoint(self._domain(), endpoint)
+        raw_status = str(getattr(endpoint, "status", "") or "").strip()
+        effective_status = "online" if connected and raw_status.lower() not in _ONLINE_ENDPOINT_STATUSES else raw_status
         payload = {
             "endpoint_id": endpoint_id,
             "display_name": str(provider.get("display_name") or getattr(endpoint, "meta", {}).get("display_name", "") or endpoint_id),
             "endpoint_type": str(getattr(endpoint, "endpoint_type", "") or ""),
             "provider_type": str(getattr(endpoint, "provider_type", "") or ""),
             "transport_type": str(getattr(endpoint, "transport_type", "") or ""),
-            "status": str(getattr(endpoint, "status", "") or ("online" if connected else "")),
+            "status": effective_status or ("online" if connected else ""),
             "connected": bool(connected),
             "connection_count": len(rows),
-            "workspace_ids": _string_list(getattr(endpoint, "workspace_scope", []) or []),
+            "workspace_ids": workspace_ids,
+            "tool_keys": tool_keys,
+            "executable_tools": tool_keys,
+            "capability_count": len(tool_keys),
             "capabilities": capabilities,
             "last_seen_at": getattr(endpoint, "updated_at", "").isoformat()
             if getattr(endpoint, "updated_at", None) is not None
@@ -231,6 +282,7 @@ class EndpointTools:
         gateway = self._gateway()
         workspace = self._workspace_row(workspace_id, session_id=session_id)
         del thread_id
+        connected_ids = await gateway.endpoint_ws_manager.connected_endpoint_ids()
         snapshot = await gateway.endpoint_ws_manager.snapshot()
         snapshots_by_endpoint: dict[str, list[dict[str, Any]]] = {}
         for item in snapshot:
@@ -244,12 +296,10 @@ class EndpointTools:
         results: list[dict[str, Any]] = []
         for endpoint in endpoints:
             endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip()
-            workspace_scope = _string_list(getattr(endpoint, "workspace_scope", []) or [])
-            if workspace_key and workspace_key not in workspace_scope and "*" not in workspace_scope:
+            workspace_ids = _workspace_ids_for_endpoint(domain, endpoint)
+            if not _workspace_matches(workspace_key, workspace_ids):
                 continue
-            if not endpoint_id or endpoint_id not in snapshots_by_endpoint:
-                continue
-            if str(getattr(endpoint, "status", "") or "").strip().lower() not in _ONLINE_ENDPOINT_STATUSES:
+            if not endpoint_id or endpoint_id not in connected_ids:
                 continue
             payload = self._endpoint_payload(
                 endpoint,
@@ -281,12 +331,10 @@ class EndpointTools:
         targets: list[dict[str, Any]] = []
         for endpoint in endpoint_rows:
             endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "").strip()
-            workspace_scope = _string_list(getattr(endpoint, "workspace_scope", []) or [])
-            if workspace_key and workspace_key not in workspace_scope and "*" not in workspace_scope:
+            workspace_ids = _workspace_ids_for_endpoint(domain, endpoint)
+            if not _workspace_matches(workspace_key, workspace_ids):
                 continue
             if not endpoint_id or endpoint_id not in connected_ids:
-                continue
-            if str(getattr(endpoint, "status", "") or "").strip().lower() not in _ONLINE_ENDPOINT_STATUSES:
                 continue
             capabilities = domain.services.endpoint_capability.list_for_endpoint(endpoint_row_id=endpoint.id)
             tool_keys = _string_list(getattr(capability, "tool_key", "") for capability in capabilities if getattr(capability, "enabled", True))
