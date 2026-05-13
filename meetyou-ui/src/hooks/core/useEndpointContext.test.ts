@@ -4,9 +4,11 @@ import {
   chooseDesktopToolEndpoint,
   DESKTOP_TOOL_ENDPOINT_REFRESH_INTERVAL_MS,
   mergeRuntimeProjectList,
+  resolveInitializedEndpointContext,
   runtimeThreadDeleteErrorMessage,
   resolveDesktopToolEndpointId,
 } from './useEndpointContext'
+import type { EndpointContext } from './useEndpointContext'
 
 function project(project_id: string, title: string): RuntimeProject {
   return {
@@ -24,6 +26,42 @@ function project(project_id: string, title: string): RuntimeProject {
 }
 
 describe('useEndpointContext helpers', () => {
+  it('awaits pending initialization before user thread actions choose a workspace', async () => {
+    const currentContext = null
+    const initializedContext: EndpointContext = {
+      workspace: {
+        workspace_id: 'personal',
+        title: 'Personal',
+        base_mode: 'general',
+        status: 'active',
+        description: '',
+        prompt_overlay: '',
+        default_execution_target: '',
+        tool_policy: '',
+        allowed_tool_ids: [],
+        preferred_target_endpoint_ids: [],
+        preferred_endpoint_provider_types: [],
+        preferred_source_profiles: [],
+        tool_target_routing_policy: '',
+        memory_ranking_policy: '',
+        tool_routing_overrides: {},
+      },
+      threadId: 'thr_default',
+      session: {
+        session_id: 'sess_default',
+        thread_id: 'thr_default',
+        active_workspace_id: 'personal',
+        workspace_id: 'personal',
+        endpoint_id: 'desktop-app',
+        status: 'active',
+      },
+      endpointId: 'desktop-app',
+    }
+
+    await expect(resolveInitializedEndpointContext(currentContext, Promise.resolve(initializedContext))).resolves.toBe(initializedContext)
+    await expect(resolveInitializedEndpointContext(initializedContext, Promise.resolve(null as never))).resolves.toBe(initializedContext)
+  })
+
   it('picks the online desktop tool endpoint for the current workspace', () => {
     const availableEndpoints: AvailableEndpoint[] = [
       {

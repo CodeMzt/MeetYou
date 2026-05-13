@@ -87,6 +87,16 @@ export function runtimeThreadDeleteErrorMessage(reason: string): string {
   }
 }
 
+export async function resolveInitializedEndpointContext(
+  currentContext: EndpointContext | null,
+  pendingInitialization: Promise<EndpointContext> | null | undefined,
+): Promise<EndpointContext | null> {
+  if (currentContext) {
+    return currentContext
+  }
+  return pendingInitialization ? await pendingInitialization : null
+}
+
 export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: string) => Promise<void> | void, onError: (turn: any) => void) {
   const initialSessionIdRef = useRef(`desktop-${Math.random().toString(36).substring(2, 9)}`)
   const sourceIdRef = useRef('desktop-app')
@@ -262,11 +272,12 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     if (!normalizedThreadId) {
       return null
     }
-    if (endpointContext?.threadId === normalizedThreadId) {
-      return endpointContext
+    const activeContext = await resolveInitializedEndpointContext(endpointContext, endpointInitPromiseRef.current)
+    if (activeContext?.threadId === normalizedThreadId) {
+      return activeContext
     }
     const workspaces = await listRuntimeWorkspaces(baseUrl)
-    const activeWorkspace = endpointContext?.workspace ?? chooseWorkspace(workspaces)
+    const activeWorkspace = activeContext?.workspace ?? chooseWorkspace(workspaces)
     if (!activeWorkspace) {
       throw new Error('没有可用工作空间')
     }
@@ -322,8 +333,9 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
     if (!normalizedTitle) {
       return null
     }
+    const activeContext = await resolveInitializedEndpointContext(endpointContext, endpointInitPromiseRef.current)
     const workspaces = await listRuntimeWorkspaces(baseUrl)
-    const activeWorkspace = endpointContext?.workspace ?? chooseWorkspace(workspaces)
+    const activeWorkspace = activeContext?.workspace ?? chooseWorkspace(workspaces)
     if (!activeWorkspace) {
       throw new Error('没有可用工作空间')
     }
@@ -337,7 +349,7 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
         : [project, ...currentProjects]
     ))
     return project
-  }, [baseUrl, endpointContext?.workspace])
+  }, [baseUrl, endpointContext])
 
   const updateRuntimeProjectAndRemember = useCallback(async (
     projectId: string,
@@ -359,8 +371,9 @@ export function useEndpointContext(baseUrl: string, onInitSuccess: (threadId: st
   }, [baseUrl])
 
   const createAndSelectRuntimeThread = useCallback(async (title?: string, projectIdOverride?: string) => {
+    const activeContext = await resolveInitializedEndpointContext(endpointContext, endpointInitPromiseRef.current)
     const workspaces = await listRuntimeWorkspaces(baseUrl)
-    const activeWorkspace = endpointContext?.workspace ?? chooseWorkspace(workspaces)
+    const activeWorkspace = activeContext?.workspace ?? chooseWorkspace(workspaces)
     if (!activeWorkspace) {
       throw new Error('没有可用工作空间')
     }
