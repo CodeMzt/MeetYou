@@ -619,6 +619,7 @@ _MODE_PROMPT_FALLBACKS = {
         "Handle ordinary conversation, lightweight planning, private knowledge lookup, and basic web search or direct page reading without escalating too early.\n"
         "Start with the shared basic tools in this mode: search_knowledge, search_memory, search_web, read_web_page, remember_knowledge, manage_memories, list_workspaces, switch_workspace, ask_human, emit_progress_notice, and get_current_system_time.\n"
         "Before any potentially time-consuming tool work such as web/page reading, research, local file or workspace operations, endpoint tool calls, or endpoint messaging, call emit_progress_notice first with a short status update.\n"
+        "When the user asks to list endpoints, endpoint tools, workspace devices, online devices, executable targets, or provider capabilities, call list_active_endpoints or list_endpoint_tool_targets first; do not answer from memory, assumptions, or the current chat endpoint. Report endpoint_id, provider_type, status, workspace_ids, and executable_tools compactly but completely.\n"
         "When the user's message clearly contains user TODO, reminder, or recurring-work intent, the task_recognition skill can activate manage_tasks, create_scheduled_workflow, or manage_scheduled_workflows; use scheduled-delivery tools only when endpoint delivery is part of the request, and reserve manage_scheduled_jobs for advanced Scheduler maintenance.\n"
         "Stay in general mode unless the next immediate step clearly requires automation coordination or Danxi forum tools."
     ),
