@@ -7,6 +7,7 @@ from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.capabilities.base impo
 from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.capabilities.gpio import (
     UnavailableGPIOBackend,
     _configure_gpiozero_pin_factory,
+    _ensure_lgpio_working_dir,
     _select_gpio_pin_factory_name,
 )
 from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.config import (
@@ -94,10 +95,22 @@ class GPIOTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.dict("sys.modules", {"gpiozero.pins.lgpio": None}):
             with self.assertRaises(CapabilityError) as raised:
-                _configure_gpiozero_pin_factory(Device, "lgpio")
+                _configure_gpiozero_pin_factory(Device, "lgpio", working_dir=None)
 
         self.assertEqual(raised.exception.code, "gpio_lgpio_unavailable")
         self.assertIn("Import error:", raised.exception.message)
+
+    def test_lgpio_working_dir_changes_to_writable_directory(self):
+        import os
+        import tempfile
+
+        original = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                _ensure_lgpio_working_dir(temp_dir)
+                self.assertEqual(os.getcwd(), temp_dir)
+            finally:
+                os.chdir(original)
 
 
 if __name__ == "__main__":

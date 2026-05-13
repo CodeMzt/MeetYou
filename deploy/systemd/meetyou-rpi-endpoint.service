@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=meetyou-rpi
 Group=meetyou-rpi
+SupplementaryGroups=gpio
 WorkingDirectory=/var/lib/meetyou-rpi
 EnvironmentFile=/etc/meetyou/rpi-endpoint.env
 Environment=PYTHONPATH=/opt/meetyou/MeetYou

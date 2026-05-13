@@ -66,7 +66,7 @@ class UnavailableGPIOBackend:
 
 
 class GpioZeroBackend:
-    def __init__(self, *, pin_factory_name: str | None = None):
+    def __init__(self, *, pin_factory_name: str | None = None, working_dir: str | None = None):
         try:
             from gpiozero import Device, DigitalInputDevice, DigitalOutputDevice
         except Exception as exc:
@@ -75,7 +75,11 @@ class GpioZeroBackend:
                 "gpiozero is not available in this environment; install gpiozero and lgpio on Raspberry Pi OS",
                 retryable=False,
             ) from exc
-        self._pin_factory_name = _configure_gpiozero_pin_factory(Device, pin_factory_name)
+        self._pin_factory_name = _configure_gpiozero_pin_factory(
+            Device,
+            pin_factory_name,
+            working_dir=working_dir,
+        )
         self._input_cls = DigitalInputDevice
         self._output_cls = DigitalOutputDevice
 
@@ -119,11 +123,14 @@ class GpioZeroBackend:
             raise _gpiozero_runtime_error(exc, pin=pin, factory_name=self._pin_factory_name) from exc
 
 
-def build_gpio_backend(*, force_fake: bool = False):
+def build_gpio_backend(*, force_fake: bool = False, working_dir: str | None = None):
     if force_fake or _env_truthy("MEETYOU_RPI_FAKE_GPIO"):
         return FakeGPIOBackend()
     try:
-        return GpioZeroBackend(pin_factory_name=_select_gpio_pin_factory_name())
+        return GpioZeroBackend(
+            pin_factory_name=_select_gpio_pin_factory_name(),
+            working_dir=working_dir,
+        )
     except CapabilityError as exc:
         return UnavailableGPIOBackend(code=exc.code, message=exc.message)
 
@@ -233,11 +240,12 @@ def _select_gpio_pin_factory_name() -> str:
     return "default"
 
 
-def _configure_gpiozero_pin_factory(Device, pin_factory_name: str | None) -> str:
+def _configure_gpiozero_pin_factory(Device, pin_factory_name: str | None, *, working_dir: str | None = None) -> str:
     name = str(pin_factory_name or "default").strip().lower() or "default"
     if name in {"default", "auto"}:
         return _pin_factory_label(getattr(Device, "pin_factory", None))
     if name == "lgpio":
+        _ensure_lgpio_working_dir(working_dir)
         try:
             from gpiozero.pins.lgpio import LGPIOFactory
         except Exception as exc:
@@ -293,3 +301,19 @@ def _looks_like_raspberry_pi() -> bool:
         if "raspberry pi" in text:
             return True
     return False
+
+
+def _ensure_lgpio_working_dir(working_dir: str | None) -> None:
+    candidate = str(working_dir or "").strip()
+    if not candidate:
+        return
+    path = Path(candidate)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        os.chdir(path)
+    except OSError as exc:
+        raise CapabilityError(
+            "gpio_working_dir_unavailable",
+            f"GPIO lgpio working directory is not usable: {path}: {exc}",
+            retryable=False,
+        ) from exc

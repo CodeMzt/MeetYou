@@ -38,7 +38,8 @@ This capability is still high risk. Keep it disabled until a specific Pi deploym
 - GPIO write requires confirmation in the advertised EndpointCapability.
 - On non-Pi development machines, use fake GPIO. Do not treat fake GPIO success as hardware validation.
 - Raspberry Pi 5 must use the `lgpio` backend. Set `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`; otherwise legacy backends can fail with `Cannot determine SOC peripheral base address`.
-- GPIO may require Linux group/device permissions depending on Raspberry Pi OS setup; avoid running the endpoint as root unless a deployment explicitly justifies it.
+- GPIO requires Linux device permission for `/dev/gpiochip*`. The systemd unit runs with `SupplementaryGroups=gpio`, and the install script adds `meetyou-rpi` to the `gpio` group.
+- Avoid running the endpoint as root unless a deployment explicitly justifies it.
 
 ## Filesystem And Process Policy
 

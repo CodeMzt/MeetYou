@@ -22,6 +22,11 @@ if ! id "${SERVICE_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir "${STATE_DIR}" --shell /usr/sbin/nologin "${SERVICE_USER}"
 fi
 
+if ! getent group gpio >/dev/null 2>&1; then
+  groupadd --system gpio
+fi
+usermod -aG gpio "${SERVICE_USER}"
+
 mkdir -p "${CONFIG_DIR}" "${STATE_DIR}/sandbox"
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STATE_DIR}"
 

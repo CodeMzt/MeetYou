@@ -30,6 +30,26 @@ python -m pytest tests/test_rpi_core_integration.py -q
 
 Result: `6 passed`.
 
+## 2026-05-13 Raspberry Pi GPIO Device Permission Fix
+
+Issue observed on hardware:
+
+- `can not open gpiochip` during `rpi.gpio.write`.
+
+Resolution:
+
+- The install script now ensures a `gpio` group exists and adds `meetyou-rpi` to it.
+- The systemd unit now declares `SupplementaryGroups=gpio`.
+- The GPIO backend can switch to the configured sandbox directory before importing `lgpio`, so manual or non-systemd runs avoid `.lgd-*` files in `/opt/meetyou/MeetYou`.
+
+Manual validation commands:
+
+```bash
+id meetyou-rpi
+ls -l /dev/gpiochip*
+systemctl cat meetyou-rpi-endpoint | grep -E 'User=|Group=|SupplementaryGroups|WorkingDirectory|TMPDIR'
+```
+
 ## 2026-05-13 Raspberry Pi 5 lgpio Working Directory Fix
 
 Issue observed on hardware:

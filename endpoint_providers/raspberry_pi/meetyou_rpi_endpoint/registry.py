@@ -59,7 +59,14 @@ class CapabilityRegistry:
 
 
 def build_default_registry(config, *, gpio_backend=None, force_fake_gpio: bool = False) -> CapabilityRegistry:
-    backend = gpio_backend if gpio_backend is not None else build_gpio_backend(force_fake=force_fake_gpio)
+    backend = (
+        gpio_backend
+        if gpio_backend is not None
+        else build_gpio_backend(
+            force_fake=force_fake_gpio,
+            working_dir=getattr(getattr(config, "security", None), "sandbox_dir", ""),
+        )
+    )
     registry = CapabilityRegistry(CapabilityContext(config=config, gpio_backend=backend))
     registry.register(build_echo_capability())
     registry.register(build_system_info_capability())
