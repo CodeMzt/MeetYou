@@ -163,6 +163,7 @@ def _desktop_routes() -> list[DesktopApiRoute]:
         DesktopApiRoute("POST", "/desktop/research-tasks", lambda _request: "/runtime/research-tasks"),
         DesktopApiRoute("GET", "/desktop/research-tasks/{research_task_id}", lambda request: f"/runtime/research-tasks/{request.match_info['research_task_id']}"),
         DesktopApiRoute("PATCH", "/desktop/research-tasks/{research_task_id}", lambda request: f"/runtime/research-tasks/{request.match_info['research_task_id']}"),
+        DesktopApiRoute("GET", "/desktop/research-tasks/{research_task_id}/events", lambda request: f"/runtime/research-tasks/{request.match_info['research_task_id']}/events?{request.query_string}" if request.query_string else f"/runtime/research-tasks/{request.match_info['research_task_id']}/events"),
         DesktopApiRoute("GET", "/desktop/threads", lambda request: f"/runtime/threads?{request.query_string}" if request.query_string else "/runtime/threads"),
         DesktopApiRoute("POST", "/desktop/threads/default", lambda _request: "/runtime/threads/default"),
         DesktopApiRoute("POST", "/desktop/threads", lambda _request: "/runtime/threads"),
