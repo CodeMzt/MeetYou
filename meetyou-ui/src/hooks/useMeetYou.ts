@@ -814,9 +814,20 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
   }, [downloadArtifactFile])
 
   const sendMessageAndRefreshThreads = useCallback(async (...args: Parameters<typeof sendMessage>) => {
-    await sendMessage(...args)
+    const message = await sendMessage(...args)
     void refreshRuntimeThreads(endpointContext?.workspace.workspace_id)
-  }, [endpointContext?.workspace.workspace_id, refreshRuntimeThreads, sendMessage])
+    const preferredMode = String(args[2] || '').trim().toLowerCase()
+    if (preferredMode === 'research') {
+      const threadId = String(message?.thread_id || endpointContext?.threadId || '').trim()
+      if (threadId) {
+        await Promise.all([
+          loadThreadHistory(threadId),
+          refreshThreadVersionState(threadId),
+          refreshResearchTasks(activeProjectId, threadId),
+        ])
+      }
+    }
+  }, [activeProjectId, endpointContext?.threadId, endpointContext?.workspace.workspace_id, loadThreadHistory, refreshResearchTasks, refreshRuntimeThreads, refreshThreadVersionState, sendMessage])
 
   return {
     messages: chatState.messages,

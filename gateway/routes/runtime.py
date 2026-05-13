@@ -407,6 +407,134 @@ def _research_task_event_response(domain, task, event) -> RuntimeResearchTaskEve
     )
 
 
+def _is_research_confirmation(content: str) -> bool:
+    normalized = str(content or "").strip().lower()
+    compact = "".join(normalized.split())
+    if not compact:
+        return False
+    confirm_phrases = {
+        "确认",
+        "确认开始",
+        "开始",
+        "开始研究",
+        "执行",
+        "执行计划",
+        "可以",
+        "可以开始",
+        "同意",
+        "批准",
+        "approve",
+        "approved",
+        "start",
+        "go",
+    }
+    if compact in confirm_phrases:
+        return True
+    return any(phrase in compact for phrase in ("确认开始", "可以开始", "开始执行", "开始研究", "按计划执行"))
+
+
+def _is_research_cancel(content: str) -> bool:
+    compact = "".join(str(content or "").strip().lower().split())
+    return compact in {"取消", "取消研究", "停止", "停止研究", "cancel", "stop"} or any(
+        phrase in compact for phrase in ("取消这个研究", "停止这个研究", "不要研究了")
+    )
+
+
+def _is_research_plan_revision(content: str) -> bool:
+    compact = "".join(str(content or "").strip().lower().split())
+    return any(phrase in compact for phrase in ("修改计划", "调整计划", "重做计划", "补充计划", "改一下", "重新规划", "revise", "modify"))
+
+
+def _render_research_plan_confirmation(task) -> str:
+    topic = str(getattr(task, "topic", "") or "").strip()
+    task_id = str(getattr(task, "research_task_id", "") or "").strip()
+    policy = dict(getattr(task, "source_policy", {}) or {})
+    derived_formats = [
+        str(item or "").strip().lower()
+        for item in list(policy.get("derived_formats") or [])
+        if str(item or "").strip().lower() in {"pdf", "docx"}
+    ]
+    source_parts = ["外部深度研究服务进行只读搜索、抓取、阅读和归纳"]
+    if policy.get("include_project_sources"):
+        source_parts.append("纳入当前项目源")
+    if policy.get("web_urls") or policy.get("seed_urls") or policy.get("source_urls"):
+        source_parts.append("优先读取你提供的种子 URL")
+    if policy.get("web_queries"):
+        source_parts.append("使用指定搜索关键词")
+    export_text = "Markdown"
+    if derived_formats:
+        export_text = f"Markdown，并生成 {', '.join(fmt.upper() for fmt in derived_formats)} 衍生产物"
+    return "\n".join(
+        [
+            "我已为这个会话创建研究计划，暂不开始执行。",
+            "",
+            f"研究任务：`{task_id}`",
+            f"主题：{topic}",
+            "",
+            "计划草案：",
+            "1. 明确研究问题边界、目标读者和输出标准。",
+            "2. 通过外部研究服务收集并阅读可引用来源。",
+            "3. 对来源去重、排序，标记可信度、不确定性和冲突点。",
+            "4. 生成带引用的结构化研究报告，并保留来源清单。",
+            f"5. 保存可下载的 {export_text} 报告产物。",
+            "",
+            f"来源策略：{'；'.join(source_parts)}。",
+            "质量要求：只读收集；报告引用必须来自已记录证据；来源不足时任务会失败，不会编造引用。",
+            "",
+            "请回复“确认开始”启动研究；也可以回复“修改计划：...”让我先调整计划。",
+        ]
+    )
+
+
+def _render_research_plan_revision(task, revision_note: str) -> str:
+    task_id = str(getattr(task, "research_task_id", "") or "").strip()
+    return "\n".join(
+        [
+            "已记录你的计划修改意见，研究仍未开始。",
+            "",
+            f"研究任务：`{task_id}`",
+            f"修改意见：{str(revision_note or '').strip()}",
+            "",
+            "如果还要继续调整，请继续说明；确认无误后回复“确认开始”。",
+        ]
+    )
+
+
+def _render_research_started(task) -> str:
+    task_id = str(getattr(task, "research_task_id", "") or "").strip()
+    topic = str(getattr(task, "topic", "") or "").strip()
+    return "\n".join(
+        [
+            "已收到确认，研究任务已开始。",
+            "",
+            f"研究任务：`{task_id}`",
+            f"主题：{topic}",
+            "",
+            "进度会在本会话的研究状态气泡中刷新；完成后我会在当前会话里给出摘要和报告下载链接。",
+        ]
+    )
+
+
+def _render_research_cancelled(task) -> str:
+    task_id = str(getattr(task, "research_task_id", "") or "").strip()
+    return f"已取消研究任务 `{task_id}`。"
+
+
+def _render_research_running(task) -> str:
+    task_id = str(getattr(task, "research_task_id", "") or "").strip()
+    return f"研究任务 `{task_id}` 正在运行。当前会话的研究状态气泡会继续刷新；如需停止，请回复“取消研究”。"
+
+
+def _default_chat_research_source_policy(thread) -> dict[str, Any]:
+    return {
+        "source_adapters": ["web"],
+        "web_search": True,
+        "include_project_sources": bool(getattr(thread, "project_id", None)),
+        "derived_formats": ["pdf", "docx"],
+        "limit": 12,
+    }
+
+
 def _record_context_pool_runtime_user_message(
     domain,
     *,
@@ -1568,8 +1696,204 @@ def build_runtime_router(gateway) -> APIRouter:
             status=session.status,
         )
 
+    def _persist_runtime_assistant_message(
+        domain,
+        *,
+        thread,
+        session,
+        workspace,
+        endpoint,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ):
+        message = domain.services.message.create_message(
+            thread_id=thread.id,
+            session_id=getattr(session, "id", None),
+            role="assistant",
+            content=content,
+            origin_endpoint_id=getattr(endpoint, "id", None),
+            active_workspace_id=workspace.id,
+            meta=dict(metadata or {}),
+        )
+        conversation_version = getattr(domain.services, "conversation_version", None)
+        if conversation_version is not None:
+            attached_message = conversation_version.attach_message_to_active_branch(
+                thread_row_id=thread.id,
+                message_row_id=message.id,
+            )
+            if attached_message is not None:
+                message = attached_message
+        return message
+
+    def _latest_active_research_task(domain, *, thread):
+        rows = domain.services.research_task.list_tasks(
+            principal_id=domain.principal.id,
+            thread_id=thread.id,
+            limit=20,
+        )
+        for row in rows:
+            if str(getattr(row, "status", "") or "").strip().lower() in {"planned", "approved", "running"}:
+                return row
+        return None
+
+    async def _handle_research_mode_chat_message(
+        domain,
+        *,
+        thread,
+        session,
+        workspace,
+        endpoint,
+        user_message,
+        content: str,
+        background_tasks: BackgroundTasks,
+    ) -> bool:
+        normalized_content = str(content or "").strip()
+        if not normalized_content:
+            return False
+        task = _latest_active_research_task(domain, thread=thread)
+        if task is not None:
+            status = str(getattr(task, "status", "") or "planned").strip().lower()
+            if _is_research_cancel(normalized_content):
+                try:
+                    task = domain.services.research_task.transition_task(
+                        research_task_id=str(getattr(task, "research_task_id", "") or ""),
+                        action="cancel",
+                        fields={"metadata": {"cancelled_from": "research_mode_chat"}},
+                    ) or task
+                except ResearchTaskStateError as exc:
+                    gateway._raise_http_error(status_code=400, code=exc.code, message=str(exc))
+                _persist_runtime_assistant_message(
+                    domain,
+                    thread=thread,
+                    session=session,
+                    workspace=workspace,
+                    endpoint=endpoint,
+                    content=_render_research_cancelled(task),
+                    metadata={
+                        "message_kind": "research_task_cancelled",
+                        "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+                        "source_user_message_id": str(getattr(user_message, "message_id", "") or ""),
+                    },
+                )
+                return True
+            if status in {"planned", "approved"} and _is_research_confirmation(normalized_content):
+                try:
+                    task = domain.services.research_task.transition_task(
+                        research_task_id=str(getattr(task, "research_task_id", "") or ""),
+                        action="start",
+                        fields={"metadata": {"started_from": "research_mode_chat_confirmation"}},
+                    ) or task
+                    task = _ensure_research_task_run(domain, task)
+                except ResearchTaskStateError as exc:
+                    gateway._raise_http_error(status_code=400, code=exc.code, message=str(exc))
+                except KeyError as exc:
+                    gateway._raise_http_error(status_code=404, code="workspace_not_found", message=f"Unknown workspace: {exc.args[0] if exc.args else ''}")
+                if _research_task_auto_execute(task):
+                    background_tasks.add_task(_run_research_task_background, domain, str(getattr(task, "research_task_id", "") or ""))
+                _persist_runtime_assistant_message(
+                    domain,
+                    thread=thread,
+                    session=session,
+                    workspace=workspace,
+                    endpoint=endpoint,
+                    content=_render_research_started(task),
+                    metadata={
+                        "message_kind": "research_task_started",
+                        "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+                        "source_user_message_id": str(getattr(user_message, "message_id", "") or ""),
+                    },
+                )
+                return True
+            if status in {"planned", "approved"}:
+                revision_kind = "explicit" if _is_research_plan_revision(normalized_content) else "implicit"
+                plan = dict(getattr(task, "plan", {}) or {})
+                revision_notes = list(plan.get("revision_notes") or [])
+                revision_notes.append(
+                    {
+                        "content": normalized_content,
+                        "source_user_message_id": str(getattr(user_message, "message_id", "") or ""),
+                        "revision_kind": revision_kind,
+                    }
+                )
+                plan["revision_notes"] = revision_notes
+                try:
+                    task = domain.services.research_task.transition_task(
+                        research_task_id=str(getattr(task, "research_task_id", "") or ""),
+                        fields={
+                            "plan": plan,
+                            "metadata": {
+                                "last_plan_revision_from": "research_mode_chat",
+                                "last_plan_revision_message_id": str(getattr(user_message, "message_id", "") or ""),
+                                "last_plan_revision_kind": revision_kind,
+                            },
+                        },
+                    ) or task
+                except ResearchTaskStateError as exc:
+                    gateway._raise_http_error(status_code=400, code=exc.code, message=str(exc))
+                _persist_runtime_assistant_message(
+                    domain,
+                    thread=thread,
+                    session=session,
+                    workspace=workspace,
+                    endpoint=endpoint,
+                    content=_render_research_plan_revision(task, normalized_content),
+                    metadata={
+                        "message_kind": "research_task_plan_revision",
+                        "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+                        "source_user_message_id": str(getattr(user_message, "message_id", "") or ""),
+                    },
+                )
+                return True
+            if status == "running":
+                _persist_runtime_assistant_message(
+                    domain,
+                    thread=thread,
+                    session=session,
+                    workspace=workspace,
+                    endpoint=endpoint,
+                    content=_render_research_running(task),
+                    metadata={
+                        "message_kind": "research_task_running_notice",
+                        "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+                        "source_user_message_id": str(getattr(user_message, "message_id", "") or ""),
+                    },
+                )
+                return True
+
+        try:
+            task = domain.services.research_task.create_task(
+                principal_id=domain.principal.id,
+                project_id=getattr(thread, "project_id", None),
+                thread_id=thread.id,
+                topic=normalized_content,
+                source_policy=_default_chat_research_source_policy(thread),
+                output_format="markdown",
+                metadata={
+                    "created_from": "research_mode_chat",
+                    "source_user_message_id": str(getattr(user_message, "message_id", "") or ""),
+                    "thread_bound": True,
+                    "chat_confirmation_required": True,
+                },
+            )
+        except ValueError as exc:
+            gateway._raise_http_error(status_code=400, code="research_task_invalid", message=str(exc))
+        _persist_runtime_assistant_message(
+            domain,
+            thread=thread,
+            session=session,
+            workspace=workspace,
+            endpoint=endpoint,
+            content=_render_research_plan_confirmation(task),
+            metadata={
+                "message_kind": "research_task_plan",
+                "research_task_id": str(getattr(task, "research_task_id", "") or ""),
+                "source_user_message_id": str(getattr(user_message, "message_id", "") or ""),
+            },
+        )
+        return True
+
     @router.post("/messages", response_model=RuntimeMessageResponse)
-    async def create_message(payload: RuntimeMessageCreateRequest, request: Request):
+    async def create_message(payload: RuntimeMessageCreateRequest, request: Request, background_tasks: BackgroundTasks):
         gateway._require_http_auth(request)
         domain = gateway._require_core_domain()
         thread = _require_thread(gateway, domain, payload.thread_id)
@@ -1624,6 +1948,19 @@ def build_runtime_router(gateway) -> APIRouter:
             endpoint=endpoint,
             active_workspace=workspace,
         )
+        if role == "user" and str(metadata.get("preferred_mode") or "").strip().lower() == "research":
+            handled = await _handle_research_mode_chat_message(
+                domain,
+                thread=thread,
+                session=session,
+                workspace=workspace,
+                endpoint=endpoint,
+                user_message=message,
+                content=payload.content,
+                background_tasks=background_tasks,
+            )
+            if handled:
+                return _message_response(message, thread_id=thread.thread_id, workspace_id=workspace.workspace_id, session_id=getattr(session, "session_id", ""))
         source_kind = _resolve_runtime_source_kind(
             endpoint_id=source_id,
             endpoint_type=payload.endpoint_type,

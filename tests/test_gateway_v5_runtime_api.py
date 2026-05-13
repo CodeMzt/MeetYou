@@ -436,6 +436,117 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(completed["metadata"]["adapter_status"], "unconfigured")
         self.assertFalse(completed["artifact_id"])
 
+    def test_research_mode_chat_creates_plan_and_confirm_starts_without_llm_queue(self) -> None:
+        project_response = self.client.post(
+            "/runtime/projects",
+            json={"workspace_id": "personal", "title": "Chat Research Project"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(project_response.status_code, 200)
+        project_id = project_response.json()["project_id"]
+
+        thread_response = self.client.post(
+            "/runtime/threads",
+            json={"workspace_id": "personal", "project_id": project_id, "title": "Chat research thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_response.status_code, 200)
+        thread_id = thread_response.json()["thread_id"]
+
+        session_response = self.client.post(
+            "/runtime/sessions",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(session_response.status_code, 200)
+        session_id = session_response.json()["session_id"]
+
+        topic_response = self.client.post(
+            "/runtime/messages",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "session_id": session_id,
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+                "role": "user",
+                "content": "研究 GPT Researcher 和 Open Deep Research 的接入取舍。",
+                "preferred_mode": "research",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(topic_response.status_code, 200)
+        self.assertTrue(self.gateway._event_bus.inbound_queue.empty())
+
+        tasks_response = self.client.get(
+            "/runtime/research-tasks",
+            params={"thread_id": thread_id},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(tasks_response.status_code, 200)
+        tasks = tasks_response.json()
+        self.assertEqual(len(tasks), 1)
+        task = tasks[0]
+        research_task_id = task["research_task_id"]
+        self.assertEqual(task["status"], "planned")
+        self.assertEqual(task["thread_id"], thread_id)
+        self.assertEqual(task["project_id"], project_id)
+        self.assertEqual(task["source_policy"]["source_adapters"], ["web"])
+        self.assertTrue(task["source_policy"]["web_search"])
+        self.assertTrue(task["metadata"]["chat_confirmation_required"])
+
+        messages_response = self.client.get(f"/runtime/threads/{thread_id}/messages", headers=self._auth_headers())
+        self.assertEqual(messages_response.status_code, 200)
+        messages = messages_response.json()
+        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+        self.assertIn("确认开始", messages[-1]["content"])
+        self.assertIn(research_task_id, messages[-1]["content"])
+
+        no_auto_execute_policy = dict(task["source_policy"])
+        no_auto_execute_policy["auto_execute"] = False
+        plan_patch_response = self.client.patch(
+            f"/runtime/research-tasks/{research_task_id}",
+            json={"source_policy": no_auto_execute_policy},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(plan_patch_response.status_code, 200)
+
+        confirm_response = self.client.post(
+            "/runtime/messages",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "session_id": session_id,
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+                "role": "user",
+                "content": "确认开始",
+                "preferred_mode": "research",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(confirm_response.status_code, 200)
+        self.assertTrue(self.gateway._event_bus.inbound_queue.empty())
+
+        started_response = self.client.get(f"/runtime/research-tasks/{research_task_id}", headers=self._auth_headers())
+        self.assertEqual(started_response.status_code, 200)
+        started = started_response.json()
+        self.assertEqual(started["status"], "running")
+        self.assertTrue(started["run_id"])
+
+        events_response = self.client.get(f"/runtime/research-tasks/{research_task_id}/events", headers=self._auth_headers())
+        self.assertEqual(events_response.status_code, 200)
+        self.assertEqual(events_response.json()[0]["type"], "research.started")
+
+        messages_after_confirm = self.client.get(f"/runtime/threads/{thread_id}/messages", headers=self._auth_headers()).json()
+        self.assertEqual([item["role"] for item in messages_after_confirm], ["user", "assistant", "user", "assistant"])
+        self.assertIn("研究任务已开始", messages_after_confirm[-1]["content"])
+
     def test_edit_retry_queues_runtime_event_when_message_has_session(self) -> None:
         thread_response = self.client.post(
             "/runtime/threads",

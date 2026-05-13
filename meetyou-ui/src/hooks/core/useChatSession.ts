@@ -229,6 +229,7 @@ export function useChatSession(
         startTransition(() => {
           dispatchChat({ type: 'complete_user_turn', optimisticId: endpointRequestId, message })
         })
+        return message
       } catch (error) {
         console.error('閫氳繃绔偣 API 鍙戦€佹秷鎭け璐?', error)
         const transportError = {
@@ -246,6 +247,7 @@ export function useChatSession(
             turn: createSystemTurn(transportError.message, true),
           })
         })
+        return undefined
       }
     },
     [baseUrl, endpointContext, initializeEndpointContext, dispatchTransport],
