@@ -6,6 +6,7 @@ from unittest.mock import patch
 from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.capabilities.base import CapabilityError
 from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.capabilities.gpio import (
     UnavailableGPIOBackend,
+    _configure_gpiozero_pin_factory,
     _select_gpio_pin_factory_name,
 )
 from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.config import (
@@ -86,6 +87,17 @@ class GPIOTests(unittest.IsolatedAsyncioTestCase):
             return_value=True,
         ):
             self.assertEqual(_select_gpio_pin_factory_name(), "lgpio")
+
+    def test_lgpio_import_error_includes_underlying_exception(self):
+        class Device:
+            pin_factory = None
+
+        with patch.dict("sys.modules", {"gpiozero.pins.lgpio": None}):
+            with self.assertRaises(CapabilityError) as raised:
+                _configure_gpiozero_pin_factory(Device, "lgpio")
+
+        self.assertEqual(raised.exception.code, "gpio_lgpio_unavailable")
+        self.assertIn("Import error:", raised.exception.message)
 
 
 if __name__ == "__main__":

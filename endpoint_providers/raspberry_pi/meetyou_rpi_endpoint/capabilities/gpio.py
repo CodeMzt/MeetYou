@@ -245,7 +245,8 @@ def _configure_gpiozero_pin_factory(Device, pin_factory_name: str | None) -> str
                 "gpio_lgpio_unavailable",
                 (
                     "GPIO lgpio backend is unavailable; on Raspberry Pi 5 install python3-lgpio "
-                    "or pip package lgpio, then set MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio"
+                    "or pip package lgpio, then set MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio. "
+                    f"Import error: {type(exc).__name__}: {exc}"
                 ),
                 retryable=False,
             ) from exc

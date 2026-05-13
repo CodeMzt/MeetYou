@@ -158,6 +158,36 @@ If an existing deployment reports `Cannot determine SOC peripheral base address`
 
 The systemd unit runs with `WorkingDirectory=/var/lib/meetyou-rpi` and `TMPDIR=/var/lib/meetyou-rpi` because `lgpio` creates short-lived `.lgd-*` notification files in the process working directory. Keep runtime files out of `/opt/meetyou/MeetYou`, which is treated as application code and protected read-only by systemd.
 
+To distinguish a missing environment variable from a missing Python dependency, run this on the Pi:
+
+```bash
+sudo -u meetyou-rpi /opt/meetyou/MeetYou/.venv-rpi/bin/python - <<'PY'
+import os
+print("MEETYOU_RPI_GPIO_PIN_FACTORY=", os.getenv("MEETYOU_RPI_GPIO_PIN_FACTORY"))
+for module_name in ("gpiozero", "lgpio"):
+    try:
+        module = __import__(module_name)
+        print(module_name, "OK", getattr(module, "__file__", ""))
+    except Exception as exc:
+        print(module_name, "FAIL", type(exc).__name__, exc)
+try:
+    from gpiozero.pins.lgpio import LGPIOFactory
+    print("LGPIOFactory OK", LGPIOFactory)
+except Exception as exc:
+    print("LGPIOFactory FAIL", type(exc).__name__, exc)
+PY
+```
+
+If `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio` is present but `lgpio` or `LGPIOFactory` fails, rebuild the venv with system site packages after installing OS GPIO packages:
+
+```bash
+sudo systemctl stop meetyou-rpi-endpoint
+sudo apt install -y python3-gpiozero python3-lgpio
+sudo rm -rf /opt/meetyou/MeetYou/.venv-rpi
+sudo REPO_DIR=/opt/meetyou/MeetYou bash /opt/meetyou/MeetYou/scripts/rpi/install-systemd.sh
+sudo systemctl restart meetyou-rpi-endpoint
+```
+
 Remove the systemd unit without deleting config/state:
 
 ```bash
