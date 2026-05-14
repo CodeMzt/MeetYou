@@ -51,6 +51,14 @@ ENV
   echo "Created ${CONFIG_DIR}/rpi-endpoint.env without secrets. Add MEETYOU_RPI_ENDPOINT_TOKEN manually."
 else
   echo "Keeping existing ${CONFIG_DIR}/rpi-endpoint.env"
+  if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?MEETYOU_RPI_GPIO_PIN_FACTORY=' "${CONFIG_DIR}/rpi-endpoint.env"; then
+    {
+      echo
+      echo "# Raspberry Pi 5 GPIO should use lgpio instead of legacy RPi.GPIO/native backends:"
+      echo "MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio"
+    } >>"${CONFIG_DIR}/rpi-endpoint.env"
+    echo "Added MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio to existing ${CONFIG_DIR}/rpi-endpoint.env"
+  fi
 fi
 
 if [[ ! -d "${VENV_DIR}" ]]; then

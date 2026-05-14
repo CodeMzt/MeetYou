@@ -17,8 +17,11 @@ class FakeGPIOBackend:
     def __init__(self):
         self.values: dict[int, bool] = {}
 
-    async def read(self, pin: int) -> bool:
-        return bool(self.values.get(int(pin), False))
+    async def read(self, pin: int, *, pull: str | None = None) -> bool:
+        normalized_pin = int(pin)
+        if normalized_pin in self.values:
+            return bool(self.values[normalized_pin])
+        return str(pull or "").strip().lower() == "up"
 
     async def write(self, pin: int, value: bool, *, duration_ms: int | None = None) -> dict[str, Any]:
         normalized_pin = int(pin)
@@ -48,8 +51,8 @@ class UnavailableGPIOBackend:
         self.code = code
         self.message = message
 
-    async def read(self, pin: int) -> bool:
-        del pin
+    async def read(self, pin: int, *, pull: str | None = None) -> bool:
+        del pin, pull
         raise CapabilityError(
             self.code,
             self.message,
@@ -83,9 +86,13 @@ class GpioZeroBackend:
         self._input_cls = DigitalInputDevice
         self._output_cls = DigitalOutputDevice
 
-    async def read(self, pin: int) -> bool:
-        device = self._open_input(pin)
+    async def read(self, pin: int, *, pull: str | None = None) -> bool:
+        device = self._open_input(pin, pull=pull)
         try:
+            pin_obj = getattr(device, "pin", None)
+            raw_state = getattr(pin_obj, "state", None)
+            if raw_state is not None:
+                return bool(raw_state)
             return bool(device.value)
         finally:
             device.close()
@@ -110,9 +117,13 @@ class GpioZeroBackend:
         finally:
             device.close()
 
-    def _open_input(self, pin: int):
+    def _open_input(self, pin: int, *, pull: str | None = None):
         try:
-            return self._input_cls(int(pin))
+            pull_up = _gpiozero_pull_up(pull)
+            kwargs: dict[str, Any] = {"pull_up": pull_up}
+            if pull_up is None:
+                kwargs["active_state"] = True
+            return self._input_cls(int(pin), **kwargs)
         except Exception as exc:
             raise _gpiozero_runtime_error(exc, pin=pin, factory_name=self._pin_factory_name) from exc
 
@@ -301,6 +312,17 @@ def _looks_like_raspberry_pi() -> bool:
         if "raspberry pi" in text:
             return True
     return False
+
+
+def _gpiozero_pull_up(pull: str | None) -> bool | None:
+    normalized = str(pull or "").strip().lower()
+    if normalized == "up":
+        return True
+    if normalized == "down":
+        return False
+    if normalized == "none":
+        return None
+    return None
 
 
 def _ensure_lgpio_working_dir(working_dir: str | None) -> None:

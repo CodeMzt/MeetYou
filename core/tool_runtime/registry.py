@@ -231,13 +231,14 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "name": "list_endpoint_tool_targets",
             "description": (
                 "List online Endpoint execution targets that can execute tools, optionally scoped to a workspace and tool key. "
+                "Examples include desktop file.read/shell.exec and Raspberry Pi rpi.device.list/status/set/pulse/blink/button.read. "
                 "When answering the user, prefer tool_target_lines, endpoint_ids, and executable_tools_by_endpoint before verbose endpoint records."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
-                    "tool_key": {"type": "string", "description": "Optional endpoint capability tool key, such as file.read or shell.exec.", "default": ""},
+                    "tool_key": {"type": "string", "description": "Optional endpoint capability tool key, such as file.read, shell.exec, or rpi.device.list.", "default": ""},
                     "include_tools": {"type": "boolean", "description": "Include each endpoint's capability list.", "default": True},
                     "include_capability_details": {"type": "boolean", "description": "Include verbose per-capability metadata. Keep false for ordinary inventory answers.", "default": False},
                     "include_endpoint_details": {"type": "boolean", "description": "Include verbose endpoint records. Keep false so compact endpoint rows stay complete.", "default": False},
@@ -278,7 +279,10 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "normal current-session reply path. Do not use this to answer the originating user or to send "
                 "progress updates to the same endpoint; use emit_progress_notice for progress and the final assistant "
                 "answer for the actual reply. Use only when the user explicitly asks to notify or call a "
-                "specific target Endpoint."
+                "specific target Endpoint. For Raspberry Pi device calls, use delivery_kind=tool_call with "
+                "target_id set to the rpi endpoint_id, tool_key such as rpi.device.list or rpi.device.set, "
+                "arguments such as {\"device_id\":\"desk_led\",\"value\":true}, and confirmed=true only after "
+                "explicit confirmation when the capability requires it."
             ),
             "parameters": {
                 "type": "object",

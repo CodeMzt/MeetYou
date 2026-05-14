@@ -4,7 +4,9 @@ import os
 import platform
 import shutil
 import socket
+import subprocess
 import sys
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -12,14 +14,20 @@ from .base import (
     CapabilityContext,
     CapabilityDefinition,
 )
+from .gpio import (
+    FakeGPIOBackend,
+    GpioZeroBackend,
+    UnavailableGPIOBackend,
+    _select_gpio_pin_factory_name,
+)
 
 
 async def handle_system_info(arguments: dict[str, Any], context: CapabilityContext) -> dict[str, Any]:
-    del arguments, context
-    return collect_system_info()
+    del arguments
+    return collect_system_info(config=context.config, gpio_backend=context.gpio_backend)
 
 
-def collect_system_info() -> dict[str, Any]:
+def collect_system_info(*, config: Any | None = None, gpio_backend: Any | None = None) -> dict[str, Any]:
     disk = _disk_summary("/")
     return {
         "summary": f"{socket.gethostname()} {platform.system()} {platform.machine()}",
@@ -39,6 +47,8 @@ def collect_system_info() -> dict[str, Any]:
         "memory": _memory_summary(),
         "disk": disk,
         "cpu_temperature_c": _cpu_temperature_c(),
+        "gpio": _gpio_backend_summary(gpio_backend),
+        "endpoint": _endpoint_summary(config),
     }
 
 
@@ -109,6 +119,84 @@ def _cpu_temperature_c() -> float | None:
     return None
 
 
+def _gpio_backend_summary(gpio_backend: Any | None) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "selected_pin_factory": _select_gpio_pin_factory_name(),
+        "backend": None,
+        "available": None,
+    }
+    if gpio_backend is None:
+        return summary
+    if isinstance(gpio_backend, FakeGPIOBackend):
+        summary.update({"backend": "fake", "available": True})
+        return summary
+    if isinstance(gpio_backend, UnavailableGPIOBackend):
+        summary.update(
+            {
+                "backend": "unavailable",
+                "available": False,
+                "code": gpio_backend.code,
+                "message": gpio_backend.message,
+            }
+        )
+        return summary
+    if isinstance(gpio_backend, GpioZeroBackend):
+        summary.update(
+            {
+                "backend": f"gpiozero:{getattr(gpio_backend, '_pin_factory_name', 'unknown')}",
+                "available": True,
+            }
+        )
+        return summary
+    summary.update({"backend": gpio_backend.__class__.__name__, "available": True})
+    return summary
+
+
+def _endpoint_summary(config: Any | None) -> dict[str, Any]:
+    return {
+        "version": _package_version(),
+        "git_commit": _git_commit(),
+        "endpoint_id": getattr(config, "endpoint_id", None),
+        "provider_type": getattr(config, "provider_type", None),
+        "executor_endpoint_id": getattr(config, "executor_endpoint_id", None),
+    }
+
+
+def _package_version() -> str | None:
+    try:
+        return metadata.version("meetyou-rpi-endpoint")
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _git_commit() -> str | None:
+    repo_root = _repo_root()
+    if repo_root is None:
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return None
+    if completed.returncode != 0:
+        return None
+    commit = completed.stdout.strip()
+    return commit or None
+
+
+def _repo_root() -> Path | None:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
 def build_system_info_capability() -> CapabilityDefinition:
     return CapabilityDefinition(
         name="rpi.system.info",
@@ -125,6 +213,8 @@ def build_system_info_capability() -> CapabilityDefinition:
                 "memory": {"type": ["object", "null"]},
                 "disk": {"type": ["object", "null"]},
                 "cpu_temperature_c": {"type": ["number", "null"]},
+                "gpio": {"type": "object"},
+                "endpoint": {"type": "object"},
             },
             "required": ["summary", "hostname", "platform", "python"],
         },

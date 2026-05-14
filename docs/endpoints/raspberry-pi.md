@@ -11,7 +11,7 @@ Implementation decisions:
 - Advertise a single execution endpoint, `rpi.<endpoint_id>.executor`; do not create Thread, Message, Run, Scheduler, Heartbeat, Delivery, or Operation state on the Pi.
 - Map requested operation terms to current MeetYou frames: Core sends `tool.call.request` with `operation_id` and `call_id`; the Pi returns `tool.call.accepted`, `tool.call.progress`, `tool.call.result`, or `tool.call.error`.
 - Keep `endpoint.heartbeat` as connection keepalive only. It must not trigger `system.heartbeat`, which remains Scheduler-owned by Core.
-- Start with `rpi.echo`, `rpi.system.info`, `rpi.gpio.read`, `rpi.gpio.write`, and optional `rpi.shell.safe_exec`; camera, audio, display, and sensor streaming remain future work.
+- Start with `rpi.echo`, `rpi.system.info`, low-level `rpi.gpio.read` / `rpi.gpio.write`, named device capabilities, and optional `rpi.shell.safe_exec`; camera, audio, display, and sensor streaming remain future work.
 - Keep GPIO and shell policies local, explicit, and deny-by-default. GPIO writes require an allowlisted pin. Safe shell is not advertised unless enabled and an allowlist is configured.
 
 ## Architecture Summary
@@ -117,6 +117,7 @@ Key fields:
 - `keepalive`: endpoint connection heartbeat interval and timeout policy.
 - `operation`: default and max local operation timeout.
 - `security`: sandbox, safe-shell allowlist, GPIO allowlist, and default GPIO write duration.
+- `devices`: named device abstraction records. Each record uses a stable `device_id`, BCM `pin`, `type`, `direction`, `active_high`, and optional output/input safety fields.
 
 Environment overrides:
 
@@ -142,13 +143,17 @@ sudo systemctl status meetyou-rpi-endpoint
 journalctl -u meetyou-rpi-endpoint -f
 ```
 
-A healthy startup shows `hello acknowledged` followed by `ready: {'registered_capability_count': 4}`. That confirms Core accepted the endpoint and capability snapshot.
+A healthy startup shows `hello acknowledged` followed by `ready: {'registered_capability_count': 10}` when safe shell is disabled and the default device capability set is advertised. That confirms Core accepted the endpoint and capability snapshot.
 
 Smoke test before starting systemd:
 
 ```bash
 bash scripts/rpi/smoke-test.sh
 ```
+
+The smoke wrapper first runs the production health check, which verifies config presence, token env presence without printing the token, sandbox writability, `lgpio`, `gpio` group membership, `/dev/gpiochip*` permissions, and systemd status with explicit `PASS` / `WARN` / `FAIL` lines. See `docs/endpoints/rpi-operations.md` for the operations runbook and `docs/endpoints/rpi-real-acceptance-2026-05-13.md` for the real Raspberry Pi 5 acceptance record.
+
+When running the health module manually as `meetyou-rpi` from `/var/lib/meetyou-rpi`, include `PYTHONPATH=/opt/meetyou/MeetYou`. The systemd unit already sets it, but manual commands need it so `meetyou_rpi_endpoint` can import the repository-local `endpoint_tool_sdk`.
 
 Raspberry Pi 5 GPIO must use the `lgpio` pin factory. `/etc/meetyou/rpi-endpoint.env` should include:
 

@@ -10,6 +10,7 @@ Group=meetyou-rpi
 SupplementaryGroups=gpio
 WorkingDirectory=/var/lib/meetyou-rpi
 EnvironmentFile=/etc/meetyou/rpi-endpoint.env
+Environment=MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio
 Environment=PYTHONPATH=/opt/meetyou/MeetYou
 Environment=TMPDIR=/var/lib/meetyou-rpi
 ExecStart=/opt/meetyou/MeetYou/.venv-rpi/bin/python -m meetyou_rpi_endpoint.main --config /etc/meetyou/rpi-endpoint.json
