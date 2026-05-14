@@ -4,17 +4,19 @@ This runbook is for operating the Raspberry Pi 5 Endpoint Provider after the MVP
 
 ## Health And Smoke Test
 
-Run the production health check from the repository root on the Pi:
+Run the production health check as the service user on the Pi:
 
 ```bash
-sudo -u meetyou-rpi env TMPDIR=/var/lib/meetyou-rpi \
+sudo -u meetyou-rpi env PYTHONPATH=/opt/meetyou/MeetYou TMPDIR=/var/lib/meetyou-rpi \
   bash -lc 'cd /var/lib/meetyou-rpi && /opt/meetyou/MeetYou/.venv-rpi/bin/python -m meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env'
 ```
+
+Keep `PYTHONPATH=/opt/meetyou/MeetYou` in manual commands that run from `/var/lib/meetyou-rpi`. The installed Pi package imports the repository-local `endpoint_tool_sdk`; the systemd unit already sets `PYTHONPATH`, but ad hoc `sudo -u meetyou-rpi ... python -m meetyou_rpi_endpoint.health` commands must set it explicitly.
 
 Or use the wrapper:
 
 ```bash
-sudo REPO_DIR=/opt/meetyou/MeetYou PYTHON_BIN=/opt/meetyou/MeetYou/.venv-rpi/bin/python \
+sudo REPO_DIR=/opt/meetyou/MeetYou PYTHON_BIN=/opt/meetyou/MeetYou/.venv-rpi/bin/python PYTHONPATH=/opt/meetyou/MeetYou \
   bash /opt/meetyou/MeetYou/scripts/rpi/smoke-test.sh /etc/meetyou/rpi-endpoint.json
 ```
 

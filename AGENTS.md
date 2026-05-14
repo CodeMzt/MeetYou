@@ -90,6 +90,7 @@
 - Raspberry Pi GPIO arguments use BCM numbering, not physical header pin numbers.
 - Raspberry Pi 5 GPIO must use gpiozero with `lgpio`; keep `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio` in the service environment and do not fall back to legacy `RPi.GPIO`/native backends.
 - The Pi systemd service must run as `meetyou-rpi`, include the `gpio` supplementary group, and use `/var/lib/meetyou-rpi` for `WorkingDirectory` / `TMPDIR`; `lgpio` creates `.lgd-*` runtime files and must not write into `/opt/meetyou/MeetYou`.
+- Manual Pi diagnostics run as `meetyou-rpi` from `/var/lib/meetyou-rpi` must include `PYTHONPATH=/opt/meetyou/MeetYou`; the endpoint package imports the repository-local `endpoint_tool_sdk`, and systemd sets this environment variable for the service.
 - GPIO diagnostics for the service user should run from `/var/lib/meetyou-rpi`, not from the repository checkout. `can not open gpiochip` means `/dev/gpiochip*` permission/group setup is wrong, not a ToolRouter problem.
 - The Pi endpoint may emit operation progress/result/error, but final assistant replies must still be persisted by Core MessageService.
 
@@ -205,7 +206,7 @@
 - Desktop Provider: `python main.py desktop-client` or `python -m desktop_client`
 - Edge Provider: `python main.py edge-client` or `python -m edge_client`
 - Research Adapter: `python -m research_adapter`
-- Raspberry Pi endpoint health: `python -m endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env`
+- Raspberry Pi endpoint health on Pi: `sudo -u meetyou-rpi env PYTHONPATH=/opt/meetyou/MeetYou TMPDIR=/var/lib/meetyou-rpi bash -lc 'cd /var/lib/meetyou-rpi && /opt/meetyou/MeetYou/.venv-rpi/bin/python -m meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env'`
 - Raspberry Pi endpoint smoke: `bash scripts/rpi/smoke-test.sh /etc/meetyou/rpi-endpoint.json`
 - Frontend development: run `npm install`, `npm run dev` under `meetyou-ui/`
 - Frontend verification: run `npm run typecheck`, `npm run test` under `meetyou-ui/`

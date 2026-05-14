@@ -11,6 +11,7 @@ CONFIG_PATH="${1:-${CONFIG_PATH:-${DEFAULT_CONFIG_PATH}}}"
 ENV_FILE="${ENV_FILE:-/etc/meetyou/rpi-endpoint.env}"
 
 cd "${REPO_DIR}"
+export PYTHONPATH="${REPO_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 HEALTH_ARGS=(--config "${CONFIG_PATH}")
 if [[ -f "${ENV_FILE}" ]]; then
   HEALTH_ARGS+=(--env-file "${ENV_FILE}")
