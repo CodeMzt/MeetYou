@@ -169,6 +169,11 @@ export function useMeetYou(baseUrl: string = DEFAULT_BASE_URL) {
       return
     }
 
+    if (update.kind === 'thread_updated') {
+      void refreshRuntimeThreads(update.workspaceId || endpointContext?.workspace.workspace_id)
+      return
+    }
+
     // Domain level handlers
     processWsUpdateForChat(update)
     processWsUpdateForOperations(update)

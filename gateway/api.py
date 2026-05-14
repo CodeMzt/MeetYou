@@ -72,6 +72,7 @@ class FastAPIGateway:
         health_getter=None,
         skill_list_getter=None,
         skill_getter=None,
+        thread_title_generator=None,
         core_domain=None,
         endpoint_connection_prompt_getter=None,
         endpoint_connection_event_handler=None,
@@ -115,6 +116,7 @@ class FastAPIGateway:
         self._health_getter = health_getter
         self._skill_list_getter = skill_list_getter
         self._skill_getter = skill_getter
+        self._thread_title_generator = thread_title_generator
         self._endpoint_connection_prompt_getter = endpoint_connection_prompt_getter
         self._endpoint_connection_event_handler = endpoint_connection_event_handler
         self._access_token = str(access_token or "").strip()

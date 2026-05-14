@@ -25,24 +25,34 @@ def _positive_int(value: Any) -> int | None:
     return parsed
 
 
-def _metadata_summary(metadata: Any) -> dict[str, Any]:
+def _metadata_summary(metadata: Any, *, include_keys: bool = False) -> dict[str, Any]:
     payload = dict(metadata or {}) if isinstance(metadata, dict) else {}
     rendered = json.dumps(payload, ensure_ascii=False, default=str) if payload else ""
-    return {
+    summary = {
         "key_count": len(payload),
-        "keys": sorted(str(key) for key in payload.keys()),
         "byte_size_estimate": len(rendered.encode("utf-8", errors="ignore")) if rendered else 0,
     }
+    if include_keys:
+        summary["keys"] = sorted(str(key) for key in payload.keys())
+    elif payload:
+        summary["keys_preview"] = sorted(str(key) for key in payload.keys())[:8]
+        summary["keys_omitted"] = max(0, len(payload) - 8)
+    return summary
 
 
-def _policy_summary(value: Any) -> dict[str, Any]:
+def _policy_summary(value: Any, *, include_keys: bool = False) -> dict[str, Any]:
     payload = dict(value or {}) if isinstance(value, dict) else {}
     rendered = json.dumps(payload, ensure_ascii=False, default=str) if payload else ""
-    return {
+    summary = {
         "present": bool(payload),
-        "keys": sorted(str(key) for key in payload.keys()),
         "byte_size_estimate": len(rendered.encode("utf-8", errors="ignore")) if rendered else 0,
     }
+    if include_keys:
+        summary["keys"] = sorted(str(key) for key in payload.keys())
+    elif payload:
+        summary["keys_preview"] = sorted(str(key) for key in payload.keys())[:8]
+        summary["keys_omitted"] = max(0, len(payload) - 8)
+    return summary
 
 
 def _compact_job(job, *, include_details: bool = True) -> dict[str, Any]:
@@ -69,10 +79,10 @@ def _compact_job(job, *, include_details: bool = True) -> dict[str, Any]:
         "lease_until_at": getattr(job, "lease_until_at", "").isoformat()
         if getattr(job, "lease_until_at", None) is not None
         else "",
-        "metadata_summary": _metadata_summary(getattr(job, "meta", {}) or {}),
-        "run_template_summary": _policy_summary(getattr(job, "run_template", {}) or {}),
-        "execution_policy_summary": _policy_summary(getattr(job, "execution_policy", {}) or {}),
-        "delivery_policy_summary": _policy_summary(getattr(job, "delivery_policy", {}) or {}),
+        "metadata_summary": _metadata_summary(getattr(job, "meta", {}) or {}, include_keys=include_details),
+        "run_template_summary": _policy_summary(getattr(job, "run_template", {}) or {}, include_keys=include_details),
+        "execution_policy_summary": _policy_summary(getattr(job, "execution_policy", {}) or {}, include_keys=include_details),
+        "delivery_policy_summary": _policy_summary(getattr(job, "delivery_policy", {}) or {}, include_keys=include_details),
         "details_included": bool(include_details),
         "created_at": getattr(job, "created_at", "").isoformat()
         if getattr(job, "created_at", None) is not None

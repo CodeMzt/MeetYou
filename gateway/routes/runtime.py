@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import os
 from typing import Any
 
@@ -77,6 +78,8 @@ from gateway.models import (
     RuntimeThreadBranchResponse,
 )
 from tools.danxi_tools import DanxiError, get_shared_danxi_tools
+
+logger = logging.getLogger("meetyou.gateway.runtime")
 
 
 _HTTP_SCHEMA = "meetyou.http.v1"
@@ -242,6 +245,89 @@ def _message_response(
         created_at=message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
         idempotent_replay=bool(idempotent_replay),
     )
+
+
+def _auto_title_pending_for_message(domain, *, thread, message) -> bool:
+    if str(getattr(message, "role", "") or "").strip().lower() != "user":
+        return False
+    if str(getattr(message, "channel", "") or "message").strip().lower() != "message":
+        return False
+    thread_service = getattr(getattr(domain, "services", None), "thread", None)
+    fresh_thread = None
+    getter = getattr(thread_service, "get_by_id", None)
+    if callable(getter):
+        try:
+            fresh_thread = getter(getattr(thread, "id", None))
+        except Exception:
+            fresh_thread = None
+    candidate = fresh_thread or thread
+    metadata = dict(getattr(candidate, "meta", {}) or {})
+    source_message_id = str(metadata.get("auto_title_source_message_id") or "").strip()
+    return bool(metadata.get("auto_title_pending")) and source_message_id == str(getattr(message, "message_id", "") or "").strip()
+
+
+async def _generate_and_apply_thread_title(
+    gateway,
+    domain,
+    *,
+    thread_id: str,
+    workspace_id: str,
+    source_message_id: str,
+    content: str,
+) -> None:
+    generator = getattr(gateway, "_thread_title_generator", None)
+    thread_service = getattr(getattr(domain, "services", None), "thread", None)
+    apply_title = getattr(thread_service, "apply_auto_title", None)
+    record_failure = getattr(thread_service, "record_auto_title_failure", None)
+    if not callable(generator) or not callable(apply_title):
+        if callable(record_failure):
+            record_failure(thread_id=thread_id, source_message_id=source_message_id, error="title_generator_unavailable")
+        return
+    try:
+        generated = await generator(content=content, thread_id=thread_id, message_id=source_message_id)
+        if isinstance(generated, dict):
+            title = str(generated.get("title") or "").strip()
+            provider = str(generated.get("provider") or "").strip()
+            model = str(generated.get("model") or "").strip()
+            error = str(generated.get("error") or "").strip()
+        else:
+            title = str(generated or "").strip()
+            provider = ""
+            model = ""
+            error = ""
+        if not title:
+            if callable(record_failure):
+                record_failure(
+                    thread_id=thread_id,
+                    source_message_id=source_message_id,
+                    error=error or "empty_model_title",
+                )
+            return
+        updated = apply_title(
+            thread_id=thread_id,
+            title=title,
+            source_message_id=source_message_id,
+            model=model,
+            provider=provider,
+        )
+        if updated is None:
+            return
+        publisher = getattr(gateway, "publish_thread_delivery_event", None)
+        if callable(publisher):
+            await publisher(
+                thread_id,
+                event_type="thread.updated",
+                payload={
+                    "thread_id": thread_id,
+                    "workspace_id": workspace_id,
+                    "title": str(getattr(updated, "title", "") or title),
+                    "reason": "auto_title_generated",
+                },
+            )
+    except Exception as exc:  # noqa: BLE001 - background title generation must not break message flow.
+        logger.warning("Runtime auto thread title generation failed for %s: %s", thread_id, exc)
+        if callable(record_failure):
+            record_failure(thread_id=thread_id, source_message_id=source_message_id, error=type(exc).__name__)
 
 
 def _iso(row, attr: str) -> str:
@@ -1984,6 +2070,16 @@ def build_runtime_router(gateway) -> APIRouter:
             endpoint=endpoint,
             active_workspace=workspace,
         )
+        if _auto_title_pending_for_message(domain, thread=thread, message=message):
+            background_tasks.add_task(
+                _generate_and_apply_thread_title,
+                gateway,
+                domain,
+                thread_id=str(getattr(thread, "thread_id", "") or ""),
+                workspace_id=str(getattr(workspace, "workspace_id", "") or ""),
+                source_message_id=str(getattr(message, "message_id", "") or ""),
+                content=str(payload.content or ""),
+            )
         if role == "user" and str(metadata.get("preferred_mode") or "").strip().lower() == "research":
             handled = await _handle_research_mode_chat_message(
                 domain,

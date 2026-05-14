@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from core.db.repositories import ThreadRepository
 from core.services.base import ServiceBase
+from core.db.base import utcnow
+from core.services.thread_titles import can_auto_title_thread, extract_title_from_model_text
 
 
 @dataclass(slots=True)
@@ -66,6 +68,74 @@ class ThreadService(ServiceBase):
                 thread_row_id=thread_row_id,
                 fields=fields,
             )
+
+    def apply_auto_title(
+        self,
+        *,
+        thread_id: str,
+        title: str,
+        source_message_id: str = "",
+        model: str = "",
+        provider: str = "",
+    ):
+        normalized_title = extract_title_from_model_text(title)
+        if not normalized_title:
+            return None
+        with self.session_scope() as session:
+            repo = ThreadRepository(session)
+            thread = repo.get_by_thread_id(thread_id)
+            if not can_auto_title_thread(thread):
+                return None
+            metadata = dict(getattr(thread, "meta", {}) or {})
+            expected_source = str(metadata.get("auto_title_source_message_id") or "").strip()
+            if source_message_id and expected_source and expected_source != str(source_message_id).strip():
+                return None
+            metadata.update(
+                {
+                    "auto_title": True,
+                    "auto_title_pending": False,
+                    "auto_title_generated_at": utcnow().isoformat(),
+                    "auto_title_strategy": "model",
+                    "auto_title_model": str(model or ""),
+                    "auto_title_provider": str(provider or ""),
+                }
+            )
+            if source_message_id:
+                metadata["auto_title_source_message_id"] = str(source_message_id)
+            metadata.pop("auto_title_error", None)
+            thread.title = normalized_title
+            thread.meta = metadata
+            thread.updated_at = utcnow()
+            session.flush()
+            return thread
+
+    def record_auto_title_failure(
+        self,
+        *,
+        thread_id: str,
+        source_message_id: str = "",
+        error: str = "",
+    ):
+        with self.session_scope() as session:
+            repo = ThreadRepository(session)
+            thread = repo.get_by_thread_id(thread_id)
+            if thread is None:
+                return None
+            metadata = dict(getattr(thread, "meta", {}) or {})
+            expected_source = str(metadata.get("auto_title_source_message_id") or "").strip()
+            if source_message_id and expected_source and expected_source != str(source_message_id).strip():
+                return None
+            metadata.update(
+                {
+                    "auto_title_pending": False,
+                    "auto_title_error": str(error or "title_generation_failed")[:240],
+                    "auto_title_failed_at": utcnow().isoformat(),
+                }
+            )
+            thread.meta = metadata
+            thread.updated_at = utcnow()
+            session.flush()
+            return thread
 
     def list_threads(self, *, principal_id, workspace_id=None, project_id=None, limit: int = 50):
         with self.session_scope() as session:

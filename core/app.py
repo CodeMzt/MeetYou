@@ -50,6 +50,7 @@ from core.runtime_context import bind_event_context, get_event_context, reset_ev
 from core.session_actor import SessionActorRuntime
 from core.session_manager import SessionManager
 from core.services.heartbeat_workflow import HeartbeatWorkflow
+from core.services.thread_titles import extract_title_from_model_text
 from core.speaker import Speaker
 from core.status import RuntimeStatus, StatusManager, utcnow_iso
 from core.tools_manager import ToolsManager
@@ -429,6 +430,57 @@ class App:
         else:
             thinking = {"enabled": False, "effort": None, "budget_tokens": None}
         return {"thinking": thinking}
+
+    async def generate_thread_title_from_user_message(
+        self,
+        *,
+        content: str,
+        thread_id: str = "",
+        message_id: str = "",
+    ) -> dict[str, str]:
+        del thread_id, message_id
+        prompt_content = str(content or "").strip()
+        if not prompt_content:
+            return {"title": "", "provider": self._get_main_provider(), "model": str(self.config.get("model") or "")}
+        if not self.brain.is_initialized or getattr(self.brain, "_http_session", None) is None:
+            return {"title": "", "provider": self._get_main_provider(), "model": str(self.config.get("model") or ""), "error": "brain_not_initialized"}
+
+        provider = self._get_main_provider()
+        model = str(self.config.get("model") or "")
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是 MeetYou 的会话标题生成器。只根据用户首条消息生成一个简短中文标题。"
+                    "不要照抄完整问题，不要解释，不要加引号，不要使用句号。"
+                    "标题应概括意图或主题，优先 6 到 14 个汉字，最长 24 个字符。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"用户首条消息：\n{prompt_content[:2400]}\n\n请只输出标题。",
+            },
+        ]
+        adapter_options = Brain._build_adapter_options({"thinking": {"enabled": False, "effort": None, "budget_tokens": None}})
+        try:
+            result = await asyncio.wait_for(
+                self.main_adapter.chat(
+                    self.brain._http_session,
+                    self.config.get("api_url") or "",
+                    self.config.get("api_key") or "",
+                    model,
+                    messages,
+                    tools=None,
+                    **adapter_options,
+                ),
+                timeout=20,
+            )
+        except Exception as exc:
+            logger.warning("Auto thread title generation failed: %s", exc)
+            return {"title": "", "provider": provider, "model": model, "error": type(exc).__name__}
+
+        title = extract_title_from_model_text(str(result.get("content") or ""))
+        return {"title": title, "provider": provider, "model": model}
 
     async def _log_error(self, error: MeetYouError):
         logger.error("[SYSTEM] %s: %s", type(error).__name__, error)

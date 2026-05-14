@@ -91,6 +91,47 @@ def _trim_text(value: Any, limit: int = _SUMMARY_LIMIT) -> str:
     return normalized[: max(0, limit - 3)].rstrip() + "..."
 
 
+def _compact_source(source: dict[str, Any], *, summary_limit: int = 360) -> dict[str, Any]:
+    summary = _trim_text(source.get("summary") or source.get("content") or "", summary_limit)
+    return {
+        key: value
+        for key, value in {
+            "id": source.get("id"),
+            "title": _trim_text(source.get("title"), 120),
+            "source_type": _normalize_text(source.get("source_type")),
+            "url": _normalize_text(source.get("url")),
+            "page_id": _normalize_text(source.get("page_id")),
+            "summary": summary,
+            "summary_truncated": len(_normalize_text(source.get("summary") or source.get("content") or "")) > len(summary),
+            "confidence": source.get("confidence"),
+        }.items()
+        if value not in ("", None)
+    }
+
+
+def _source_lines(sources: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for source in sources:
+        source_id = source.get("id")
+        title = _trim_text(source.get("title"), 90)
+        source_type = _normalize_text(source.get("source_type"))
+        url = _normalize_text(source.get("url"))
+        suffix = f" | url={url}" if url else ""
+        lines.append(f"{source_id}. {title} | type={source_type}{suffix}")
+    return lines
+
+
+def _compact_skill(skill: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": _normalize_text(skill.get("id")),
+        "skill_type": _normalize_text(skill.get("skill_type")),
+        "title": _trim_text(skill.get("title"), 80),
+        "summary": _trim_text(skill.get("summary"), 160),
+        "applicable_modes": [str(item) for item in skill.get("applicable_modes", []) if str(item).strip()],
+        "recommended_tools": [str(item) for item in skill.get("recommended_tools", []) if str(item).strip()],
+    }
+
+
 def _looks_like_url(value: str) -> bool:
     return bool(_URL_RE.search(str(value or "").strip()))
 
@@ -1018,7 +1059,9 @@ class ScenarioTools:
                 "query": normalized_query,
                 "scope_used": scope_used,
                 "found": bool(sources),
-                "sources": sources,
+                "source_lines": _source_lines([_compact_source(source) for source in sources]),
+                "compact_sources": [_compact_source(source) for source in sources],
+                "sources": [_compact_source(source) for source in sources],
                 "partial_failures": failures,
                 "answer_style": "Use only the returned private knowledge sources. If nothing was found, say so plainly.",
             },
@@ -1087,6 +1130,7 @@ class ScenarioTools:
         self,
         query: str = "",
         skill_type: str = "all",
+        include_details: bool = False,
         session_id: str = "",
         source=None,
         activity_callback: ActivityCallback | None = None,
@@ -1107,13 +1151,23 @@ class ScenarioTools:
             }
             return json.dumps(payload, ensure_ascii=False, indent=2)
         skills = self._mode_manager.list_skills(skill_type=skill_type, query=query)
+        compact_skills = [_compact_skill(skill) for skill in skills]
         payload = {
             "tool": "list_skills",
             "query": _normalize_text(query),
             "skill_type": _normalize_text(skill_type) or "all",
             "skill_count": len(skills),
-            "skills": skills,
+            "skill_ids": [skill["id"] for skill in compact_skills if skill.get("id")],
+            "skill_lines": [
+                f"{skill.get('id')} | type={skill.get('skill_type')} | title={skill.get('title')} | tools={','.join(skill.get('recommended_tools') or [])}"
+                for skill in compact_skills
+            ],
+            "compact_skills": compact_skills,
+            "skills": skills if include_details else compact_skills,
+            "details_included": bool(include_details),
         }
+        if include_details:
+            payload["skill_details"] = skills
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
     async def load_skill(

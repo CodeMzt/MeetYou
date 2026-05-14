@@ -71,14 +71,26 @@ def _workspace_matches(workspace_key: str, workspace_ids: list[str]) -> bool:
 
 
 def _compact_endpoint_payload(endpoint: dict[str, Any]) -> dict[str, Any]:
+    executable_tools = _string_list(endpoint.get("executable_tools") or endpoint.get("tool_keys") or [])
     return {
         "endpoint_id": str(endpoint.get("endpoint_id") or ""),
         "display_name": str(endpoint.get("display_name") or ""),
+        "endpoint_type": str(endpoint.get("endpoint_type") or ""),
         "provider_type": str(endpoint.get("provider_type") or ""),
+        "transport_type": str(endpoint.get("transport_type") or ""),
         "status": str(endpoint.get("status") or ""),
         "connected": bool(endpoint.get("connected")),
+        "connection_count": int(endpoint.get("connection_count") or 0),
         "workspace_ids": _string_list(endpoint.get("workspace_ids") or []),
-        "executable_tools": _string_list(endpoint.get("executable_tools") or endpoint.get("tool_keys") or []),
+        "tool_keys": executable_tools,
+        "executable_tools": executable_tools,
+        "capability_count": len(executable_tools),
+        "capability_details_included": False,
+        "capabilities": [],
+        "matched_tool_key": str(endpoint.get("matched_tool_key") or ""),
+        "last_seen_at": str(endpoint.get("last_seen_at") or ""),
+        "connected_at": str(endpoint.get("connected_at") or ""),
+        "updated_at": str(endpoint.get("updated_at") or ""),
     }
 
 
@@ -164,6 +176,7 @@ def _compact_address_payload(address: dict[str, Any]) -> dict[str, Any]:
         "status": str(address.get("status") or ""),
         "bound": bool(address.get("bound")),
         "alias": str(address.get("alias") or ""),
+        "metadata_summary": dict(address.get("metadata_summary") or {}),
     }
 
 
@@ -381,6 +394,7 @@ class EndpointTools:
         thread_id: str = "",
         include_tools: bool = True,
         include_capability_details: bool = False,
+        include_endpoint_details: bool = False,
         session_id: str = "",
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -431,7 +445,8 @@ class EndpointTools:
             "ok": True,
             "count": len(results),
             **summary,
-            "endpoints": results,
+            "endpoints": results if include_endpoint_details or include_capability_details else compact,
+            "endpoint_details_included": bool(include_endpoint_details or include_capability_details),
         }
 
     async def list_endpoint_tool_targets(
@@ -440,6 +455,7 @@ class EndpointTools:
         tool_key: str = "",
         include_tools: bool = True,
         include_capability_details: bool = False,
+        include_endpoint_details: bool = False,
         session_id: str = "",
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -492,7 +508,8 @@ class EndpointTools:
             "workspace_id": str(getattr(workspace, "workspace_id", "") or workspace_id or ""),
             "tool_key": normalized_tool_key,
             **summary,
-            "endpoints": targets,
+            "endpoints": targets if include_endpoint_details or include_capability_details else compact,
+            "endpoint_details_included": bool(include_endpoint_details or include_capability_details),
         }
 
     async def list_delivery_targets(
@@ -503,6 +520,7 @@ class EndpointTools:
         workspace_id: str = "",
         include_unavailable: bool = False,
         include_metadata: bool = False,
+        include_address_details: bool = False,
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         del route_context
@@ -544,7 +562,8 @@ class EndpointTools:
             "provider_type": normalized_provider,
             "actor_ref": normalized_actor_ref,
             **summary,
-            "addresses": payloads,
+            "addresses": payloads if include_address_details or include_metadata else summary["compact_addresses"],
+            "address_details_included": bool(include_address_details or include_metadata),
         }
 
     async def set_delivery_preference(

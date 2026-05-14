@@ -55,7 +55,14 @@ class ToolCallResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def as_message_content(self) -> str:
-        return json.dumps(self.model_dump(mode="json"), ensure_ascii=False, default=str)
+        payload = self.model_dump(mode="json")
+        content = dict(payload.get("content") or {})
+        if content.get("kind") == ToolContentKind.JSON.value and content.get("data") is not None:
+            payload["content"] = {
+                "kind": ToolContentKind.JSON.value,
+                "data": content.get("data"),
+            }
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
     @classmethod
     def success(

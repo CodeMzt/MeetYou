@@ -93,6 +93,28 @@ def _trim_text(text: str, limit: int) -> str:
     return normalized[: max(0, limit - 3)].rstrip() + "..."
 
 
+def _source_lines(sources: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for source in sources:
+        source_id = source.get("source_id") or source.get("id")
+        title = _trim_text(str(source.get("title") or ""), 90)
+        domain = str(source.get("domain") or "")
+        status = str(source.get("verification_status") or "")
+        url = str(source.get("url") or "")
+        lines.append(f"{source_id}. {title} | domain={domain} | status={status} | url={url}")
+    return lines
+
+
+def _compact_web_source(source: dict[str, Any], *, summary_limit: int = 520) -> dict[str, Any]:
+    summary_raw = str(source.get("summary") or "")
+    summary = _trim_text(summary_raw, summary_limit)
+    payload = dict(source)
+    payload["summary"] = summary
+    payload["excerpt"] = _trim_text(str(source.get("excerpt") or summary), 240)
+    payload["summary_truncated"] = len(re.sub(r"\s+", " ", summary_raw).strip()) > len(summary)
+    return payload
+
+
 def _looks_like_url(value: str) -> bool:
     if not value:
         return False
@@ -722,6 +744,7 @@ class SearchOrchestrator:
             for item in results[read_top_k : request.max_results]
         ]
         evidence_ledger = [_evidence_from_source(source) for source in sources]
+        compact_sources = [_compact_web_source(source) for source in sources]
 
         return json.dumps(
             {
@@ -737,7 +760,9 @@ class SearchOrchestrator:
                 "freshness": request.freshness,
                 "citation_style": "Answer first, then cite only evidence_ledger source ids inline like [1], [2].",
                 "summary_hint": summary_hint,
-                "sources": sources,
+                "source_lines": _source_lines(compact_sources),
+                "compact_sources": compact_sources,
+                "sources": compact_sources,
                 "evidence_ledger": evidence_ledger,
                 "evidence": evidence_ledger,
                 "additional_results": additional_results,

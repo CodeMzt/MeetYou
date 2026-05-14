@@ -406,11 +406,20 @@ describe('protocolClient', () => {
         fallback_thread_id: 'thr_default',
         workspace_id: 'personal',
       }))
+    const updated = parseEndpointWsPayload(endpointRunEvent({
+        type: 'thread.updated',
+        thread_id: 'thr_current',
+        session_id: 'sess_1',
+        workspace_id: 'personal',
+        title: '模型生成标题',
+      }))
 
     expect(switched.kind).toBe('thread_switched')
     expect(switched.kind === 'thread_switched' ? switched.targetThreadId : '').toBe('thr_next')
     expect(deleted.kind).toBe('thread_deleted')
     expect(deleted.kind === 'thread_deleted' ? deleted.fallbackThreadId : '').toBe('thr_default')
+    expect(updated.kind).toBe('thread_updated')
+    expect(updated.kind === 'thread_updated' ? updated.title : '').toBe('模型生成标题')
   })
 
   it('parses operation updated events', () => {

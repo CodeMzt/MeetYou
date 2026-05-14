@@ -1,55 +1,12 @@
 from __future__ import annotations
 
-import re
 from uuid import uuid4
 
 from core.db.base import utcnow
 from core.db.models import Message, Thread
 from core.db.repositories import MessageRepository
 from core.services.base import ServiceBase
-
-
-_AUTO_TITLE_FALLBACKS = {
-    "",
-    "new chat",
-    "new conversation",
-    "desktop chat",
-    "untitled",
-    "新会话",
-    "新對話",
-    "桌面聊天",
-    "未命名",
-    "未命名会话",
-}
-
-
-def _normalize_title(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip()).lower()
-
-
-def _can_auto_title_thread(thread: Thread | None) -> bool:
-    if thread is None:
-        return False
-    metadata = dict(getattr(thread, "meta", {}) or {})
-    if metadata.get("auto_title_disabled") or metadata.get("manual_title"):
-        return False
-    return _normalize_title(getattr(thread, "title", "")) in _AUTO_TITLE_FALLBACKS
-
-
-def _auto_title_from_content(content: str) -> str:
-    text = str(content or "")
-    text = re.sub(r"```.*?```", " ", text, flags=re.S)
-    text = re.sub(r"`([^`]*)`", r"\1", text)
-    text = re.sub(r"^[#>\-\*\s]+", "", text.strip())
-    text = re.sub(r"\s+", " ", text).strip()
-    if not text:
-        return ""
-    first_sentence = re.split(r"[。！？!?]\s*|\n", text, maxsplit=1)[0].strip()
-    title = first_sentence or text
-    title = title.strip(" ，,。.!！？?;；:：\"'“”‘’[]()（）")
-    if len(title) > 32:
-        title = title[:32].rstrip() + "..."
-    return title or "新会话"
+from core.services.thread_titles import can_auto_title_thread
 
 
 class MessageService(ServiceBase):
@@ -95,16 +52,16 @@ class MessageService(ServiceBase):
                 visibility=visibility,
                 meta=meta,
             )
-            self._maybe_auto_title_thread(session, message)
+            self._maybe_mark_auto_title_pending(session, message)
             return message
 
-    def _maybe_auto_title_thread(self, session, message: Message) -> None:
+    def _maybe_mark_auto_title_pending(self, session, message: Message) -> None:
         if str(getattr(message, "role", "") or "").strip().lower() != "user":
             return
         if str(getattr(message, "channel", "") or "message").strip().lower() != "message":
             return
         thread = session.get(Thread, getattr(message, "thread_id", None))
-        if not _can_auto_title_thread(thread):
+        if not can_auto_title_thread(thread):
             return
         user_message_count = (
             session.query(Message)
@@ -117,18 +74,15 @@ class MessageService(ServiceBase):
         )
         if user_message_count != 1:
             return
-        title = _auto_title_from_content(getattr(message, "content", ""))
-        if not title:
-            return
         metadata = dict(getattr(thread, "meta", {}) or {})
         metadata.update(
             {
-                "auto_title": True,
+                "auto_title_pending": True,
                 "auto_title_source_message_id": getattr(message, "message_id", ""),
-                "auto_title_generated_at": utcnow().isoformat(),
+                "auto_title_requested_at": utcnow().isoformat(),
+                "auto_title_strategy": "model",
             }
         )
-        thread.title = title
         thread.meta = metadata
         thread.updated_at = utcnow()
         session.flush()

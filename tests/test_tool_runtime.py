@@ -137,6 +137,23 @@ class ToolRuntimeTests(unittest.IsolatedAsyncioTestCase):
         del args, kwargs
         return None
 
+    def test_tool_message_content_does_not_duplicate_json_text_and_data(self):
+        payload = {"items": [{"id": str(index), "text": "x" * 100} for index in range(20)]}
+        result = ToolCallResult.success(
+            tool_name="large_list",
+            source="builtin",
+            action_risk="read",
+            raw_output=payload,
+        )
+
+        rendered = result.as_message_content()
+        parsed = json.loads(rendered)
+
+        self.assertEqual(parsed["content"]["kind"], "json")
+        self.assertEqual(parsed["content"]["data"], payload)
+        self.assertNotIn("text", parsed["content"])
+        self.assertLess(len(rendered), len(json.dumps(payload, ensure_ascii=False)) * 2)
+
     def _build_manager_with_real_system_tools(self, *, mode_manager):
         memory = SimpleNamespace(
             save_memory=None,

@@ -754,6 +754,16 @@ export function parseEndpointWsPayload(payload: unknown): EndpointWsEvent {
     }
   }
 
+  if (eventType === 'thread.updated') {
+    return {
+      kind: 'thread_updated',
+      threadId,
+      sessionId,
+      workspaceId: toString(event.workspace_id || event.active_workspace_id),
+      title: toString(event.title),
+    }
+  }
+
   if (eventType === 'thread.deleted') {
     return {
       kind: 'thread_deleted',

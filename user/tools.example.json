@@ -238,6 +238,11 @@
               "type": "boolean",
               "description": "Include verbose capability records. Keep false for ordinary inventory answers to avoid hiding later endpoints behind long payloads.",
               "default": false
+            },
+            "include_endpoint_details": {
+              "type": "boolean",
+              "description": "Include verbose endpoint records. Keep false so compact endpoint rows stay complete.",
+              "default": false
             }
           },
           "required": []
@@ -268,6 +273,11 @@
             "include_capability_details": {
               "type": "boolean",
               "description": "Include verbose capability records. Keep false for ordinary endpoint inventory answers to avoid hiding later endpoints behind long payloads.",
+              "default": false
+            },
+            "include_endpoint_details": {
+              "type": "boolean",
+              "description": "Include verbose endpoint records. Keep false so compact endpoint rows stay complete.",
               "default": false
             }
           },
@@ -986,6 +996,11 @@
                 "mode",
                 "reusable"
               ]
+            },
+            "include_details": {
+              "type": "boolean",
+              "description": "Include verbose skill details. Keep false for ordinary listings and use load_skill for one full skill.",
+              "default": false
             }
           },
           "required": []

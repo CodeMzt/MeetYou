@@ -33,6 +33,13 @@ _REMEMBER_CATEGORY_DEFAULT_IMPORTANCE = {
 _MEMORY_ID_RE = re.compile(r"id=([A-Za-z0-9_\-]+)")
 
 
+def _trim_text(value: Any, limit: int = 360) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
 def _clamp_importance(value: float) -> float:
     return max(0.0, min(1.0, value))
 
@@ -52,32 +59,50 @@ def _remember_tags(category: str) -> list[str]:
 
 
 def _compact_profile_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    fact_value = str(entry.get("fact_value") or "").strip()
+    content = str(entry.get("content") or "").strip()
     payload = {
         "fact_key": str(entry.get("fact_key") or "").strip(),
-        "fact_value": str(entry.get("fact_value") or "").strip(),
-        "content": str(entry.get("content") or "").strip(),
+        "fact_value": _trim_text(fact_value),
+        "content": _trim_text(content),
+        "truncated": len(fact_value) > 360 or len(content) > 360,
         "score": entry.get("score"),
     }
-    return {key: value for key, value in payload.items() if value not in ("", None)}
+    return {key: value for key, value in payload.items() if value not in ("", None, False)}
 
 
 def _compact_fact_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    fact_value = str(entry.get("fact_value") or "").strip()
+    content = str(entry.get("content") or "").strip()
     payload = {
         "fact_key": str(entry.get("fact_key") or "").strip(),
-        "fact_value": str(entry.get("fact_value") or "").strip(),
-        "content": str(entry.get("content") or "").strip(),
+        "fact_value": _trim_text(fact_value),
+        "content": _trim_text(content),
+        "truncated": len(fact_value) > 360 or len(content) > 360,
         "score": entry.get("score"),
     }
-    return {key: value for key, value in payload.items() if value not in ("", None)}
+    return {key: value for key, value in payload.items() if value not in ("", None, False)}
 
 
 def _compact_event_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    content = str(entry.get("content") or "").strip()
     payload = {
-        "content": str(entry.get("content") or "").strip(),
+        "content": _trim_text(content),
+        "truncated": len(content) > 360,
         "created_at": str(entry.get("created_at") or "").strip(),
         "score": entry.get("score"),
     }
-    return {key: value for key, value in payload.items() if value not in ("", None)}
+    return {key: value for key, value in payload.items() if value not in ("", None, False)}
+
+
+def _memory_result_lines(*, profile: list[dict[str, Any]], facts: list[dict[str, Any]], recent_events: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for label, rows in (("profile", profile), ("fact", facts), ("event", recent_events)):
+        for index, item in enumerate(rows, start=1):
+            key = str(item.get("fact_key") or item.get("created_at") or index)
+            value = _trim_text(item.get("fact_value") or item.get("content") or "", 140)
+            lines.append(f"{label}:{index} | {key} | {value}")
+    return lines
 
 
 def _memory_object(record: dict[str, Any], memory) -> dict[str, Any]:
@@ -324,6 +349,7 @@ class MemoryTools:
             {
                 "query": normalized_query,
                 "found": bool(profile or facts or recent_events),
+                "result_lines": _memory_result_lines(profile=profile, facts=facts, recent_events=recent_events),
                 "usage_hint": (
                     "Use only details that are explicitly supported by memory. "
                     "If the current user message conflicts with memory, trust the current user message."
