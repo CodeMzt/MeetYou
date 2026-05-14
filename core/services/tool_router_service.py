@@ -665,7 +665,10 @@ class ToolRouterService:
         updated_at = getattr(call_row, "updated_at", None)
         if not isinstance(created_at, datetime) or not isinstance(updated_at, datetime):
             return None
-        return max(0.0, (updated_at - created_at).total_seconds() * 1000)
+        try:
+            return max(0.0, (updated_at - created_at).total_seconds() * 1000)
+        except TypeError:
+            return max(0.0, (updated_at.timestamp() - created_at.timestamp()) * 1000)
 
     def _record_endpoint_routing_result(self, call_row, *, success: bool) -> None:
         endpoint_row_id = getattr(call_row, "target_endpoint_id", None)
