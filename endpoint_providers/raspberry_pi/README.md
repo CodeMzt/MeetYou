@@ -29,10 +29,13 @@ meetyou-rpi-endpoint --config user/rpi_endpoint.json
 ## Production health check
 
 ```bash
-python -m endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env
+sudo -u meetyou-rpi env PYTHONPATH=/opt/meetyou/MeetYou TMPDIR=/var/lib/meetyou-rpi \
+  bash -lc 'cd /var/lib/meetyou-rpi && /opt/meetyou/MeetYou/.venv-rpi/bin/python -m meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env'
 ```
 
 The health check reports `PASS` / `WARN` / `FAIL` for config, token env presence, sandbox writability, `lgpio`, `gpio` group membership, `/dev/gpiochip*` permissions, and systemd status. Token values are never printed.
+
+Manual service-user checks need `PYTHONPATH=/opt/meetyou/MeetYou` because the endpoint package imports the repository-local `endpoint_tool_sdk`. The systemd unit sets this automatically for the running service.
 
 ## Capabilities
 
