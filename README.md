@@ -8,7 +8,7 @@ The short version: Core owns conversations and runtime state; endpoint providers
 
 ```mermaid
 flowchart LR
-    Human["Human / External Channels"] --> Providers["Endpoint Providers<br/>Desktop / Edge / Feishu / WeChatBot"]
+    Human["Human / External Channels"] --> Providers["Endpoint Providers<br/>Desktop / Edge / Raspberry Pi / Feishu / WeChatBot"]
     UI["Electron Desktop UI"] --> Desktop["desktop_client backend"]
     CIL["CIL / HTTP Surfaces"] --> Core["Core Service"]
     Desktop --> Core
@@ -39,7 +39,7 @@ MeetYou separates those responsibilities:
 
 - Run a Core assistant service with persistent Thread / Message / Run state.
 - Stream assistant output through RunEventLog and delivery fan-out.
-- Connect Desktop and Edge endpoint providers through the V4 `/endpoint/ws` protocol.
+- Connect Desktop, Edge, and Raspberry Pi endpoint providers through the V4 `/endpoint/ws` protocol.
 - Route local file, workspace, general shell, and local MCP capabilities through endpoint execution targets rather than embedding them in Core. The narrow exception is `exec_core_cmd`, which runs only on the Core Service host under a Core command whitelist.
 - Deliver replies, notices, run events, and operation updates to endpoint addresses.
 - Support scheduled workflows, scheduled delivery, and the non-deletable `system.heartbeat` job.
@@ -65,7 +65,7 @@ The repository is Windows-oriented by default because the desktop provider, laun
 | `endpoint_tool_sdk/` | Endpoint protocol helpers and provider runtime SDK. |
 | `desktop_client/` | Desktop Endpoint Provider runtime and local backend. |
 | `edge_client/` | Edge Endpoint Provider runtime. |
-| `endpoint_providers/` | Optional Feishu / WeChatBot external providers. |
+| `endpoint_providers/` | Optional external and hardware providers, including Feishu, WeChatBot, and Raspberry Pi. |
 | `meetyou-ui/` | Electron + React desktop UI. |
 | `tools/` | Tool implementations registered through the Core capability path. |
 | `prompt/` | Prompt, assistant mode, and SKILL guidance assets. |
@@ -221,6 +221,7 @@ Provider implementation entrypoints:
 | `endpoint_tool_sdk/security.py` | Local endpoint security helpers. |
 | `desktop_client/runtime.py` | Desktop provider runtime reference. |
 | `edge_client/runtime.py` | Edge provider runtime reference. |
+| `endpoint_providers/raspberry_pi/` | Raspberry Pi hardware endpoint provider MVP. |
 | `endpoint_providers/feishu.py` | External Feishu provider wiring. |
 | `endpoint_providers/meetwechat.py` | External WeChatBot provider wiring. |
 | `tests/test_endpoint_protocol_v4.py` | Protocol-level test examples. |

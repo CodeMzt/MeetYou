@@ -88,6 +88,22 @@
 - Procedure is removed in V4. Do not reintroduce Procedure API, table, tool, prompt layer, pinned Procedure fields, or UI. Reusable workflow guidance must use SKILL.
 - SKILL is the only reusable workflow guide layer. Public workflow discovery and authoring go through `list_skills`, `load_skill`, and `create_skill`; skill lookup must match titles, summaries, scenarios, and recommended tools; capability exposure flows through `CapabilityRegistry`, semantic routing, ToolRouter, and ExecutionTarget.
 
+## Raspberry Pi Endpoint Provider Rules
+
+- Raspberry Pi 5 / Linux ARM64 support is an Endpoint Provider only. Do not turn it into Core and do not let it own Thread, Message, Run, Scheduler, `system.heartbeat`, Memory, Delivery, Operation records, ToolRouter, or persistence.
+- Raspberry Pi provider work lives under `endpoint_providers/raspberry_pi/`, with docs in `docs/endpoints/raspberry-pi.md`, `docs/endpoints/rpi-capabilities.md`, `docs/endpoints/rpi-security.md`, `docs/endpoints/rpi-operations.md`, and real hardware acceptance records under `docs/endpoints/rpi-real-acceptance-*.md`.
+- The Pi must actively connect to Core through `GET /endpoint/ws` using `meetyou.endpoint.ws.v4`; do not add an inbound Pi server or revive `/client/ws`.
+- Pi executable tools must be advertised as EndpointCapability snapshots and executed only from Core-routed `tool.call.request` frames. Results must return through `tool.call.accepted` / `tool.call.progress` / `tool.call.result` / `tool.call.error`.
+- `endpoint.heartbeat` from the Pi is connection keepalive only and must not trigger Scheduler-owned `system.heartbeat`.
+- GPIO and shell capabilities must be deny-by-default: no GPIO outside `security.gpio_allowed_pins`, no arbitrary shell strings, no `shell=True`, and `rpi.shell.safe_exec` must not be advertised unless enabled with an allowlist.
+- Raspberry Pi device abstractions (`rpi.device.*` / `rpi.button.read`) must remain endpoint-local wrappers over allowlisted GPIO. Device config must validate `device_id`, BCM pin allowlist, type/direction, relay confirmation defaults, and pulse/blink bounds without changing Core routing or endpoint protocol ownership.
+- Raspberry Pi GPIO arguments use BCM numbering, not physical header pin numbers.
+- Raspberry Pi 5 GPIO must use gpiozero with `lgpio`; keep `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio` in the service environment and do not fall back to legacy `RPi.GPIO`/native backends.
+- The Pi systemd service must run as `meetyou-rpi`, include the `gpio` supplementary group, and use `/var/lib/meetyou-rpi` for `WorkingDirectory` / `TMPDIR`; `lgpio` creates `.lgd-*` runtime files and must not write into `/opt/meetyou/MeetYou`.
+- Manual Pi diagnostics run as `meetyou-rpi` from `/var/lib/meetyou-rpi` must include `PYTHONPATH=/opt/meetyou/MeetYou`; the endpoint package imports the repository-local `endpoint_tool_sdk`, and systemd sets this environment variable for the service.
+- GPIO diagnostics for the service user should run from `/var/lib/meetyou-rpi`, not from the repository checkout. `can not open gpiochip` means `/dev/gpiochip*` permission/group setup is wrong, not a ToolRouter problem.
+- The Pi endpoint may emit operation progress/result/error, but final assistant replies must still be persisted by Core MessageService.
+
 ## Runtime Shape
 
 - The target architecture is `Core-owned Runtime + Endpoint Routing`.
@@ -205,6 +221,8 @@
 - Desktop Provider: `python main.py desktop-client` or `python -m desktop_client`
 - Edge Provider: `python main.py edge-client` or `python -m edge_client`
 - Research Adapter: `python -m research_adapter`
+- Raspberry Pi endpoint health on Pi: `sudo -u meetyou-rpi env PYTHONPATH=/opt/meetyou/MeetYou TMPDIR=/var/lib/meetyou-rpi bash -lc 'cd /var/lib/meetyou-rpi && /opt/meetyou/MeetYou/.venv-rpi/bin/python -m meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env'`
+- Raspberry Pi endpoint smoke: `bash scripts/rpi/smoke-test.sh /etc/meetyou/rpi-endpoint.json`
 - Frontend development: run `npm install`, `npm run dev` under `meetyou-ui/`
 - Frontend verification: run `npm run typecheck`, `npm run test` under `meetyou-ui/`
 - Frontend build: run `npm run build` under `meetyou-ui/`

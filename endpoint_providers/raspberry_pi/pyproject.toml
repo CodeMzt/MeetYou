@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meetyou-rpi-endpoint"
+version = "0.1.0"
+description = "Raspberry Pi Endpoint Provider for MeetYou"
+requires-python = ">=3.10"
+dependencies = [
+  "aiohttp>=3.8",
+  "pydantic>=2",
+]
+
+[project.optional-dependencies]
+gpio = [
+  "gpiozero>=2",
+  "lgpio>=0.2.2.0",
+]
+
+[project.scripts]
+meetyou-rpi-endpoint = "meetyou_rpi_endpoint.main:main"
+meetyou-rpi-health = "meetyou_rpi_endpoint.health:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["meetyou_rpi_endpoint*"]

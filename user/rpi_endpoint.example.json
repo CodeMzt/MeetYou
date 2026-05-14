@@ -1,0 +1,59 @@
+{
+  "core_base_url": "https://core.example.com",
+  "endpoint_id": "raspberry-pi-dev",
+  "endpoint_name": "Raspberry Pi Dev Endpoint",
+  "endpoint_token_env": "MEETYOU_RPI_ENDPOINT_TOKEN",
+  "connect_path": "/endpoint/ws",
+  "workspace_ids": ["personal"],
+  "reconnect": {
+    "initial_delay_seconds": 1,
+    "max_delay_seconds": 30,
+    "jitter_seconds": 1
+  },
+  "keepalive": {
+    "interval_seconds": 20,
+    "timeout_seconds": 10
+  },
+  "operation": {
+    "default_timeout_seconds": 30,
+    "max_timeout_seconds": 300
+  },
+  "security": {
+    "sandbox_dir": "/var/lib/meetyou-rpi/sandbox",
+    "safe_shell_enabled": false,
+    "safe_shell_allowlist": [],
+    "gpio_allowed_pins": [17, 27, 22],
+    "gpio_write_default_duration_ms": 500
+  },
+  "devices": [
+    {
+      "device_id": "desk_led",
+      "type": "led",
+      "name": "Desk LED",
+      "pin": 17,
+      "direction": "out",
+      "active_high": true,
+      "max_on_ms": 5000,
+      "requires_confirmation": false
+    },
+    {
+      "device_id": "relay_1",
+      "type": "relay",
+      "name": "Relay 1",
+      "pin": 27,
+      "direction": "out",
+      "active_high": true,
+      "max_on_ms": 3000,
+      "requires_confirmation": true
+    },
+    {
+      "device_id": "button_1",
+      "type": "button",
+      "name": "Button 1",
+      "pin": 22,
+      "direction": "in",
+      "active_high": false,
+      "pull": "up"
+    }
+  ]
+}
