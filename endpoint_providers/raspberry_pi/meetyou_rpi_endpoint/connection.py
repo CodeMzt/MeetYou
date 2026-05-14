@@ -110,6 +110,13 @@ class RpiEndpointRuntime(EndpointToolRuntimeBase):
         return build_hello(self.config)
 
     def build_tools_snapshot_message(self, *, revision: int) -> dict[str, Any]:
+        capability_names = self.registry.names()
+        self._logger.info(
+            "%s advertising %d capabilities: %s",
+            self.runtime_label,
+            len(capability_names),
+            ", ".join(capability_names),
+        )
         return build_tools_snapshot(
             self.config,
             revision=revision,
