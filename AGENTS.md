@@ -101,6 +101,7 @@
 - Raspberry Pi device confirmation is currently capability-level, not per-device. A write-class `rpi.device.*` capability may advertise `requires_confirmation=true` when any configured output device requires confirmation; do not redesign Core approval for per-device confirmation unless explicitly scoped.
 - Raspberry Pi GPIO arguments use BCM numbering, not physical header pin numbers.
 - Raspberry Pi 5 GPIO must use gpiozero with `lgpio`; keep `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio` in the service environment and do not fall back to legacy `RPi.GPIO`/native backends.
+- Raspberry Pi output device status reads must not open floating gpiozero inputs without `active_state`; Desk LED / Relay status on pins such as BCM 17/27 should use the lgpio backend and explicit active-state handling rather than surfacing gpiozero `active_state` errors to Core.
 - The Pi systemd service must run as `meetyou-rpi`, include the `gpio` supplementary group, and use `/var/lib/meetyou-rpi` for `WorkingDirectory` / `TMPDIR`; `lgpio` creates `.lgd-*` runtime files and must not write into `/opt/meetyou/MeetYou`.
 - Manual Pi diagnostics run as `meetyou-rpi` from `/var/lib/meetyou-rpi` must include `PYTHONPATH=/opt/meetyou/MeetYou`; the endpoint package imports the repository-local `endpoint_tool_sdk`, and systemd sets this environment variable for the service.
 - GPIO diagnostics for the service user should run from `/var/lib/meetyou-rpi`, not from the repository checkout. `can not open gpiochip` means `/dev/gpiochip*` permission/group setup is wrong, not a ToolRouter problem.

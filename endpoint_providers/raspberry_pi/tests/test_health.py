@@ -9,10 +9,12 @@ from unittest.mock import patch
 
 from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.health import (
     HealthCheckResult,
+    _check_gpio_backend,
     load_env_file,
     render_health_results,
     run_health_checks,
 )
+from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.config import RpiEndpointConfig, SecurityConfig
 
 
 class HealthCheckTests(unittest.TestCase):
@@ -78,6 +80,19 @@ class HealthCheckTests(unittest.TestCase):
         self.assertIn("MEETYOU_RPI_ENDPOINT_TOKEN", rendered)
         self.assertIn("value redacted", rendered)
         self.assertNotIn("super-secret-token", rendered)
+
+    def test_raspberry_pi_health_requires_explicit_lgpio_env(self):
+        config = RpiEndpointConfig(security=SecurityConfig(gpio_allowed_pins=[17]))
+
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.health._looks_like_raspberry_pi",
+            return_value=True,
+        ):
+            result = _check_gpio_backend(config)
+
+        self.assertEqual(result.status, "FAIL")
+        self.assertEqual(result.name, "gpio_backend")
+        self.assertIn("MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio", result.message)
 
 
 if __name__ == "__main__":

@@ -147,6 +147,13 @@ def _check_gpio_backend(config: RpiEndpointConfig) -> HealthCheckResult:
 
     selected = _select_gpio_pin_factory_name()
     is_pi = _looks_like_raspberry_pi()
+    configured = str(os.environ.get("MEETYOU_RPI_GPIO_PIN_FACTORY") or "").strip().lower()
+    if is_pi and configured != "lgpio":
+        return HealthCheckResult(
+            "gpio_backend",
+            FAIL,
+            "MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio is required in the service environment for Raspberry Pi 5 GPIO",
+        )
     if selected != "lgpio":
         status = FAIL if is_pi else WARN
         return HealthCheckResult(

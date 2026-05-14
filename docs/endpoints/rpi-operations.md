@@ -77,6 +77,17 @@ sudo systemctl restart meetyou-rpi-endpoint
 
 Run GPIO diagnostics from `/var/lib/meetyou-rpi`, not from `/opt/meetyou/MeetYou`, because `lgpio` creates short-lived `.lgd-*` files in the process working directory.
 
+If device status for an output device such as `desk_led` on BCM 17 or `relay_1` on BCM 27 fails with a gpiozero `active_state` error, verify the service has the lgpio pin factory and restart it:
+
+```bash
+grep -E '^MEETYOU_RPI_GPIO_PIN_FACTORY=' /etc/meetyou/rpi-endpoint.env
+systemctl cat meetyou-rpi-endpoint | grep MEETYOU_RPI_GPIO_PIN_FACTORY
+sudo systemctl daemon-reload
+sudo systemctl restart meetyou-rpi-endpoint
+```
+
+The expected value is `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio`. The installer appends this value to existing env files when missing, and the service template pins it in the systemd environment.
+
 ## Device Configuration And Diagnostics
 
 Named devices live in the Raspberry Pi endpoint config under `devices`. Every configured device pin must also be listed in `security.gpio_allowed_pins`; startup rejects duplicate `device_id` values, pins outside the allowlist, invalid direction/type pairs, and invalid input pull modes.

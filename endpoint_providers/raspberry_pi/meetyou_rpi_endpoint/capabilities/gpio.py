@@ -89,6 +89,10 @@ class GpioZeroBackend:
     async def read(self, pin: int, *, pull: str | None = None) -> bool:
         device = self._open_input(pin, pull=pull)
         try:
+            pin_obj = getattr(device, "pin", None)
+            raw_state = getattr(pin_obj, "state", None)
+            if raw_state is not None:
+                return bool(raw_state)
             return bool(device.value)
         finally:
             device.close()
@@ -115,7 +119,11 @@ class GpioZeroBackend:
 
     def _open_input(self, pin: int, *, pull: str | None = None):
         try:
-            return self._input_cls(int(pin), pull_up=_gpiozero_pull_up(pull))
+            pull_up = _gpiozero_pull_up(pull)
+            kwargs: dict[str, Any] = {"pull_up": pull_up}
+            if pull_up is None:
+                kwargs["active_state"] = True
+            return self._input_cls(int(pin), **kwargs)
         except Exception as exc:
             raise _gpiozero_runtime_error(exc, pin=pin, factory_name=self._pin_factory_name) from exc
 
