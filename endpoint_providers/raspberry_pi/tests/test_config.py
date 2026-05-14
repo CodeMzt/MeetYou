@@ -19,7 +19,11 @@ class RpiConfigTests(unittest.TestCase):
         return path
 
     def test_loads_example_config(self):
-        config = load_rpi_endpoint_config("user/rpi_endpoint.example.json")
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.config._load_env_file",
+            lambda path: None,
+        ):
+            config = load_rpi_endpoint_config("user/rpi_endpoint.example.json")
 
         self.assertEqual(config.core_base_url, "https://core.example.com")
         self.assertEqual(config.endpoint_id, "raspberry-pi-dev")
