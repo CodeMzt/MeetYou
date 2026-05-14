@@ -18,7 +18,7 @@ from core.services.endpoint_service import (
 from core.services.operation_call_service import OperationCallService
 from core.services.operation_service import OperationService
 from core.services.tool_router_service import ToolRouterError, ToolRouterService
-from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.config import RpiEndpointConfig, SecurityConfig
+from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.config import DeviceConfig, RpiEndpointConfig, SecurityConfig
 from endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.protocol import (
     build_call_accepted,
     build_call_error,
@@ -150,6 +150,18 @@ class RpiCoreIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 gpio_allowed_pins=[17],
                 gpio_write_default_duration_ms=0,
             ),
+            devices=[
+                DeviceConfig(
+                    device_id="desk_led",
+                    type="led",
+                    name="Desk LED",
+                    pin=17,
+                    direction="out",
+                    active_high=True,
+                    max_on_ms=1000,
+                    requires_confirmation=False,
+                )
+            ],
         )
         self.rpi_registry = build_default_registry(self.config, force_fake_gpio=True)
         self.rpi_runner = OperationRunner(self.rpi_registry, default_timeout_seconds=1, max_timeout_seconds=1)
@@ -281,6 +293,8 @@ class RpiCoreIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("rpi.echo", capability_keys)
         self.assertIn("rpi.system.info", capability_keys)
         self.assertIn("rpi.gpio.read", capability_keys)
+        self.assertIn("rpi.device.list", capability_keys)
+        self.assertIn("rpi.device.set", capability_keys)
         self.assertNotIn("rpi.shell.safe_exec", capability_keys)
 
     async def test_tool_router_resolves_rpi_capability_to_endpoint_target(self):
@@ -314,6 +328,22 @@ class RpiCoreIntegrationTests(unittest.IsolatedAsyncioTestCase):
         update_phases = await self._wait_for_operation_update_phase(monitor, "completed")
         self.assertIn("accepted", update_phases)
         self.assertIn("running", update_phases)
+        self.assertIn("completed", update_phases)
+
+    async def test_rpi_device_list_operation_reaches_endpoint_and_records_completed_result(self):
+        result, monitor = await self._dispatch_with_fake_pi(
+            tool_key="rpi.device.list",
+            arguments={},
+            return_operation=True,
+        )
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["result"]["devices"][0]["device_id"], "desk_led")
+        operation = self.harness.operation.get_by_operation_id(result["operation_id"])
+        call = self.harness.operation_call.get_by_call_id(result["call_id"])
+        self.assertEqual(operation.status, "succeeded")
+        self.assertEqual(call.status, "succeeded")
+        update_phases = await self._wait_for_operation_update_phase(monitor, "completed")
         self.assertIn("completed", update_phases)
 
     async def test_rpi_gpio_failure_records_failed_operation(self):
