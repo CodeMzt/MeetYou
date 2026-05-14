@@ -26,6 +26,14 @@ python -m pip install -e 'endpoint_providers/raspberry_pi[gpio]'
 meetyou-rpi-endpoint --config user/rpi_endpoint.json
 ```
 
+## Production health check
+
+```bash
+python -m endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env
+```
+
+The health check reports `PASS` / `WARN` / `FAIL` for config, token env presence, sandbox writability, `lgpio`, `gpio` group membership, `/dev/gpiochip*` permissions, and systemd status. Token values are never printed.
+
 ## Capabilities
 
 - `rpi.echo`

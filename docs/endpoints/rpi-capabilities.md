@@ -17,7 +17,7 @@ Raspberry Pi capabilities are endpoint-local executable tools advertised through
 - Risk: `read`
 - Confirmation: no
 - Input: empty object
-- Output: hostname, platform, Python version, uptime when available, memory summary when available, disk summary, and CPU temperature when available.
+- Output: hostname, platform, Python version, uptime when available, memory summary when available, disk summary, CPU temperature when available, GPIO backend info, endpoint version, and git commit when available.
 - Notes: CPU temperature and `/proc` data are optional. The capability must not fail on non-Pi development machines just because those files are absent.
 
 ### `rpi.gpio.read`

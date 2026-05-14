@@ -150,6 +150,8 @@ Smoke test before starting systemd:
 bash scripts/rpi/smoke-test.sh
 ```
 
+The smoke wrapper first runs the production health check, which verifies config presence, token env presence without printing the token, sandbox writability, `lgpio`, `gpio` group membership, `/dev/gpiochip*` permissions, and systemd status with explicit `PASS` / `WARN` / `FAIL` lines. See `docs/endpoints/rpi-operations.md` for the operations runbook and `docs/endpoints/rpi-real-acceptance-2026-05-13.md` for the real Raspberry Pi 5 acceptance record.
+
 Raspberry Pi 5 GPIO must use the `lgpio` pin factory. `/etc/meetyou/rpi-endpoint.env` should include:
 
 ```bash

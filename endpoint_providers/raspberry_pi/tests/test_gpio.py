@@ -69,6 +69,30 @@ class GPIOTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(write_result.payload["backend"], "fake")
         self.assertTrue(read_result.payload["value"])
 
+    async def test_fake_backend_duration_write_resets_low(self):
+        runner, _ = self._runner()
+
+        write_result = await runner.run(
+            OperationRequest(
+                operation_id="op-gpio-pulse",
+                call_id="call-gpio-pulse",
+                capability_name="rpi.gpio.write",
+                arguments={"pin": 17, "value": True, "duration_ms": 1},
+            )
+        )
+        read_result = await runner.run(
+            OperationRequest(
+                operation_id="op-gpio-read-after-pulse",
+                call_id="call-gpio-read-after-pulse",
+                capability_name="rpi.gpio.read",
+                arguments={"pin": 17},
+            )
+        )
+
+        self.assertTrue(write_result.succeeded)
+        self.assertTrue(write_result.payload["reset_performed"])
+        self.assertFalse(read_result.payload["value"])
+
     async def test_unavailable_backend_preserves_reason(self):
         backend = UnavailableGPIOBackend(code="gpio_lgpio_unavailable", message="install lgpio")
 
@@ -77,6 +101,16 @@ class GPIOTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.code, "gpio_lgpio_unavailable")
         self.assertIn("install lgpio", raised.exception.message)
+
+    async def test_default_unavailable_backend_message_names_gpiozero_and_lgpio(self):
+        backend = UnavailableGPIOBackend()
+
+        with self.assertRaises(CapabilityError) as raised:
+            await backend.read(17)
+
+        self.assertEqual(raised.exception.code, "gpio_unavailable")
+        self.assertIn("gpiozero", raised.exception.message)
+        self.assertIn("lgpio", raised.exception.message)
 
     def test_gpio_pin_factory_env_override(self):
         with patch.dict("os.environ", {"MEETYOU_RPI_GPIO_PIN_FACTORY": "lgpio"}, clear=True):
