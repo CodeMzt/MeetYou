@@ -560,6 +560,39 @@ class SchedulerToolsV4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.run_template["output_policy"]["delivery_targets"][0]["address_id"], "addr.feishu.direct.chat-1")
         self.assertEqual(job.run_template["tool_bundle"], ["get_current_system_time", "emit_progress_notice"])
 
+    async def test_scheduled_workflow_list_uses_compact_complete_rows(self):
+        tools, scheduler, *_ = self._tools()
+        scheduler.create_job(
+            job_id="workflow.long",
+            kind="scheduled_workflow",
+            name="Long workflow",
+            workspace_id=None,
+            singleton_key=None,
+            enabled=True,
+            trigger_type="daily",
+            trigger_config={"type": "daily", "time_of_day": "08:00"},
+            timezone="Asia/Shanghai",
+            action_ref="core.workflow.scheduled_workflow",
+            run_template={"prompt": "x" * 4000, "tool_bundle": [f"tool.{idx}" for idx in range(30)]},
+            execution_policy={},
+            delivery_policy={},
+            concurrency_policy={},
+            misfire_policy={},
+            metadata={"created_by": "test", "long": "y" * 4000},
+        )
+
+        payload = await tools.manage_scheduled_workflows(action="list")
+
+        self.assertTrue(payload["ok"])
+        self.assertIn("workflow.long", payload["job_ids"])
+        self.assertEqual(len(payload["job_lines"]), 1)
+        row = payload["jobs"][0]
+        self.assertFalse(row["details_included"])
+        self.assertIn("metadata_summary", row)
+        self.assertIn("run_template_summary", row)
+        self.assertNotIn("metadata", row)
+        self.assertNotIn("run_template", row)
+
 
 if __name__ == "__main__":
     unittest.main()

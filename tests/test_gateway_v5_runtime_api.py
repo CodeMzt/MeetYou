@@ -412,6 +412,7 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         with patch.dict(
             "os.environ",
             {
+                "MEETYOU_RESEARCH_ENABLED": "true",
                 "MEETYOU_RESEARCH_ADAPTER_BASE_URL": "",
                 "MEETYOU_RESEARCH_ADAPTER_REQUIRED": "true",
             },
@@ -436,6 +437,70 @@ class GatewayV5RuntimeApiTests(unittest.TestCase):
         self.assertEqual(completed["metadata"]["adapter_status"], "unconfigured")
         self.assertFalse(completed["artifact_id"])
 
+    @patch.dict("os.environ", {"MEETYOU_RESEARCH_ENABLED": "false"}, clear=False)
+    def test_research_mode_chat_reports_disabled_without_creating_plan(self) -> None:
+        project_response = self.client.post(
+            "/runtime/projects",
+            json={"workspace_id": "personal", "title": "Disabled Research Project"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(project_response.status_code, 200)
+        project_id = project_response.json()["project_id"]
+
+        thread_response = self.client.post(
+            "/runtime/threads",
+            json={"workspace_id": "personal", "project_id": project_id, "title": "Disabled research thread"},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(thread_response.status_code, 200)
+        thread_id = thread_response.json()["thread_id"]
+
+        session_response = self.client.post(
+            "/runtime/sessions",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(session_response.status_code, 200)
+        session_id = session_response.json()["session_id"]
+
+        topic_response = self.client.post(
+            "/runtime/messages",
+            json={
+                "thread_id": thread_id,
+                "workspace_id": "personal",
+                "session_id": session_id,
+                "endpoint_id": "ui.endpoint",
+                "endpoint_type": "electron",
+                "role": "user",
+                "content": "Run a deep research test.",
+                "preferred_mode": "research",
+            },
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(topic_response.status_code, 200)
+        self.assertTrue(self.gateway._event_bus.inbound_queue.empty())
+
+        tasks_response = self.client.get(
+            "/runtime/research-tasks",
+            params={"thread_id": thread_id},
+            headers=self._auth_headers(),
+        )
+        self.assertEqual(tasks_response.status_code, 200)
+        self.assertEqual(tasks_response.json(), [])
+
+        messages_response = self.client.get(f"/runtime/threads/{thread_id}/messages", headers=self._auth_headers())
+        self.assertEqual(messages_response.status_code, 200)
+        messages = messages_response.json()
+        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+        self.assertIn("Connection error", messages[-1]["content"])
+        self.assertTrue(messages[-1]["metadata"]["research_disabled"])
+
+    @patch.dict("os.environ", {"MEETYOU_RESEARCH_ENABLED": "true"}, clear=False)
     def test_research_mode_chat_creates_plan_and_confirm_starts_without_llm_queue(self) -> None:
         project_response = self.client.post(
             "/runtime/projects",

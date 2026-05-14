@@ -229,13 +229,17 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "list_endpoint_tool_targets",
-            "description": "List online Endpoint execution targets that can execute tools, optionally scoped to a workspace and tool key.",
+            "description": (
+                "List online Endpoint execution targets that can execute tools, optionally scoped to a workspace and tool key. "
+                "When answering the user, prefer tool_target_lines, endpoint_ids, and executable_tools_by_endpoint before verbose endpoint records."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
                     "tool_key": {"type": "string", "description": "Optional endpoint capability tool key, such as file.read or shell.exec.", "default": ""},
                     "include_tools": {"type": "boolean", "description": "Include each endpoint's capability list.", "default": True},
+                    "include_capability_details": {"type": "boolean", "description": "Include verbose per-capability metadata. Keep false for ordinary inventory answers.", "default": False},
                 },
                 "required": [],
             },
@@ -246,13 +250,17 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "list_active_endpoints",
-            "description": "List currently online Endpoint websocket connections, optionally scoped to a workspace or thread.",
+            "description": (
+                "List currently online Endpoint websocket connections, optionally scoped to a workspace or thread. "
+                "When answering the user, prefer tool_target_lines, endpoint_ids, and executable_tools_by_endpoint before verbose endpoint records."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
                     "thread_id": {"type": "string", "description": "Optional thread id.", "default": ""},
                     "include_tools": {"type": "boolean", "description": "Include each endpoint's capability list.", "default": True},
+                    "include_capability_details": {"type": "boolean", "description": "Include verbose per-capability metadata. Keep false for ordinary inventory answers.", "default": False},
                 },
                 "required": [],
             },
@@ -295,7 +303,8 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "name": "list_delivery_targets",
             "description": (
                 "List V4 delivery addresses inside endpoint providers, such as Feishu chats or WeChat private/group chats. "
-                "Use actor_ref=me plus provider_type to check whether the current user has a bound default address."
+                "Use actor_ref=me plus provider_type to check whether the current user has a bound default address. "
+                "When answering the user, prefer delivery_target_lines and address_ids so long metadata cannot hide later addresses."
             ),
             "parameters": {
                 "type": "object",
@@ -305,6 +314,7 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "address_type": {"type": "string", "enum": ["", "direct", "group", "channel", "room", "inbox"], "default": ""},
                     "workspace_id": {"type": "string", "description": "Optional workspace id.", "default": ""},
                     "include_unavailable": {"type": "boolean", "default": False},
+                    "include_metadata": {"type": "boolean", "description": "Include verbose address metadata. Keep false for ordinary listing answers.", "default": False},
                 },
                 "required": [],
             },
@@ -683,7 +693,10 @@ _BUILTIN_FALLBACK_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "manage_scheduled_workflows",
-            "description": "List, inspect, update, enable, disable, delete, or manually trigger V4 scheduled_workflow jobs.",
+            "description": (
+                "List, inspect, update, enable, disable, delete, or manually trigger V4 scheduled_workflow jobs. "
+                "For list responses, answer from job_lines/job_ids/compact_jobs; use action=detail only for one job's full metadata."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

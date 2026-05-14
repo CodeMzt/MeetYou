@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,8 +25,28 @@ def _positive_int(value: Any) -> int | None:
     return parsed
 
 
-def _compact_job(job) -> dict[str, Any]:
+def _metadata_summary(metadata: Any) -> dict[str, Any]:
+    payload = dict(metadata or {}) if isinstance(metadata, dict) else {}
+    rendered = json.dumps(payload, ensure_ascii=False, default=str) if payload else ""
     return {
+        "key_count": len(payload),
+        "keys": sorted(str(key) for key in payload.keys()),
+        "byte_size_estimate": len(rendered.encode("utf-8", errors="ignore")) if rendered else 0,
+    }
+
+
+def _policy_summary(value: Any) -> dict[str, Any]:
+    payload = dict(value or {}) if isinstance(value, dict) else {}
+    rendered = json.dumps(payload, ensure_ascii=False, default=str) if payload else ""
+    return {
+        "present": bool(payload),
+        "keys": sorted(str(key) for key in payload.keys()),
+        "byte_size_estimate": len(rendered.encode("utf-8", errors="ignore")) if rendered else 0,
+    }
+
+
+def _compact_job(job, *, include_details: bool = True) -> dict[str, Any]:
+    base = {
         "job_id": str(getattr(job, "job_id", "") or ""),
         "kind": str(getattr(job, "kind", "") or ""),
         "name": str(getattr(job, "name", "") or ""),
@@ -38,11 +59,6 @@ def _compact_job(job) -> dict[str, Any]:
         "trigger_config": dict(getattr(job, "trigger_config", {}) or {}),
         "timezone": str(getattr(job, "timezone", "") or "UTC"),
         "action_ref": str(getattr(job, "action_ref", "") or ""),
-        "run_template": dict(getattr(job, "run_template", {}) or {}),
-        "execution_policy": dict(getattr(job, "execution_policy", {}) or {}),
-        "delivery_policy": dict(getattr(job, "delivery_policy", {}) or {}),
-        "concurrency_policy": dict(getattr(job, "concurrency_policy", {}) or {}),
-        "misfire_policy": dict(getattr(job, "misfire_policy", {}) or {}),
         "next_fire_at": getattr(job, "next_fire_at", "").isoformat()
         if getattr(job, "next_fire_at", None) is not None
         else "",
@@ -53,13 +69,58 @@ def _compact_job(job) -> dict[str, Any]:
         "lease_until_at": getattr(job, "lease_until_at", "").isoformat()
         if getattr(job, "lease_until_at", None) is not None
         else "",
-        "metadata": dict(getattr(job, "meta", {}) or {}),
+        "metadata_summary": _metadata_summary(getattr(job, "meta", {}) or {}),
+        "run_template_summary": _policy_summary(getattr(job, "run_template", {}) or {}),
+        "execution_policy_summary": _policy_summary(getattr(job, "execution_policy", {}) or {}),
+        "delivery_policy_summary": _policy_summary(getattr(job, "delivery_policy", {}) or {}),
+        "details_included": bool(include_details),
         "created_at": getattr(job, "created_at", "").isoformat()
         if getattr(job, "created_at", None) is not None
         else "",
         "updated_at": getattr(job, "updated_at", "").isoformat()
         if getattr(job, "updated_at", None) is not None
         else "",
+    }
+    if include_details:
+        base.update(
+            {
+                "run_template": dict(getattr(job, "run_template", {}) or {}),
+                "execution_policy": dict(getattr(job, "execution_policy", {}) or {}),
+                "delivery_policy": dict(getattr(job, "delivery_policy", {}) or {}),
+                "concurrency_policy": dict(getattr(job, "concurrency_policy", {}) or {}),
+                "misfire_policy": dict(getattr(job, "misfire_policy", {}) or {}),
+                "metadata": dict(getattr(job, "meta", {}) or {}),
+            }
+        )
+    return base
+
+
+def _job_list_summary(jobs: list[dict[str, Any]]) -> dict[str, Any]:
+    ordered = sorted(
+        jobs,
+        key=lambda item: (
+            0 if bool(item.get("enabled")) else 1,
+            str(item.get("kind") or "").lower(),
+            str(item.get("job_id") or "").lower(),
+        ),
+    )
+    lines: list[str] = []
+    for item in ordered:
+        job_id = str(item.get("job_id") or "")
+        if not job_id:
+            continue
+        schedule = str(item.get("trigger_type") or "")
+        trigger_config = item.get("trigger_config") if isinstance(item.get("trigger_config"), dict) else {}
+        if trigger_config:
+            schedule = f"{schedule}:{json.dumps(trigger_config, ensure_ascii=False, default=str)}"
+        lines.append(
+            f"{job_id} | kind={item.get('kind') or ''} | enabled={bool(item.get('enabled'))} | "
+            f"schedule={schedule} | next_fire_at={item.get('next_fire_at') or ''} | name={item.get('name') or ''}"
+        )
+    return {
+        "job_lines": lines,
+        "job_ids": [item["job_id"] for item in ordered if item.get("job_id")],
+        "compact_jobs": ordered,
     }
 
 
@@ -429,8 +490,8 @@ class SchedulerTools:
         domain = self._domain()
 
         if normalized_action == "list":
-            jobs = [_compact_job(job) for job in domain.services.scheduler.list_jobs()]
-            return {"ok": True, "count": len(jobs), "jobs": jobs}
+            jobs = [_compact_job(job, include_details=False) for job in domain.services.scheduler.list_jobs()]
+            return {"ok": True, "count": len(jobs), **_job_list_summary(jobs), "jobs": jobs}
 
         if normalized_action == "detail":
             return {"ok": True, "job": _compact_job(self._job_or_raise(job_id))}
@@ -704,11 +765,11 @@ class SchedulerTools:
         domain = self._domain()
         if normalized_action == "list":
             jobs = [
-                _compact_job(job)
+                _compact_job(job, include_details=False)
                 for job in domain.services.scheduler.list_jobs()
                 if str(getattr(job, "kind", "") or "") == "scheduled_workflow"
             ]
-            return {"ok": True, "count": len(jobs), "jobs": jobs}
+            return {"ok": True, "count": len(jobs), **_job_list_summary(jobs), "jobs": jobs}
         job = self._job_or_raise(job_id)
         if str(getattr(job, "kind", "") or "") != "scheduled_workflow":
             raise ValueError(f"Scheduled job is not a scheduled_workflow: {job_id}")
@@ -805,8 +866,8 @@ class SchedulerTools:
         normalized_action = str(action or "list").strip().lower()
         domain = self._domain()
         if normalized_action == "list":
-            jobs = [_compact_job(job) for job in domain.services.scheduler.list_jobs() if _is_scheduled_delivery_job(job)]
-            return {"ok": True, "count": len(jobs), "jobs": jobs}
+            jobs = [_compact_job(job, include_details=False) for job in domain.services.scheduler.list_jobs() if _is_scheduled_delivery_job(job)]
+            return {"ok": True, "count": len(jobs), **_job_list_summary(jobs), "jobs": jobs}
         job = self._job_or_raise(job_id)
         if not _is_scheduled_delivery_job(job):
             raise ValueError(f"Scheduled job is not a scheduled delivery workflow: {job_id}")

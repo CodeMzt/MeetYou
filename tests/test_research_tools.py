@@ -186,7 +186,15 @@ class ResearchToolsTests(unittest.IsolatedAsyncioTestCase):
             source_policy={"source_adapters": [], "include_project_sources": True},
         )
 
-        with patch.dict("os.environ", {"MEETYOU_RESEARCH_ADAPTER_REQUIRED": "false", "MEETYOU_RESEARCH_ADAPTER_BASE_URL": ""}, clear=False):
+        with patch.dict(
+            "os.environ",
+            {
+                "MEETYOU_RESEARCH_ENABLED": "true",
+                "MEETYOU_RESEARCH_ADAPTER_REQUIRED": "false",
+                "MEETYOU_RESEARCH_ADAPTER_BASE_URL": "",
+            },
+            clear=False,
+        ):
             result = await self.tools.manage_research_tasks(
                 action="run",
                 research_task_id=created["research_task_id"],
@@ -196,21 +204,30 @@ class ResearchToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["evidence_ledger"][0]["source_type"], "project_source")
 
-    async def test_manage_research_tasks_run_reports_missing_external_adapter_by_default(self) -> None:
+    async def test_manage_research_tasks_run_reports_disabled_by_default(self) -> None:
         created = await self.tools.create_research_task(
             topic="external adapter required",
             source_policy={"source_adapters": []},
         )
 
-        with patch.dict("os.environ", {"MEETYOU_RESEARCH_ADAPTER_REQUIRED": "true", "MEETYOU_RESEARCH_ADAPTER_BASE_URL": ""}, clear=False):
+        with patch.dict(
+            "os.environ",
+            {
+                "MEETYOU_RESEARCH_ENABLED": "false",
+                "MEETYOU_RESEARCH_ADAPTER_REQUIRED": "true",
+                "MEETYOU_RESEARCH_ADAPTER_BASE_URL": "",
+            },
+            clear=False,
+        ):
             result = await self.tools.manage_research_tasks(
                 action="run",
                 research_task_id=created["research_task_id"],
             )
 
         self.assertFalse(result["ok"])
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["summary"], "Research adapter service is not configured.")
+        self.assertEqual(result["code"], "research_disabled")
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(result["message"], "Deep research execution is disabled.")
 
 
 if __name__ == "__main__":

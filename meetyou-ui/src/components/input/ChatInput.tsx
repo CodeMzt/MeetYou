@@ -15,7 +15,6 @@ const THINKING_OPTIONS: Array<{ label: string; value: ThinkingOverride }> = [
 const MODE_OPTIONS: Array<{ label: string; value: AssistantMode }> = [
   { label: '通用', value: 'general' },
   { label: '自动化', value: 'automation' },
-  { label: '研究', value: 'research' },
   { label: '旦夕', value: 'danxi' },
 ]
 

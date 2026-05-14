@@ -14,6 +14,7 @@ TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 @dataclass(frozen=True)
 class ResearchAdapterConfig:
+    enabled: bool = True
     base_url: str = ""
     token: str = ""
     provider: str = "gpt_researcher"
@@ -25,13 +26,14 @@ class ResearchAdapterConfig:
 
     @property
     def configured(self) -> bool:
-        return bool(self.base_url.strip())
+        return bool(self.enabled and self.base_url.strip())
 
     @classmethod
     def from_env(cls) -> "ResearchAdapterConfig":
         base_url = str(os.environ.get("MEETYOU_RESEARCH_ADAPTER_BASE_URL", "") or "").strip()
         required_raw = str(os.environ.get("MEETYOU_RESEARCH_ADAPTER_REQUIRED", "true") or "true").strip().lower()
         return cls(
+            enabled=_bool_env("MEETYOU_RESEARCH_ENABLED", False),
             base_url=base_url,
             token=str(os.environ.get("MEETYOU_RESEARCH_ADAPTER_TOKEN", "") or "").strip(),
             provider=str(os.environ.get("MEETYOU_RESEARCH_PROVIDER", "gpt_researcher") or "gpt_researcher").strip() or "gpt_researcher",
@@ -153,6 +155,13 @@ def _int_env(key: str, default: int) -> int:
         return max(1, int(os.environ.get(key, default) or default))
     except (TypeError, ValueError):
         return int(default)
+
+
+def _bool_env(key: str, default: bool) -> bool:
+    raw = str(os.environ.get(key, "") or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in {"1", "true", "yes", "on", "enabled"}
 
 
 def _normalize_status(value: Any) -> str:

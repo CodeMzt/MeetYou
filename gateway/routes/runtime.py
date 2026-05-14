@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -237,6 +238,7 @@ def _message_response(
         content=message.content,
         status=message.status,
         channel=message.channel,
+        metadata=dict(getattr(message, "meta", {}) or {}),
         created_at=message.created_at.isoformat() if getattr(message, "created_at", None) is not None else "",
         idempotent_replay=bool(idempotent_replay),
     )
@@ -523,6 +525,19 @@ def _render_research_cancelled(task) -> str:
 def _render_research_running(task) -> str:
     task_id = str(getattr(task, "research_task_id", "") or "").strip()
     return f"研究任务 `{task_id}` 正在运行。当前会话的研究状态气泡会继续刷新；如需停止，请回复“取消研究”。"
+
+
+def _research_feature_enabled() -> bool:
+    raw = str(os.environ.get("MEETYOU_RESEARCH_ENABLED", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on", "enabled"}
+
+
+def _render_research_disabled() -> str:
+    return (
+        "深度研究执行功能已暂停。\n\n"
+        "原因是当前自维护研究服务稳定性和维护成本不符合交付要求，继续暴露会造成 Connection error 这类失败体验。"
+        "你仍然可以在普通聊天里让我做轻量调研、整理资料或生成研究提纲；需要长时间深度研究时，建议直接使用稳定的外部厂商研究产品。"
+    )
 
 
 def _default_chat_research_source_policy(thread) -> dict[str, Any]:
@@ -1321,6 +1336,12 @@ def build_runtime_router(gateway) -> APIRouter:
             gateway._raise_http_error(status_code=404, code="research_task_not_found", message=f"Unknown research task: {research_task_id}")
         if report_markdown is not None and not action:
             action = "complete"
+        if action in {"start", "run", "execute"} and _research_task_auto_execute(task) and not _research_feature_enabled():
+            gateway._raise_http_error(
+                status_code=409,
+                code="research_disabled",
+                message="Deep research execution is disabled.",
+            )
         try:
             domain.services.research_task.normalize_update_fields(
                 current_status=str(getattr(task, "status", "") or "planned"),
@@ -1750,6 +1771,21 @@ def build_runtime_router(gateway) -> APIRouter:
         normalized_content = str(content or "").strip()
         if not normalized_content:
             return False
+        if not _research_feature_enabled():
+            _persist_runtime_assistant_message(
+                domain,
+                thread=thread,
+                session=session,
+                workspace=workspace,
+                endpoint=endpoint,
+                content=_render_research_disabled(),
+                metadata={
+                    "message_kind": "research_disabled",
+                    "source_user_message_id": str(getattr(user_message, "message_id", "") or ""),
+                    "research_disabled": True,
+                },
+            )
+            return True
         task = _latest_active_research_task(domain, thread=thread)
         if task is not None:
             status = str(getattr(task, "status", "") or "planned").strip().lower()

@@ -506,6 +506,7 @@ class RuntimeMessageResponse(BaseModel):
     content: str
     status: str = "completed"
     channel: str = "message"
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = ""
     idempotent_replay: bool = False
 

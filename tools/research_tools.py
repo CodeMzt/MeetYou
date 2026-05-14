@@ -140,9 +140,18 @@ class ResearchTools:
         if task is None:
             return {"ok": False, "code": "research_task_not_found", "message": f"Unknown research task: {research_task_id}"}
         if normalized_action in {"run", "execute"}:
+            config = ResearchAdapterConfig.from_env()
+            if not config.enabled:
+                return {
+                    "ok": False,
+                    "code": "research_disabled",
+                    "message": "Deep research execution is disabled.",
+                    "research_task_id": research_task_id,
+                    "status": task.status,
+                }
             result = ResearchExecutionService(
                 domain.services,
-                adapter_config=ResearchAdapterConfig.from_env(),
+                adapter_config=config,
             ).run_task(research_task_id)
             refreshed = domain.services.research_task.get_by_research_task_id(research_task_id) or task
             return {

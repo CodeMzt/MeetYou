@@ -557,63 +557,22 @@ class V5Acceptance:
                 "endpoint_id": "v5.acceptance",
                 "endpoint_type": "acceptance",
                 "role": "user",
-                "content": f"研究 GPT Researcher 服务化接入 MeetYou 的最小可行方案 {self.marker}",
+                "content": f"Deep research disabled acceptance {self.marker}",
                 "preferred_mode": "research",
                 "metadata": {"marker": self.marker},
             },
         )
         tasks = as_list(await self.request("GET", "/runtime/research-tasks", params={"thread_id": thread_id}))
-        if len(tasks) != 1 or tasks[0].get("status") != "planned":
-            self.fail("chat research plan gate", f"expected one planned task, got {tasks}")
-        task = tasks[0]
-        task_id = str(task.get("research_task_id") or "")
+        if tasks:
+            self.fail("chat research disabled", f"expected no research task while disabled, got {tasks}")
         messages = as_list(await self.request("GET", f"/runtime/threads/{thread_id}/messages"))
         if [item.get("role") for item in messages] != ["user", "assistant"]:
-            self.fail("chat research plan message", f"unexpected messages={messages}")
-        plan_text = str(messages[-1].get("content") or "")
-        if "确认开始" not in plan_text or task_id not in plan_text:
-            self.fail("chat research plan message", "assistant plan did not ask for confirmation with task id")
-        self.ok("chat research plan gate", {"thread_id": thread_id, "research_task_id": task_id})
-
-        await self.request(
-            "POST",
-            "/runtime/messages",
-            json_body={
-                "thread_id": thread_id,
-                "workspace_id": workspace_id,
-                "session_id": session_id,
-                "endpoint_id": "v5.acceptance",
-                "endpoint_type": "acceptance",
-                "role": "user",
-                "content": "确认开始",
-                "preferred_mode": "research",
-                "metadata": {"marker": self.marker},
-            },
-        )
-        deadline = asyncio.get_running_loop().time() + min(30.0, self.wait_timeout)
-        started: dict[str, Any] = {}
-        while asyncio.get_running_loop().time() < deadline:
-            started = await self.request("GET", f"/runtime/research-tasks/{task_id}")
-            status = str(started.get("status") or "")
-            if status in {"running", "completed", "failed", "cancelled"} and started.get("run_id"):
-                break
-            await asyncio.sleep(1.0)
-        if started.get("status") == "failed":
-            self.fail("chat research confirm start", f"research failed after confirm metadata={started.get('metadata')}")
-        if started.get("status") not in {"running", "completed"} or not started.get("run_id"):
-            self.fail("chat research confirm start", f"unexpected task state={started}")
-        messages_after_confirm = as_list(await self.request("GET", f"/runtime/threads/{thread_id}/messages"))
-        if [item.get("role") for item in messages_after_confirm] != ["user", "assistant", "user", "assistant"]:
-            self.fail("chat research start message", f"unexpected messages={messages_after_confirm}")
-        if "研究任务已开始" not in str(messages_after_confirm[-1].get("content") or ""):
-            self.fail("chat research start message", "assistant did not acknowledge research start")
-        self.ok("chat research confirm start", {"research_task_id": task_id, "status": started.get("status"), "run_id": started.get("run_id")})
-
-        if started.get("status") == "running":
-            cancelled = await self.request("PATCH", f"/runtime/research-tasks/{task_id}", json_body={"action": "cancel"})
-            if cancelled.get("status") != "cancelled":
-                self.fail("chat research cleanup cancel", f"unexpected cancel response={cancelled}")
-            self.ok("chat research cleanup cancel", {"research_task_id": task_id})
+            self.fail("chat research disabled message", f"unexpected messages={messages}")
+        disabled_text = str(messages[-1].get("content") or "")
+        disabled_meta = messages[-1].get("metadata") or {}
+        if "Connection error" not in disabled_text or not disabled_meta.get("research_disabled"):
+            self.fail("chat research disabled message", f"unexpected disabled response={messages[-1]}")
+        self.ok("chat research disabled", {"thread_id": thread_id})
 
     async def check_research_cancel(self, project: dict[str, Any]) -> None:
         task = await self.request(
@@ -637,7 +596,6 @@ class V5Acceptance:
         await self.check_versioning_and_sources(project, thread)
         await self.check_research_cancel(project)
         await self.check_chat_native_research_flow(project)
-        await self.check_research_and_artifacts(project, thread)
         return self.results
 
 

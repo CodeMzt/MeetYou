@@ -254,6 +254,30 @@ class EndpointToolsTests(unittest.IsolatedAsyncioTestCase):
         active_endpoint_ids = {item["endpoint_id"] for item in active_payload["endpoints"]}
         self.assertIn("raspberry.pi.executor", active_endpoint_ids)
 
+    async def test_endpoint_inventory_defaults_to_complete_compact_tool_lists(self):
+        tools, _, _ = self._tools()
+        endpoint_service = tools._core_domain.services.endpoint
+        endpoint_service.capabilities_by_endpoint[endpoint_service.endpoint.id] = [
+            SimpleNamespace(
+                capability_id=f"cap-{index}",
+                tool_key=f"tool.{index:02d}",
+                risk_level="read",
+                requires_confirmation=False,
+                enabled=True,
+            )
+            for index in range(24)
+        ]
+
+        payload = await tools.list_active_endpoints(workspace_id="personal")
+
+        tools_by_endpoint = payload["executable_tools_by_endpoint"]["desktop.main.executor"]
+        self.assertEqual(len(tools_by_endpoint), 24)
+        self.assertEqual(tools_by_endpoint[-1], "tool.23")
+        self.assertIn("desktop.main.executor", payload["endpoint_ids"])
+        self.assertFalse(payload["endpoints"][0]["capability_details_included"])
+        self.assertEqual(payload["endpoints"][0]["capabilities"], [])
+        self.assertEqual(payload["endpoints"][0]["capability_count"], 24)
+
 
 if __name__ == "__main__":
     unittest.main()

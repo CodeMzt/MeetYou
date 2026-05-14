@@ -681,6 +681,25 @@ class ResearchExecutionService:
 
     def _run_external_adapter_task(self, task, *, research_task_id: str, policy: dict[str, Any]) -> dict[str, Any]:
         config = self.adapter_config or ResearchAdapterConfig()
+        if not config.enabled:
+            self._record_progress(
+                research_task_id,
+                stage="adapter",
+                status="failed",
+                message="深度研究执行已停用。",
+                metadata={"research_provider": config.provider, "adapter_status": "disabled"},
+            )
+            return self._fail_task(
+                research_task_id,
+                summary="Deep research execution is disabled.",
+                metadata={
+                    "runner": "research_adapter.v1",
+                    "runner_error": "research_disabled",
+                    "research_provider": config.provider,
+                    "adapter_status": "disabled",
+                    "adapter_error": "Deep research execution is disabled.",
+                },
+            )
         if not config.configured:
             self._record_progress(
                 research_task_id,

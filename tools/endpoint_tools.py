@@ -82,6 +82,23 @@ def _compact_endpoint_payload(endpoint: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _metadata_summary(metadata: Any) -> dict[str, Any]:
+    payload = dict(metadata or {}) if isinstance(metadata, dict) else {}
+    rendered = ""
+    if payload:
+        try:
+            import json
+
+            rendered = json.dumps(payload, ensure_ascii=False, default=str)
+        except Exception:
+            rendered = str(payload)
+    return {
+        "key_count": len(payload),
+        "keys": sorted(str(key) for key in payload.keys()),
+        "byte_size_estimate": len(rendered.encode("utf-8", errors="ignore")) if rendered else 0,
+    }
+
+
 def _endpoint_inventory_summary(compact: list[dict[str, Any]]) -> dict[str, Any]:
     ordered = sorted(
         compact,
@@ -111,9 +128,10 @@ def _endpoint_inventory_summary(compact: list[dict[str, Any]]) -> dict[str, Any]
     }
 
 
-def _address_payload(address, *, endpoint=None, preference=None) -> dict[str, Any]:
+def _address_payload(address, *, endpoint=None, preference=None, include_metadata: bool = False) -> dict[str, Any]:
     endpoint_id = str(getattr(endpoint, "endpoint_id", "") or "")
-    return {
+    metadata = dict(getattr(address, "meta", {}) or {})
+    payload = {
         "address_id": str(getattr(address, "address_id", "") or ""),
         "endpoint_id": endpoint_id,
         "provider_type": str(getattr(address, "provider_type", "") or ""),
@@ -127,7 +145,53 @@ def _address_payload(address, *, endpoint=None, preference=None) -> dict[str, An
         "alias": str(getattr(preference, "alias", "") or "") if preference is not None else "",
         "is_default": bool(getattr(preference, "is_default", False)) if preference is not None else False,
         "verified": bool(getattr(preference, "verified", False)) if preference is not None else False,
-        "metadata": dict(getattr(address, "meta", {}) or {}),
+        "metadata_summary": _metadata_summary(metadata),
+    }
+    if include_metadata:
+        payload["metadata"] = metadata
+    return payload
+
+
+def _compact_address_payload(address: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "address_id": str(address.get("address_id") or ""),
+        "endpoint_id": str(address.get("endpoint_id") or ""),
+        "provider_type": str(address.get("provider_type") or ""),
+        "address_type": str(address.get("address_type") or ""),
+        "external_ref": str(address.get("external_ref") or ""),
+        "display_name": str(address.get("display_name") or ""),
+        "workspace_ids": _string_list(address.get("workspace_ids") or []),
+        "status": str(address.get("status") or ""),
+        "bound": bool(address.get("bound")),
+        "alias": str(address.get("alias") or ""),
+    }
+
+
+def _delivery_target_summary(addresses: list[dict[str, Any]]) -> dict[str, Any]:
+    ordered = sorted(
+        [_compact_address_payload(address) for address in addresses],
+        key=lambda item: (
+            str(item.get("provider_type") or "").lower(),
+            str(item.get("address_type") or "").lower(),
+            str(item.get("display_name") or "").lower(),
+            str(item.get("address_id") or "").lower(),
+        ),
+    )
+    lines: list[str] = []
+    for item in ordered:
+        address_id = str(item.get("address_id") or "")
+        if not address_id:
+            continue
+        workspace_text = ",".join(_string_list(item.get("workspace_ids") or [])) or "(none)"
+        display_name = str(item.get("display_name") or item.get("external_ref") or "")
+        lines.append(
+            f"{address_id} | provider={item.get('provider_type') or ''} | type={item.get('address_type') or ''} | "
+            f"status={item.get('status') or ''} | workspace_ids={workspace_text} | name={display_name}"
+        )
+    return {
+        "delivery_target_lines": lines,
+        "address_ids": [item["address_id"] for item in ordered if item.get("address_id")],
+        "compact_addresses": ordered,
     }
 
 
@@ -300,6 +364,7 @@ class EndpointTools:
             "tool_keys": tool_keys,
             "executable_tools": tool_keys,
             "capability_count": len(tool_keys),
+            "capability_details_included": bool(include_capabilities),
             "capabilities": capabilities,
             "last_seen_at": getattr(endpoint, "updated_at", "").isoformat()
             if getattr(endpoint, "updated_at", None) is not None
@@ -315,6 +380,7 @@ class EndpointTools:
         workspace_id: str = "",
         thread_id: str = "",
         include_tools: bool = True,
+        include_capability_details: bool = False,
         session_id: str = "",
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -346,8 +412,11 @@ class EndpointTools:
                 endpoint,
                 connected=True,
                 snapshots=snapshots_by_endpoint.get(endpoint_id, []),
-                include_capabilities=include_tools,
+                include_capabilities=include_capability_details,
             )
+            if not include_tools:
+                payload["tool_keys"] = []
+                payload["executable_tools"] = []
             results.append(payload)
         results.sort(
             key=lambda item: (
@@ -370,6 +439,7 @@ class EndpointTools:
         workspace_id: str = "",
         tool_key: str = "",
         include_tools: bool = True,
+        include_capability_details: bool = False,
         session_id: str = "",
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -399,8 +469,11 @@ class EndpointTools:
                 endpoint,
                 connected=True,
                 snapshots=snapshots,
-                include_capabilities=include_tools,
+                include_capabilities=include_capability_details,
             )
+            if not include_tools:
+                payload["tool_keys"] = []
+                payload["executable_tools"] = []
             if normalized_tool_key:
                 payload["matched_tool_key"] = normalized_tool_key
             targets.append(payload)
@@ -429,6 +502,7 @@ class EndpointTools:
         address_type: str = "",
         workspace_id: str = "",
         include_unavailable: bool = False,
+        include_metadata: bool = False,
         route_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         del route_context
@@ -461,13 +535,15 @@ class EndpointTools:
         for address in addresses:
             endpoint = domain.services.endpoint.get_by_id(getattr(address, "endpoint_id", None))
             preference = preference_by_address.get(str(getattr(address, "id", "") or ""))
-            payloads.append(_address_payload(address, endpoint=endpoint, preference=preference))
+            payloads.append(_address_payload(address, endpoint=endpoint, preference=preference, include_metadata=include_metadata))
+        summary = _delivery_target_summary(payloads)
         return {
             "ok": True,
             "count": len(payloads),
             "requires_binding": requires_binding,
             "provider_type": normalized_provider,
             "actor_ref": normalized_actor_ref,
+            **summary,
             "addresses": payloads,
         }
 
@@ -511,7 +587,7 @@ class EndpointTools:
         return {
             "ok": True,
             "preference_id": str(getattr(preference, "preference_id", "") or ""),
-            "target": _address_payload(address, endpoint=endpoint, preference=preference),
+            "target": _address_payload(address, endpoint=endpoint, preference=preference, include_metadata=True),
         }
 
     async def _send_notice(self, *, target_type: str, target_id: str, content: str, session_id: str = "", workspace_id: str = "") -> dict[str, Any]:

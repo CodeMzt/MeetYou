@@ -255,6 +255,33 @@ class EndpointAddressToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sent["delivered"])
         self.assertEqual(delivery.calls[0]["target_address"].address_id, address.address_id)
 
+    async def test_list_delivery_targets_front_loads_all_addresses_without_metadata_blob(self):
+        tools, address, *_ = self._tools()
+        service = tools._core_domain.services.endpoint_address
+        for index in range(6):
+            service.upsert_address(
+                endpoint_row_id="endpoint-row-1",
+                provider_type="feishu",
+                address_type="group",
+                external_ref=f"group-{index}",
+                address_id=f"addr.feishu.group.{index}",
+                display_name=f"Feishu Group {index}",
+                workspace_scope=["personal"],
+                status="sendable",
+                capabilities=["receive_message"],
+                metadata={"long": "x" * 2000, "index": index},
+            )
+
+        payload = await tools.list_delivery_targets(provider_type="feishu")
+
+        self.assertEqual(payload["count"], 7)
+        self.assertEqual(len(payload["delivery_target_lines"]), 7)
+        self.assertIn(address.address_id, payload["address_ids"])
+        self.assertEqual(len(payload["compact_addresses"]), 7)
+        self.assertNotIn("metadata", payload["addresses"][0])
+        self.assertIn("metadata_summary", payload["addresses"][0])
+        self.assertTrue(all("addr.feishu.group." in line or address.address_id in line for line in payload["delivery_target_lines"]))
+
 
 if __name__ == "__main__":
     unittest.main()

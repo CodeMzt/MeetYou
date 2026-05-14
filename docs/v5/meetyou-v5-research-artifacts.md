@@ -1,5 +1,11 @@
 # MeetYou V5 Research And Artifacts
 
+## Current Product Status
+
+Deep research execution is disabled by default in V5 because the self-maintained GPT Researcher adapter path has not met the stability bar for user-facing delivery. The durable Core model (`ResearchTask`, evidence ledger, artifacts, run events, and thread binding) stays in place, and deployments can explicitly re-enable execution with `MEETYOU_RESEARCH_ENABLED=true` after validating a vendor or adapter service. Default Desktop UI should not expose a research-mode entry point while execution is disabled; research-mode messages receive a clear disabled assistant response instead of entering the old plan/start path and failing with connection errors.
+
+Ordinary lightweight research remains a normal chat capability. Long-running vendor-grade deep research should be handled by a stable external product or a future provider behind the same adapter contract, not by silently falling back to an uncited Core report.
+
 ## Research Task Flow
 
 Deep research is represented by `ResearchTask`.
@@ -12,10 +18,10 @@ Deep research is represented by `ResearchTask`.
 6. Artifact: Core normalizes/safety-marks the returned sources into the evidence ledger, validates report citations against that ledger, saves a Markdown report through `ArtifactStore`, and optionally creates PDF/DOCX derived artifacts when requested by `source_policy.derived_formats`, `artifact_formats`, `report_formats`, output format, or the `include_pdf` / `include_docx` flags.
 7. Deliver: assistant final message contains a short summary and artifact link, not the full large report body.
 
-The default executable runner is now externalized:
+When deep research execution is explicitly enabled, the executable runner is externalized:
 
-- `PATCH /runtime/research-tasks/{id}` with `action=start` transitions the task to `running`; unless `source_policy.auto_execute=false`, Runtime schedules Core to call the external research adapter.
-- `manage_research_tasks(action="run")` uses the same Core adapter path from assistant tools.
+- `PATCH /runtime/research-tasks/{id}` with `action=start` transitions the task to `running`; unless `source_policy.auto_execute=false`, Runtime schedules Core to call the external research adapter. With default disabled execution, auto-executing starts are rejected with `research_disabled`.
+- `manage_research_tasks(action="run")` uses the same Core adapter path from assistant tools and returns `research_disabled` while default execution is off.
 - Assistant-facing V5 research tools are part of the public tool template: `search_academic_sources`, `create_research_task`, and `manage_research_tasks` must be present in `user/tools.example.json` with parameter schemas that match the registered Core tool implementations and research-mode prompts.
 - Assistant-facing ResearchTask tools share the Runtime binding contract: supplied `project_id` and `thread_id` must resolve to durable Core records. Unknown ids return structured `project_not_found` or `thread_not_found` errors rather than silently creating or listing unscoped tasks.
 - When assistant tools are invoked from a routed conversation and `project_id` or `thread_id` is omitted, `create_research_task` and `manage_research_tasks(action=list)` infer the current binding from route/event context. This keeps research mode thread-bound without requiring the model to copy ids into every call.
@@ -60,9 +66,9 @@ When `source_policy.include_project_sources=true`, `source_policy.source_adapter
 
 Configuration:
 
-- Core: `MEETYOU_RESEARCH_ADAPTER_BASE_URL`, `MEETYOU_RESEARCH_ADAPTER_TOKEN`, `MEETYOU_RESEARCH_PROVIDER`, `MEETYOU_RESEARCH_TIMEOUT_SECONDS`, `MEETYOU_RESEARCH_ADAPTER_REQUIRED`, `MEETYOU_RESEARCH_POLL_SECONDS`, `MEETYOU_RESEARCH_POLL_MAX_ERRORS`, and `MEETYOU_RESEARCH_POLL_ERROR_GRACE_SECONDS`.
+- Core: `MEETYOU_RESEARCH_ENABLED`, `MEETYOU_RESEARCH_ADAPTER_BASE_URL`, `MEETYOU_RESEARCH_ADAPTER_TOKEN`, `MEETYOU_RESEARCH_PROVIDER`, `MEETYOU_RESEARCH_TIMEOUT_SECONDS`, `MEETYOU_RESEARCH_ADAPTER_REQUIRED`, `MEETYOU_RESEARCH_POLL_SECONDS`, `MEETYOU_RESEARCH_POLL_MAX_ERRORS`, and `MEETYOU_RESEARCH_POLL_ERROR_GRACE_SECONDS`. `MEETYOU_RESEARCH_ENABLED` defaults to false for the user-facing product path.
 - Adapter process: `MEETYOU_RESEARCH_ADAPTER_HOST`, `MEETYOU_RESEARCH_ADAPTER_PORT`, `MEETYOU_RESEARCH_ADAPTER_TOKEN`, `MEETYOU_RESEARCH_PROVIDER`, provider-specific model/search keys, and optional `MEETYOU_RESEARCH_ADAPTER_FAKE=true` for local acceptance tests.
-- Deployment: the `v5` Core deploy workflow installs `meetyou-research-adapter` as a separate systemd service with an isolated `.venv-research-adapter`, writes default Core adapter settings into `/etc/meetyou/meetyou-core.env` only when missing or placeholder-valued, and keeps the adapter token synchronized with `/etc/meetyou/meetyou-research-adapter.env`. The adapter unit reads Core env first, then adapter env; adapter env files must not contain blank provider-key assignments such as `OPENAI_API_KEY=` because systemd would override real Core values with empty strings.
+- Deployment: the `v5` Core deploy workflow writes `MEETYOU_RESEARCH_ENABLED=false` by default and skips adapter install/health-gating while execution is disabled. When a deployment explicitly sets `MEETYOU_RESEARCH_ENABLED=true`, the workflow installs `meetyou-research-adapter` as a separate systemd service with an isolated `.venv-research-adapter`, writes Core adapter settings into `/etc/meetyou/meetyou-core.env` only when missing or placeholder-valued, and keeps the adapter token synchronized with `/etc/meetyou/meetyou-research-adapter.env`. The adapter unit reads Core env first, then adapter env; adapter env files must not contain blank provider-key assignments such as `OPENAI_API_KEY=` because systemd would override real Core values with empty strings.
 - Provider credentials: when `OPENAI_API_KEY` is absent but Core's `MEETYOU_API_KEY` is present in the adapter process env, the adapter exposes it to OpenAI-compatible provider SDKs as `OPENAI_API_KEY` in-process. It can also bridge `MEETYOU_OPENAI_BASE_URL`, `MEETYOU_API_BASE_URL`, `MEETYOU_LLM_BASE_URL`, or legacy `OPENAI_API_BASE` to `OPENAI_BASE_URL`, and `MEETYOU_TAVILY_API_KEY` to `TAVILY_API_KEY`. It does not log or persist secret values. `/health` may expose safe booleans such as key/base-url presence for diagnostics.
 
 `MEETYOU_RESEARCH_TIMEOUT_SECONDS` is a per-request HTTP guard between Core and the adapter, not a total deadline for a deep research run. Long-running research remains `running` until the adapter reports a terminal state or the user cancels.
