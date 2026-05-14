@@ -217,7 +217,7 @@
       "type": "function",
       "function": {
         "name": "list_endpoint_tool_targets",
-        "description": "List online Endpoint execution targets. Use tool_target_lines, endpoint_ids, and executable_tools_by_endpoint first; request capability details only for a specific follow-up.",
+        "description": "List online Endpoint execution targets, including Raspberry Pi device tools such as rpi.device.list/status/set/pulse/blink and rpi.button.read. Use tool_target_lines, endpoint_ids, and executable_tools_by_endpoint first; request capability details only for a specific follow-up.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -227,7 +227,7 @@
             },
             "tool_key": {
               "type": "string",
-              "description": "Optional endpoint capability tool key, such as file.read or shell.exec."
+              "description": "Optional endpoint capability tool key, such as file.read, shell.exec, or rpi.device.list."
             },
             "include_tools": {
               "type": "boolean",
@@ -289,7 +289,7 @@
       "type": "function",
       "function": {
         "name": "send_endpoint_message",
-        "description": "Send a realtime notice or dispatch an Endpoint tool call to a target Endpoint other than the normal current-session reply path. Do not use this to answer the originating user or to send progress updates to the same endpoint; use emit_progress_notice for progress and the final assistant answer for the actual reply. Use only when the user explicitly asks to notify or call a specific target Endpoint.",
+        "description": "Send a realtime notice or dispatch an Endpoint tool call to a target Endpoint other than the normal current-session reply path. Do not use this to answer the originating user or to send progress updates to the same endpoint; use emit_progress_notice for progress and the final assistant answer for the actual reply. Use only when the user explicitly asks to notify or call a specific target Endpoint. Example Raspberry Pi device calls: target_id=<rpi endpoint_id>, delivery_kind=tool_call, tool_key=rpi.device.list, arguments={}; or tool_key=rpi.device.set, arguments={\"device_id\":\"desk_led\",\"value\":true}, confirmed=true after explicit confirmation when required.",
         "parameters": {
           "type": "object",
           "properties": {
