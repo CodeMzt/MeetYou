@@ -87,6 +87,7 @@
 - Pi executable tools must be advertised as EndpointCapability snapshots and executed only from Core-routed `tool.call.request` frames. Results must return through `tool.call.accepted` / `tool.call.progress` / `tool.call.result` / `tool.call.error`.
 - `endpoint.heartbeat` from the Pi is connection keepalive only and must not trigger Scheduler-owned `system.heartbeat`.
 - GPIO and shell capabilities must be deny-by-default: no GPIO outside `security.gpio_allowed_pins`, no arbitrary shell strings, no `shell=True`, and `rpi.shell.safe_exec` must not be advertised unless enabled with an allowlist.
+- Raspberry Pi device abstractions (`rpi.device.*` / `rpi.button.read`) must remain endpoint-local wrappers over allowlisted GPIO. Device config must validate `device_id`, BCM pin allowlist, type/direction, relay confirmation defaults, and pulse/blink bounds without changing Core routing or endpoint protocol ownership.
 - Raspberry Pi GPIO arguments use BCM numbering, not physical header pin numbers.
 - Raspberry Pi 5 GPIO must use gpiozero with `lgpio`; keep `MEETYOU_RPI_GPIO_PIN_FACTORY=lgpio` in the service environment and do not fall back to legacy `RPi.GPIO`/native backends.
 - The Pi systemd service must run as `meetyou-rpi`, include the `gpio` supplementary group, and use `/var/lib/meetyou-rpi` for `WorkingDirectory` / `TMPDIR`; `lgpio` creates `.lgd-*` runtime files and must not write into `/opt/meetyou/MeetYou`.

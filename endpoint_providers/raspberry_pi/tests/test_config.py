@@ -26,6 +26,8 @@ class RpiConfigTests(unittest.TestCase):
         self.assertEqual(config.connect_path, "/endpoint/ws")
         self.assertEqual(config.security.gpio_allowed_pins, [17, 27, 22])
         self.assertFalse(config.security.safe_shell_enabled)
+        self.assertEqual([device.device_id for device in config.devices], ["desk_led", "relay_1", "button_1"])
+        self.assertTrue(config.devices[1].effective_requires_confirmation)
 
     def test_env_overrides_work(self):
         with TemporaryDirectory() as tmp, patch.dict(

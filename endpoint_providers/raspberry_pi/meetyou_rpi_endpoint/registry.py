@@ -7,6 +7,14 @@ from .capabilities.base import (
     CapabilityDefinition,
     CapabilityError,
 )
+from .capabilities.device import (
+    build_button_read_capability,
+    build_device_blink_capability,
+    build_device_list_capability,
+    build_device_pulse_capability,
+    build_device_set_capability,
+    build_device_status_capability,
+)
 from .capabilities.echo import build_echo_capability
 from .capabilities.gpio import (
     build_gpio_backend,
@@ -19,6 +27,7 @@ from .capabilities.safe_shell import (
 from .capabilities.system_info import (
     build_system_info_capability,
 )
+from .devices import DeviceRegistry
 from .security import normalize_safe_shell_allowlist
 
 
@@ -67,11 +76,25 @@ def build_default_registry(config, *, gpio_backend=None, force_fake_gpio: bool =
             working_dir=getattr(getattr(config, "security", None), "sandbox_dir", ""),
         )
     )
-    registry = CapabilityRegistry(CapabilityContext(config=config, gpio_backend=backend))
+    device_registry = DeviceRegistry.from_config(config)
+    device_writes_require_confirmation = device_registry.requires_confirmation_for_writes()
+    registry = CapabilityRegistry(
+        CapabilityContext(
+            config=config,
+            gpio_backend=backend,
+            device_registry=device_registry,
+        )
+    )
     registry.register(build_echo_capability())
     registry.register(build_system_info_capability())
     registry.register(build_gpio_read_capability())
     registry.register(build_gpio_write_capability())
+    registry.register(build_device_list_capability())
+    registry.register(build_device_status_capability())
+    registry.register(build_device_set_capability(requires_confirmation=device_writes_require_confirmation))
+    registry.register(build_device_pulse_capability(requires_confirmation=device_writes_require_confirmation))
+    registry.register(build_device_blink_capability(requires_confirmation=device_writes_require_confirmation))
+    registry.register(build_button_read_capability())
     allowlist = normalize_safe_shell_allowlist(config.security.safe_shell_allowlist)
     if config.security.safe_shell_enabled and allowlist:
         registry.register(build_safe_shell_capability())

@@ -77,15 +77,81 @@ sudo systemctl restart meetyou-rpi-endpoint
 
 Run GPIO diagnostics from `/var/lib/meetyou-rpi`, not from `/opt/meetyou/MeetYou`, because `lgpio` creates short-lived `.lgd-*` files in the process working directory.
 
+## Device Configuration And Diagnostics
+
+Named devices live in the Raspberry Pi endpoint config under `devices`. Every configured device pin must also be listed in `security.gpio_allowed_pins`; startup rejects duplicate `device_id` values, pins outside the allowlist, invalid direction/type pairs, and invalid input pull modes.
+
+Minimal examples:
+
+```json
+{
+  "security": {
+    "gpio_allowed_pins": [17, 27, 22]
+  },
+  "devices": [
+    {
+      "device_id": "desk_led",
+      "type": "led",
+      "name": "Desk LED",
+      "pin": 17,
+      "direction": "out",
+      "active_high": true,
+      "max_on_ms": 5000,
+      "requires_confirmation": false
+    },
+    {
+      "device_id": "relay_1",
+      "type": "relay",
+      "name": "Relay 1",
+      "pin": 27,
+      "direction": "out",
+      "active_high": true,
+      "max_on_ms": 3000
+    },
+    {
+      "device_id": "button_1",
+      "type": "button",
+      "name": "Button 1",
+      "pin": 22,
+      "direction": "in",
+      "active_high": false,
+      "pull": "up"
+    }
+  ]
+}
+```
+
+Operational checks after editing `/etc/meetyou/rpi-endpoint.json`:
+
+```bash
+sudo -u meetyou-rpi env PYTHONPATH=/opt/meetyou/MeetYou TMPDIR=/var/lib/meetyou-rpi \
+  bash -lc 'cd /var/lib/meetyou-rpi && /opt/meetyou/MeetYou/.venv-rpi/bin/python -m meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env'
+sudo systemctl restart meetyou-rpi-endpoint
+journalctl -u meetyou-rpi-endpoint -n 100 --no-pager
+```
+
+Device capability failures are intentionally specific:
+
+- `device_not_found`: the requested `device_id` is not configured.
+- `device_pin_not_allowed` or `gpio_pin_not_allowed`: config or runtime pin is outside `security.gpio_allowed_pins`.
+- `device_permission_denied`: a write was attempted on an input device or a button read targeted a non-button device.
+- `invalid_device_*`: malformed value, duration, blink count, interval, or config.
+- `gpio_unavailable` / `gpio_backend_*`: `gpiozero` / `lgpio` is missing or cannot access `/dev/gpiochip*`.
+
+Relay devices default to requiring Core confirmation. Because the endpoint protocol does not include a per-operation confirmation receipt, the Pi advertises write-class device capabilities with `requires_confirmation=true` whenever any configured output device requires confirmation. If a deployment has only LEDs or explicitly sets a relay `requires_confirmation=false`, the advertised flag can be false.
+
 ## Runtime Acceptance Signals
 
 A healthy Pi endpoint shows:
 
 - Core acknowledges `endpoint.hello`.
-- Core sends `endpoint.ready` with `registered_capability_count = 4` when safe shell is disabled.
+- Core sends `endpoint.ready` with `registered_capability_count = 10` when safe shell is disabled and the default device capability set is advertised.
 - `rpi.echo` returns the requested text.
 - `rpi.system.info` returns hostname, platform, Python version, uptime, memory, disk, optional CPU temperature, GPIO backend info, endpoint version, and git commit when available.
 - `rpi.gpio.write` succeeds only for pins in `security.gpio_allowed_pins`.
+- `rpi.device.list` returns configured devices without tokens or secrets.
+- `rpi.device.set`, `rpi.device.pulse`, and `rpi.device.blink` operate only on `direction=out` devices and enforce duration/count limits.
+- `rpi.button.read` operates only on configured button inputs.
 
 `rpi.shell.safe_exec` must remain absent unless both `security.safe_shell_enabled=true` and a reviewed allowlist are configured.
 
