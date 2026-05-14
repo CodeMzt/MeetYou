@@ -20,6 +20,7 @@ gpio = [
 
 [project.scripts]
 meetyou-rpi-endpoint = "meetyou_rpi_endpoint.main:main"
+meetyou-rpi-health = "meetyou_rpi_endpoint.health:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

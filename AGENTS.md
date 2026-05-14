@@ -82,7 +82,7 @@
 ## Raspberry Pi Endpoint Provider Rules
 
 - Raspberry Pi 5 / Linux ARM64 support is an Endpoint Provider only. Do not turn it into Core and do not let it own Thread, Message, Run, Scheduler, `system.heartbeat`, Memory, Delivery, Operation records, ToolRouter, or persistence.
-- Raspberry Pi provider work lives under `endpoint_providers/raspberry_pi/`, with docs in `docs/endpoints/raspberry-pi.md`, `docs/endpoints/rpi-capabilities.md`, and `docs/endpoints/rpi-security.md`.
+- Raspberry Pi provider work lives under `endpoint_providers/raspberry_pi/`, with docs in `docs/endpoints/raspberry-pi.md`, `docs/endpoints/rpi-capabilities.md`, `docs/endpoints/rpi-security.md`, `docs/endpoints/rpi-operations.md`, and real hardware acceptance records under `docs/endpoints/rpi-real-acceptance-*.md`.
 - The Pi must actively connect to Core through `GET /endpoint/ws` using `meetyou.endpoint.ws.v4`; do not add an inbound Pi server or revive `/client/ws`.
 - Pi executable tools must be advertised as EndpointCapability snapshots and executed only from Core-routed `tool.call.request` frames. Results must return through `tool.call.accepted` / `tool.call.progress` / `tool.call.result` / `tool.call.error`.
 - `endpoint.heartbeat` from the Pi is connection keepalive only and must not trigger Scheduler-owned `system.heartbeat`.
@@ -205,6 +205,8 @@
 - Desktop Provider: `python main.py desktop-client` or `python -m desktop_client`
 - Edge Provider: `python main.py edge-client` or `python -m edge_client`
 - Research Adapter: `python -m research_adapter`
+- Raspberry Pi endpoint health: `python -m endpoint_providers.raspberry_pi.meetyou_rpi_endpoint.health --config /etc/meetyou/rpi-endpoint.json --env-file /etc/meetyou/rpi-endpoint.env`
+- Raspberry Pi endpoint smoke: `bash scripts/rpi/smoke-test.sh /etc/meetyou/rpi-endpoint.json`
 - Frontend development: run `npm install`, `npm run dev` under `meetyou-ui/`
 - Frontend verification: run `npm run typecheck`, `npm run test` under `meetyou-ui/`
 - Frontend build: run `npm run build` under `meetyou-ui/`
