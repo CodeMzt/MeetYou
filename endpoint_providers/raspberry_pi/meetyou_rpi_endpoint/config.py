@@ -47,6 +47,25 @@ class SecurityConfig:
 
 
 @dataclass(slots=True)
+class DeviceConfig:
+    device_id: str
+    type: str
+    name: str
+    pin: int
+    direction: str
+    active_high: bool = True
+    max_on_ms: int | None = None
+    requires_confirmation: bool | None = None
+    pull: str | None = None
+
+    @property
+    def effective_requires_confirmation(self) -> bool:
+        if self.requires_confirmation is not None:
+            return bool(self.requires_confirmation)
+        return self.type == "relay"
+
+
+@dataclass(slots=True)
 class RpiEndpointConfig:
     core_base_url: str = "http://127.0.0.1:8000"
     endpoint_id: str = "raspberry-pi-dev"
@@ -63,6 +82,7 @@ class RpiEndpointConfig:
     keepalive: KeepaliveConfig = field(default_factory=KeepaliveConfig)
     operation: OperationConfig = field(default_factory=OperationConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    devices: list[DeviceConfig] = field(default_factory=list)
     core_access_token: str = field(default="", repr=False)
     config_file_path: str = str(DEFAULT_CONFIG_PATH)
 
@@ -193,6 +213,20 @@ def _to_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None =
     return number
 
 
+def _optional_positive_int(value: Any, *, code: str, label: str, maximum: int | None = None) -> int | None:
+    if value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise RpiConfigError(code, f"{label} must be an integer") from exc
+    if number <= 0:
+        raise RpiConfigError(code, f"{label} must be greater than 0")
+    if maximum is not None and number > maximum:
+        raise RpiConfigError(code, f"{label} must be <= {maximum}")
+    return number
+
+
 def _to_float(value: Any, default: float, *, minimum: float = 0.0, maximum: float | None = None) -> float:
     try:
         number = float(value)
@@ -223,6 +257,117 @@ def _config_path(config_file_path: str | None) -> Path:
     return Path(selected)
 
 
+_OUTPUT_DEVICE_TYPES = {"led", "relay", "output"}
+_INPUT_DEVICE_TYPES = {"button", "input"}
+_DEVICE_DIRECTIONS = {"in", "out"}
+_DEVICE_PULLS = {"up", "down", "none"}
+
+
+def _normalize_direction(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text == "input":
+        return "in"
+    if text == "output":
+        return "out"
+    return text
+
+
+def _normalize_pull(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value or "").strip().lower()
+    aliases = {
+        "pull_up": "up",
+        "pullup": "up",
+        "pull-down": "down",
+        "pull_down": "down",
+        "pulldown": "down",
+        "floating": "none",
+        "off": "none",
+    }
+    return aliases.get(text, text)
+
+
+def _normalize_device_configs(value: Any, allowed_pins: list[int]) -> list[DeviceConfig]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise RpiConfigError("invalid_devices_shape", "devices must be a list")
+    allowed = {int(pin) for pin in allowed_pins}
+    seen: set[str] = set()
+    devices: list[DeviceConfig] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise RpiConfigError("invalid_device_shape", f"devices[{index}] must be an object")
+        device_id = str(item.get("device_id") or "").strip()
+        if not device_id:
+            raise RpiConfigError("invalid_device_id", f"devices[{index}].device_id is required")
+        if device_id in seen:
+            raise RpiConfigError("duplicate_device_id", f"duplicate Raspberry Pi device_id: {device_id}")
+        seen.add(device_id)
+
+        device_type = str(item.get("type") or "").strip().lower()
+        if device_type not in _OUTPUT_DEVICE_TYPES | _INPUT_DEVICE_TYPES:
+            raise RpiConfigError("invalid_device_type", f"device {device_id} has unsupported type: {device_type}")
+
+        direction = _normalize_direction(item.get("direction"))
+        if direction not in _DEVICE_DIRECTIONS:
+            raise RpiConfigError("invalid_device_direction", f"device {device_id} direction must be in or out")
+        if device_type in _OUTPUT_DEVICE_TYPES and direction != "out":
+            raise RpiConfigError("device_direction_mismatch", f"device {device_id} type {device_type} requires direction=out")
+        if device_type in _INPUT_DEVICE_TYPES and direction != "in":
+            raise RpiConfigError("device_direction_mismatch", f"device {device_id} type {device_type} requires direction=in")
+
+        try:
+            pin = int(item.get("pin"))
+        except (TypeError, ValueError) as exc:
+            raise RpiConfigError("invalid_device_pin", f"device {device_id} pin must be an integer") from exc
+        if pin not in allowed:
+            raise RpiConfigError(
+                "device_pin_not_allowed",
+                f"device {device_id} pin {pin} is not listed in security.gpio_allowed_pins",
+            )
+
+        pull = _normalize_pull(item.get("pull"))
+        if direction == "out" and pull is not None:
+            raise RpiConfigError("invalid_device_pull", f"output device {device_id} must not configure pull")
+        if direction == "in" and pull is not None and pull not in _DEVICE_PULLS:
+            raise RpiConfigError("invalid_device_pull", f"input device {device_id} pull must be up, down, or none")
+
+        max_on_ms = _optional_positive_int(
+            item.get("max_on_ms"),
+            code="invalid_device_max_on_ms",
+            label=f"device {device_id} max_on_ms",
+            maximum=60_000,
+        )
+        if direction == "in" and max_on_ms is not None:
+            raise RpiConfigError("invalid_device_max_on_ms", f"input device {device_id} must not configure max_on_ms")
+
+        requires_confirmation = None
+        if "requires_confirmation" in item:
+            requires_confirmation = _to_bool(item.get("requires_confirmation"), default=device_type == "relay")
+        if direction == "in" and requires_confirmation is not None:
+            raise RpiConfigError(
+                "invalid_device_confirmation",
+                f"input device {device_id} must not configure requires_confirmation",
+            )
+
+        devices.append(
+            DeviceConfig(
+                device_id=device_id,
+                type=device_type,
+                name=str(item.get("name") or device_id).strip() or device_id,
+                pin=pin,
+                direction=direction,
+                active_high=_to_bool(item.get("active_high"), default=True),
+                max_on_ms=max_on_ms,
+                requires_confirmation=requires_confirmation,
+                pull=pull,
+            )
+        )
+    return devices
+
+
 def load_rpi_endpoint_config(config_file_path: str | None = None) -> RpiEndpointConfig:
     file_path = _config_path(config_file_path)
     env_root = file_path.parent.parent if file_path.parent.name == "user" else file_path.parent
@@ -250,6 +395,19 @@ def load_rpi_endpoint_config(config_file_path: str | None = None) -> RpiEndpoint
     safe_shell_enabled = _to_bool(
         os.environ.get("MEETYOU_RPI_SAFE_SHELL_ENABLED", security_payload.get("safe_shell_enabled")),
         default=False,
+    )
+
+    security = SecurityConfig(
+        sandbox_dir=str(security_payload.get("sandbox_dir") or "/var/lib/meetyou-rpi/sandbox").strip(),
+        safe_shell_enabled=safe_shell_enabled,
+        safe_shell_allowlist=list(security_payload.get("safe_shell_allowlist") or []),
+        gpio_allowed_pins=_int_list(security_payload.get("gpio_allowed_pins"), [17, 27, 22]),
+        gpio_write_default_duration_ms=_to_int(
+            security_payload.get("gpio_write_default_duration_ms"),
+            500,
+            minimum=0,
+            maximum=60_000,
+        ),
     )
 
     return RpiEndpointConfig(
@@ -290,19 +448,8 @@ def load_rpi_endpoint_config(config_file_path: str | None = None) -> RpiEndpoint
             default_timeout_seconds=default_timeout,
             max_timeout_seconds=max_timeout,
         ),
-        security=SecurityConfig(
-            sandbox_dir=str(security_payload.get("sandbox_dir") or "/var/lib/meetyou-rpi/sandbox").strip(),
-            safe_shell_enabled=safe_shell_enabled,
-            safe_shell_allowlist=list(security_payload.get("safe_shell_allowlist") or []),
-            gpio_allowed_pins=_int_list(security_payload.get("gpio_allowed_pins"), [17, 27, 22]),
-            gpio_write_default_duration_ms=_to_int(
-                security_payload.get("gpio_write_default_duration_ms"),
-                500,
-                minimum=0,
-                maximum=60_000,
-            ),
-        ),
+        security=security,
+        devices=_normalize_device_configs(payload.get("devices"), security.gpio_allowed_pins),
         core_access_token=_resolve_token(payload, endpoint_token_env),
         config_file_path=str(file_path),
     )
-

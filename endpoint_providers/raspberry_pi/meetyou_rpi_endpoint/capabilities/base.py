@@ -15,7 +15,7 @@ class CapabilityError(RuntimeError):
 
 
 class GPIOBackend(Protocol):
-    async def read(self, pin: int) -> bool:
+    async def read(self, pin: int, *, pull: str | None = None) -> bool:
         raise NotImplementedError
 
     async def write(self, pin: int, value: bool, *, duration_ms: int | None = None) -> dict[str, Any]:
@@ -26,6 +26,7 @@ class GPIOBackend(Protocol):
 class CapabilityContext:
     config: Any
     gpio_backend: GPIOBackend | None = None
+    device_registry: Any | None = None
 
 
 CapabilityHandler = Callable[[dict[str, Any], CapabilityContext], Awaitable[dict[str, Any]]]
@@ -58,4 +59,3 @@ class CapabilityDefinition:
             "input_schema": dict(self.input_schema or {}),
             "output_schema": dict(self.output_schema or {}),
         }
-
