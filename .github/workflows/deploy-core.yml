@@ -346,7 +346,7 @@ jobs:
                 CORE_SERVICE_GROUP="${CORE_SERVICE_USER}"
               fi
               if [ -x "${MEETYOU_REPO}/.venv/bin/python" ]; then
-                for provider in feishu meetwechat; do
+                for provider in feishu clawbot-wechat meetwechat; do
                   SERVICE_NAME="meetyou-${provider}-provider"
                   INSTALL_SCRIPT="${MEETYOU_REPO}/scripts/linux/install-${provider}-provider-systemd.sh"
                   if [ ! -f "${INSTALL_SCRIPT}" ]; then

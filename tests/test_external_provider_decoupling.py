@@ -32,6 +32,13 @@ class ExternalProviderDecouplingTests(unittest.TestCase):
         self.assertTrue((ROOT / "endpoint_providers" / "clawbot.py").exists())
         self.assertTrue((ROOT / "endpoint_providers" / "meetwechat.py").exists())
 
+    def test_core_deploy_restarts_clawbot_provider_service(self):
+        workflow = (ROOT / ".github" / "workflows" / "deploy-core.yml").read_text(encoding="utf-8")
+
+        self.assertIn("for provider in feishu clawbot-wechat meetwechat; do", workflow)
+        self.assertTrue((ROOT / "scripts" / "linux" / "install-clawbot-wechat-provider-systemd.sh").exists())
+        self.assertTrue((ROOT / "deploy" / "systemd" / "meetyou-clawbot-wechat-provider.service.template").exists())
+
     def test_clawbot_provider_does_not_depend_on_openclaw(self):
         paths = [
             ROOT / "adapters" / "clawbot_client.py",

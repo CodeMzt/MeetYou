@@ -38,7 +38,9 @@ After WeChat confirms the QR, the command saves these MeetYou-owned settings:
 
 ## Run
 
-Start Core and the provider separately:
+Production Core deploy installs and restarts the `meetyou-clawbot-wechat-provider` systemd service together with other external providers. After `python -m endpoint_providers.clawbot login --enable`, the next successful Core deploy should start the provider service automatically.
+
+For local development or foreground diagnostics, start Core and the provider separately:
 
 ```bash
 python -m service_runtime
