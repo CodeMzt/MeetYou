@@ -346,7 +346,7 @@ jobs:
                 CORE_SERVICE_GROUP="${CORE_SERVICE_USER}"
               fi
               if [ -x "${MEETYOU_REPO}/.venv/bin/python" ]; then
-                for provider in feishu clawbot-wechat meetwechat; do
+                for provider in feishu clawbot-wechat; do
                   SERVICE_NAME="meetyou-${provider}-provider"
                   INSTALL_SCRIPT="${MEETYOU_REPO}/scripts/linux/install-${provider}-provider-systemd.sh"
                   if [ ! -f "${INSTALL_SCRIPT}" ]; then
@@ -367,6 +367,11 @@ jobs:
                   sleep 2
                   sudo -n systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
                   sudo -n journalctl -u "${SERVICE_NAME}.service" -n 80 --no-pager 2>&1 | sanitize_diagnostics || true
+                done
+                for legacy_service in meetyou-meetwechat-provider.service; do
+                  echo "Disable legacy provider service: ${legacy_service}"
+                  sudo -n systemctl disable --now "${legacy_service}" || true
+                  sudo -n systemctl --no-pager --full status "${legacy_service}" || true
                 done
               else
                 echo "Provider restart skipped: Python venv not found at ${MEETYOU_REPO}/.venv/bin/python"
