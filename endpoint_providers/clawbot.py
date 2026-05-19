@@ -55,11 +55,18 @@ async def login(args: argparse.Namespace) -> int:
         atomic_write_text(str(output_path), text)
         print(text.strip())
         deadline = asyncio.get_running_loop().time() + float(args.timeout_seconds)
+        poll_interval_seconds = max(float(args.poll_interval_seconds), 0.1)
+        status_timeout_ms = max(int(float(args.status_timeout_seconds) * 1000), 1000)
         while asyncio.get_running_loop().time() < deadline:
-            status = await client.get_qrcode_status(
-                qrcode.qrcode,
-                timeout_ms=int(float(args.poll_interval_seconds) * 1000),
-            )
+            try:
+                status = await client.get_qrcode_status(qrcode.qrcode, timeout_ms=status_timeout_ms)
+            except asyncio.TimeoutError:
+                logger.info(
+                    "ClawBot iLink QR status poll timed out after %.1fs; retrying.",
+                    status_timeout_ms / 1000,
+                )
+                await asyncio.sleep(poll_interval_seconds)
+                continue
             status_text = status.status or "unknown"
             logger.info("ClawBot iLink QR status: %s", status_text)
             if status.expired:
@@ -81,7 +88,7 @@ async def login(args: argparse.Namespace) -> int:
                 print("ClawBot iLink 登录成功，已写入 MeetYou 配置。")
                 print("更新配置项: " + ", ".join(applied))
                 return 0
-            await asyncio.sleep(float(args.poll_interval_seconds))
+            await asyncio.sleep(poll_interval_seconds)
         print("等待扫码确认超时，请重新运行登录命令。")
         return 3
     finally:
@@ -127,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     login_parser.add_argument("--qr-output", default="user/clawbot-ilink-login-qr.txt")
     login_parser.add_argument("--timeout-seconds", type=float, default=480)
     login_parser.add_argument("--poll-interval-seconds", type=float, default=2)
+    login_parser.add_argument("--status-timeout-seconds", type=float, default=30)
     login_parser.add_argument("--enable", action="store_true", help="also set enable_clawbot_wechat_client=true")
     return parser
 
