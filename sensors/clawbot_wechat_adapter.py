@@ -122,15 +122,11 @@ def _message_drop_reason(*, bot_user_id: str = "", message: ClawBotMessage) -> s
         return "group_message_unsupported"
     if message.message_type == 2:
         return "outbound_or_bot_message"
-    if bot_user_id and message.from_user_id == bot_user_id:
-        return "from_bot_user"
     if not message.is_complete_text():
         return "not_completed_text"
     if not message.text_content():
         return "empty_text"
     peer_id = message.from_user_id or message.to_user_id
-    if bot_user_id and peer_id == bot_user_id:
-        peer_id = message.to_user_id
     if not peer_id:
         return "missing_peer_id"
     if not message.context_token:
@@ -161,8 +157,6 @@ def event_from_message(*, bot_id: str, bot_user_id: str = "", message: ClawBotMe
         return None
     text = message.text_content()
     peer_id = message.from_user_id or message.to_user_id
-    if bot_user_id and peer_id == bot_user_id:
-        peer_id = message.to_user_id
     identity_seed = "\n".join(
         [
             str(bot_id or "default"),

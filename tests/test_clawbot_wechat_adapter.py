@@ -87,6 +87,27 @@ class ClawBotWechatAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(event_from_message(bot_id="bot-1", bot_user_id="bot-user", message=group_message))
         self.assertIsNone(event_from_message(bot_id="bot-1", bot_user_id="bot-user", message=bot_message))
 
+    def test_event_from_message_accepts_ilink_user_id_sender(self):
+        message = ClawBotMessage.from_payload(
+            {
+                "seq": 8,
+                "message_id": "msg-ilink-user",
+                "from_user_id": "login-user",
+                "to_user_id": "bot-1",
+                "message_type": 1,
+                "message_state": 2,
+                "context_token": "ctx-login-user",
+                "item_list": [{"type": 1, "text_item": {"text": "ping"}, "is_completed": True}],
+            }
+        )
+
+        event = event_from_message(bot_id="bot-1", bot_user_id="login-user", message=message)
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.peer_id, "login-user")
+        self.assertEqual(event.conversation_ref, "bot-1::login-user")
+
     async def test_output_sends_delivery_message_with_stored_context_token(self):
         message = ClawBotMessage.from_payload(
             {
