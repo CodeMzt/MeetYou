@@ -421,6 +421,20 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertTrue((self.temp_root / "user" / "config.json.bak").exists())
         self.assertTrue((self.temp_root / ".env.bak").exists())
 
+    def test_env_file_non_empty_value_overrides_blank_process_env(self):
+        os.environ["MEETYOU_CLAWBOT_ILINK_BOT_TOKEN"] = ""
+        (self.temp_root / ".env").write_text(
+            "MEETYOU_CLAWBOT_ILINK_BOT_TOKEN=token-from-env-file\n",
+            encoding="utf-8",
+        )
+
+        config = ConfigManager(
+            config_file_path=str(self.temp_root / "user" / "config.json"),
+            env_file_path=str(self.temp_root / ".env"),
+        )
+
+        self.assertEqual(config.get("clawbot_ilink_bot_token"), "token-from-env-file")
+
     def test_heartbeat_idle_settings_are_manageable_and_typed(self):
         config = ConfigManager(
             config_file_path=str(self.temp_root / "user" / "config.json"),

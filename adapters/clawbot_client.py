@@ -16,6 +16,7 @@ DEFAULT_CLAWBOT_ILINK_CLIENT_VERSION = "1"
 DEFAULT_CLAWBOT_ILINK_REQUEST_TIMEOUT_MS = 15000
 DEFAULT_CLAWBOT_ILINK_LONG_POLL_TIMEOUT_MS = 35000
 DEFAULT_CLAWBOT_ILINK_QR_POLL_TIMEOUT_MS = 30000
+DEFAULT_CLAWBOT_ILINK_SEND_TIMEOUT_MS = 300000
 
 
 class ClawBotError(RuntimeError):
@@ -175,14 +176,17 @@ class ClawBotGetUpdatesResult:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "ClawBotGetUpdatesResult":
         raw = dict(payload or {})
-        msg_payloads = raw.get("msgs") if isinstance(raw.get("msgs"), list) else []
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+        msg_payloads = data.get("msgs") if isinstance(data.get("msgs"), list) else []
+        ret_value = raw.get("ret")
+        errcode_value = raw.get("errcode")
         return cls(
-            ret=_safe_int(raw.get("ret")),
-            errcode=_safe_int(raw.get("errcode")),
-            errmsg=str(raw.get("errmsg") or raw.get("message") or ""),
+            ret=_safe_int(data.get("ret") if ret_value is None else ret_value),
+            errcode=_safe_int(data.get("errcode") if errcode_value is None else errcode_value),
+            errmsg=str(raw.get("errmsg") or data.get("errmsg") or raw.get("message") or data.get("message") or ""),
             messages=[ClawBotMessage.from_payload(item) for item in msg_payloads if isinstance(item, dict)],
-            get_updates_buf=str(raw.get("get_updates_buf") or raw.get("sync_buf") or ""),
-            longpolling_timeout_ms=_safe_int(raw.get("longpolling_timeout_ms")),
+            get_updates_buf=str(data.get("get_updates_buf") or raw.get("get_updates_buf") or data.get("sync_buf") or raw.get("sync_buf") or ""),
+            longpolling_timeout_ms=_safe_int(data.get("longpolling_timeout_ms") or raw.get("longpolling_timeout_ms")),
             raw=raw,
         )
 
@@ -329,14 +333,19 @@ class ClawBotClient:
 
     @staticmethod
     def _raise_for_api_error(payload: dict[str, Any]) -> None:
-        ret = _safe_int(payload.get("ret"), 0)
-        errcode = _safe_int(payload.get("errcode"), 0)
-        if ret == -14 or errcode == -14:
-            raise ClawBotSessionExpired(-14, str(payload.get("errmsg") or "ClawBot iLink session expired"), payload)
-        if ret not in {0}:
-            raise ClawBotAPIError(ret, str(payload.get("errmsg") or payload.get("message") or "ClawBot iLink API error"), payload)
-        if errcode not in {0}:
-            raise ClawBotAPIError(errcode, str(payload.get("errmsg") or payload.get("message") or "ClawBot iLink API error"), payload)
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        ret_values = [
+            _safe_int(payload.get("ret"), 0),
+            _safe_int(payload.get("errcode"), 0),
+            _safe_int(data.get("ret"), 0),
+            _safe_int(data.get("errcode"), 0),
+        ]
+        message = str(payload.get("errmsg") or data.get("errmsg") or payload.get("message") or data.get("message") or "")
+        if any(value == -14 for value in ret_values):
+            raise ClawBotSessionExpired(-14, message or "ClawBot iLink session expired", payload)
+        error_code = next((value for value in ret_values if value not in {0}), 0)
+        if error_code:
+            raise ClawBotAPIError(error_code, message or "ClawBot iLink API error", payload)
 
     async def get_bot_qrcode(self, *, bot_type: int = 3) -> ClawBotLoginQRCode:
         payload = await self._request_json(
@@ -364,12 +373,13 @@ class ClawBotClient:
         return ClawBotLoginStatus.from_payload(payload)
 
     async def get_updates(self, *, get_updates_buf: str = "", timeout_ms: int | None = None) -> ClawBotGetUpdatesResult:
+        request_timeout_ms = int(timeout_ms or self.long_poll_timeout_ms) + 5000
         payload = await self._request_json(
             "POST",
             "ilink/bot/getupdates",
             json_body={"get_updates_buf": str(get_updates_buf or "")},
             auth=True,
-            timeout_ms=timeout_ms or self.long_poll_timeout_ms,
+            timeout_ms=request_timeout_ms,
         )
         return ClawBotGetUpdatesResult.from_payload(payload)
 
@@ -381,6 +391,7 @@ class ClawBotClient:
         text: str,
         timeout_ms: int | None = None,
     ) -> ClawBotSendResult:
+        send_timeout_ms = max(int(timeout_ms or self.request_timeout_ms), DEFAULT_CLAWBOT_ILINK_SEND_TIMEOUT_MS)
         payload = await self._request_json(
             "POST",
             "ilink/bot/sendmessage",
@@ -402,7 +413,7 @@ class ClawBotClient:
                 }
             },
             auth=True,
-            timeout_ms=timeout_ms or self.request_timeout_ms,
+            timeout_ms=send_timeout_ms,
         )
         return ClawBotSendResult(ok=True, raw=payload)
 

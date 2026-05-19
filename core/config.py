@@ -282,9 +282,15 @@ class ConfigManager(ConfigRepository):
 
     def _load_env(self):
         try:
-            from dotenv import load_dotenv
+            from dotenv import dotenv_values, load_dotenv
 
             load_dotenv(self._env_file_path, override=False)
+            env_file_values = dotenv_values(self._env_file_path)
+            for env_key, env_value in env_file_values.items():
+                if not env_key or env_value in {None, ""}:
+                    continue
+                if os.environ.get(env_key) in {None, ""}:
+                    os.environ[env_key] = str(env_value)
         except ImportError:
             logger.info("python-dotenv 未安装，仅使用系统环境变量")
 

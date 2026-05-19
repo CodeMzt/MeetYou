@@ -184,6 +184,7 @@
 - ClawBot WeChat must remain an Endpoint Provider. It may store native iLink cursors/context tokens locally, but Core still owns Thread, Message, Run, Delivery, EndpointAddress truth, and final assistant Message persistence.
 - Core deploy must install/restart the `meetyou-clawbot-wechat-provider` systemd service alongside other external providers; ClawBot login only writes iLink credentials and must not be treated as starting the provider runtime.
 - ClawBot WeChat v1 supports official direct/private text only unless a task explicitly expands the official capability surface. Do not promise legacy group behavior, media support, or old chat_id migration without a separate design and acceptance pass.
+- ClawBot iLink failures must be debugged across the complete path: iLink `getupdates` payloads/drop reasons, Endpoint Provider `/endpoint/ws` connection, Core runtime message submission, Core delivery/run-event frames, and iLink `sendmessage` results. Do not treat a connected provider process as end-to-end acceptance.
 - Endpoint tool listing must match workspace device topology: use managed endpoint-workspace membership plus live WebSocket connection state, and do not drop connected devices such as Raspberry Pi only because legacy `workspace_scope` or DB `status` is stale.
 - Endpoint/device listing requests must use endpoint listing tools as the source of truth. Do not answer endpoint inventories from memory, assumptions, or the current chat endpoint; include returned endpoint ids, provider types, status, workspace ids, and executable tools compactly without silently dropping Raspberry Pi / RPI or other connected providers. Keep assistant-facing endpoint tool results front-loaded with `tool_target_lines`, `executable_tools_by_endpoint`, `endpoint_ids`, and `compact_endpoints` before verbose details, and sort executable endpoints first so long capability payloads cannot hide later endpoints.
 - Assistant-facing list tools must be complete before they are verbose: front-load compact lines, ids, counts, and summary maps for every returned item, and keep long metadata/capability blobs behind explicit detail flags or item-specific follow-up calls. Do not put long repeated lists before later records, because model-facing output budgets can hide or truncate later data.
@@ -260,8 +261,8 @@
   - Wait for GitHub Actions CI and Deploy. Remote Core is considered updated only after both pass.
   - After Deploy passes, confirm remote Core `/health` and version / commit sha.
   - Start local Desktop against remote Core and test conversation, Streaming, `assistant.progress_notice`, local tools, Scheduler, Heartbeat, and disconnect/reconnect.
-  - Test Feishu and WeChatBot last with unique real messages and human confirmation. Never assume external delivery succeeded without human feedback.
-  - Write the local ignored report at `docs/_local/v4-test-report.md` with commit sha, CI/Deploy status, remote Core status, local Desktop to remote Core results, and Feishu/WeChatBot human feedback unless the user explicitly asks to publish the report.
+  - Test Feishu and ClawBot iLink WeChat last with unique real messages and human confirmation. Never assume external delivery succeeded without human feedback.
+  - Write the local ignored report at `docs/_local/v4-test-report.md` with commit sha, CI/Deploy status, remote Core status, local Desktop to remote Core results, and Feishu/ClawBot iLink WeChat human feedback unless the user explicitly asks to publish the report.
 
 ## Platform Notes
 

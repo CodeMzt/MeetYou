@@ -102,6 +102,15 @@ async def run() -> None:
         logger.info("ClawBot iLink WeChat Endpoint Provider disabled by config.")
         return
     client = _build_client(config)
+    logger.info(
+        "ClawBot iLink provider config token_present=%s base_url=%s bot_id_present=%s user_id_present=%s state_file=%s core_base_url=%s",
+        bool(config.get("clawbot_ilink_bot_token")),
+        str(config.get("clawbot_ilink_base_url") or DEFAULT_CLAWBOT_ILINK_BASE_URL),
+        bool(config.get("clawbot_ilink_bot_id")),
+        bool(config.get("clawbot_ilink_user_id")),
+        str(config.get("clawbot_ilink_state_file") or DEFAULT_STATE_FILE),
+        str(config.get("core_base_url") or ""),
+    )
     state_store = ClawBotWechatStateStore(
         str(config.get("clawbot_ilink_state_file") or DEFAULT_STATE_FILE),
         flush_interval_ms=int(config.get("clawbot_ilink_state_flush_interval_ms") or 500),

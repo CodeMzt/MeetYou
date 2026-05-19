@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import os
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlencode
@@ -12,6 +13,7 @@ import aiohttp
 from endpoint_tool_sdk.protocol import build_endpoint_protocol_offer
 
 
+logger = logging.getLogger("meetyou.endpoint_provider.runtime_connection")
 _HTTP_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15, sock_connect=5, sock_read=15)
 _HTTP_SESSION_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=5)
 
@@ -259,10 +261,17 @@ class EndpointRuntimeConnection:
                 await self._read_ws()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 self._ws_connected.clear()
                 if self._closed:
                     break
+                logger.warning(
+                    "Endpoint runtime websocket disconnected provider=%s endpoint=%s error=%s:%s",
+                    self.provider_id,
+                    self.endpoint_id,
+                    exc.__class__.__name__,
+                    exc,
+                )
                 await asyncio.sleep(2)
 
     async def _connect_ws(self) -> None:
@@ -272,6 +281,14 @@ class EndpointRuntimeConnection:
         self._ws = await self._http_session.ws_connect(
             self._build_endpoint_ws_url(),
             headers=self._auth_headers(),
+        )
+        logger.info(
+            "Endpoint runtime websocket connected provider=%s endpoint=%s bind_thread=%s thread=%s session=%s",
+            self.provider_id,
+            self.endpoint_id,
+            self._bind_thread,
+            self.thread_id,
+            self.session_id,
         )
         self._ws_connected.clear()
         self._subscription_acknowledged.clear()

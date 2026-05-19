@@ -117,6 +117,27 @@ def _infer_preferred_mode(text: str) -> str | None:
     return None
 
 
+def _message_drop_reason(*, bot_user_id: str = "", message: ClawBotMessage) -> str:
+    if message.group_id:
+        return "group_message_unsupported"
+    if message.message_type == 2:
+        return "outbound_or_bot_message"
+    if bot_user_id and message.from_user_id == bot_user_id:
+        return "from_bot_user"
+    if not message.is_complete_text():
+        return "not_completed_text"
+    if not message.text_content():
+        return "empty_text"
+    peer_id = message.from_user_id or message.to_user_id
+    if bot_user_id and peer_id == bot_user_id:
+        peer_id = message.to_user_id
+    if not peer_id:
+        return "missing_peer_id"
+    if not message.context_token:
+        return "missing_context_token"
+    return ""
+
+
 @dataclass(slots=True)
 class ClawBotWechatEvent:
     bot_id: str
@@ -136,22 +157,12 @@ class ClawBotWechatEvent:
 
 
 def event_from_message(*, bot_id: str, bot_user_id: str = "", message: ClawBotMessage) -> ClawBotWechatEvent | None:
-    if message.group_id:
-        return None
-    if message.message_type == 2:
-        return None
-    if bot_user_id and message.from_user_id == bot_user_id:
-        return None
-    if not message.is_complete_text():
+    if _message_drop_reason(bot_user_id=bot_user_id, message=message):
         return None
     text = message.text_content()
-    if not text:
-        return None
     peer_id = message.from_user_id or message.to_user_id
     if bot_user_id and peer_id == bot_user_id:
         peer_id = message.to_user_id
-    if not peer_id or not message.context_token:
-        return None
     identity_seed = "\n".join(
         [
             str(bot_id or "default"),
@@ -428,6 +439,7 @@ class ClawBotWechatOutputService:
             return
         pending = self._pending_replies.get(ref)
         if frame_type == "endpoint.error":
+            logger.warning("ClawBot iLink endpoint websocket error target=%s payload=%s", _mask(ref), body_payload)
             self._complete_pending(ref, False, "endpoint websocket error")
             return
         if frame_type == "delivery.notice":
@@ -446,6 +458,13 @@ class ClawBotWechatOutputService:
             message_id = str(message.get("message_id") or "")
             if not self._remember_final_delivery(ref, message_id=message_id, stream_key=""):
                 return
+            logger.info(
+                "ClawBot iLink received Core delivery.message target=%s delivery=%s message=%s chars=%d",
+                _mask(ref),
+                _mask(delivery_id),
+                _mask(message_id),
+                len(text),
+            )
             await self._handle_outbound_text(ref, text, pending=pending, delivery_id=delivery_id, frame_type=frame_type, complete_pending=True)
             return
         if frame_type != "delivery.run_event":
@@ -500,6 +519,13 @@ class ClawBotWechatOutputService:
             message_id = str(message.get("message_id") or "")
             if not self._remember_final_delivery(ref, message_id=message_id, stream_key=stream_key):
                 return
+            logger.info(
+                "ClawBot iLink received Core message.completed target=%s delivery=%s message=%s chars=%d",
+                _mask(ref),
+                _mask(delivery_id),
+                _mask(message_id),
+                len(text),
+            )
             await self._handle_outbound_text(ref, text, pending=pending, delivery_id=delivery_id, frame_type=frame_type, complete_pending=True)
 
     async def _handle_outbound_text(
@@ -523,6 +549,13 @@ class ClawBotWechatOutputService:
             return
         try:
             await self._send_direct_text(ref, content)
+            logger.info(
+                "ClawBot iLink sent outbound text target=%s delivery=%s frame=%s chars=%d",
+                _mask(ref),
+                _mask(delivery_id),
+                frame_type,
+                len(content),
+            )
             if pending is not None and complete_pending:
                 self._complete_pending(ref, True)
             await self._report_delivery_result(
@@ -570,6 +603,13 @@ class ClawBotWechatOutputService:
         fragments = split_text_naturally(markdown_to_plain_text(text), limit=limit)
         for index, fragment in enumerate(fragments, start=1):
             await self._wait_global_send_slot()
+            logger.info(
+                "ClawBot iLink sendmessage target=%s fragment=%d/%d chars=%d",
+                _mask(ref),
+                index,
+                len(fragments),
+                len(fragment),
+            )
             await self._client.send_text(
                 to_user_id=peer_id,
                 context_token=context_token,
@@ -672,6 +712,7 @@ class ClawBotWechatInputAdapter:
         self._provider_endpoint_connection: Any | None = None
         self._endpoint_connections: dict[str, Any] = {}
         self._endpoint_connection_last_used: dict[str, float] = {}
+        self._last_empty_poll_log_at = 0.0
         self._gateway_endpoint_idle_ttl_seconds = _safe_positive_int(
             config.get("clawbot_ilink_gateway_endpoint_idle_ttl_seconds"),
             DEFAULT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS,
@@ -752,11 +793,31 @@ class ClawBotWechatInputAdapter:
                     get_updates_buf=self._state_store.get_updates_buf(),
                     timeout_ms=timeout_ms,
                 )
-                events = [
-                    event
-                    for message in result.messages
-                    if (event := event_from_message(bot_id=self._bot_id, bot_user_id=self._bot_user_id, message=message)) is not None
-                ]
+                events: list[ClawBotWechatEvent] = []
+                drop_counts: dict[str, int] = {}
+                for message in result.messages:
+                    event = event_from_message(bot_id=self._bot_id, bot_user_id=self._bot_user_id, message=message)
+                    if event is None:
+                        reason = _message_drop_reason(bot_user_id=self._bot_user_id, message=message) or "unknown"
+                        drop_counts[reason] = drop_counts.get(reason, 0) + 1
+                        continue
+                    events.append(event)
+                if result.messages or events or drop_counts:
+                    logger.info(
+                        "ClawBot iLink getupdates messages=%d accepted=%d dropped=%d reasons=%s cursor_present=%s",
+                        len(result.messages),
+                        len(events),
+                        sum(drop_counts.values()),
+                        drop_counts,
+                        bool(result.get_updates_buf),
+                    )
+                elif asyncio.get_running_loop().time() - self._last_empty_poll_log_at >= 60:
+                    self._last_empty_poll_log_at = asyncio.get_running_loop().time()
+                    logger.info(
+                        "ClawBot iLink polling alive messages=0 cursor_present=%s timeout_ms=%d",
+                        bool(result.get_updates_buf),
+                        timeout_ms,
+                    )
                 if events:
                     await self.handle_events(events)
                 await self._state_store.set_cursor(
@@ -771,6 +832,8 @@ class ClawBotWechatInputAdapter:
                 logger.error("ClawBot iLink session expired. Run `python -m endpoint_providers.clawbot login` again: %s", exc)
                 await self._state_store.clear_cursor(reason="session_expired")
                 await asyncio.sleep(DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
+            except asyncio.TimeoutError:
+                logger.info("ClawBot iLink getupdates timed out after %d ms; continuing.", timeout_ms)
             except Exception as exc:
                 logger.warning("ClawBot iLink polling failed: %s", exc)
                 await asyncio.sleep(backoff_seconds)
@@ -812,9 +875,21 @@ class ClawBotWechatInputAdapter:
     async def _handle_event(self, event: ClawBotWechatEvent) -> None:
         status = self._state_store.event_status(event.event_id)
         if status in {"sent", "submitted", "skipped", "read_only", "failed"}:
+            logger.info(
+                "ClawBot iLink inbound event already processed target=%s event=%s status=%s",
+                _mask(event.conversation_ref),
+                _mask(event.event_id),
+                status,
+            )
             return
         await self._state_store.remember_context(event)
         ref = event.conversation_ref
+        logger.info(
+            "ClawBot iLink inbound event target=%s event=%s text_chars=%d",
+            _mask(ref),
+            _mask(event.event_id),
+            len(event.text),
+        )
         confirm_value = _parse_confirm_response(event.text)
         pending_confirm = self._output_adapter.get_pending_confirm_request(ref)
         if confirm_value is not None and pending_confirm:
@@ -842,6 +917,14 @@ class ClawBotWechatInputAdapter:
                 endpoint_message_id=event.event_id,
             )
             await self._remember_endpoint_connection_thread(event, client)
+            logger.info(
+                "ClawBot iLink submitted event to Core target=%s event=%s core_message=%s thread=%s session=%s",
+                _mask(ref),
+                _mask(event.event_id),
+                _mask(str((message_response or {}).get("message_id") or "")),
+                _mask(str(getattr(client, "thread_id", "") or "")),
+                _mask(str(getattr(client, "session_id", "") or "")),
+            )
         except Exception as exc:
             self._output_adapter.discard_pending(event)
             logger.warning(
@@ -872,6 +955,12 @@ class ClawBotWechatInputAdapter:
             await self._state_store.mark_event_status(event, "submitted", reason=f"reply:{exc.__class__.__name__}", core_message_id=core_message_id)
             return
         if not bool(result.get("ok")):
+            logger.warning(
+                "ClawBot iLink Core reply did not send target=%s event=%s detail=%s",
+                _mask(ref),
+                _mask(event.event_id),
+                result.get("detail"),
+            )
             await self._state_store.mark_event_status(
                 event,
                 "submitted",
@@ -879,6 +968,7 @@ class ClawBotWechatInputAdapter:
                 core_message_id=core_message_id,
             )
             return
+        logger.info("ClawBot iLink event completed target=%s event=%s", _mask(ref), _mask(event.event_id))
         await self._state_store.mark_event_status(event, "sent", core_message_id=core_message_id)
 
     def _conversation_key(self, event: ClawBotWechatEvent) -> str:
@@ -956,6 +1046,12 @@ class ClawBotWechatInputAdapter:
         thread_id = str(getattr(client, "thread_id", "") or "")
         if thread_id:
             await self._state_store.set_thread_id(ref, thread_id)
+        logger.info(
+            "ClawBot iLink Core endpoint session ready target=%s thread=%s session=%s",
+            _mask(ref),
+            _mask(thread_id),
+            _mask(str(getattr(client, "session_id", "") or "")),
+        )
         return client
 
     async def _close_idle_endpoint_connections(self) -> None:

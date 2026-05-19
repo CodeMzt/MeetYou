@@ -1,6 +1,6 @@
 import unittest
 
-from adapters.clawbot_client import ClawBotClient
+from adapters.clawbot_client import ClawBotClient, ClawBotSessionExpired
 
 
 class _FakeResponse:
@@ -76,26 +76,28 @@ class ClawBotClientTests(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "ret": 0,
-                    "get_updates_buf": "next-buf",
-                    "longpolling_timeout_ms": 35000,
-                    "msgs": [
-                        {
-                            "seq": 7,
-                            "message_id": "msg-1",
-                            "from_user_id": "peer-1",
-                            "to_user_id": "bot-user",
-                            "message_type": 1,
-                            "message_state": 2,
-                            "context_token": "ctx-1",
-                            "item_list": [{"type": 1, "text_item": {"text": "hello"}, "is_completed": True}],
-                        }
-                    ],
+                    "data": {
+                        "get_updates_buf": "next-buf",
+                        "longpolling_timeout_ms": 35000,
+                        "msgs": [
+                            {
+                                "seq": 7,
+                                "message_id": "msg-1",
+                                "from_user_id": "peer-1",
+                                "to_user_id": "bot-user",
+                                "message_type": 1,
+                                "message_state": 2,
+                                "context_token": "ctx-1",
+                                "item_list": [{"type": 1, "text_item": {"text": "hello"}, "is_completed": True}],
+                            }
+                        ],
+                    },
                 }
             ]
         )
         client = ClawBotClient(base_url="https://ilink.example.test", bot_token="token-1", session=session)
 
-        result = await client.get_updates(get_updates_buf="old-buf")
+        result = await client.get_updates(get_updates_buf="old-buf", timeout_ms=35000)
 
         request = session.requests[0]
         self.assertEqual(request["method"], "POST")
@@ -105,6 +107,7 @@ class ClawBotClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("X-WECHAT-UIN", request["headers"])
         self.assertEqual(request["json"]["get_updates_buf"], "old-buf")
         self.assertEqual(request["json"]["base_info"]["channel_version"], "2.0.0")
+        self.assertEqual(request["timeout"].total, 40)
         self.assertEqual(result.get_updates_buf, "next-buf")
         self.assertEqual(result.messages[0].text_content(), "hello")
 
@@ -125,6 +128,13 @@ class ClawBotClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["msg"]["message_type"], 2)
         self.assertEqual(body["msg"]["message_state"], 2)
         self.assertEqual(body["msg"]["item_list"][0]["text_item"]["text"], "hello")
+
+    async def test_nested_session_expiry_is_detected(self):
+        session = _FakeSession([{"ret": 0, "data": {"ret": -14, "errmsg": "expired"}}])
+        client = ClawBotClient(base_url="https://ilink.example.test", bot_token="token-1", session=session)
+
+        with self.assertRaises(ClawBotSessionExpired):
+            await client.get_updates()
 
 
 if __name__ == "__main__":
