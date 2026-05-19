@@ -35,7 +35,9 @@ class ExternalProviderDecouplingTests(unittest.TestCase):
     def test_core_deploy_restarts_clawbot_provider_service(self):
         workflow = (ROOT / ".github" / "workflows" / "deploy-core.yml").read_text(encoding="utf-8")
 
-        self.assertIn("for provider in feishu clawbot-wechat meetwechat; do", workflow)
+        self.assertIn("for provider in feishu clawbot-wechat; do", workflow)
+        self.assertIn("Disable legacy provider service: ${legacy_service}", workflow)
+        self.assertIn("meetyou-meetwechat-provider.service", workflow)
         self.assertTrue((ROOT / "scripts" / "linux" / "install-clawbot-wechat-provider-systemd.sh").exists())
         self.assertTrue((ROOT / "deploy" / "systemd" / "meetyou-clawbot-wechat-provider.service.template").exists())
 
