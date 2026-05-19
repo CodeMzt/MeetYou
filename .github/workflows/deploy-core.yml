@@ -364,7 +364,9 @@ jobs:
                     bash "${INSTALL_SCRIPT}" || true
                   sudo -n systemctl enable "${SERVICE_NAME}.service" || true
                   sudo -n systemctl restart "${SERVICE_NAME}.service" || true
+                  sleep 2
                   sudo -n systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
+                  sudo -n journalctl -u "${SERVICE_NAME}.service" -n 80 --no-pager 2>&1 | sanitize_diagnostics || true
                 done
               else
                 echo "Provider restart skipped: Python venv not found at ${MEETYOU_REPO}/.venv/bin/python"
