@@ -1,5 +1,7 @@
 # MeetWeChat
 
+> Legacy note: MeetWeChat / old WeChatBot is kept only as historical failed support. New WeChat development must use the official ClawBot/OpenClaw provider documented in `docs/ClawBot_Wechat.md`.
+
 MeetWeChat 是一个 Linux-first 的微信桥接服务。它不做 LLM、不做业务编排、不直接暴露 agent-wechat API，只把真实微信能力整理成稳定的本地 `/v1` HTTP API。
 
 当前真实链路已经在远程 Linux 验证通过：

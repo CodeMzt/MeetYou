@@ -16,7 +16,9 @@ class ExternalProviderDecouplingTests(unittest.TestCase):
             "from sensors.feishu_input_adapter",
             "from sensors.feishu_output_adapter",
             "from sensors.meetwechat_adapter",
+            "from sensors.clawbot_wechat_adapter",
             "from adapters.meetwechat_client",
+            "from adapters.clawbot_client",
             "_start_feishu_endpoint_provider",
             "_start_meetwechat_endpoint_provider",
             "_register_feishu_broadcast_targets",
@@ -27,6 +29,7 @@ class ExternalProviderDecouplingTests(unittest.TestCase):
 
     def test_standalone_external_provider_entrypoints_exist(self):
         self.assertTrue((ROOT / "endpoint_providers" / "feishu.py").exists())
+        self.assertTrue((ROOT / "endpoint_providers" / "clawbot.py").exists())
         self.assertTrue((ROOT / "endpoint_providers" / "meetwechat.py").exists())
 
 

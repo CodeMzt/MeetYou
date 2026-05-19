@@ -265,6 +265,7 @@ async def setup_app_runtime(app) -> None:
 async def start_external_endpoint_providers(app) -> None:
     provider_commands = {
         "enable_feishu_bot": "python -m endpoint_providers.feishu",
+        "enable_clawbot_wechat_client": "python -m endpoint_providers.clawbot",
         "enable_meetwechat_client": "python -m endpoint_providers.meetwechat",
     }
     for enabled_key, command in provider_commands.items():

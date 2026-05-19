@@ -41,7 +41,7 @@ Initialization helpers:
 - `local_bridge_enabled`: enables the loopback `/desktop/*` HTTP / WS API used by Electron UI.
 - `local_bridge_host` / `local_bridge_port`: local desktop backend bind address, default `127.0.0.1:38951`.
 
-Local acceptance can temporarily set `MEETYOU_FEISHU_ENABLE=false` and `MEETYOU_MEETWECHAT_ENABLE=false` to keep external endpoints disabled without editing `user/config.json`.
+Local acceptance can temporarily set `MEETYOU_FEISHU_ENABLE=false`, `MEETYOU_CLAWBOT_WECHAT_ENABLE=false`, and `MEETYOU_MEETWECHAT_ENABLE=false` to keep external endpoints disabled without editing `user/config.json`. New WeChat acceptance should use ClawBot; MeetWeChat is legacy only.
 
 Core command execution fields:
 
