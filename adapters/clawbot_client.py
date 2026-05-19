@@ -1,25 +1,21 @@
 from __future__ import annotations
 
 import base64
-import json
-import os
 import random
-import re
+import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 import aiohttp
 
 
-DEFAULT_CLAWBOT_BASE_URL = "https://ilinkai.weixin.qq.com"
-DEFAULT_OPENCLAW_STATE_DIR = "~/.openclaw"
-DEFAULT_CLAWBOT_BOT_AGENT = "MeetYou/1.0"
-DEFAULT_CLAWBOT_CHANNEL_VERSION = "meetyou"
-DEFAULT_CLAWBOT_CLIENT_VERSION = "0"
-DEFAULT_CLAWBOT_REQUEST_TIMEOUT_MS = 15000
-DEFAULT_CLAWBOT_LONG_POLL_TIMEOUT_MS = 35000
+DEFAULT_CLAWBOT_ILINK_BASE_URL = "https://ilinkai.weixin.qq.com"
+DEFAULT_CLAWBOT_ILINK_CHANNEL_VERSION = "2.0.0"
+DEFAULT_CLAWBOT_ILINK_CLIENT_VERSION = "1"
+DEFAULT_CLAWBOT_ILINK_REQUEST_TIMEOUT_MS = 15000
+DEFAULT_CLAWBOT_ILINK_LONG_POLL_TIMEOUT_MS = 35000
+DEFAULT_CLAWBOT_ILINK_QR_POLL_TIMEOUT_MS = 30000
 
 
 class ClawBotError(RuntimeError):
@@ -40,13 +36,64 @@ class ClawBotAPIError(ClawBotError):
         self.payload = payload
 
 
+class ClawBotSessionExpired(ClawBotAPIError):
+    pass
+
+
 @dataclass(slots=True)
-class ClawBotAccount:
-    account_id: str
-    token: str
-    base_url: str = DEFAULT_CLAWBOT_BASE_URL
-    user_id: str = ""
-    name: str = ""
+class ClawBotLoginQRCode:
+    qrcode: str
+    qrcode_img_content: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def display_url(self) -> str:
+        return self.qrcode_img_content or self.qrcode
+
+
+@dataclass(slots=True)
+class ClawBotLoginStatus:
+    status: str
+    bot_token: str = ""
+    base_url: str = ""
+    ilink_bot_id: str = ""
+    ilink_user_id: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "ClawBotLoginStatus":
+        raw = dict(payload or {})
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+        status = str(
+            raw.get("status")
+            or raw.get("qrcode_status")
+            or raw.get("state")
+            or raw.get("code")
+            or data.get("status")
+            or data.get("qrcode_status")
+            or data.get("state")
+            or data.get("code")
+            or ""
+        ).strip()
+        bot_token = str(data.get("bot_token") or data.get("token") or "").strip()
+        if bot_token and not status:
+            status = "confirmed"
+        return cls(
+            status=status,
+            bot_token=bot_token,
+            base_url=str(data.get("baseurl") or data.get("base_url") or data.get("baseUrl") or "").strip(),
+            ilink_bot_id=str(data.get("ilink_bot_id") or data.get("bot_id") or "").strip(),
+            ilink_user_id=str(data.get("ilink_user_id") or data.get("user_id") or "").strip(),
+            raw=raw,
+        )
+
+    @property
+    def confirmed(self) -> bool:
+        return bool(self.bot_token) or self.status.lower() == "confirmed"
+
+    @property
+    def expired(self) -> bool:
+        return self.status.lower() == "expired"
 
 
 @dataclass(slots=True)
@@ -132,7 +179,7 @@ class ClawBotGetUpdatesResult:
         return cls(
             ret=_safe_int(raw.get("ret")),
             errcode=_safe_int(raw.get("errcode")),
-            errmsg=str(raw.get("errmsg") or ""),
+            errmsg=str(raw.get("errmsg") or raw.get("message") or ""),
             messages=[ClawBotMessage.from_payload(item) for item in msg_payloads if isinstance(item, dict)],
             get_updates_buf=str(raw.get("get_updates_buf") or raw.get("sync_buf") or ""),
             longpolling_timeout_ms=_safe_int(raw.get("longpolling_timeout_ms")),
@@ -153,85 +200,34 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(default)
 
 
-def resolve_openclaw_state_dir(configured: str = "") -> Path:
-    configured = str(configured or "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    env_value = str(os.environ.get("OPENCLAW_STATE_DIR") or "").strip()
-    if env_value:
-        return Path(env_value).expanduser()
-    return Path(DEFAULT_OPENCLAW_STATE_DIR).expanduser()
-
-
-def sanitize_bot_agent(raw: str | None) -> str:
-    text = str(raw or "").strip()
-    if not text:
-        return DEFAULT_CLAWBOT_BOT_AGENT
-    product_re = re.compile(r"^[A-Za-z0-9_.-]{1,32}/[A-Za-z0-9_.+\-]{1,32}$")
-    comment_re = re.compile(r"^[\x20-\x27\x2A-\x7E]{1,64}$")
-    pieces = text.split()
-    accepted: list[str] = []
-    pending: str | None = None
-    index = 0
-    while index < len(pieces):
-        token = pieces[index]
-        if token.startswith("(") and not token.endswith(")"):
-            while index + 1 < len(pieces) and not token.endswith(")"):
-                index += 1
-                token += " " + pieces[index]
-        if token.startswith("(") and token.endswith(")"):
-            inner = token[1:-1]
-            if pending and comment_re.fullmatch(inner):
-                accepted.append(f"{pending} ({inner})")
-                pending = None
-            elif pending:
-                accepted.append(pending)
-                pending = None
-            index += 1
-            continue
-        if pending:
-            accepted.append(pending)
-            pending = None
-        if product_re.fullmatch(token):
-            pending = token
-        index += 1
-    if pending:
-        accepted.append(pending)
-    if not accepted:
-        return DEFAULT_CLAWBOT_BOT_AGENT
-    truncated: list[str] = []
-    total = 0
-    for token in accepted:
-        added = len(token.encode("utf-8")) + (1 if truncated else 0)
-        if total + added > 256:
-            break
-        truncated.append(token)
-        total += added
-    return " ".join(truncated) if truncated else DEFAULT_CLAWBOT_BOT_AGENT
+def _random_wechat_uin_header() -> str:
+    return base64.b64encode(str(random.getrandbits(32)).encode("utf-8")).decode("ascii")
 
 
 class ClawBotClient:
     def __init__(
         self,
         *,
-        state_dir: str = "",
-        base_url: str = "",
-        bot_agent: str = DEFAULT_CLAWBOT_BOT_AGENT,
-        channel_version: str = DEFAULT_CLAWBOT_CHANNEL_VERSION,
-        ilink_app_id: str = "",
-        ilink_app_client_version: str = DEFAULT_CLAWBOT_CLIENT_VERSION,
-        request_timeout_ms: int = DEFAULT_CLAWBOT_REQUEST_TIMEOUT_MS,
-        long_poll_timeout_ms: int = DEFAULT_CLAWBOT_LONG_POLL_TIMEOUT_MS,
+        base_url: str = DEFAULT_CLAWBOT_ILINK_BASE_URL,
+        bot_token: str = "",
+        bot_id: str = "",
+        ilink_user_id: str = "",
+        channel_version: str = DEFAULT_CLAWBOT_ILINK_CHANNEL_VERSION,
+        ilink_app_client_version: str = DEFAULT_CLAWBOT_ILINK_CLIENT_VERSION,
+        route_tag: str = "",
+        request_timeout_ms: int = DEFAULT_CLAWBOT_ILINK_REQUEST_TIMEOUT_MS,
+        long_poll_timeout_ms: int = DEFAULT_CLAWBOT_ILINK_LONG_POLL_TIMEOUT_MS,
         session: aiohttp.ClientSession | None = None,
     ):
-        self.state_dir = resolve_openclaw_state_dir(state_dir)
-        self.base_url = str(base_url or "").strip()
-        self.bot_agent = sanitize_bot_agent(bot_agent)
-        self.channel_version = str(channel_version or DEFAULT_CLAWBOT_CHANNEL_VERSION).strip()
-        self.ilink_app_id = str(ilink_app_id or "").strip()
-        self.ilink_app_client_version = str(ilink_app_client_version or DEFAULT_CLAWBOT_CLIENT_VERSION).strip()
-        self.request_timeout_ms = int(request_timeout_ms or DEFAULT_CLAWBOT_REQUEST_TIMEOUT_MS)
-        self.long_poll_timeout_ms = int(long_poll_timeout_ms or DEFAULT_CLAWBOT_LONG_POLL_TIMEOUT_MS)
+        self.base_url = str(base_url or DEFAULT_CLAWBOT_ILINK_BASE_URL).strip().rstrip("/") or DEFAULT_CLAWBOT_ILINK_BASE_URL
+        self.bot_token = str(bot_token or "").strip()
+        self.bot_id = str(bot_id or "").strip()
+        self.ilink_user_id = str(ilink_user_id or "").strip()
+        self.channel_version = str(channel_version or DEFAULT_CLAWBOT_ILINK_CHANNEL_VERSION).strip()
+        self.ilink_app_client_version = str(ilink_app_client_version or DEFAULT_CLAWBOT_ILINK_CLIENT_VERSION).strip()
+        self.route_tag = str(route_tag or "").strip()
+        self.request_timeout_ms = int(request_timeout_ms or DEFAULT_CLAWBOT_ILINK_REQUEST_TIMEOUT_MS)
+        self.long_poll_timeout_ms = int(long_poll_timeout_ms or DEFAULT_CLAWBOT_ILINK_LONG_POLL_TIMEOUT_MS)
         self._session = session
         self._owns_session = session is None
 
@@ -245,155 +241,179 @@ class ClawBotClient:
             await self._session.close()
         self._session = None
 
-    @property
-    def accounts_root(self) -> Path:
-        return self.state_dir / "openclaw-weixin" / "accounts"
+    def update_credentials(
+        self,
+        *,
+        bot_token: str,
+        base_url: str = "",
+        bot_id: str = "",
+        ilink_user_id: str = "",
+    ) -> None:
+        self.bot_token = str(bot_token or "").strip()
+        if base_url:
+            self.base_url = str(base_url or "").strip().rstrip("/")
+        if bot_id:
+            self.bot_id = str(bot_id or "").strip()
+        if ilink_user_id:
+            self.ilink_user_id = str(ilink_user_id or "").strip()
 
-    def list_account_ids(self) -> list[str]:
-        index_path = self.state_dir / "openclaw-weixin" / "accounts.json"
-        try:
-            payload = json.loads(index_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return []
-        if not isinstance(payload, list):
-            return []
-        return [str(item).strip() for item in payload if str(item or "").strip()]
-
-    def load_account(self, account_id: str) -> ClawBotAccount | None:
-        clean_id = str(account_id or "").strip()
-        if not clean_id:
-            return None
-        path = self.accounts_root / f"{clean_id}.json"
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return None
-        if not isinstance(payload, dict):
-            return None
-        token = str(payload.get("token") or "").strip()
-        if not token:
-            return None
-        return ClawBotAccount(
-            account_id=clean_id,
-            token=token,
-            base_url=self.base_url or str(payload.get("baseUrl") or DEFAULT_CLAWBOT_BASE_URL).strip(),
-            user_id=str(payload.get("userId") or "").strip(),
-            name=str(payload.get("name") or "").strip(),
-        )
-
-    def list_accounts(self) -> list[ClawBotAccount]:
-        accounts: list[ClawBotAccount] = []
-        for account_id in self.list_account_ids():
-            account = self.load_account(account_id)
-            if account is not None:
-                accounts.append(account)
-        return accounts
+    def _url(self, endpoint: str, *, query: dict[str, Any] | None = None) -> str:
+        url = urljoin(self.base_url.rstrip("/") + "/", endpoint.lstrip("/"))
+        if query:
+            url = f"{url}?{urlencode({key: str(value) for key, value in query.items() if str(value or '').strip()})}"
+        return url
 
     def _base_info(self) -> dict[str, Any]:
-        return {
-            "channel_version": self.channel_version,
-            "bot_agent": self.bot_agent,
-        }
+        return {"channel_version": self.channel_version}
 
-    def _headers(self, account: ClawBotAccount) -> dict[str, str]:
-        random_uin = base64.b64encode(str(random.getrandbits(32)).encode("utf-8")).decode("ascii")
-        headers = {
-            "Content-Type": "application/json",
-            "AuthorizationType": "ilink_bot_token",
-            "Authorization": f"Bearer {account.token}",
-            "X-WECHAT-UIN": random_uin,
-            "iLink-App-Id": self.ilink_app_id,
-            "iLink-App-ClientVersion": self.ilink_app_client_version,
-        }
+    def _common_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.route_tag:
+            headers["SKRouteTag"] = self.route_tag
+        if self.ilink_app_client_version:
+            headers["iLink-App-ClientVersion"] = self.ilink_app_client_version
         return headers
 
-    async def _post_json(
+    def _auth_headers(self) -> dict[str, str]:
+        if not self.bot_token:
+            raise ClawBotError("clawbot_ilink_bot_token is not configured; run `python -m endpoint_providers.clawbot login`")
+        headers = self._common_headers()
+        headers.update(
+            {
+                "AuthorizationType": "ilink_bot_token",
+                "Authorization": f"Bearer {self.bot_token}",
+                "X-WECHAT-UIN": _random_wechat_uin_header(),
+            }
+        )
+        return headers
+
+    async def _request_json(
         self,
-        account: ClawBotAccount,
+        method: str,
         endpoint: str,
-        body: dict[str, Any],
         *,
+        query: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        auth: bool = False,
         timeout_ms: int | None = None,
     ) -> dict[str, Any]:
         await self.init()
         assert self._session is not None
-        payload = dict(body or {})
-        payload["base_info"] = self._base_info()
-        url = urljoin(account.base_url.rstrip("/") + "/", endpoint.lstrip("/"))
+        headers = self._auth_headers() if auth else self._common_headers()
+        body = dict(json_body or {})
+        if method.upper() == "POST":
+            body["base_info"] = self._base_info()
         timeout = aiohttp.ClientTimeout(total=max(int(timeout_ms or self.request_timeout_ms), 1) / 1000)
         async with self._session.request(
-            "POST",
-            url,
-            headers=self._headers(account),
-            json=payload,
+            method.upper(),
+            self._url(endpoint, query=query),
+            headers=headers,
+            json=body if method.upper() == "POST" else None,
             timeout=timeout,
         ) as response:
             try:
-                response_payload: Any = await response.json(content_type=None)
+                payload: Any = await response.json(content_type=None)
             except TypeError:
-                response_payload = await response.json()
+                payload = await response.json()
             except Exception:
-                response_payload = {"message": await response.text()}
+                payload = {"message": await response.text()}
             if response.status >= 400:
                 message = ""
-                if isinstance(response_payload, dict):
-                    message = str(response_payload.get("errmsg") or response_payload.get("message") or "")
-                raise ClawBotHTTPError(response.status, message or "ClawBot HTTP error", response_payload)
-            return response_payload if isinstance(response_payload, dict) else {"data": response_payload}
+                if isinstance(payload, dict):
+                    message = str(payload.get("errmsg") or payload.get("message") or "")
+                raise ClawBotHTTPError(response.status, message or "ClawBot iLink HTTP error", payload)
+            if not isinstance(payload, dict):
+                payload = {"data": payload}
+            self._raise_for_api_error(payload)
+            return payload
 
-    async def get_updates(self, account: ClawBotAccount, *, get_updates_buf: str = "", timeout_ms: int | None = None) -> ClawBotGetUpdatesResult:
-        payload = await self._post_json(
-            account,
+    @staticmethod
+    def _raise_for_api_error(payload: dict[str, Any]) -> None:
+        ret = _safe_int(payload.get("ret"), 0)
+        errcode = _safe_int(payload.get("errcode"), 0)
+        if ret == -14 or errcode == -14:
+            raise ClawBotSessionExpired(-14, str(payload.get("errmsg") or "ClawBot iLink session expired"), payload)
+        if ret not in {0}:
+            raise ClawBotAPIError(ret, str(payload.get("errmsg") or payload.get("message") or "ClawBot iLink API error"), payload)
+        if errcode not in {0}:
+            raise ClawBotAPIError(errcode, str(payload.get("errmsg") or payload.get("message") or "ClawBot iLink API error"), payload)
+
+    async def get_bot_qrcode(self, *, bot_type: int = 3) -> ClawBotLoginQRCode:
+        payload = await self._request_json(
+            "GET",
+            "ilink/bot/get_bot_qrcode",
+            query={"bot_type": int(bot_type or 3)},
+            auth=False,
+            timeout_ms=self.request_timeout_ms,
+        )
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+        return ClawBotLoginQRCode(
+            qrcode=str(data.get("qrcode") or ""),
+            qrcode_img_content=str(data.get("qrcode_img_content") or data.get("qrcode_url") or ""),
+            raw=payload,
+        )
+
+    async def get_qrcode_status(self, qrcode: str, *, timeout_ms: int | None = None) -> ClawBotLoginStatus:
+        payload = await self._request_json(
+            "GET",
+            "ilink/bot/get_qrcode_status",
+            query={"qrcode": str(qrcode or "")},
+            auth=False,
+            timeout_ms=timeout_ms or DEFAULT_CLAWBOT_ILINK_QR_POLL_TIMEOUT_MS,
+        )
+        return ClawBotLoginStatus.from_payload(payload)
+
+    async def get_updates(self, *, get_updates_buf: str = "", timeout_ms: int | None = None) -> ClawBotGetUpdatesResult:
+        payload = await self._request_json(
+            "POST",
             "ilink/bot/getupdates",
-            {"get_updates_buf": str(get_updates_buf or "")},
+            json_body={"get_updates_buf": str(get_updates_buf or "")},
+            auth=True,
             timeout_ms=timeout_ms or self.long_poll_timeout_ms,
         )
         return ClawBotGetUpdatesResult.from_payload(payload)
 
     async def send_text(
         self,
-        account: ClawBotAccount,
         *,
         to_user_id: str,
         context_token: str,
         text: str,
         timeout_ms: int | None = None,
     ) -> ClawBotSendResult:
-        payload = await self._post_json(
-            account,
+        payload = await self._request_json(
+            "POST",
             "ilink/bot/sendmessage",
-            {
+            json_body={
                 "msg": {
+                    "from_user_id": "",
+                    "client_id": f"meetyou:{uuid.uuid4()}",
                     "to_user_id": str(to_user_id or ""),
                     "context_token": str(context_token or ""),
+                    "message_type": 2,
+                    "message_state": 2,
                     "item_list": [
                         {
                             "type": 1,
                             "text_item": {"text": str(text or "")},
+                            "is_completed": True,
                         }
                     ],
                 }
             },
+            auth=True,
             timeout_ms=timeout_ms or self.request_timeout_ms,
         )
-        ret = payload.get("ret") if isinstance(payload, dict) else None
-        if ret not in (None, 0):
-            raise ClawBotAPIError(_safe_int(ret), str(payload.get("errmsg") or "sendmessage rejected"), payload)
         return ClawBotSendResult(ok=True, raw=payload)
 
-    async def get_config(self, account: ClawBotAccount, *, ilink_user_id: str, context_token: str = "") -> dict[str, Any]:
-        return await self._post_json(
-            account,
+    async def get_config(self, *, ilink_user_id: str, context_token: str = "") -> dict[str, Any]:
+        return await self._request_json(
+            "POST",
             "ilink/bot/getconfig",
-            {
+            json_body={
                 "ilink_user_id": str(ilink_user_id or ""),
                 "context_token": str(context_token or ""),
             },
+            auth=True,
             timeout_ms=self.request_timeout_ms,
         )
-
-    async def notify_start(self, account: ClawBotAccount) -> dict[str, Any]:
-        return await self._post_json(account, "ilink/bot/msg/notifystart", {}, timeout_ms=self.request_timeout_ms)
-
-    async def notify_stop(self, account: ClawBotAccount) -> dict[str, Any]:
-        return await self._post_json(account, "ilink/bot/msg/notifystop", {}, timeout_ms=self.request_timeout_ms)

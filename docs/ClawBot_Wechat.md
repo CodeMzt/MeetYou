@@ -1,71 +1,70 @@
-# ClawBot WeChat Endpoint Provider
+# ClawBot iLink WeChat Endpoint Provider
 
-This is the main WeChat integration path for MeetYou. It uses Tencent's official ClawBot/OpenClaw WeChat channel as an external Endpoint Provider and keeps MeetYou Core as the owner of Thread, Message, Run, Delivery, and EndpointAddress records.
+This is MeetYou's main WeChat integration path. It is a native Endpoint Provider that talks directly to Tencent's ClawBot iLink HTTP/JSON API.
 
-Legacy `MeetWeChat` / old WeChatBot support remains in the repository only as a failed historical path. New WeChat work should not adapt to its `/v1/events`, ACK, or `chat_id` shape.
-
-## Official Upstream
-
-- Official docs: https://docs.openclaw.ai/channels
-- Official package/source: https://github.com/Tencent/openclaw-weixin
-- Official npm package: `@tencent-weixin/openclaw-weixin`
-
-Relevant official API surfaces used here:
-
-- `ilink/bot/getupdates`
-- `ilink/bot/sendmessage`
-- `ilink/bot/getconfig`
-- `ilink/bot/msg/notifystart`
-- `ilink/bot/msg/notifystop`
+It must not require a separate bot runtime, CLI, or external state directory. MeetYou stores only its own token, cursor, context token, dedupe state, and Core thread bindings.
 
 ## Boundaries
 
-- ClawBot/OpenClaw owns WeChat login and iLink transport.
-- MeetYou ClawBot provider owns only local transport state: OpenClaw account discovery, `get_updates_buf`, `context_token`, and dedupe/thread binding state.
-- MeetYou Core owns all product truth: threads, messages, runs, delivery, address records, and assistant final messages.
-- V1 supports direct/private text messages only. Group behavior, media, and old MeetWeChat state migration are intentionally out of scope.
+- iLink owns WeChat QR authorization and message transport.
+- MeetYou Core owns Thread, Message, Run, Delivery, EndpointAddress records, and final assistant message persistence.
+- The provider is under `endpoint_providers/clawbot.py` and connects back to Core through `/endpoint/ws`.
+- V1 supports direct/private text only. Group, media, and old MeetWeChat state migration are intentionally out of scope.
 
-## Setup
+## Login
 
-Install and login using the official OpenClaw WeChat channel:
+Run login from the MeetYou repo:
 
 ```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
-openclaw channels login --channel openclaw-weixin
+python -m endpoint_providers.clawbot login --enable
 ```
 
-The official login writes account state under `OPENCLAW_STATE_DIR/openclaw-weixin/` or `~/.openclaw/openclaw-weixin/`.
+The command calls:
 
-Enable MeetYou's provider:
+- `GET /ilink/bot/get_bot_qrcode?bot_type=3`
+- `GET /ilink/bot/get_qrcode_status?qrcode=...`
 
-```env
-MEETYOU_CLAWBOT_WECHAT_ENABLE=true
-MEETYOU_CLAWBOT_WECHAT_STATE_DIR=
-MEETYOU_CLAWBOT_WECHAT_BASE_URL=
-MEETYOU_CLAWBOT_WECHAT_STATE_FILE=user/clawbot_wechat_state.json
-MEETYOU_CLAWBOT_WECHAT_POLL_TIMEOUT_MS=35000
-MEETYOU_CLAWBOT_WECHAT_BOT_AGENT=MeetYou/1.0
+It prints the QR URL and writes the same data to:
+
+```text
+user/clawbot-ilink-login-qr.txt
 ```
 
-Then start Core and the external provider separately:
+After WeChat confirms the QR, the command saves these MeetYou-owned settings:
+
+- `.env`: `MEETYOU_CLAWBOT_ILINK_BOT_TOKEN`
+- `user/config.json`: `clawbot_ilink_base_url`, `clawbot_ilink_bot_id`, `clawbot_ilink_user_id`
+- `user/clawbot_ilink_state.json`: local cursor/context state
+
+## Run
+
+Start Core and the provider separately:
 
 ```bash
 python -m service_runtime
 python -m endpoint_providers.clawbot
 ```
 
+Required environment/config values:
+
+```env
+MEETYOU_CLAWBOT_WECHAT_ENABLE=true
+MEETYOU_CLAWBOT_ILINK_BOT_TOKEN=...
+MEETYOU_CLAWBOT_ILINK_BASE_URL=https://ilinkai.weixin.qq.com
+```
+
 ## Runtime Flow
 
-1. The provider reads official OpenClaw account files from `openclaw-weixin/accounts.json` and `openclaw-weixin/accounts/*.json`.
-2. Each account polls `ilink/bot/getupdates` with its stored `get_updates_buf`.
-3. Completed direct text messages are converted into MeetYou runtime user messages with `source=wechat` and `transport=clawbot`.
-4. Core persists the user message, creates/runs the assistant turn, and emits delivery frames.
-5. The provider sends the final assistant text back through `ilink/bot/sendmessage` with the stored `context_token`.
+1. The provider long-polls `POST /ilink/bot/getupdates` with MeetYou's stored `get_updates_buf`.
+2. Completed direct text messages are converted into MeetYou runtime user messages with `source=wechat` and `transport=clawbot_ilink`.
+3. The provider stores the message `context_token` per `(bot_id, peer_id)`.
+4. Core persists the user message, runs the assistant turn, and emits delivery frames.
+5. The provider sends final assistant text through `POST /ilink/bot/sendmessage` with `to_user_id`, `context_token`, `message_type=2`, `message_state=2`, and a unique `client_id`.
 
 ## Acceptance
 
-- Start the official login flow and confirm `openclaw-weixin/accounts.json` contains at least one account id.
-- Start `python -m endpoint_providers.clawbot` and confirm it registers `wechat.clawbot.provider.ui`.
-- Send a private WeChat text message to the logged-in account.
-- Confirm MeetYou persists the user message in the per-conversation Core Thread.
-- Confirm the assistant's final text is returned through official ClawBot and no old MeetWeChat process is required.
+- `python -m endpoint_providers.clawbot login --enable` completes after a real WeChat QR confirmation.
+- `python -m endpoint_providers.clawbot` registers `wechat.clawbot.provider.ui`.
+- A private WeChat text message creates or reuses a Core thread.
+- The assistant final reply is delivered back through iLink.
+- Restarting the provider preserves cursor/context state. If iLink returns session expiry, rerun the MeetYou login command.

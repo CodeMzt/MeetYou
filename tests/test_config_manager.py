@@ -26,22 +26,23 @@ class ConfigManagerTests(unittest.TestCase):
             "MEETYOU_FEISHU_APP_ID": os.environ.get("MEETYOU_FEISHU_APP_ID"),
             "MEETYOU_FEISHU_APP_SECRET": os.environ.get("MEETYOU_FEISHU_APP_SECRET"),
             "MEETYOU_CLAWBOT_WECHAT_ENABLE": os.environ.get("MEETYOU_CLAWBOT_WECHAT_ENABLE"),
-            "MEETYOU_CLAWBOT_WECHAT_STATE_DIR": os.environ.get("MEETYOU_CLAWBOT_WECHAT_STATE_DIR"),
-            "MEETYOU_CLAWBOT_WECHAT_BASE_URL": os.environ.get("MEETYOU_CLAWBOT_WECHAT_BASE_URL"),
-            "MEETYOU_CLAWBOT_WECHAT_STATE_FILE": os.environ.get("MEETYOU_CLAWBOT_WECHAT_STATE_FILE"),
-            "MEETYOU_CLAWBOT_WECHAT_POLL_TIMEOUT_MS": os.environ.get("MEETYOU_CLAWBOT_WECHAT_POLL_TIMEOUT_MS"),
-            "MEETYOU_CLAWBOT_WECHAT_MAX_TEXT_CHARS": os.environ.get("MEETYOU_CLAWBOT_WECHAT_MAX_TEXT_CHARS"),
-            "MEETYOU_CLAWBOT_WECHAT_BOT_AGENT": os.environ.get("MEETYOU_CLAWBOT_WECHAT_BOT_AGENT"),
-            "MEETYOU_CLAWBOT_WECHAT_CHANNEL_VERSION": os.environ.get("MEETYOU_CLAWBOT_WECHAT_CHANNEL_VERSION"),
-            "MEETYOU_CLAWBOT_WECHAT_ILINK_APP_ID": os.environ.get("MEETYOU_CLAWBOT_WECHAT_ILINK_APP_ID"),
-            "MEETYOU_CLAWBOT_WECHAT_ILINK_APP_CLIENT_VERSION": os.environ.get("MEETYOU_CLAWBOT_WECHAT_ILINK_APP_CLIENT_VERSION"),
-            "MEETYOU_CLAWBOT_WECHAT_INBOUND_WORKERS": os.environ.get("MEETYOU_CLAWBOT_WECHAT_INBOUND_WORKERS"),
-            "MEETYOU_CLAWBOT_WECHAT_INBOUND_QUEUE_SIZE": os.environ.get("MEETYOU_CLAWBOT_WECHAT_INBOUND_QUEUE_SIZE"),
-            "MEETYOU_CLAWBOT_WECHAT_OUTBOUND_MIN_INTERVAL_MS": os.environ.get("MEETYOU_CLAWBOT_WECHAT_OUTBOUND_MIN_INTERVAL_MS"),
-            "MEETYOU_CLAWBOT_WECHAT_SEND_TIMEOUT_MS": os.environ.get("MEETYOU_CLAWBOT_WECHAT_SEND_TIMEOUT_MS"),
-            "MEETYOU_CLAWBOT_WECHAT_STATE_FLUSH_INTERVAL_MS": os.environ.get("MEETYOU_CLAWBOT_WECHAT_STATE_FLUSH_INTERVAL_MS"),
-            "MEETYOU_CLAWBOT_WECHAT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS": os.environ.get("MEETYOU_CLAWBOT_WECHAT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS"),
-            "MEETYOU_CLAWBOT_WECHAT_REPLY_TIMEOUT_SECONDS": os.environ.get("MEETYOU_CLAWBOT_WECHAT_REPLY_TIMEOUT_SECONDS"),
+            "MEETYOU_CLAWBOT_ILINK_BOT_TOKEN": os.environ.get("MEETYOU_CLAWBOT_ILINK_BOT_TOKEN"),
+            "MEETYOU_CLAWBOT_ILINK_BASE_URL": os.environ.get("MEETYOU_CLAWBOT_ILINK_BASE_URL"),
+            "MEETYOU_CLAWBOT_ILINK_STATE_FILE": os.environ.get("MEETYOU_CLAWBOT_ILINK_STATE_FILE"),
+            "MEETYOU_CLAWBOT_ILINK_BOT_ID": os.environ.get("MEETYOU_CLAWBOT_ILINK_BOT_ID"),
+            "MEETYOU_CLAWBOT_ILINK_USER_ID": os.environ.get("MEETYOU_CLAWBOT_ILINK_USER_ID"),
+            "MEETYOU_CLAWBOT_ILINK_CHANNEL_VERSION": os.environ.get("MEETYOU_CLAWBOT_ILINK_CHANNEL_VERSION"),
+            "MEETYOU_CLAWBOT_ILINK_APP_CLIENT_VERSION": os.environ.get("MEETYOU_CLAWBOT_ILINK_APP_CLIENT_VERSION"),
+            "MEETYOU_CLAWBOT_ILINK_ROUTE_TAG": os.environ.get("MEETYOU_CLAWBOT_ILINK_ROUTE_TAG"),
+            "MEETYOU_CLAWBOT_ILINK_POLL_TIMEOUT_MS": os.environ.get("MEETYOU_CLAWBOT_ILINK_POLL_TIMEOUT_MS"),
+            "MEETYOU_CLAWBOT_ILINK_MAX_TEXT_CHARS": os.environ.get("MEETYOU_CLAWBOT_ILINK_MAX_TEXT_CHARS"),
+            "MEETYOU_CLAWBOT_ILINK_INBOUND_WORKERS": os.environ.get("MEETYOU_CLAWBOT_ILINK_INBOUND_WORKERS"),
+            "MEETYOU_CLAWBOT_ILINK_INBOUND_QUEUE_SIZE": os.environ.get("MEETYOU_CLAWBOT_ILINK_INBOUND_QUEUE_SIZE"),
+            "MEETYOU_CLAWBOT_ILINK_OUTBOUND_MIN_INTERVAL_MS": os.environ.get("MEETYOU_CLAWBOT_ILINK_OUTBOUND_MIN_INTERVAL_MS"),
+            "MEETYOU_CLAWBOT_ILINK_SEND_TIMEOUT_MS": os.environ.get("MEETYOU_CLAWBOT_ILINK_SEND_TIMEOUT_MS"),
+            "MEETYOU_CLAWBOT_ILINK_STATE_FLUSH_INTERVAL_MS": os.environ.get("MEETYOU_CLAWBOT_ILINK_STATE_FLUSH_INTERVAL_MS"),
+            "MEETYOU_CLAWBOT_ILINK_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS": os.environ.get("MEETYOU_CLAWBOT_ILINK_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS"),
+            "MEETYOU_CLAWBOT_ILINK_REPLY_TIMEOUT_SECONDS": os.environ.get("MEETYOU_CLAWBOT_ILINK_REPLY_TIMEOUT_SECONDS"),
             "MEETYOU_MEETWECHAT_ENABLE": os.environ.get("MEETYOU_MEETWECHAT_ENABLE"),
             "MEETYOU_MEETWECHAT_BASE_URL": os.environ.get("MEETYOU_MEETWECHAT_BASE_URL"),
             "MEETYOU_MEETWECHAT_POLL_INTERVAL_SECONDS": os.environ.get("MEETYOU_MEETWECHAT_POLL_INTERVAL_SECONDS"),
@@ -332,22 +333,23 @@ class ConfigManagerTests(unittest.TestCase):
         applied_keys, warnings = config.apply_updates(
             {
                 "enable_clawbot_wechat_client": "true",
-                "clawbot_wechat_state_dir": "~/.openclaw",
-                "clawbot_wechat_base_url": "https://ilinkai.weixin.qq.com",
-                "clawbot_wechat_state_file": "user/clawbot_wechat_state.json",
-                "clawbot_wechat_poll_timeout_ms": "35000",
-                "clawbot_wechat_max_text_chars": "1800",
-                "clawbot_wechat_bot_agent": "MeetYou/1.0",
-                "clawbot_wechat_channel_version": "meetyou",
-                "clawbot_wechat_ilink_app_id": "appid",
-                "clawbot_wechat_ilink_app_client_version": "0",
-                "clawbot_wechat_inbound_worker_count": "4",
-                "clawbot_wechat_inbound_queue_size": "500",
-                "clawbot_wechat_outbound_min_interval_ms": "250",
-                "clawbot_wechat_send_timeout_ms": "15000",
-                "clawbot_wechat_state_flush_interval_ms": "500",
-                "clawbot_wechat_gateway_endpoint_idle_ttl_seconds": "600",
-                "clawbot_wechat_reply_timeout_seconds": "120",
+                "clawbot_ilink_bot_token": "token-1",
+                "clawbot_ilink_base_url": "https://ilinkai.weixin.qq.com",
+                "clawbot_ilink_state_file": "user/clawbot_ilink_state.json",
+                "clawbot_ilink_bot_id": "bot-1",
+                "clawbot_ilink_user_id": "user-1",
+                "clawbot_ilink_channel_version": "2.0.0",
+                "clawbot_ilink_app_client_version": "1",
+                "clawbot_ilink_route_tag": "route-1",
+                "clawbot_ilink_poll_timeout_ms": "35000",
+                "clawbot_ilink_max_text_chars": "1800",
+                "clawbot_ilink_inbound_worker_count": "4",
+                "clawbot_ilink_inbound_queue_size": "500",
+                "clawbot_ilink_outbound_min_interval_ms": "250",
+                "clawbot_ilink_send_timeout_ms": "15000",
+                "clawbot_ilink_state_flush_interval_ms": "500",
+                "clawbot_ilink_gateway_endpoint_idle_ttl_seconds": "600",
+                "clawbot_ilink_reply_timeout_seconds": "120",
             }
         )
         config.reload()
@@ -357,29 +359,37 @@ class ConfigManagerTests(unittest.TestCase):
             set(applied_keys),
             {
                 "enable_clawbot_wechat_client",
-                "clawbot_wechat_state_dir",
-                "clawbot_wechat_base_url",
-                "clawbot_wechat_state_file",
-                "clawbot_wechat_poll_timeout_ms",
-                "clawbot_wechat_max_text_chars",
-                "clawbot_wechat_bot_agent",
-                "clawbot_wechat_channel_version",
-                "clawbot_wechat_ilink_app_id",
-                "clawbot_wechat_ilink_app_client_version",
-                "clawbot_wechat_inbound_worker_count",
-                "clawbot_wechat_inbound_queue_size",
-                "clawbot_wechat_outbound_min_interval_ms",
-                "clawbot_wechat_send_timeout_ms",
-                "clawbot_wechat_state_flush_interval_ms",
-                "clawbot_wechat_gateway_endpoint_idle_ttl_seconds",
-                "clawbot_wechat_reply_timeout_seconds",
+                "clawbot_ilink_bot_token",
+                "clawbot_ilink_base_url",
+                "clawbot_ilink_state_file",
+                "clawbot_ilink_bot_id",
+                "clawbot_ilink_user_id",
+                "clawbot_ilink_channel_version",
+                "clawbot_ilink_app_client_version",
+                "clawbot_ilink_route_tag",
+                "clawbot_ilink_poll_timeout_ms",
+                "clawbot_ilink_max_text_chars",
+                "clawbot_ilink_inbound_worker_count",
+                "clawbot_ilink_inbound_queue_size",
+                "clawbot_ilink_outbound_min_interval_ms",
+                "clawbot_ilink_send_timeout_ms",
+                "clawbot_ilink_state_flush_interval_ms",
+                "clawbot_ilink_gateway_endpoint_idle_ttl_seconds",
+                "clawbot_ilink_reply_timeout_seconds",
             },
         )
         self.assertIs(config.get("enable_clawbot_wechat_client"), True)
-        self.assertEqual(config.get("clawbot_wechat_poll_timeout_ms"), 35000)
-        self.assertEqual(config.get("clawbot_wechat_max_text_chars"), 1800)
-        self.assertEqual(config.get("clawbot_wechat_send_timeout_ms"), 15000)
-        self.assertEqual(config.get("clawbot_wechat_reply_timeout_seconds"), 120)
+        self.assertEqual(config.get("clawbot_ilink_bot_token"), "token-1")
+        self.assertEqual(config.get("clawbot_ilink_poll_timeout_ms"), 35000)
+        self.assertEqual(config.get("clawbot_ilink_max_text_chars"), 1800)
+        self.assertEqual(config.get("clawbot_ilink_send_timeout_ms"), 15000)
+        self.assertEqual(config.get("clawbot_ilink_reply_timeout_seconds"), 120)
+        config_data = json.loads((self.temp_root / "user" / "config.json").read_text(encoding="utf-8"))
+        self.assertNotIn("clawbot_ilink_bot_token", config_data)
+        self.assertIn(
+            "MEETYOU_CLAWBOT_ILINK_BOT_TOKEN='token-1'",
+            (self.temp_root / ".env").read_text(encoding="utf-8"),
+        )
 
     def test_apply_updates_persists_json_and_env(self):
         config = ConfigManager(

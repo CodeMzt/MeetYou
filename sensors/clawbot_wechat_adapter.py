@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from adapters.clawbot_client import (
-    DEFAULT_CLAWBOT_LONG_POLL_TIMEOUT_MS,
-    DEFAULT_CLAWBOT_REQUEST_TIMEOUT_MS,
-    ClawBotAccount,
+    DEFAULT_CLAWBOT_ILINK_LONG_POLL_TIMEOUT_MS,
+    DEFAULT_CLAWBOT_ILINK_REQUEST_TIMEOUT_MS,
     ClawBotClient,
     ClawBotMessage,
+    ClawBotSessionExpired,
 )
 from core.delivery_formatting import markdown_to_plain_text
 from core.endpoint_tool_bundles import EXTERNAL_ENDPOINT_BASIC_TOOL_BUNDLE
@@ -24,7 +24,7 @@ from endpoint_providers.runtime_connection import EndpointRuntimeConnection, res
 
 logger = logging.getLogger("meetyou.clawbot_wechat")
 
-DEFAULT_STATE_FILE = "user/clawbot_wechat_state.json"
+DEFAULT_STATE_FILE = "user/clawbot_ilink_state.json"
 DEFAULT_MAX_TEXT_CHARS = 1800
 DEFAULT_REPLY_TIMEOUT_SECONDS = 120
 DEFAULT_ERROR_BACKOFF_SECONDS = 2
@@ -61,15 +61,15 @@ def _hash_suffix(*parts: str, length: int = 20) -> str:
     return hashlib.sha256("\n".join(str(part or "") for part in parts).encode("utf-8")).hexdigest()[:length]
 
 
-def conversation_ref(account_id: str, peer_id: str) -> str:
-    return f"{account_id}::{peer_id}"
+def conversation_ref(bot_id: str, peer_id: str) -> str:
+    return f"{bot_id or 'default'}::{peer_id}"
 
 
 def split_conversation_ref(value: str) -> tuple[str, str]:
-    account_id, separator, peer_id = str(value or "").partition("::")
+    bot_id, separator, peer_id = str(value or "").partition("::")
     if not separator:
         return "", ""
-    return account_id, peer_id
+    return bot_id, peer_id
 
 
 def split_text_naturally(text: str, *, limit: int = DEFAULT_MAX_TEXT_CHARS) -> list[str]:
@@ -119,8 +119,8 @@ def _infer_preferred_mode(text: str) -> str | None:
 
 @dataclass(slots=True)
 class ClawBotWechatEvent:
-    account_id: str
-    account_user_id: str
+    bot_id: str
+    bot_user_id: str
     peer_id: str
     event_id: str
     message_id: str
@@ -132,15 +132,15 @@ class ClawBotWechatEvent:
 
     @property
     def conversation_ref(self) -> str:
-        return conversation_ref(self.account_id, self.peer_id)
+        return conversation_ref(self.bot_id, self.peer_id)
 
 
-def event_from_message(account: ClawBotAccount, message: ClawBotMessage) -> ClawBotWechatEvent | None:
+def event_from_message(*, bot_id: str, bot_user_id: str = "", message: ClawBotMessage) -> ClawBotWechatEvent | None:
     if message.group_id:
         return None
     if message.message_type == 2:
         return None
-    if account.user_id and message.from_user_id == account.user_id:
+    if bot_user_id and message.from_user_id == bot_user_id:
         return None
     if not message.is_complete_text():
         return None
@@ -148,13 +148,13 @@ def event_from_message(account: ClawBotAccount, message: ClawBotMessage) -> Claw
     if not text:
         return None
     peer_id = message.from_user_id or message.to_user_id
-    if account.user_id and peer_id == account.user_id:
+    if bot_user_id and peer_id == bot_user_id:
         peer_id = message.to_user_id
     if not peer_id or not message.context_token:
         return None
     identity_seed = "\n".join(
         [
-            account.account_id,
+            str(bot_id or "default"),
             str(message.message_id or ""),
             str(message.seq or ""),
             str(message.create_time_ms or ""),
@@ -164,8 +164,8 @@ def event_from_message(account: ClawBotAccount, message: ClawBotMessage) -> Claw
     )
     event_id = f"clawbot:{hashlib.sha256(identity_seed.encode('utf-8')).hexdigest()[:32]}"
     return ClawBotWechatEvent(
-        account_id=account.account_id,
-        account_user_id=account.user_id,
+        bot_id=bot_id or "default",
+        bot_user_id=bot_user_id,
         peer_id=peer_id,
         event_id=event_id,
         message_id=message.message_id,
@@ -187,8 +187,8 @@ class ClawBotWechatStateStore:
 
     def _empty_payload(self) -> dict[str, Any]:
         return {
-            "schema_version": 1,
-            "accounts": {},
+            "schema_version": 2,
+            "ilink": {},
             "conversations": {},
             "processed_events": {},
             "updated_at": "",
@@ -200,11 +200,7 @@ class ClawBotWechatStateStore:
             validator=lambda item: isinstance(item, dict),
             default_factory=self._empty_payload,
         )
-        for key, default in (
-            ("accounts", {}),
-            ("conversations", {}),
-            ("processed_events", {}),
-        ):
+        for key, default in (("ilink", {}), ("conversations", {}), ("processed_events", {})):
             if not isinstance(payload.get(key), dict):
                 payload[key] = default
         return payload
@@ -236,7 +232,7 @@ class ClawBotWechatStateStore:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("ClawBot state flush failed: %s", exc)
+            logger.warning("ClawBot iLink state flush failed: %s", exc)
 
     async def flush(self) -> None:
         task = self._flush_task
@@ -251,31 +247,34 @@ class ClawBotWechatStateStore:
     async def close(self) -> None:
         await self.flush()
 
-    def get_updates_buf(self, account_id: str) -> str:
-        account = self._payload.get("accounts", {}).get(str(account_id or ""), {})
-        return str(account.get("get_updates_buf") or "")
+    def get_updates_buf(self) -> str:
+        return str(self._payload.get("ilink", {}).get("get_updates_buf") or "")
 
-    def get_longpolling_timeout_ms(self, account_id: str, default: int) -> int:
-        account = self._payload.get("accounts", {}).get(str(account_id or ""), {})
-        return _safe_positive_int(account.get("longpolling_timeout_ms"), default)
+    def get_longpolling_timeout_ms(self, default: int) -> int:
+        return _safe_positive_int(self._payload.get("ilink", {}).get("longpolling_timeout_ms"), default)
 
-    async def set_account_cursor(self, account_id: str, *, get_updates_buf: str, longpolling_timeout_ms: int = 0) -> None:
+    async def set_cursor(self, *, get_updates_buf: str, longpolling_timeout_ms: int = 0) -> None:
         async with self._lock:
-            account = self._payload.setdefault("accounts", {}).setdefault(str(account_id or ""), {})
+            ilink = self._payload.setdefault("ilink", {})
             if str(get_updates_buf or ""):
-                account["get_updates_buf"] = str(get_updates_buf or "")
+                ilink["get_updates_buf"] = str(get_updates_buf or "")
             if longpolling_timeout_ms > 0:
-                account["longpolling_timeout_ms"] = int(longpolling_timeout_ms)
-            account["updated_at"] = _utcnow_iso()
+                ilink["longpolling_timeout_ms"] = int(longpolling_timeout_ms)
+            ilink["updated_at"] = _utcnow_iso()
             await self._persist_locked()
+
+    async def clear_cursor(self, *, reason: str = "") -> None:
+        async with self._lock:
+            self._payload["ilink"] = {"cleared_at": _utcnow_iso(), "reason": str(reason or "")}
+            await self._persist_locked(force=True)
 
     async def remember_context(self, event: ClawBotWechatEvent) -> None:
         async with self._lock:
             record = self._payload.setdefault("conversations", {}).setdefault(event.conversation_ref, {})
             record.update(
                 {
-                    "account_id": event.account_id,
-                    "account_user_id": event.account_user_id,
+                    "bot_id": event.bot_id,
+                    "bot_user_id": event.bot_user_id,
                     "peer_id": event.peer_id,
                     "context_token": event.context_token,
                     "last_message_id": event.message_id,
@@ -285,8 +284,8 @@ class ClawBotWechatStateStore:
             )
             await self._persist_locked()
 
-    def get_context_token(self, account_id: str, peer_id: str) -> str:
-        record = self._payload.get("conversations", {}).get(conversation_ref(account_id, peer_id), {})
+    def get_context_token(self, bot_id: str, peer_id: str) -> str:
+        record = self._payload.get("conversations", {}).get(conversation_ref(bot_id, peer_id), {})
         return str(record.get("context_token") or "")
 
     def get_thread_id(self, ref: str) -> str:
@@ -311,7 +310,7 @@ class ClawBotWechatStateStore:
             self._payload.setdefault("processed_events", {})[event.event_id] = {
                 "status": str(status or ""),
                 "reason": str(reason or ""),
-                "account_id": event.account_id,
+                "bot_id": event.bot_id,
                 "peer_id": event.peer_id,
                 "message_id": event.message_id,
                 "core_message_id": str(core_message_id or ""),
@@ -324,10 +323,10 @@ class ClawBotWechatStateStore:
         for ref, payload in (self._payload.get("conversations") or {}).items():
             if not isinstance(payload, dict):
                 continue
-            account_id = str(payload.get("account_id") or "")
+            bot_id = str(payload.get("bot_id") or "")
             peer_id = str(payload.get("peer_id") or "")
-            if account_id and peer_id:
-                records.append({"conversation_ref": str(ref), "account_id": account_id, "peer_id": peer_id})
+            if bot_id and peer_id:
+                records.append({"conversation_ref": str(ref), "bot_id": bot_id, "peer_id": peer_id})
         return records
 
 
@@ -345,14 +344,12 @@ class ClawBotWechatOutputService:
         config,
         client: ClawBotClient,
         state_store: ClawBotWechatStateStore,
-        account_resolver: Callable[[str], ClawBotAccount | None] | None = None,
         delivery_result_sender: Callable[..., Any] | None = None,
         sleeper: Callable[[float], Any] = asyncio.sleep,
     ):
         self._config = config
         self._client = client
         self._state_store = state_store
-        self._account_resolver = account_resolver
         self._delivery_result_sender = delivery_result_sender
         self._sleeper = sleeper
         self._pending_replies: dict[str, _PendingReply] = {}
@@ -362,9 +359,6 @@ class ClawBotWechatOutputService:
         self._sent_final_keys: set[str] = set()
         self._send_lock = asyncio.Lock()
         self._last_send_at = 0.0
-
-    def set_account_resolver(self, resolver: Callable[[str], ClawBotAccount | None]) -> None:
-        self._account_resolver = resolver
 
     def set_delivery_result_sender(self, sender: Callable[..., Any] | None) -> None:
         self._delivery_result_sender = sender
@@ -534,7 +528,7 @@ class ClawBotWechatOutputService:
             await self._report_delivery_result(
                 delivery_id,
                 status="sent",
-                metadata={"provider_type": "wechat", "transport": "clawbot", "target": _mask(ref), "frame_type": frame_type},
+                metadata={"provider_type": "wechat", "transport": "clawbot_ilink", "target": _mask(ref), "frame_type": frame_type},
             )
         except Exception as exc:
             if pending is not None and complete_pending:
@@ -543,9 +537,9 @@ class ClawBotWechatOutputService:
                 delivery_id,
                 status="failed",
                 error={"message": str(exc), "type": exc.__class__.__name__},
-                metadata={"provider_type": "wechat", "transport": "clawbot", "target": _mask(ref), "frame_type": frame_type},
+                metadata={"provider_type": "wechat", "transport": "clawbot_ilink", "target": _mask(ref), "frame_type": frame_type},
             )
-            logger.warning("ClawBot WeChat send failed target=%s error=%s", _mask(ref), exc)
+            logger.warning("ClawBot iLink send failed target=%s error=%s", _mask(ref), exc)
 
     def _complete_pending(self, ref: str, ok: bool, detail: str = "", *, terminal: bool = False) -> None:
         pending = self._pending_replies.pop(ref, None)
@@ -566,29 +560,23 @@ class ClawBotWechatOutputService:
         return True
 
     async def _send_direct_text(self, ref: str, text: str) -> None:
-        account_id, peer_id = split_conversation_ref(ref)
-        if not account_id or not peer_id:
-            raise RuntimeError("missing ClawBot account or peer id")
-        if self._account_resolver is None:
-            raise RuntimeError("ClawBot account resolver is not configured")
-        account = self._account_resolver(account_id)
-        if account is None:
-            raise RuntimeError("ClawBot account is not available")
-        context_token = self._state_store.get_context_token(account_id, peer_id)
+        bot_id, peer_id = split_conversation_ref(ref)
+        if not bot_id or not peer_id:
+            raise RuntimeError("missing ClawBot iLink bot or peer id")
+        context_token = self._state_store.get_context_token(bot_id, peer_id)
         if not context_token:
-            raise RuntimeError("ClawBot context_token is not available for this conversation")
-        limit = _safe_positive_int(self._config.get("clawbot_wechat_max_text_chars"), DEFAULT_MAX_TEXT_CHARS)
+            raise RuntimeError("ClawBot iLink context_token is not available for this conversation")
+        limit = _safe_positive_int(self._config.get("clawbot_ilink_max_text_chars"), DEFAULT_MAX_TEXT_CHARS)
         fragments = split_text_naturally(markdown_to_plain_text(text), limit=limit)
         for index, fragment in enumerate(fragments, start=1):
             await self._wait_global_send_slot()
             await self._client.send_text(
-                account,
                 to_user_id=peer_id,
                 context_token=context_token,
                 text=fragment,
                 timeout_ms=_safe_positive_int(
-                    self._config.get("clawbot_wechat_send_timeout_ms"),
-                    DEFAULT_CLAWBOT_REQUEST_TIMEOUT_MS,
+                    self._config.get("clawbot_ilink_send_timeout_ms"),
+                    DEFAULT_CLAWBOT_ILINK_REQUEST_TIMEOUT_MS,
                 ),
             )
             if index < len(fragments):
@@ -596,7 +584,7 @@ class ClawBotWechatOutputService:
 
     async def _wait_global_send_slot(self) -> None:
         min_interval = _safe_positive_int(
-            self._config.get("clawbot_wechat_outbound_min_interval_ms"),
+            self._config.get("clawbot_ilink_outbound_min_interval_ms"),
             DEFAULT_OUTBOUND_MIN_INTERVAL_MS,
         ) / 1000
         async with self._send_lock:
@@ -633,7 +621,7 @@ class ClawBotWechatOutputService:
             if asyncio.iscoroutine(result):
                 await result
         except Exception as exc:
-            logger.warning("ClawBot delivery result report failed delivery=%s error=%s", _mask(delivery_id), exc)
+            logger.warning("ClawBot iLink delivery result report failed delivery=%s error=%s", _mask(delivery_id), exc)
 
 
 class ClawBotWechatInputAdapter:
@@ -652,53 +640,51 @@ class ClawBotWechatInputAdapter:
         self._config = config
         self._endpoint_connection_factory = endpoint_connection_factory
         self._client = client or ClawBotClient(
-            state_dir=str(config.get("clawbot_wechat_state_dir") or ""),
-            base_url=str(config.get("clawbot_wechat_base_url") or ""),
-            bot_agent=str(config.get("clawbot_wechat_bot_agent") or ""),
-            channel_version=str(config.get("clawbot_wechat_channel_version") or ""),
-            ilink_app_id=str(config.get("clawbot_wechat_ilink_app_id") or ""),
-            ilink_app_client_version=str(config.get("clawbot_wechat_ilink_app_client_version") or ""),
+            base_url=str(config.get("clawbot_ilink_base_url") or ""),
+            bot_token=str(config.get("clawbot_ilink_bot_token") or ""),
+            bot_id=str(config.get("clawbot_ilink_bot_id") or ""),
+            ilink_user_id=str(config.get("clawbot_ilink_user_id") or ""),
+            channel_version=str(config.get("clawbot_ilink_channel_version") or ""),
+            ilink_app_client_version=str(config.get("clawbot_ilink_app_client_version") or ""),
+            route_tag=str(config.get("clawbot_ilink_route_tag") or ""),
             request_timeout_ms=_safe_positive_int(
-                config.get("clawbot_wechat_send_timeout_ms"),
-                DEFAULT_CLAWBOT_REQUEST_TIMEOUT_MS,
+                config.get("clawbot_ilink_send_timeout_ms"),
+                DEFAULT_CLAWBOT_ILINK_REQUEST_TIMEOUT_MS,
             ),
             long_poll_timeout_ms=_safe_positive_int(
-                config.get("clawbot_wechat_poll_timeout_ms"),
-                DEFAULT_CLAWBOT_LONG_POLL_TIMEOUT_MS,
+                config.get("clawbot_ilink_poll_timeout_ms"),
+                DEFAULT_CLAWBOT_ILINK_LONG_POLL_TIMEOUT_MS,
             ),
         )
         self._state_store = state_store or ClawBotWechatStateStore(
-            str(config.get("clawbot_wechat_state_file") or DEFAULT_STATE_FILE),
+            str(config.get("clawbot_ilink_state_file") or DEFAULT_STATE_FILE),
             flush_interval_ms=_safe_positive_int(
-                config.get("clawbot_wechat_state_flush_interval_ms"),
+                config.get("clawbot_ilink_state_flush_interval_ms"),
                 DEFAULT_STATE_FLUSH_INTERVAL_MS,
             ),
         )
-        self._accounts: dict[str, ClawBotAccount] = {}
         self._output_adapter = output_adapter or ClawBotWechatOutputService(
             config=config,
             client=self._client,
             state_store=self._state_store,
-            account_resolver=self._resolve_account,
         )
-        self._output_adapter.set_account_resolver(self._resolve_account)
         self._output_adapter.set_delivery_result_sender(self._send_delivery_result)
         self._provider_endpoint_connection: Any | None = None
         self._endpoint_connections: dict[str, Any] = {}
         self._endpoint_connection_last_used: dict[str, float] = {}
         self._gateway_endpoint_idle_ttl_seconds = _safe_positive_int(
-            config.get("clawbot_wechat_gateway_endpoint_idle_ttl_seconds"),
+            config.get("clawbot_ilink_gateway_endpoint_idle_ttl_seconds"),
             DEFAULT_GATEWAY_ENDPOINT_IDLE_TTL_SECONDS,
         )
-        self._poll_tasks: dict[str, asyncio.Task] = {}
+        self._poll_task: asyncio.Task | None = None
         self._closed = False
         self._inbound_worker_count = _safe_positive_int(
-            config.get("clawbot_wechat_inbound_worker_count"),
+            config.get("clawbot_ilink_inbound_worker_count"),
             DEFAULT_INBOUND_WORKER_COUNT,
         )
         self._inbound_queue: asyncio.Queue[ClawBotWechatEvent] = asyncio.Queue(
             maxsize=_safe_positive_int(
-                config.get("clawbot_wechat_inbound_queue_size"),
+                config.get("clawbot_ilink_inbound_queue_size"),
                 DEFAULT_INBOUND_QUEUE_SIZE,
             )
         )
@@ -711,35 +697,31 @@ class ClawBotWechatInputAdapter:
     def _provider_endpoint_id(self) -> str:
         return "wechat.clawbot.provider.ui"
 
-    def _resolve_account(self, account_id: str) -> ClawBotAccount | None:
-        return self._accounts.get(str(account_id or "").strip())
+    @property
+    def _bot_id(self) -> str:
+        return str(self._client.bot_id or self._config.get("clawbot_ilink_bot_id") or "clawbot").strip() or "clawbot"
+
+    @property
+    def _bot_user_id(self) -> str:
+        return str(self._client.ilink_user_id or self._config.get("clawbot_ilink_user_id") or "").strip()
 
     async def run(self) -> None:
         self._closed = False
         await self._client.init()
-        await self._reload_accounts()
         await self._get_provider_endpoint_connection()
         self._ensure_inbound_workers()
-        for account in self._accounts.values():
-            with contextlib.suppress(Exception):
-                await self._client.notify_start(account)
-            self._poll_tasks[account.account_id] = asyncio.create_task(self._run_account_poll_loop(account))
-        if not self._accounts:
-            logger.warning("No ClawBot WeChat accounts found. Run OpenClaw QR login first.")
-        logger.info("ClawBot WeChat Endpoint Provider started with %s account(s)", len(self._accounts))
+        if self._poll_task is None or self._poll_task.done():
+            self._poll_task = asyncio.create_task(self._run_poll_loop())
+        logger.info("ClawBot iLink Endpoint Provider started")
 
     async def close(self) -> None:
         self._closed = True
-        for task in self._poll_tasks.values():
-            task.cancel()
-        for task in self._poll_tasks.values():
+        if self._poll_task is not None:
+            self._poll_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
-        self._poll_tasks.clear()
+                await self._poll_task
+            self._poll_task = None
         await self._stop_inbound_workers()
-        for account in self._accounts.values():
-            with contextlib.suppress(Exception):
-                await self._client.notify_stop(account)
         for connection in self._endpoint_connections.values():
             close = getattr(connection, "close", None)
             if callable(close):
@@ -756,41 +738,28 @@ class ClawBotWechatInputAdapter:
         await self._state_store.close()
         await self._client.close()
 
-    async def _reload_accounts(self) -> None:
-        self._accounts = {account.account_id: account for account in self._client.list_accounts()}
-
-    async def _run_account_poll_loop(self, account: ClawBotAccount) -> None:
+    async def _run_poll_loop(self) -> None:
         backoff_seconds = DEFAULT_ERROR_BACKOFF_SECONDS
         while not self._closed:
             try:
                 timeout_ms = self._state_store.get_longpolling_timeout_ms(
-                    account.account_id,
                     _safe_positive_int(
-                        self._config.get("clawbot_wechat_poll_timeout_ms"),
-                        DEFAULT_CLAWBOT_LONG_POLL_TIMEOUT_MS,
-                    ),
+                        self._config.get("clawbot_ilink_poll_timeout_ms"),
+                        DEFAULT_CLAWBOT_ILINK_LONG_POLL_TIMEOUT_MS,
+                    )
                 )
                 result = await self._client.get_updates(
-                    account,
-                    get_updates_buf=self._state_store.get_updates_buf(account.account_id),
+                    get_updates_buf=self._state_store.get_updates_buf(),
                     timeout_ms=timeout_ms,
                 )
-                if result.ret != 0:
-                    logger.warning(
-                        "ClawBot getupdates failed account=%s ret=%s errcode=%s errmsg=%s",
-                        _mask(account.account_id),
-                        result.ret,
-                        result.errcode,
-                        result.errmsg,
-                    )
-                    await asyncio.sleep(backoff_seconds)
-                    backoff_seconds = min(backoff_seconds * 2, DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
-                    continue
-                events = [event for message in result.messages if (event := event_from_message(account, message)) is not None]
+                events = [
+                    event
+                    for message in result.messages
+                    if (event := event_from_message(bot_id=self._bot_id, bot_user_id=self._bot_user_id, message=message)) is not None
+                ]
                 if events:
                     await self.handle_events(events)
-                await self._state_store.set_account_cursor(
-                    account.account_id,
+                await self._state_store.set_cursor(
                     get_updates_buf=result.get_updates_buf,
                     longpolling_timeout_ms=result.longpolling_timeout_ms,
                 )
@@ -798,8 +767,12 @@ class ClawBotWechatInputAdapter:
                 await self._close_idle_endpoint_connections()
             except asyncio.CancelledError:
                 raise
+            except ClawBotSessionExpired as exc:
+                logger.error("ClawBot iLink session expired. Run `python -m endpoint_providers.clawbot login` again: %s", exc)
+                await self._state_store.clear_cursor(reason="session_expired")
+                await asyncio.sleep(DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
             except Exception as exc:
-                logger.warning("ClawBot polling failed account=%s error=%s", _mask(account.account_id), exc)
+                logger.warning("ClawBot iLink polling failed: %s", exc)
                 await asyncio.sleep(backoff_seconds)
                 backoff_seconds = min(backoff_seconds * 2, DEFAULT_MAX_ERROR_BACKOFF_SECONDS)
 
@@ -832,7 +805,7 @@ class ClawBotWechatInputAdapter:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("ClawBot inbound worker failed target=%s error=%s", _mask(event.conversation_ref), exc)
+                logger.warning("ClawBot iLink inbound worker failed target=%s error=%s", _mask(event.conversation_ref), exc)
             finally:
                 self._inbound_queue.task_done()
 
@@ -859,7 +832,7 @@ class ClawBotWechatInputAdapter:
         await self._state_store.mark_event_status(event, "processing")
         client = await self._get_endpoint_connection(event)
         with contextlib.suppress(Exception):
-            await client.upsert_address(self._address_payload(account_id=event.account_id, peer_id=event.peer_id))
+            await client.upsert_address(self._address_payload(bot_id=event.bot_id, peer_id=event.peer_id))
         future = self._output_adapter.begin_event(event, allow_send=True)
         try:
             message_response = await client.send_message(
@@ -872,7 +845,7 @@ class ClawBotWechatInputAdapter:
         except Exception as exc:
             self._output_adapter.discard_pending(event)
             logger.warning(
-                "ClawBot Core bridge failed target=%s event=%s error=%s:%s",
+                "ClawBot iLink Core bridge failed target=%s event=%s error=%s:%s",
                 _mask(ref),
                 _mask(event.event_id),
                 exc.__class__.__name__,
@@ -889,13 +862,13 @@ class ClawBotWechatInputAdapter:
             result = await asyncio.wait_for(
                 future,
                 timeout=_safe_positive_int(
-                    self._config.get("clawbot_wechat_reply_timeout_seconds"),
+                    self._config.get("clawbot_ilink_reply_timeout_seconds"),
                     DEFAULT_REPLY_TIMEOUT_SECONDS,
                 ),
             )
         except Exception as exc:
             self._output_adapter.discard_pending(event)
-            logger.warning("ClawBot reply wait failed target=%s event=%s error=%s", _mask(ref), _mask(event.event_id), exc)
+            logger.warning("ClawBot iLink reply wait failed target=%s event=%s error=%s", _mask(ref), _mask(event.event_id), exc)
             await self._state_store.mark_event_status(event, "submitted", reason=f"reply:{exc.__class__.__name__}", core_message_id=core_message_id)
             return
         if not bool(result.get("ok")):
@@ -909,11 +882,11 @@ class ClawBotWechatInputAdapter:
         await self._state_store.mark_event_status(event, "sent", core_message_id=core_message_id)
 
     def _conversation_key(self, event: ClawBotWechatEvent) -> str:
-        return f"wechat:clawbot:direct:{event.account_id}:{event.peer_id}"
+        return f"wechat:clawbot:direct:{event.bot_id}:{event.peer_id}"
 
-    def _address_payload(self, *, account_id: str, peer_id: str) -> dict[str, Any]:
-        ref = conversation_ref(account_id, peer_id)
-        digest = _hash_suffix(account_id, peer_id, length=24)
+    def _address_payload(self, *, bot_id: str, peer_id: str) -> dict[str, Any]:
+        ref = conversation_ref(bot_id, peer_id)
+        digest = _hash_suffix(bot_id, peer_id, length=24)
         return {
             "address_id": f"addr.wechat.direct.{digest}",
             "provider_type": "wechat",
@@ -924,15 +897,15 @@ class ClawBotWechatInputAdapter:
             "status": "sendable",
             "capabilities": ["send_text"],
             "metadata": {
-                "transport": "clawbot",
-                "account_id": account_id,
+                "transport": "clawbot_ilink",
+                "bot_id": bot_id,
                 "peer_id_present": bool(peer_id),
             },
         }
 
     async def _discover_address_snapshot(self) -> list[dict[str, Any]]:
         return [
-            self._address_payload(account_id=record["account_id"], peer_id=record["peer_id"])
+            self._address_payload(bot_id=record["bot_id"], peer_id=record["peer_id"])
             for record in self._state_store.list_address_records()
         ]
 
@@ -942,10 +915,10 @@ class ClawBotWechatInputAdapter:
                 base_url=self._core_base_url,
                 provider_id="clawbot-wechat-provider",
                 provider_type="wechat",
-                display_name="ClawBot WeChat Provider",
+                display_name="ClawBot iLink WeChat Provider",
                 workspace_id="personal",
                 access_token=self._core_access_token,
-                thread_title="ClawBot WeChat Provider",
+                thread_title="ClawBot iLink WeChat Provider",
                 endpoint_id=self._provider_endpoint_id,
                 endpoint_addresses=await self._discover_address_snapshot(),
                 supports_markdown=False,
@@ -972,7 +945,7 @@ class ClawBotWechatInputAdapter:
                 thread_id=thread_id,
                 endpoint_id=self._provider_endpoint_id,
                 conversation_key=self._conversation_key(event),
-                address_id=self._address_payload(account_id=event.account_id, peer_id=event.peer_id).get("address_id", ""),
+                address_id=self._address_payload(bot_id=event.bot_id, peer_id=event.peer_id).get("address_id", ""),
                 thread_strategy="per_conversation",
                 supports_markdown=False,
                 event_handler=lambda payload, ref=ref: self._output_adapter.send_runtime_event(ref, payload),
@@ -1054,7 +1027,7 @@ class ClawBotWechatInputAdapter:
     def _metadata_for(self, event: ClawBotWechatEvent) -> dict[str, Any]:
         return {
             "source": "wechat",
-            "transport": "clawbot",
+            "transport": "clawbot_ilink",
             "provider": "official_clawbot",
             "response_transport": "non_streaming_endpoint_provider",
             "supports_streaming_reply": False,
@@ -1063,7 +1036,7 @@ class ClawBotWechatInputAdapter:
             "tool_scope": "basic",
             "allowed_tool_bundle": list(CLAWBOT_BASIC_TOOL_BUNDLE),
             "allowed_mcp_servers": [],
-            "account_id": event.account_id,
+            "bot_id": event.bot_id,
             "peer_id_present": bool(event.peer_id),
             "event_id": event.event_id,
             "message_id": event.message_id,

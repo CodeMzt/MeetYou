@@ -32,6 +32,26 @@ class ExternalProviderDecouplingTests(unittest.TestCase):
         self.assertTrue((ROOT / "endpoint_providers" / "clawbot.py").exists())
         self.assertTrue((ROOT / "endpoint_providers" / "meetwechat.py").exists())
 
+    def test_clawbot_provider_does_not_depend_on_openclaw(self):
+        paths = [
+            ROOT / "adapters" / "clawbot_client.py",
+            ROOT / "sensors" / "clawbot_wechat_adapter.py",
+            ROOT / "endpoint_providers" / "clawbot.py",
+            ROOT / "docs" / "ClawBot_Wechat.md",
+        ]
+        forbidden = [
+            "openclaw",
+            "openclaw_state_dir",
+            "openclaw-weixin",
+            "accounts.json",
+            "channels login",
+        ]
+
+        for path in paths:
+            text = path.read_text(encoding="utf-8").lower()
+            for token in forbidden:
+                self.assertNotIn(token, text, f"{token!r} leaked into {path}")
+
 
 if __name__ == "__main__":
     unittest.main()
